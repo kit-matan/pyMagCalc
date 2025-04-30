@@ -171,7 +171,7 @@ if __name__ == "__main__":
     params = [3.23, 0.11, 0.218, -0.195, 0]
 
     # Set cache mode: 'w' for first run, 'r' afterwards
-    write_read_mode = "r"  # Default to read mode
+    write_read_mode = "w"  # Default to read mode
 
     logger.info(f"Starting KFe3J dispersion plot with mode='{write_read_mode}'...")
     plot_disp(params, S_val, write_read_mode)

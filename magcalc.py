@@ -35,6 +35,9 @@ logger = logging.getLogger(__name__)
 # --- Numerical Constants ---
 DEGENERACY_THRESHOLD: float = 1e-12
 ZERO_MATRIX_ELEMENT_THRESHOLD: float = 1e-6
+# --- NEW CONSTANT for suppressing alpha matrix norm warnings ---
+ALPHA_MATRIX_ZERO_NORM_WARNING_THRESHOLD: float = 1e-14  # Suppress warnings below this
+# --- END NEW CONSTANT ---
 EIGENVECTOR_MATCHING_THRESHOLD: float = 1e-5
 ENERGY_IMAG_PART_THRESHOLD: float = 1e-5
 SQW_IMAG_PART_THRESHOLD: float = 1e-4
@@ -146,6 +149,7 @@ def _apply_gram_schmidt(
     return orthonormalized_eigenvectors
 
 
+# --- MODIFIED FUNCTION ---
 def _calculate_alpha_matrix(
     eigenvectors: npt.NDArray[np.complex_],
     G_metric: npt.NDArray[np.float_],
@@ -154,28 +158,49 @@ def _calculate_alpha_matrix(
 ) -> Optional[npt.NDArray[np.complex_]]:
     nspins2 = eigenvectors.shape[0]
     alpha_diag_sq: npt.NDArray[np.float_] = np.zeros(nspins2, dtype=float)
+    zero_threshold_sq = zero_threshold**2  # Pre-calculate square
+
     for i in range(nspins2):
         V_i = eigenvectors[:, i]
         norm_sq_N_ii = np.real(np.vdot(V_i, G_metric @ V_i))
         G_ii = G_metric[i, i]
-        if abs(norm_sq_N_ii) < zero_threshold**2:
-            logger.warning(
-                f"Near-zero pseudo-norm N_ii ({norm_sq_N_ii:.2e}) for eigenvector {i} at {q_vector_label}. Setting alpha_ii to 0."
-            )
+
+        # Check if norm is below the main threshold for setting alpha to zero
+        if abs(norm_sq_N_ii) < zero_threshold_sq:
+            # Only warn if the norm is not extremely close to zero
+            if abs(norm_sq_N_ii) >= ALPHA_MATRIX_ZERO_NORM_WARNING_THRESHOLD:
+                logger.warning(
+                    f"Near-zero pseudo-norm N_ii ({norm_sq_N_ii:.2e}) for eigenvector {i} at {q_vector_label}. Setting alpha_ii to 0."
+                )
+            # Always set alpha to 0 if below the main threshold
             alpha_diag_sq[i] = 0.0
-            continue
-        if G_ii * norm_sq_N_ii < -(zero_threshold**2):
+            continue  # Skip the sign mismatch check
+
+        # Check for sign mismatch only if norm is not near zero
+        # Use the squared threshold here as well for consistency
+        if G_ii * norm_sq_N_ii < -zero_threshold_sq:
             logger.warning(
                 f"Sign mismatch between G_ii ({G_ii}) and N_ii ({norm_sq_N_ii:.2e}) for eigenvector {i} at {q_vector_label}. Setting alpha_ii to 0."
             )
             alpha_diag_sq[i] = 0.0
         else:
+            # This case implies abs(norm_sq_N_ii) >= zero_threshold_sq
+            # AND G_ii * norm_sq_N_ii >= -zero_threshold_sq
+            # If G_ii is +1, norm_sq_N_ii must be >= zero_threshold_sq (positive)
+            # If G_ii is -1, norm_sq_N_ii must be <= -zero_threshold_sq (negative)
+            # So G_ii / norm_sq_N_ii should always be positive here.
             alpha_diag_sq[i] = G_ii / norm_sq_N_ii
+
+    # Ensure no negative values remain due to potential floating point issues near zero
     alpha_diag_sq[alpha_diag_sq < 0] = 0
     alpha_diag: npt.NDArray[np.float_] = np.sqrt(alpha_diag_sq)
+    # Set very small resulting alphas to zero
     alpha_diag[np.abs(alpha_diag) < zero_threshold] = 0.0
     alpha_matrix: npt.NDArray[np.complex_] = np.diag(alpha_diag).astype(np.complex_)
     return alpha_matrix
+
+
+# --- END MODIFIED FUNCTION ---
 
 
 def _match_and_reorder_minus_q(

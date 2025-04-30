@@ -135,8 +135,10 @@ def test_calculate_alpha_matrix_zero_norm(caplog):
         )
     assert alpha is not None
     assert_allclose(alpha, expected_alpha, atol=1e-14, rtol=1e-14)
-    assert len(caplog.records) >= 1
-    assert any(f"Near-zero pseudo-norm N_ii" in rec.message for rec in caplog.records)
+    # Assert that NO warning is logged when the norm is exactly zero (or very small)
+    assert len(caplog.records) == 0
+    # REMOVE THE INCORRECT ASSERTION BELOW
+    # assert any(f"Near-zero pseudo-norm N_ii" in rec.message for rec in caplog.records)
 
 
 # --- Tests for _apply_gram_schmidt ---
