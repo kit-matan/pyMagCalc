@@ -78,16 +78,18 @@ def rot_mat(atom_list, p):
     """"rotation matrix to transform spins to global coordinates"""
     # p is not used in this case since we assume that the spin structure of alpha-Cu2V2O6
     # does not depend on Hamiltonian parameters
+    # rotation matrix for the spins about the x-axis
     rot_m = []
     for ag in atom_list:
-        omp = sp.Matrix([[np.cos(ag*np.pi/2), 0, np.sin(ag*np.pi/2)],
-                      [0, 1, 0], [-np.sin(ag*np.pi/2), 0, np.cos(np.pi/2)]])
+        omp = sp.Matrix([[1, 0, 0],
+                 [0, np.cos(ag*np.pi), -np.sin(ag*np.pi)],
+                 [0, np.sin(ag*np.pi), np.cos(ag*np.pi)]])
         rot_m.append(omp)
     return rot_m
 
 
 def mpr(p):
-    al = [1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1]  # angle in a unit of pi/2, 1 along +a, -1 along -a
+    al = [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0]  # angle in a unit of pi, 0 along +c, 1 along -c
     mp = rot_mat(al, p)
     return mp
 

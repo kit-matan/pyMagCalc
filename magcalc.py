@@ -23,6 +23,10 @@ import pickle
 from multiprocessing import Pool
 from tqdm import tqdm
 
+# Ensure the pckFiles directory exists
+import os
+if not os.path.exists('pckFiles'):
+    os.makedirs('pckFiles')
 
 def substitute_expr(args):
     """Substitute the Fourier transform into each term of the Hamiltonian
@@ -410,8 +414,8 @@ def process_calc_Sqw(args):
     # Create a lambda function for HMat
     HMat_func = lambdify([k[0], k[1], k[2]], HMat)
     # Use the lambda function to substitute and evaluate
-    Hkp = np.array(HMat_func(q[0], q[1], q[2]), dtype=np.complex_)
-    Hkm = np.array(HMat_func(-q[0], -q[1], -q[2]), dtype=np.complex_)
+    Hkp = np.array(HMat_func(q[0], q[1], q[2]), dtype=np.complex128)
+    Hkm = np.array(HMat_func(-q[0], -q[1], -q[2]), dtype=np.complex128)
 
     K, Kd, evals = KKdMatrix(Sp, Hkp, Hkm, Ud, q, nspins)
     # En = np.real_if_close(evals[0:nspins])
@@ -472,7 +476,7 @@ def calc_Sqw(Sp, q, p, file, rd_or_wr):
     param_subs = [[S, Sp]] + [[params[i], p[i]] for i in range(len(p))]
     HMat = HMat.subs(param_subs, simultaneous=True).evalf()
     Ud = Ud.subs(param_subs, simultaneous=True).evalf()
-    Ud = np.mat(Ud).astype(np.float_)
+    Ud = np.asmatrix(Ud).astype(np.float64)
 
     print('Running diagonalization ...')
     st = timeit.default_timer()
@@ -505,7 +509,7 @@ def process_calc_disp(args):
     # Create a lambda function for HMat
     HMat_func = lambdify([k[0], k[1], k[2]], HMat)
     # Use the lambda function to substitute and evaluate
-    HMat_k = np.array(HMat_func(q[0], q[1], q[2]), dtype=np.complex_)
+    HMat_k = np.array(HMat_func(q[0], q[1], q[2]), dtype=np.complex128)
     eigval = la.eigvals(HMat_k)
     # check whether all eigen-energies are real
     for i in range(nspins):

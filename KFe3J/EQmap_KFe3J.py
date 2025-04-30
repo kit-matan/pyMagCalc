@@ -17,13 +17,14 @@ import pickle
 
 
 def plot_map(p, S, wr, newcalc):
-    """Spin-wave intensity map S(Q,\omega)
+    """Spin-wave intensity map S(Q, omega)
         Inputs:
             p: list of parameters
             S: spin value
             nspins: number of spins in a unit cell
             wr: 'w' for write to file, 'r' for read from file
             newcalc: 1 for new calculation, 0 for reading from file"""
+
     intv = 0.05
     qsx = np.arange(-np.pi / np.sqrt(3) - intv / 2, 2 * np.pi / np.sqrt(3) + intv / 2, intv)
     qsy = np.arange(-np.pi - intv / 2, 2 * np.pi + intv / 2, intv)
@@ -97,11 +98,11 @@ def plot_map(p, S, wr, newcalc):
     plt.xlim([-np.pi / np.sqrt(3), 2 * np.pi / np.sqrt(3) + 3 * np.pi])
     plt.ylim([0, 20])
     plt.xticks([])
-    plt.text(-0.1, -1, '$\Gamma$', fontsize=12)
+    plt.text(-0.1, -1, r'$\Gamma$', fontsize=12)
     plt.text(2 * np.pi / np.sqrt(3) - 0.1, -1, 'M', fontsize=12)
     plt.text(2 * np.pi / np.sqrt(3) + 2 * np.pi - 4 * np.pi / 3 - 0.1, -1, 'K', fontsize=12)
-    plt.text(2 * np.pi / np.sqrt(3) + 2 * np.pi - 0.1, -1, '$\Gamma$', fontsize=12)
-    plt.ylabel('$\hbar\omega$ (meV)', fontsize=12)
+    plt.text(2 * np.pi / np.sqrt(3) + 2 * np.pi - 0.1, -1, r'$\Gamma$', fontsize=12)
+    plt.ylabel(r'$\hbar\omega$ (meV)', fontsize=12)
     plt.yticks(np.arange(0, 21, 5.0))
     plt.title('Spin-waves for KFe$_3$(OH)$_6$(SO$_4$)$_2$')
     plt.colorbar()

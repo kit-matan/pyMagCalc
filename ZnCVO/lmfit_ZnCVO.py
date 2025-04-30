@@ -8,7 +8,7 @@ This work is based on the paper PRB 106, 214438 (2022).
 
 fit the spin-wave data of Zn-doped Cu2V2O7
 """
-import spin_model as sm
+import KFe3J.spin_model_sf as sm
 import numpy as np
 import magcalc as mc
 from numpy import loadtxt

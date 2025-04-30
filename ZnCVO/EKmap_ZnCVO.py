@@ -6,7 +6,7 @@ Created on Mon Aug 13 01:22:57 2018
 @author: Ganatee Gitgeatpong and Kit Matan
 This work is based on the paper PRB 106, 214438 (2022).
 """
-import spin_model as sm
+import KFe3J.spin_model_sf as sm
 import numpy as np
 from timeit import default_timer
 import magcalc as mc

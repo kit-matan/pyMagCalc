@@ -14,7 +14,8 @@ import magcalc as mc
 if __name__ == "__main__":
     st = default_timer()
     S = 1.0 / 2.0  # spin value
-    p = [2.49, 1.12 * 2.49, 2.03 * 2.49, 0.28, 2.67, 0.0]
+    
+    p = [2.49, 1.12 * 2.49, 2.03 * 2.49, 0.28, 2.67, 0.0] # spin Hamiltonian parameters (J1, J2, J3, G1, Dx, H)
 
     qsy = np.arange(1, 3 + 0.02, 0.02)
     q = []
@@ -24,7 +25,7 @@ if __name__ == "__main__":
         qz = 0
         q1 = [qx, qy, qz]
         q.append(q1)
-    En_ky = mc.calc_disp(S, q, p, 'CVO', 'w')
+    En_ky = mc.calc_disp(S, q, p, 'CVO', 'w') # change 'w' to 'r' after the first run.
 
     Eky1 = [En_ky[i][0] for i in range(len(En_ky))]
     Eky2 = [En_ky[i][1] for i in range(len(En_ky))]
@@ -62,7 +63,7 @@ if __name__ == "__main__":
     plt.plot(qsy, Eky16, 'b-')
     plt.xlim([1, 3])
     # plt.ylim([0, 10])
-    plt.ylabel('$\hbar\omega$ (meV)', fontsize=12)
+    plt.ylabel(r'$\hbar\omega$ (meV)', fontsize=12)
     # plt.yticks(np.arange(0, 10.5, 2))
     plt.xticks(np.arange(1.0, 3.0, 0.25))
     plt.title('Spin-waves a-Cu$_2$V$_2$O$_7$')

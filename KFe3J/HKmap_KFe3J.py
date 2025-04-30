@@ -24,8 +24,8 @@ def plot_hkmap(p, S, wr, newcalc, E_intv, qstep):
             wr: 'w' for write to file, 'r' for read from file
             newcalc: 1 for new calculation, 0 for read from file
             E_intv: energy interval for integration"""
-    qsx = np.arange(-7 - qstep / 2, 7 + qstep / 2, qstep) * np.pi
-    qsy = np.arange(-7 - qstep / 2, 7 + qstep / 2, qstep) * np.pi
+    qsx = np.arange(0 - qstep / 2, 4 + qstep / 2, qstep) * np.pi
+    qsy = np.arange(0 - qstep / 2, 4 + qstep / 2, qstep) * np.pi
     q = []
     for i in range(len(qsx)):
         for j in range(len(qsy)):
@@ -55,6 +55,7 @@ def plot_hkmap(p, S, wr, newcalc, E_intv, qstep):
                     intMat[i, j] = intMat[i, j] + Sqwout[i*len(qsy)+j][band]
                 else:
                     intMat[i, j] = intMat[i, j]
+    
     print("A number of Qy and Qx point: ", qsy.shape[0], qsx.shape[0])
     print("A matrix size: ", intMat.shape)
     X, Y = np.meshgrid(qsx / np.pi, qsy / np.pi)
@@ -74,11 +75,11 @@ if __name__ == "__main__":
     # S = 1.0 / 2.0
     # p = [12.8, -1.23, 0.063 * 12.8, -0.25 * 12.8, 0]
 
-    e_inv = [8,10]
+    e_inv = [8,9]
     
     ############# DO NOT CHANGE ######################
-    q_step = 0.1
-    plot_hkmap(p, S, 'r', 1, e_inv, q_step)
+    q_step = 0.01
+    plot_hkmap(p, S, 'r', 0, e_inv, q_step)
     ##################################################
     
     et_main = default_timer()
