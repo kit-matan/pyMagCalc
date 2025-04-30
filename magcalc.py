@@ -400,7 +400,12 @@ def _apply_gram_schmidt(
     q_vector_label: str,
 ) -> npt.NDArray[np.complex_]:
     """
-    Applies Gram-Schmidt orthogonalization to degenerate subspaces.
+    Applies Gram-Schmidt orthogonalization to degenerate subspaces using QR decomposition.
+
+    Iterates through sorted eigenvalues and identifies blocks where consecutive
+    eigenvalues are closer than `degeneracy_threshold`. Applies QR decomposition
+    via the `gram_schmidt` helper to the corresponding eigenvector columns within
+    each block to ensure they form an orthonormal basis for that subspace.
 
     Args:
         eigenvalues (npt.NDArray[np.complex_]): Sorted eigenvalues.
@@ -411,46 +416,65 @@ def _apply_gram_schmidt(
     Returns:
         npt.NDArray[np.complex_]: Eigenvectors with degenerate subspaces orthogonalized.
     """
-    nspins2 = eigenvectors.shape[0]  # Should be 2 * nspins
-    orthonormalized_eigenvectors = eigenvectors.copy()  # Work on a copy
-    degeneracy_count: int = 0
+    nspins2 = eigenvectors.shape[0]  # Dimension of the matrix (2 * nspins)
+    orthonormalized_eigenvectors = eigenvectors.copy()  # Operate on a copy
+    degeneracy_count: int = 0  # Tracks the size of the current degenerate block - 1
 
+    # Iterate through eigenvalues to find blocks of degenerate values
     for i in range(1, nspins2):
+        # Check if the current eigenvalue is close to the previous one
         if abs(eigenvalues[i] - eigenvalues[i - 1]) < degeneracy_threshold:
-            degeneracy_count += 1
+            degeneracy_count += 1  # Extend the current degenerate block
         elif degeneracy_count > 0:
-            # Found end of a degenerate block
-            start_idx = i - degeneracy_count - 1
-            end_idx = i
+            # End of a degenerate block detected (current eigenvalue is different)
+            start_idx = i - degeneracy_count - 1  # Start index of the block
+            end_idx = i  # End index (exclusive) of the block
+            logger.debug(
+                f"Applying Gram-Schmidt to block [{start_idx}:{end_idx}] for {q_vector_label}"
+            )
             vec_block = orthonormalized_eigenvectors[:, start_idx:end_idx]
-            orthonormal_vecs = gram_schmidt(vec_block)
 
+            # Orthonormalize the columns within the degenerate block
+            orthonormal_vecs = gram_schmidt(vec_block)  # Uses np.linalg.qr
+
+            # Check if QR decomposition found rank deficiency
             if orthonormal_vecs.shape[1] == vec_block.shape[1]:
+                # Full rank: Replace the block with the orthonormalized vectors
                 orthonormalized_eigenvectors[:, start_idx:end_idx] = orthonormal_vecs
             else:
-                # Handle rank deficiency
+                # Rank deficient: Log a warning, replace with the basis found, zero out the rest
                 logger.warning(
-                    f"Rank deficiency detected during GS for {q_vector_label} at index {i}"
+                    f"Rank deficiency detected during GS for {q_vector_label} at index {i}. "
+                    f"Original block size: {vec_block.shape[1]}, "
+                    f"Orthonormal basis size: {orthonormal_vecs.shape[1]}"
                 )
+                # Place the found orthonormal basis vectors
                 orthonormalized_eigenvectors[
                     :, start_idx : start_idx + orthonormal_vecs.shape[1]
                 ] = orthonormal_vecs
+                # Zero out the remaining columns in the block where QR found linear dependence
                 orthonormalized_eigenvectors[
                     :, start_idx + orthonormal_vecs.shape[1] : end_idx
-                ] = 0  # Zero out remaining columns
-            degeneracy_count = 0
+                ] = 0
+            degeneracy_count = 0  # Reset counter for the next block
 
-    # Check for degeneracy at the very end
+    # Handle potential degeneracy extending to the very last eigenvalue
     if degeneracy_count > 0:
         start_idx = nspins2 - 1 - degeneracy_count
         end_idx = nspins2
+        logger.debug(
+            f"Applying Gram-Schmidt to final block [{start_idx}:{end_idx}] for {q_vector_label}"
+        )
         vec_block = orthonormalized_eigenvectors[:, start_idx:end_idx]
         orthonormal_vecs = gram_schmidt(vec_block)
+
         if orthonormal_vecs.shape[1] == vec_block.shape[1]:
             orthonormalized_eigenvectors[:, start_idx:end_idx] = orthonormal_vecs
         else:
             logger.warning(
-                f"Rank deficiency detected during GS for {q_vector_label} at end of array"
+                f"Rank deficiency detected during GS for {q_vector_label} at end of array. "
+                f"Original block size: {vec_block.shape[1]}, "
+                f"Orthonormal basis size: {orthonormal_vecs.shape[1]}"
             )
             orthonormalized_eigenvectors[
                 :, start_idx : start_idx + orthonormal_vecs.shape[1]
