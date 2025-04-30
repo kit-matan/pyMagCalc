@@ -103,11 +103,18 @@ def gen_HM(
     hamiltonian_sym: sp.Expr = sm.Hamiltonian(spin_ops_global_ouc, params_sym)
     hamiltonian_sym = sp.expand(hamiltonian_sym)
     hamiltonian_S0: sp.Expr = hamiltonian_sym.coeff(S_sym, 0)
-    hamiltonian_sym = (
-        hamiltonian_S0.coeff(params_sym[-1]) * params_sym[-1]
-        + hamiltonian_sym.coeff(S_sym, 1) * S_sym
-        + hamiltonian_sym.coeff(S_sym, 2) * S_sym**2
-    )
+    # Ensure params_sym[-1] is indeed the intended magnetic field symbol if used here
+    if params_sym:  # Avoid index error if params_sym is empty
+        hamiltonian_sym = (
+            hamiltonian_S0.coeff(params_sym[-1]) * params_sym[-1]
+            + hamiltonian_sym.coeff(S_sym, 1) * S_sym
+            + hamiltonian_sym.coeff(S_sym, 2) * S_sym**2
+        )
+    else:
+        hamiltonian_sym = (
+            hamiltonian_sym.coeff(S_sym, 1) * S_sym
+            + hamiltonian_sym.coeff(S_sym, 2) * S_sym**2
+        )
     hamiltonian_sym = sp.expand(hamiltonian_sym)
 
     ck_ops: List[sp.Symbol] = [
@@ -241,48 +248,60 @@ def gen_HM(
     logger.info("Running symbolic substitutions...")
     start_time: float = timeit.default_timer()
 
-    hamiltonian_terms: List[sp.Expr] = hamiltonian_sym.as_ordered_terms()
-    pool_args_ft = [(expr, fourier_substitutions) for expr in hamiltonian_terms]
-    with Pool() as pool:
-        results_ft: List[sp.Expr] = list(
-            tqdm(
-                pool.imap(substitute_expr, pool_args_ft),
-                total=len(hamiltonian_terms),
-                desc="Substituting FT ",
-                bar_format="{percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
+    # --- Multiprocessing for substitutions ---
+    try:
+        hamiltonian_terms: List[sp.Expr] = hamiltonian_sym.as_ordered_terms()
+        pool_args_ft = [(expr, fourier_substitutions) for expr in hamiltonian_terms]
+        with Pool() as pool:
+            results_ft: List[sp.Expr] = list(
+                tqdm(
+                    pool.imap(substitute_expr, pool_args_ft),
+                    total=len(hamiltonian_terms),
+                    desc="Substituting FT ",
+                    bar_format="{percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
+                )
             )
-        )
-    hamiltonian_k_space: sp.Expr = Add(*results_ft)
-    hamiltonian_k_space = hamiltonian_k_space.expand()
+        hamiltonian_k_space: sp.Expr = Add(*results_ft)
+        hamiltonian_k_space = hamiltonian_k_space.expand()
 
-    hamiltonian_k_terms: List[sp.Expr] = hamiltonian_k_space.as_ordered_terms()
-    pool_args_comm = [(expr, commutation_substitutions) for expr in hamiltonian_k_terms]
-    with Pool() as pool:
-        results_comm: List[sp.Expr] = list(
-            tqdm(
-                pool.imap(substitute_expr, pool_args_comm),
-                total=len(hamiltonian_k_terms),
-                desc="Applying Commutation",
-                bar_format="{percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
+        hamiltonian_k_terms: List[sp.Expr] = hamiltonian_k_space.as_ordered_terms()
+        pool_args_comm = [
+            (expr, commutation_substitutions) for expr in hamiltonian_k_terms
+        ]
+        with Pool() as pool:
+            results_comm: List[sp.Expr] = list(
+                tqdm(
+                    pool.imap(substitute_expr, pool_args_comm),
+                    total=len(hamiltonian_k_terms),
+                    desc="Applying Commutation",
+                    bar_format="{percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
+                )
             )
-        )
-    hamiltonian_k_commuted: sp.Expr = Add(*results_comm)
-    hamiltonian_k_commuted = hamiltonian_k_commuted.expand()
+        hamiltonian_k_commuted: sp.Expr = Add(*results_comm)
+        hamiltonian_k_commuted = hamiltonian_k_commuted.expand()
 
-    hamiltonian_k_comm_terms: List[sp.Expr] = hamiltonian_k_commuted.as_ordered_terms()
-    pool_args_placeholder = [
-        (expr, placeholder_substitutions) for expr in hamiltonian_k_comm_terms
-    ]
-    with Pool() as pool:
-        results_placeholder: List[sp.Expr] = list(
-            tqdm(
-                pool.imap(substitute_expr, pool_args_placeholder),
-                total=len(hamiltonian_k_comm_terms),
-                desc="Substituting Placeholders",
-                bar_format="{percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
-            )
+        hamiltonian_k_comm_terms: List[sp.Expr] = (
+            hamiltonian_k_commuted.as_ordered_terms()
         )
-    hamiltonian_with_placeholders: sp.Expr = Add(*results_placeholder)
+        pool_args_placeholder = [
+            (expr, placeholder_substitutions) for expr in hamiltonian_k_comm_terms
+        ]
+        with Pool() as pool:
+            results_placeholder: List[sp.Expr] = list(
+                tqdm(
+                    pool.imap(substitute_expr, pool_args_placeholder),
+                    total=len(hamiltonian_k_comm_terms),
+                    desc="Substituting Placeholders",
+                    bar_format="{percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
+                )
+            )
+        hamiltonian_with_placeholders: sp.Expr = Add(*results_placeholder)
+    except Exception as e:
+        logger.exception(
+            "Error during symbolic substitution in gen_HM."
+        )  # Log traceback
+        raise RuntimeError("Symbolic substitution failed.") from e
+    # --- End Multiprocessing ---
 
     end_time: float = timeit.default_timer()
     logger.info(
@@ -325,6 +344,8 @@ def check_degeneracy(
     projected_eigenvectors: npt.NDArray[np.complex_],
 ) -> NoReturn:
     """Logs critical error and exits if degeneracy handling fails (original logic)."""
+    # This function seems related to an older/alternative matching logic.
+    # Keeping it for now, but it might be deprecated by the current matching.
     logger.critical("Mismatch in degeneracy handling (check_degeneracy).")
     logger.critical(f"  q = {q_vector}")
     logger.critical(
@@ -344,34 +365,17 @@ def check_degeneracy(
     sys.exit()
 
 
-# --- Helper Functions for KKdMatrix Refactoring (Phase 2, Step 1) ---
-
-
+# --- Helper Functions for KKdMatrix Refactoring ---
+# ... (_diagonalize_and_sort, _apply_gram_schmidt, _calculate_alpha_matrix, _match_and_reorder_minus_q, _calculate_K_Kd) ...
+# (Keep the implementations from previous steps)
 def _diagonalize_and_sort(
     Hmat: npt.NDArray[np.complex_], nspins: int, q_vector_label: str
 ) -> Tuple[Optional[npt.NDArray[np.complex_]], Optional[npt.NDArray[np.complex_]]]:
-    """
-    Diagonalizes the Hamiltonian matrix Hmat = g * H2 and sorts eigenvalues/vectors.
-
-    Sorting places positive energy branches first, then negative energy branches
-    sorted by magnitude.
-
-    Args:
-        Hmat (npt.NDArray[np.complex_]): The matrix to diagonalize (2gH).
-        nspins (int): Number of spins in the unit cell.
-        q_vector_label (str): Label for logging (e.g., "+q" or "-q").
-
-    Returns:
-        Tuple[Optional[npt.NDArray[np.complex_]], Optional[npt.NDArray[np.complex_]]]:
-            Sorted eigenvalues and eigenvectors, or (None, None) on failure.
-    """
     try:
         eigvals, eigvecs = la.eig(Hmat)
     except np.linalg.LinAlgError as e:
         logger.error(f"Eigenvalue calculation failed for {q_vector_label}: {e}")
         return None, None
-
-    # Sorting logic (same as original KKdMatrix)
     sort_indices: npt.NDArray[np.int_] = eigvals.argsort()
     eigvecs_tmp1: npt.NDArray[np.complex_] = eigvecs[:, sort_indices][
         :, nspins : 2 * nspins
@@ -382,14 +386,12 @@ def _diagonalize_and_sort(
     sort_indices_neg: npt.NDArray[np.int_] = (np.abs(eigvals_tmp2)).argsort()
     eigvecs_tmp3: npt.NDArray[np.complex_] = eigvecs_tmp2[:, sort_indices_neg]
     eigvals_tmp3: npt.NDArray[np.complex_] = eigvals_tmp2[sort_indices_neg]
-
     eigenvalues_sorted: npt.NDArray[np.complex_] = np.concatenate(
         (eigvals_tmp1, eigvals_tmp3)
     )
     eigenvectors_sorted: npt.NDArray[np.complex_] = np.hstack(
         (eigvecs_tmp1, eigvecs_tmp3)
     )
-
     return eigenvalues_sorted, eigenvectors_sorted
 
 
@@ -399,66 +401,33 @@ def _apply_gram_schmidt(
     degeneracy_threshold: float,
     q_vector_label: str,
 ) -> npt.NDArray[np.complex_]:
-    """
-    Applies Gram-Schmidt orthogonalization to degenerate subspaces using QR decomposition.
-
-    Iterates through sorted eigenvalues and identifies blocks where consecutive
-    eigenvalues are closer than `degeneracy_threshold`. Applies QR decomposition
-    via the `gram_schmidt` helper to the corresponding eigenvector columns within
-    each block to ensure they form an orthonormal basis for that subspace.
-
-    Args:
-        eigenvalues (npt.NDArray[np.complex_]): Sorted eigenvalues.
-        eigenvectors (npt.NDArray[np.complex_]): Corresponding sorted eigenvectors (columns).
-        degeneracy_threshold (float): Threshold to consider eigenvalues degenerate.
-        q_vector_label (str): Label for logging (e.g., "+q" or "-q").
-
-    Returns:
-        npt.NDArray[np.complex_]: Eigenvectors with degenerate subspaces orthogonalized.
-    """
-    nspins2 = eigenvectors.shape[0]  # Dimension of the matrix (2 * nspins)
-    orthonormalized_eigenvectors = eigenvectors.copy()  # Operate on a copy
-    degeneracy_count: int = 0  # Tracks the size of the current degenerate block - 1
-
-    # Iterate through eigenvalues to find blocks of degenerate values
+    nspins2 = eigenvectors.shape[0]
+    orthonormalized_eigenvectors = eigenvectors.copy()
+    degeneracy_count: int = 0
     for i in range(1, nspins2):
-        # Check if the current eigenvalue is close to the previous one
         if abs(eigenvalues[i] - eigenvalues[i - 1]) < degeneracy_threshold:
-            degeneracy_count += 1  # Extend the current degenerate block
+            degeneracy_count += 1
         elif degeneracy_count > 0:
-            # End of a degenerate block detected (current eigenvalue is different)
-            start_idx = i - degeneracy_count - 1  # Start index of the block
-            end_idx = i  # End index (exclusive) of the block
+            start_idx = i - degeneracy_count - 1
+            end_idx = i
             logger.debug(
                 f"Applying Gram-Schmidt to block [{start_idx}:{end_idx}] for {q_vector_label}"
             )
             vec_block = orthonormalized_eigenvectors[:, start_idx:end_idx]
-
-            # Orthonormalize the columns within the degenerate block
-            orthonormal_vecs = gram_schmidt(vec_block)  # Uses np.linalg.qr
-
-            # Check if QR decomposition found rank deficiency
+            orthonormal_vecs = gram_schmidt(vec_block)
             if orthonormal_vecs.shape[1] == vec_block.shape[1]:
-                # Full rank: Replace the block with the orthonormalized vectors
                 orthonormalized_eigenvectors[:, start_idx:end_idx] = orthonormal_vecs
             else:
-                # Rank deficient: Log a warning, replace with the basis found, zero out the rest
                 logger.warning(
-                    f"Rank deficiency detected during GS for {q_vector_label} at index {i}. "
-                    f"Original block size: {vec_block.shape[1]}, "
-                    f"Orthonormal basis size: {orthonormal_vecs.shape[1]}"
+                    f"Rank deficiency detected during GS for {q_vector_label} at index {i}. Original block size: {vec_block.shape[1]}, Orthonormal basis size: {orthonormal_vecs.shape[1]}"
                 )
-                # Place the found orthonormal basis vectors
                 orthonormalized_eigenvectors[
                     :, start_idx : start_idx + orthonormal_vecs.shape[1]
                 ] = orthonormal_vecs
-                # Zero out the remaining columns in the block where QR found linear dependence
                 orthonormalized_eigenvectors[
                     :, start_idx + orthonormal_vecs.shape[1] : end_idx
                 ] = 0
-            degeneracy_count = 0  # Reset counter for the next block
-
-    # Handle potential degeneracy extending to the very last eigenvalue
+            degeneracy_count = 0
     if degeneracy_count > 0:
         start_idx = nspins2 - 1 - degeneracy_count
         end_idx = nspins2
@@ -467,14 +436,11 @@ def _apply_gram_schmidt(
         )
         vec_block = orthonormalized_eigenvectors[:, start_idx:end_idx]
         orthonormal_vecs = gram_schmidt(vec_block)
-
         if orthonormal_vecs.shape[1] == vec_block.shape[1]:
             orthonormalized_eigenvectors[:, start_idx:end_idx] = orthonormal_vecs
         else:
             logger.warning(
-                f"Rank deficiency detected during GS for {q_vector_label} at end of array. "
-                f"Original block size: {vec_block.shape[1]}, "
-                f"Orthonormal basis size: {orthonormal_vecs.shape[1]}"
+                f"Rank deficiency detected during GS for {q_vector_label} at end of array. Original block size: {vec_block.shape[1]}, Orthonormal basis size: {orthonormal_vecs.shape[1]}"
             )
             orthonormalized_eigenvectors[
                 :, start_idx : start_idx + orthonormal_vecs.shape[1]
@@ -482,7 +448,6 @@ def _apply_gram_schmidt(
             orthonormalized_eigenvectors[
                 :, start_idx + orthonormal_vecs.shape[1] : end_idx
             ] = 0
-
     return orthonormalized_eigenvectors
 
 
@@ -492,42 +457,30 @@ def _calculate_alpha_matrix(
     zero_threshold: float,
     q_vector_label: str,
 ) -> Optional[npt.NDArray[np.complex_]]:
-    """
-    Calculates the diagonal alpha normalization matrix.
-
-    Ensures T^-1 G (T^-1)^dagger = G, where T^-1 = eigenvectors @ alpha.
-
-    Args:
-        eigenvectors (npt.NDArray[np.complex_]): Orthonormalized eigenvectors (columns).
-        G_metric (npt.NDArray[np.float_]): The metric tensor diag(1,..1,-1..-1).
-        zero_threshold (float): Threshold for setting small alpha values to zero.
-        q_vector_label (str): Label for logging (e.g., "+q" or "-q").
-
-    Returns:
-        Optional[npt.NDArray[np.complex_]]: Diagonal alpha matrix, or None on failure.
-    """
-    try:
-        inv_eigenvectors: npt.NDArray[np.complex_] = la.inv(eigenvectors)
-        nspins2 = eigenvectors.shape[0]
-        alpha_sq_diag: npt.NDArray[np.float_] = np.zeros(nspins2, dtype=float)
-
-        # alpha_ii^2 = | <U_i | G | U_i> | where U_i are rows of V^-1.
-        for i in range(nspins2):
-            row_i = inv_eigenvectors[i, :]
-            alpha_sq_diag[i] = np.real(np.dot(np.conj(row_i), G_metric @ row_i))
-
-        # Ensure positivity and take square root
-        alpha_sq_diag[alpha_sq_diag < 0] = 0
-        alpha_diag: npt.NDArray[np.float_] = np.sqrt(alpha_sq_diag)
-        alpha_diag[np.abs(alpha_diag) < zero_threshold] = 0  # Apply zero threshold
-        alpha_matrix: npt.NDArray[np.complex_] = np.diag(alpha_diag).astype(np.complex_)
-        return alpha_matrix
-
-    except np.linalg.LinAlgError:
-        logger.error(
-            f"Matrix inversion failed for {q_vector_label}. Eigenvector matrix might be singular."
-        )
-        return None
+    nspins2 = eigenvectors.shape[0]
+    alpha_diag_sq: npt.NDArray[np.float_] = np.zeros(nspins2, dtype=float)
+    for i in range(nspins2):
+        V_i = eigenvectors[:, i]
+        norm_sq_N_ii = np.real(np.vdot(V_i, G_metric @ V_i))
+        G_ii = G_metric[i, i]
+        if abs(norm_sq_N_ii) < zero_threshold**2:
+            logger.warning(
+                f"Near-zero pseudo-norm N_ii ({norm_sq_N_ii:.2e}) for eigenvector {i} at {q_vector_label}. Setting alpha_ii to 0."
+            )
+            alpha_diag_sq[i] = 0.0
+            continue
+        if G_ii * norm_sq_N_ii < -(zero_threshold**2):
+            logger.warning(
+                f"Sign mismatch between G_ii ({G_ii}) and N_ii ({norm_sq_N_ii:.2e}) for eigenvector {i} at {q_vector_label}. Setting alpha_ii to 0."
+            )
+            alpha_diag_sq[i] = 0.0
+        else:
+            alpha_diag_sq[i] = G_ii / norm_sq_N_ii
+    alpha_diag_sq[alpha_diag_sq < 0] = 0
+    alpha_diag: npt.NDArray[np.float_] = np.sqrt(alpha_diag_sq)
+    alpha_diag[np.abs(alpha_diag) < zero_threshold] = 0.0
+    alpha_matrix: npt.NDArray[np.complex_] = np.diag(alpha_diag).astype(np.complex_)
+    return alpha_matrix
 
 
 def _match_and_reorder_minus_q(
@@ -543,54 +496,13 @@ def _match_and_reorder_minus_q(
 ) -> Tuple[
     npt.NDArray[np.complex_], npt.NDArray[np.complex_], npt.NDArray[np.complex_]
 ]:
-    """
-    Matches -q eigenvectors to +q, reorders, and adjusts phases using dot product.
-
-    Matches columns of conj(swap(eigvecs_m_ortho)) [source] to columns of
-    conj(swap(eigvecs_p_ortho)) [target] based on maximum projection.
-    Reorders eigvecs_m_ortho, eigvals_m_sorted, alpha_m_sorted according to the match.
-    Adjusts the phase of the reordered alpha_m using the phase of the dot product
-    between the original +q vector and the matched conj(swap(-q)) vector.
-
-    Args:
-        eigvecs_p_ortho: Orthonormalized eigenvectors for +q.
-        alpha_p: Alpha matrix for +q.
-        eigvecs_m_ortho: Orthonormalized eigenvectors for -q (initial sorting).
-        eigvals_m_sorted: Eigenvalues for -q (initial sorting).
-        alpha_m_sorted: Alpha matrix for -q (initial sorting).
-        nspins: Number of spins.
-        match_tol: Tolerance for eigenvector matching projection (|projection|^2 > 1-match_tol^2).
-        zero_tol: Tolerance for zero checks (vector norms, dot products).
-        q_vector_label: Label for logging (e.g., "q=[0,0,0]").
-
-    Returns:
-        Tuple containing the reordered/phase-adjusted:
-        - eigenvectors_minus_q_final
-        - eigenvalues_minus_q_reordered
-        - alpha_matrix_minus_q_final
-    """
     nspins2 = 2 * nspins
-
-    # Prepare swapped+conjugated +q vectors (target vectors for matching)
     eigenvectors_plus_q_swapped_conj: npt.NDArray[np.complex_] = np.conj(
-        np.vstack(
-            (
-                eigvecs_p_ortho[nspins:nspins2, :],  # Lower block
-                eigvecs_p_ortho[0:nspins, :],  # Upper block
-            )
-        )
+        np.vstack((eigvecs_p_ortho[nspins:nspins2, :], eigvecs_p_ortho[0:nspins, :]))
     )
-    # Prepare swapped+conjugated -q vectors (source vectors for matching)
     eigenvectors_minus_q_swapped_conj: npt.NDArray[np.complex_] = np.conj(
-        np.vstack(
-            (
-                eigvecs_m_ortho[nspins:nspins2, :],  # Lower block
-                eigvecs_m_ortho[0:nspins, :],  # Upper block
-            )
-        )
+        np.vstack((eigvecs_m_ortho[nspins:nspins2, :], eigvecs_m_ortho[0:nspins, :]))
     )
-
-    # Initialize arrays for reordered results
     eigenvectors_minus_q_reordered: npt.NDArray[np.complex_] = np.zeros_like(
         eigvecs_m_ortho, dtype=complex
     )
@@ -600,124 +512,76 @@ def _match_and_reorder_minus_q(
     alpha_matrix_minus_q_reordered: npt.NDArray[np.complex_] = np.zeros_like(
         alpha_m_sorted, dtype=complex
     )
-
-    matched_indices_m: set[int] = (
-        set()
-    )  # Keep track of which source vectors (j) are used
+    matched_indices_m: set[int] = set()
     num_matched_vectors: int = 0
-
-    # Match each target vector (i, derived from +q) to a source vector (j, derived from -q)
     for i in range(nspins2):
         best_match_j: int = -1
         max_proj_metric: float = -1.0
-        # Target vector 'i' (column i of eigenvectors_plus_q_swapped_conj)
         vec_i_target: npt.NDArray[np.complex_] = eigenvectors_plus_q_swapped_conj[:, i]
         vec_i_norm_sq: float = np.real(np.dot(np.conj(vec_i_target), vec_i_target))
-
         if vec_i_norm_sq < zero_tol**2:
             logger.warning(
                 f"Target vector {i} has near-zero norm at {q_vector_label}. Skipping match."
             )
             continue
-
-        # Compare target 'i' to all unmatched source vectors 'j'
         for j in range(nspins2):
             if j in matched_indices_m:
-                continue  # Skip if source 'j' already matched
-
-            # Source vector 'j' (column j of eigenvectors_minus_q_swapped_conj)
+                continue
             vec_j_source: npt.NDArray[np.complex_] = eigenvectors_minus_q_swapped_conj[
                 :, j
             ]
             vec_j_norm_sq: float = np.real(np.dot(np.conj(vec_j_source), vec_j_source))
             if vec_j_norm_sq < zero_tol**2:
-                continue  # Skip zero-norm source vectors
-
-            # Calculate normalized projection squared |<target_i|source_j>|^2 / (|target_i|^2 * |source_j|^2)
+                continue
             projection: complex = np.dot(np.conj(vec_i_target), vec_j_source)
             projection_mag_sq: float = np.abs(projection) ** 2
-            # Avoid division by zero just in case norms were exactly zero (though skipped above)
             norm_product_sq = vec_i_norm_sq * vec_j_norm_sq
             if norm_product_sq < zero_tol**4:
                 continue
             normalized_projection_mag_sq: float = projection_mag_sq / norm_product_sq
-
-            # Check if this is the best match found so far for target 'i'
             if (
                 normalized_projection_mag_sq > max_proj_metric
                 and normalized_projection_mag_sq > (1.0 - match_tol**2)
             ):
                 max_proj_metric = normalized_projection_mag_sq
                 best_match_j = j
-
-        # Process the best match found for target 'i'
         if best_match_j != -1:
             matched_indices_m.add(best_match_j)
             num_matched_vectors += 1
-
-            # Determine the original +q index ('orig_i') corresponding to the target index 'i'
-            # This is the reverse of the swap operation used to create the target vectors
             orig_i = i + nspins if i < nspins else i - nspins
-
-            # The target index 'i' becomes the column index in the reordered -q matrices
             target_index = i
-
-            # Assign the matched eigenvector/value from the original -q results
             eigenvectors_minus_q_reordered[:, target_index] = eigvecs_m_ortho[
                 :, best_match_j
             ]
             eigenvalues_minus_q_reordered[target_index] = eigvals_m_sorted[best_match_j]
-
-            # --- Robust Phase Calculation ---
-            # We need the phase relating the original +q vector (eigvecs_p_ortho[:, orig_i])
-            # and the matched source vector (eigenvectors_minus_q_swapped_conj[:, best_match_j]).
             vec_i_plus_q_orig = eigvecs_p_ortho[:, orig_i]
-            vec_j_minus_q_source = eigenvectors_minus_q_swapped_conj[
-                :, best_match_j
-            ]  # Already computed above
-
-            # Calculate the dot product between them
+            vec_j_minus_q_source = eigenvectors_minus_q_swapped_conj[:, best_match_j]
             dot_product: complex = np.dot(
                 np.conj(vec_j_minus_q_source), vec_i_plus_q_orig
             )
             dot_product_mag: float = np.abs(dot_product)
-
             phase_factor: complex
             if dot_product_mag < zero_tol:
-                # If dot product is zero (vectors are orthogonal or one is zero), phase is undefined/arbitrary.
-                # Setting phase_factor to 1.0 is a neutral choice.
                 logger.warning(
                     f"Near-zero dot product ({dot_product_mag:.2e}) during phase calculation for match ({i} -> {best_match_j}) at {q_vector_label}. Setting phase factor to 1."
                 )
                 phase_factor = 1.0 + 0.0j
             else:
-                # Phase factor is the phase of the dot product
                 phase_factor = dot_product / dot_product_mag
-
-            # Apply the phase adjustment rule: alpha_m_reordered[i] ~ conj(alpha_p[orig_i] * phase_factor)
-            # This ensures the Bogoliubov transformation matrices T(+q) and T(-q) have the correct relative phase.
             alpha_matrix_minus_q_reordered[target_index, target_index] = np.conj(
                 alpha_p[orig_i, orig_i] * phase_factor
             )
-            # --- End Robust Phase Calculation ---
-
         else:
-            # No suitable match found for target vector 'i'
             logger.warning(
                 f"No matching eigenvector found for target vector index {i} at {q_vector_label}"
             )
-
-    # Final checks and cleanup
     if num_matched_vectors != nspins2:
         logger.warning(
             f"Number of matched vectors ({num_matched_vectors}) does not equal {nspins2} at {q_vector_label}"
         )
-
-    # Clean up near-zero elements in the final alpha matrix
     alpha_matrix_minus_q_reordered[
         np.abs(alpha_matrix_minus_q_reordered) < zero_tol
     ] = 0
-
     return (
         eigenvectors_minus_q_reordered,
         eigenvalues_minus_q_reordered,
@@ -733,21 +597,6 @@ def _calculate_K_Kd(
     inv_T_m_reordered: npt.NDArray[np.complex_],
     zero_threshold: float,
 ) -> Tuple[npt.NDArray[np.complex_], npt.NDArray[np.complex_]]:
-    """
-    Calculates the K and Kd transformation matrices.
-
-    Args:
-        Ud_numeric: Numerical rotation matrix.
-        spin_magnitude: Numerical spin value S.
-        nspins: Number of spins.
-        inv_T_p: Inverse Bogoliubov matrix T^-1(+q) = V(+q) @ alpha(+q).
-        inv_T_m_reordered: Reordered inverse Bogoliubov matrix T^-1(-q) = V(-q) @ alpha(-q).
-        zero_threshold: Threshold for cleaning up small elements.
-
-    Returns:
-        Tuple[npt.NDArray[np.complex_], npt.NDArray[np.complex_]]: K_matrix, Kd_matrix.
-    """
-    # Mapping from local boson operators (c, c_dag) to local spin operators (Sx, Sy)
     Udd_local_boson_map: npt.NDArray[np.complex_] = np.zeros(
         (3 * nspins, 2 * nspins), dtype=complex
     )
@@ -756,8 +605,6 @@ def _calculate_K_Kd(
         Udd_local_boson_map[3 * i, i + nspins] = 1.0
         Udd_local_boson_map[3 * i + 1, i] = 1.0 / I
         Udd_local_boson_map[3 * i + 1, i + nspins] = -1.0 / I
-
-    # Combine transformations: S_global = Ud * sqrt(S/2) * Udd * T^-1 * Y
     prefactor: float = np.sqrt(spin_magnitude / 2.0)
     K_matrix: npt.NDArray[np.complex_] = (
         prefactor * Ud_numeric @ Udd_local_boson_map @ inv_T_p
@@ -765,17 +612,12 @@ def _calculate_K_Kd(
     Kd_matrix: npt.NDArray[np.complex_] = (
         prefactor * Ud_numeric @ Udd_local_boson_map @ inv_T_m_reordered
     )
-
-    # Clean up small numerical noise
     K_matrix[np.abs(K_matrix) < zero_threshold] = 0
     Kd_matrix[np.abs(Kd_matrix) < zero_threshold] = 0
-
     return K_matrix, Kd_matrix
 
 
 # --- Main KKdMatrix Function (Refactored) ---
-
-
 def KKdMatrix(
     spin_magnitude: float,
     Hmat_plus_q: npt.NDArray[np.complex_],
@@ -786,64 +628,44 @@ def KKdMatrix(
 ) -> Tuple[
     npt.NDArray[np.complex_], npt.NDArray[np.complex_], npt.NDArray[np.complex_]
 ]:
-    """
-    Calculates transformation matrices K, Kd and eigenvalues for LSWT by orchestrating helper functions.
-
-    Performs Bogoliubov diagonalization for +q and -q, handles sorting, degeneracy,
-    normalization, eigenvector matching, and finally computes K and Kd.
-
-    Args:
-        spin_magnitude (float): Numerical value of the spin magnitude S.
-        Hmat_plus_q: Numerical TwogH2 matrix evaluated at +q.
-        Hmat_minus_q: Numerical TwogH2 matrix evaluated at -q.
-        Ud_numeric: Numerical block rotation matrix Ud.
-        q_vector: Momentum vector q = [qx, qy, qz].
-        nspins: Number of spins in the magnetic unit cell.
-
-    Returns:
-        Tuple containing K_matrix, Kd_matrix, and eigenvalues_plus_q_sorted.
-        Returns matrices/arrays of NaNs if any intermediate step fails.
-    """
-    q_label = f"q={q_vector}"  # Label for logging
+    """Calculates K, Kd, and eigenvalues by orchestrating helper functions."""
+    q_label = f"q={q_vector}"
     nan_matrix = np.full((3 * nspins, 2 * nspins), np.nan, dtype=np.complex_)
     nan_eigs = np.full((2 * nspins,), np.nan, dtype=np.complex_)
     G_metric = np.diag(np.concatenate([np.ones(nspins), -np.ones(nspins)]))
 
-    # --- Process +q ---
     eigvals_p_sorted, eigvecs_p_sorted = _diagonalize_and_sort(
         Hmat_plus_q, nspins, f"+{q_label}"
     )
     if eigvals_p_sorted is None or eigvecs_p_sorted is None:
         return nan_matrix, nan_matrix, nan_eigs
-
     eigvecs_p_ortho = _apply_gram_schmidt(
         eigvals_p_sorted, eigvecs_p_sorted, DEGENERACY_THRESHOLD, f"+{q_label}"
     )
-
     alpha_p = _calculate_alpha_matrix(
         eigvecs_p_ortho, G_metric, ZERO_MATRIX_ELEMENT_THRESHOLD, f"+{q_label}"
     )
     if alpha_p is None:
-        return nan_matrix, nan_matrix, nan_eigs
+        return (
+            nan_matrix,
+            nan_matrix,
+            nan_eigs,
+        )  # Should not happen with new logic unless zero norms
 
-    # --- Process -q ---
     eigvals_m_sorted, eigvecs_m_sorted = _diagonalize_and_sort(
         Hmat_minus_q, nspins, f"-{q_label}"
     )
     if eigvals_m_sorted is None or eigvecs_m_sorted is None:
         return nan_matrix, nan_matrix, nan_eigs
-
     eigvecs_m_ortho = _apply_gram_schmidt(
         eigvals_m_sorted, eigvecs_m_sorted, DEGENERACY_THRESHOLD, f"-{q_label}"
     )
-
     alpha_m_sorted = _calculate_alpha_matrix(
         eigvecs_m_ortho, G_metric, ZERO_MATRIX_ELEMENT_THRESHOLD, f"-{q_label}"
     )
     if alpha_m_sorted is None:
-        return nan_matrix, nan_matrix, nan_eigs
+        return nan_matrix, nan_matrix, nan_eigs  # Should not happen
 
-    # --- Match +q and -q results ---
     (eigvecs_m_final, eigvals_m_reordered, alpha_m_final) = _match_and_reorder_minus_q(
         eigvecs_p_ortho,
         alpha_p,
@@ -856,11 +678,8 @@ def KKdMatrix(
         q_label,
     )
 
-    # --- Calculate K and Kd ---
-    # Calculate T^-1 = V @ alpha
     inv_T_p = eigvecs_p_ortho @ alpha_p
     inv_T_m_reordered = eigvecs_m_final @ alpha_m_final
-
     K_matrix, Kd_matrix = _calculate_K_Kd(
         Ud_numeric,
         spin_magnitude,
@@ -869,14 +688,10 @@ def KKdMatrix(
         inv_T_m_reordered,
         ZERO_MATRIX_ELEMENT_THRESHOLD,
     )
-
     return K_matrix, Kd_matrix, eigvals_p_sorted
 
 
-# --- Remaining Functions (process_matrix, process_calc_Sqw, etc.) ---
-# These functions remain largely the same, but now call the refactored KKdMatrix
-
-
+# --- Remaining Functions ---
 def process_matrix(
     cache_mode: str,
     k_sym: List[sp.Symbol],
@@ -889,10 +704,13 @@ def process_matrix(
     ud_cache_file: str = os.path.join("pckFiles", cache_file_base + "_Ud.pck")
     HMat: sp.Matrix
     Ud: sp.Matrix
-
     if cache_mode == "w":
         logger.info("Generating symbolic matrices (HMat, Ud)...")
-        HMat, Ud = gen_HM(k_sym, S_sym, params_sym)
+        try:
+            HMat, Ud = gen_HM(k_sym, S_sym, params_sym)
+        except Exception as e:
+            logger.exception("Failed to generate symbolic matrices.")
+            raise
         logger.info(f"Writing HMat to {hm_cache_file}")
         try:
             with open(hm_cache_file, "wb") as outHM:
@@ -907,7 +725,6 @@ def process_matrix(
         except IOError as e:
             logger.error(f"Error writing Ud cache file: {e}")
             raise
-
     elif cache_mode == "r":
         logger.info(
             f"Importing symbolic matrices from cache files ({hm_cache_file}, {ud_cache_file})..."
@@ -922,17 +739,23 @@ def process_matrix(
                 f"Cache files not found. Run with 'w' option first or check filename '{cache_file_base}'."
             )
             raise
-        except (pickle.UnpicklingError, EOFError) as e:
+        except (
+            pickle.UnpicklingError,
+            EOFError,
+            ImportError,
+            AttributeError,
+        ) as e:  # Added common pickle errors
             logger.error(
                 f"Error loading cache files (may be corrupted or incompatible): {e}"
             )
             raise
         except Exception as e:
-            logger.error(f"An unexpected error occurred loading cache files: {e}")
+            logger.exception(
+                f"An unexpected error occurred loading cache files."
+            )  # Log traceback
             raise
     else:
         raise ValueError(f"Invalid mode '{cache_mode}'. Use 'r' (read) or 'w' (write).")
-
     return HMat, Ud
 
 
@@ -948,99 +771,106 @@ def process_calc_Sqw(
 ) -> Tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]]:
     """Worker function for multiprocessing calculation of S(q,w) for a single q-point."""
     HMat_sym, Ud_numeric, k_sym, q_vector, nspins, spin_magnitude_num = args
-    sqw_complex_accumulator: npt.NDArray[np.complex_] = np.zeros(nspins, dtype=complex)
+    q_label = f"q={q_vector}"  # For logging
     nan_energies: npt.NDArray[np.float_] = np.full((nspins,), np.nan)
     nan_intensities: npt.NDArray[np.float_] = np.full((nspins,), np.nan)
+    nan_result = (q_vector, nan_energies, nan_intensities)  # Predefined failure result
 
     try:
         HMat_func = lambdify(k_sym, HMat_sym, modules=["numpy"])
-    except Exception as e:
-        logger.error(f"Error during lambdify at q={q_vector}: {e}")
-        return q_vector, nan_energies, nan_intensities
+    except Exception:
+        logger.exception(f"Error during lambdify at {q_label}.")  # Log traceback
+        return nan_result
 
     try:
         Hmat_plus_q: npt.NDArray[np.complex_] = np.array(
-            HMat_func(q_vector[0], q_vector[1], q_vector[2]), dtype=np.complex128
+            HMat_func(*q_vector), dtype=np.complex128
         )
         Hmat_minus_q: npt.NDArray[np.complex_] = np.array(
-            HMat_func(-q_vector[0], -q_vector[1], -q_vector[2]), dtype=np.complex128
+            HMat_func(*(-q_vector)), dtype=np.complex128
         )
-    except Exception as e:
-        logger.error(f"Error evaluating HMat function at q={q_vector}: {e}")
-        return q_vector, nan_energies, nan_intensities
+    except Exception:
+        logger.exception(
+            f"Error evaluating HMat function at {q_label}."
+        )  # Log traceback
+        return nan_result
 
-    # Call the refactored KKdMatrix orchestrator
-    K_matrix: npt.NDArray[np.complex_]
-    Kd_matrix: npt.NDArray[np.complex_]
-    eigenvalues: npt.NDArray[np.complex_]
-    K_matrix, Kd_matrix, eigenvalues = KKdMatrix(
-        spin_magnitude_num, Hmat_plus_q, Hmat_minus_q, Ud_numeric, q_vector, nspins
-    )
-
-    if (
-        np.isnan(K_matrix).any()
-        or np.isnan(Kd_matrix).any()
-        or np.isnan(eigenvalues).any()
-    ):
-        # Warning already logged within KKdMatrix or its helpers if specific step failed
-        # logger.warning(f"NaN encountered in KKdMatrix result for q={q_vector}. Skipping intensity calculation.")
-        return q_vector, nan_energies, nan_intensities
-
-    imag_energy_mag: npt.NDArray[np.float_] = np.abs(np.imag(eigenvalues[0:nspins]))
-    if np.any(imag_energy_mag > ENERGY_IMAG_PART_THRESHOLD):
-        logger.warning(
-            f"Significant imaginary part in energy eigenvalues for q={q_vector}. Max imag: {np.max(imag_energy_mag)}"
+    try:
+        K_matrix, Kd_matrix, eigenvalues = KKdMatrix(
+            spin_magnitude_num, Hmat_plus_q, Hmat_minus_q, Ud_numeric, q_vector, nspins
         )
-    energies: npt.NDArray[np.float_] = np.real(eigenvalues[0:nspins])
-    q_output: npt.NDArray[np.float_] = q_vector
+        # Check for NaNs which indicate failure within KKdMatrix helpers
+        if (
+            np.isnan(K_matrix).any()
+            or np.isnan(Kd_matrix).any()
+            or np.isnan(eigenvalues).any()
+        ):
+            logger.error(
+                f"NaN encountered in KKdMatrix result for {q_label}. Check previous logs for details."
+            )
+            return nan_result
+    except Exception:  # Catch unexpected errors during KKdMatrix orchestration
+        logger.exception(f"Unexpected error during KKdMatrix execution for {q_label}.")
+        return nan_result
 
-    # Intensity calculation loop (remains the same)
-    for mode_index in range(nspins):
-        spin_correlation_matrix: npt.NDArray[np.complex_] = np.zeros(
-            (3, 3), dtype=complex
+    try:
+        imag_energy_mag: npt.NDArray[np.float_] = np.abs(np.imag(eigenvalues[0:nspins]))
+        if np.any(imag_energy_mag > ENERGY_IMAG_PART_THRESHOLD):
+            logger.warning(
+                f"Significant imaginary part in energy eigenvalues for {q_label}. Max imag: {np.max(imag_energy_mag)}"
+            )
+        energies: npt.NDArray[np.float_] = np.real(eigenvalues[0:nspins])
+
+        sqw_complex_accumulator: npt.NDArray[np.complex_] = np.zeros(
+            nspins, dtype=complex
         )
-        intensity_one_mode: complex = 0.0 + 0.0j
-
-        for alpha in range(3):
-            for beta in range(3):
-                correlation_sum: complex = 0.0 + 0.0j
-                for spin_i in range(nspins):
-                    for spin_j in range(nspins):
-                        idx_K: int = 3 * spin_i + alpha
-                        idx_Kd: int = 3 * spin_j + beta
-                        correlation_sum += (
-                            K_matrix[idx_K, mode_index]
-                            * Kd_matrix[idx_Kd, mode_index + nspins]
-                        )
-                spin_correlation_matrix[alpha, beta] = correlation_sum
-
-        q_norm_sq: float = np.dot(q_vector, q_vector)
-        if q_norm_sq < Q_ZERO_THRESHOLD:
-            for alpha in range(3):
-                intensity_one_mode += spin_correlation_matrix[alpha, alpha]
-        else:
-            q_normalized: npt.NDArray[np.float_] = q_vector / np.sqrt(q_norm_sq)
+        for mode_index in range(nspins):
+            spin_correlation_matrix: npt.NDArray[np.complex_] = np.zeros(
+                (3, 3), dtype=complex
+            )
+            intensity_one_mode: complex = 0.0 + 0.0j
             for alpha in range(3):
                 for beta in range(3):
-                    delta_ab: float = 1.0 if alpha == beta else 0.0
-                    polarization_factor: float = (
-                        delta_ab - q_normalized[alpha] * q_normalized[beta]
-                    )
-                    intensity_one_mode += (
-                        polarization_factor * spin_correlation_matrix[alpha, beta]
-                    )
+                    correlation_sum: complex = 0.0 + 0.0j
+                    for spin_i in range(nspins):
+                        for spin_j in range(nspins):
+                            idx_K: int = 3 * spin_i + alpha
+                            idx_Kd: int = 3 * spin_j + beta
+                            correlation_sum += (
+                                K_matrix[idx_K, mode_index]
+                                * Kd_matrix[idx_Kd, mode_index + nspins]
+                            )
+                    spin_correlation_matrix[alpha, beta] = correlation_sum
 
-        if np.abs(np.imag(intensity_one_mode)) > SQW_IMAG_PART_THRESHOLD:
-            logger.warning(
-                f"Significant imaginary part in Sqw for q={q_vector}, mode {mode_index}: {np.imag(intensity_one_mode)}"
-            )
+            q_norm_sq: float = np.dot(q_vector, q_vector)
+            if q_norm_sq < Q_ZERO_THRESHOLD:
+                for alpha in range(3):
+                    intensity_one_mode += spin_correlation_matrix[alpha, alpha]
+            else:
+                q_normalized: npt.NDArray[np.float_] = q_vector / np.sqrt(q_norm_sq)
+                for alpha in range(3):
+                    for beta in range(3):
+                        delta_ab: float = 1.0 if alpha == beta else 0.0
+                        polarization_factor: float = (
+                            delta_ab - q_normalized[alpha] * q_normalized[beta]
+                        )
+                        intensity_one_mode += (
+                            polarization_factor * spin_correlation_matrix[alpha, beta]
+                        )
 
-        sqw_complex_accumulator[mode_index] = intensity_one_mode
+            if np.abs(np.imag(intensity_one_mode)) > SQW_IMAG_PART_THRESHOLD:
+                logger.warning(
+                    f"Significant imaginary part in Sqw for {q_label}, mode {mode_index}: {np.imag(intensity_one_mode)}"
+                )
+            sqw_complex_accumulator[mode_index] = intensity_one_mode
 
-    intensities: npt.NDArray[np.float_] = np.real(sqw_complex_accumulator)
-    intensities[intensities < 0] = 0
+        intensities: npt.NDArray[np.float_] = np.real(sqw_complex_accumulator)
+        intensities[intensities < 0] = 0
+        return q_vector, energies, intensities
 
-    return q_output, energies, intensities
+    except Exception:  # Catch errors during intensity calculation part
+        logger.exception(f"Error during intensity calculation for {q_label}.")
+        return nan_result
 
 
 def calc_Sqw(
@@ -1064,14 +894,13 @@ def calc_Sqw(
     except AttributeError:
         raise AttributeError("Function 'atom_pos' not found in spin_model.py.")
     except Exception as e:
-        raise RuntimeError(f"Error getting nspins from spin_model.atom_pos(): {e}")
+        logger.exception("Error getting nspins from spin_model.atom_pos()")
+        raise
 
     kx, ky, kz = sp.symbols("kx ky kz", real=True)
     k_sym: List[sp.Symbol] = [kx, ky, kz]
     S_sym: sp.Symbol = sp.Symbol("S", real=True)
-    params_sym: List[sp.Symbol] = sp.symbols(
-        "p0:%d" % len(hamiltonian_params), real=True
-    )
+    params_sym: List[sp.Symbol] = sp.symbols(f"p0:{len(hamiltonian_params)}", real=True)
     HMat_sym: sp.Matrix
     Ud_sym: sp.Matrix
 
@@ -1093,11 +922,11 @@ def calc_Sqw(
         HMat_num_sym = HMat_sym.subs(param_substitutions, simultaneous=True).evalf()
         Ud_num_sym = Ud_sym.subs(param_substitutions, simultaneous=True).evalf()
         Ud_numeric = np.array(Ud_num_sym, dtype=np.complex128)
-    except Exception as e:
-        logger.error(f"Error during substitution of numerical parameters: {e}")
+    except Exception:
+        logger.exception("Error during substitution of numerical parameters.")
         return None, None, None
 
-    logger.info("Running diagonalization and intensity calculation...")
+    logger.info("Running S(q,w) calculation via multiprocessing...")
     start_time: float = timeit.default_timer()
 
     pool_args: List[Tuple] = [
@@ -1117,26 +946,37 @@ def calc_Sqw(
                     bar_format="{percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
                 )
             )
-    except Exception as e:
-        logger.error(f"Error during multiprocessing execution: {e}")
+    except Exception:
+        logger.exception("Error during multiprocessing pool execution for S(q,w).")
         return None, None, None
 
     q_vectors_out: Tuple[npt.NDArray[np.float_], ...]
     energies_out: Tuple[npt.NDArray[np.float_], ...]
     intensities_out: Tuple[npt.NDArray[np.float_], ...]
     try:
-        if not results or len(results[0]) != 3:
-            raise ValueError("Multiprocessing returned empty or malformed results.")
+        if not results:
+            raise ValueError("Multiprocessing returned empty results list.")
+        # Check if results have the expected structure (e.g., 3 elements per tuple)
+        if len(results[0]) != 3:
+            raise ValueError(
+                f"Multiprocessing returned malformed results: {results[0]}"
+            )
         q_vectors_out, energies_out, intensities_out = zip(*results)
-    except ValueError as e:
-        logger.error(f"Error unpacking results from parallel processing: {e}")
+    except (ValueError, TypeError):
+        logger.exception("Error unpacking results from parallel processing.")
         return None, None, None
+
+    # Check for failures within workers (indicated by NaNs)
+    num_failures = sum(np.isnan(en).any() for en in energies_out)
+    if num_failures > 0:
+        logger.warning(
+            f"S(q,w) calculation failed for {num_failures} out of {len(q_vectors)} q-points. Check logs for details."
+        )
 
     end_time: float = timeit.default_timer()
     logger.info(
         f"Run-time for S(q,w) calculation: {np.round((end_time - start_time) / 60, 2)} min."
     )
-
     return q_vectors_out, energies_out, intensities_out
 
 
@@ -1145,42 +985,47 @@ def process_calc_disp(
 ) -> npt.NDArray[np.float_]:
     """Worker function for multiprocessing calculation of dispersion for a single q-point."""
     HMat_sym, k_sym, q_vector, nspins = args
+    q_label = f"q={q_vector}"  # For logging
     nan_energies: npt.NDArray[np.float_] = np.full((nspins,), np.nan)
 
     try:
         HMat_func = lambdify(k_sym, HMat_sym, modules=["numpy"])
-    except Exception as e:
-        logger.error(f"Error during lambdify at q={q_vector}: {e}")
+    except Exception:
+        logger.exception(f"Error during lambdify at {q_label}.")
         return nan_energies
 
     try:
         HMat_numeric: npt.NDArray[np.complex_] = np.array(
-            HMat_func(q_vector[0], q_vector[1], q_vector[2]), dtype=np.complex128
+            HMat_func(*q_vector), dtype=np.complex128
         )
-    except Exception as e:
-        logger.error(f"Error evaluating HMat function at q={q_vector}: {e}")
+    except Exception:
+        logger.exception(f"Error evaluating HMat function at {q_label}.")
         return nan_energies
 
     eigenvalues: npt.NDArray[np.complex_]
     try:
         eigenvalues = la.eigvals(HMat_numeric)
     except np.linalg.LinAlgError:
-        logger.error(f"Eigenvalue calculation failed for q={q_vector}.")
+        logger.error(f"Eigenvalue calculation failed for {q_label}.")
+        return nan_energies
+    except Exception:
+        logger.exception(
+            f"Unexpected error during eigenvalue calculation for {q_label}."
+        )
         return nan_energies
 
-    imag_part_mags: npt.NDArray[np.float_] = np.abs(np.imag(eigenvalues))
-    if np.any(imag_part_mags > ENERGY_IMAG_PART_THRESHOLD):
-        logger.warning(
-            f"Significant imaginary part in eigenvalues for q={q_vector}. Max imag: {np.max(imag_part_mags)}"
-        )
-
-    energies: npt.NDArray[np.float_]
     try:
+        imag_part_mags: npt.NDArray[np.float_] = np.abs(np.imag(eigenvalues))
+        if np.any(imag_part_mags > ENERGY_IMAG_PART_THRESHOLD):
+            logger.warning(
+                f"Significant imaginary part in eigenvalues for {q_label}. Max imag: {np.max(imag_part_mags)}"
+            )
+
         eigenvalues_sorted_real: npt.NDArray[np.float_] = np.real(np.sort(eigenvalues))
         energies = eigenvalues_sorted_real[nspins:]
         if len(energies) != nspins:
             logger.warning(
-                f"Unexpected number of positive energies ({len(energies)}) found for q={q_vector}. Expected {nspins}."
+                f"Unexpected number of positive energies ({len(energies)}) found for {q_label}. Expected {nspins}."
             )
             if len(energies) > nspins:
                 energies = energies[:nspins]
@@ -1188,11 +1033,10 @@ def process_calc_disp(
                 energies = np.pad(
                     energies, (0, nspins - len(energies)), constant_values=np.nan
                 )
-    except Exception as e:
-        logger.error(f"Error during eigenvalue sorting/selection for q={q_vector}: {e}")
+        return energies
+    except Exception:
+        logger.exception(f"Error during eigenvalue sorting/selection for {q_label}.")
         return nan_energies
-
-    return energies
 
 
 def calc_disp(
@@ -1212,14 +1056,13 @@ def calc_disp(
     except AttributeError:
         raise AttributeError("Function 'atom_pos' not found in spin_model.py.")
     except Exception as e:
-        raise RuntimeError(f"Error getting nspins from spin_model.atom_pos(): {e}")
+        logger.exception("Error getting nspins from spin_model.atom_pos()")
+        raise
 
     kx, ky, kz = sp.symbols("kx ky kz", real=True)
     k_sym: List[sp.Symbol] = [kx, ky, kz]
     S_sym: sp.Symbol = sp.Symbol("S", real=True)
-    params_sym: List[sp.Symbol] = sp.symbols(
-        "p0:%d" % len(hamiltonian_params), real=True
-    )
+    params_sym: List[sp.Symbol] = sp.symbols(f"p0:{len(hamiltonian_params)}", real=True)
     HMat_sym: sp.Matrix
 
     try:
@@ -1236,11 +1079,11 @@ def calc_disp(
     HMat_num_sym: sp.Matrix
     try:
         HMat_num_sym = HMat_sym.subs(param_substitutions, simultaneous=True).evalf()
-    except Exception as e:
-        logger.error(f"Error during substitution of numerical parameters: {e}")
+    except Exception:
+        logger.exception("Error during substitution of numerical parameters.")
         return None
 
-    logger.info("Running diagonalization...")
+    logger.info("Running dispersion calculation via multiprocessing...")
     start_time: float = timeit.default_timer()
 
     pool_args: List[Tuple] = [
@@ -1257,14 +1100,21 @@ def calc_disp(
                     bar_format="{percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
                 )
             )
-    except Exception as e:
-        logger.error(f"Error during multiprocessing execution: {e}")
+    except Exception:
+        logger.exception("Error during multiprocessing pool execution for dispersion.")
+        return None  # Return None on pool error
+
+    # Check for failures within workers (indicated by NaNs)
+    num_failures = sum(np.isnan(en).any() for en in energies_list)
+    if num_failures > 0:
+        logger.warning(
+            f"Dispersion calculation failed for {num_failures} out of {len(q_vectors)} q-points. Check logs for details."
+        )
 
     end_time: float = timeit.default_timer()
     logger.info(
         f"Run-time for dispersion calculation: {np.round((end_time - start_time) / 60, 2)} min."
     )
-
     return energies_list
 
 
@@ -1317,10 +1167,7 @@ if __name__ == "__main__":
                     )
                 elif i == 5:
                     print("...")
-            else:
-                logger.warning(
-                    f"Dispersion calculation failed for q = {np.round(q_vec, 3)}"
-                )
+            # else: logger.warning(f"Dispersion calculation failed for q = {np.round(q_vec, 3)}") # Covered by summary log now
     else:
         logger.error("Dispersion calculation failed to start.")
 
@@ -1363,10 +1210,7 @@ if __name__ == "__main__":
                     )
                 elif i == 5:
                     print("...")
-            else:
-                logger.warning(
-                    f"S(q,w) calculation failed for q = {np.round(q_vec, 3)}"
-                )
+            # else: logger.warning(f"S(q,w) calculation failed for q = {np.round(q_vec, 3)}") # Covered by summary log now
     else:
         logger.error("S(q,w) calculation failed to start.")
 
