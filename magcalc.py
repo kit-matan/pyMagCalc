@@ -761,59 +761,74 @@ def process_matrix(
 
 def process_calc_Sqw(
     args: Tuple[
-        sp.Matrix,
-        npt.NDArray[np.complex_],
-        List[sp.Symbol],
-        npt.NDArray[np.float_],
-        int,
-        float,
+        sp.Matrix,  # HMat_sym (original symbolic)
+        npt.NDArray[np.complex_],  # Ud_numeric (already substituted)
+        List[sp.Symbol],  # Full symbol list (k_sym + [S_sym] + params_sym)
+        npt.NDArray[np.float_],  # q_vector
+        int,  # nspins
+        float,  # spin_magnitude_num
+        Union[List[float], npt.NDArray[np.float_]],  # hamiltonian_params_num
     ],
 ) -> Tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]]:
     """Worker function for multiprocessing calculation of S(q,w) for a single q-point."""
-    HMat_sym, Ud_numeric, k_sym, q_vector, nspins, spin_magnitude_num = args
-    q_label = f"q={q_vector}"  # For logging
+    # Unpack arguments
+    (
+        HMat_sym,
+        Ud_numeric,
+        full_symbol_list,
+        q_vector,
+        nspins,
+        spin_magnitude_num,
+        hamiltonian_params_num,
+    ) = args
+
+    q_label = f"q={q_vector}"
     nan_energies: npt.NDArray[np.float_] = np.full((nspins,), np.nan)
     nan_intensities: npt.NDArray[np.float_] = np.full((nspins,), np.nan)
-    nan_result = (q_vector, nan_energies, nan_intensities)  # Predefined failure result
+    nan_result = (q_vector, nan_energies, nan_intensities)
 
     try:
-        HMat_func = lambdify(k_sym, HMat_sym, modules=["numpy"])
+        # Lambdify HMat with ALL symbols as arguments
+        HMat_func = lambdify(full_symbol_list, HMat_sym, modules=["numpy"])
     except Exception:
-        logger.exception(f"Error during lambdify at {q_label}.")  # Log traceback
+        logger.exception(f"Error during lambdify at {q_label}.")
         return nan_result
 
     try:
+        # Prepare numerical arguments for HMat_func
+        numerical_args_base = [spin_magnitude_num] + list(hamiltonian_params_num)
+        numerical_args_plus_q = list(q_vector) + numerical_args_base
+        numerical_args_minus_q = list(-q_vector) + numerical_args_base
+
+        # Evaluate numerical HMat at +q and -q
         Hmat_plus_q: npt.NDArray[np.complex_] = np.array(
-            HMat_func(*q_vector), dtype=np.complex128
+            HMat_func(*numerical_args_plus_q), dtype=np.complex128
         )
         Hmat_minus_q: npt.NDArray[np.complex_] = np.array(
-            HMat_func(*(-q_vector)), dtype=np.complex128
+            HMat_func(*numerical_args_minus_q), dtype=np.complex128
         )
     except Exception:
-        logger.exception(
-            f"Error evaluating HMat function at {q_label}."
-        )  # Log traceback
+        logger.exception(f"Error evaluating HMat function at {q_label}.")
         return nan_result
 
     try:
+        # Ud_numeric is already passed in
         K_matrix, Kd_matrix, eigenvalues = KKdMatrix(
             spin_magnitude_num, Hmat_plus_q, Hmat_minus_q, Ud_numeric, q_vector, nspins
         )
-        # Check for NaNs which indicate failure within KKdMatrix helpers
         if (
             np.isnan(K_matrix).any()
             or np.isnan(Kd_matrix).any()
             or np.isnan(eigenvalues).any()
         ):
-            logger.error(
-                f"NaN encountered in KKdMatrix result for {q_label}. Check previous logs for details."
-            )
+            logger.error(f"NaN encountered in KKdMatrix result for {q_label}.")
             return nan_result
-    except Exception:  # Catch unexpected errors during KKdMatrix orchestration
+    except Exception:
         logger.exception(f"Unexpected error during KKdMatrix execution for {q_label}.")
         return nan_result
 
     try:
+        # Intensity calculation (remains the same logic)
         imag_energy_mag: npt.NDArray[np.float_] = np.abs(np.imag(eigenvalues[0:nspins]))
         if np.any(imag_energy_mag > ENERGY_IMAG_PART_THRESHOLD):
             logger.warning(
@@ -824,6 +839,7 @@ def process_calc_Sqw(
         sqw_complex_accumulator: npt.NDArray[np.complex_] = np.zeros(
             nspins, dtype=complex
         )
+        # ... (rest of intensity calculation loop as before) ...
         for mode_index in range(nspins):
             spin_correlation_matrix: npt.NDArray[np.complex_] = np.zeros(
                 (3, 3), dtype=complex
@@ -841,7 +857,6 @@ def process_calc_Sqw(
                                 * Kd_matrix[idx_Kd, mode_index + nspins]
                             )
                     spin_correlation_matrix[alpha, beta] = correlation_sum
-
             q_norm_sq: float = np.dot(q_vector, q_vector)
             if q_norm_sq < Q_ZERO_THRESHOLD:
                 for alpha in range(3):
@@ -857,18 +872,18 @@ def process_calc_Sqw(
                         intensity_one_mode += (
                             polarization_factor * spin_correlation_matrix[alpha, beta]
                         )
-
             if np.abs(np.imag(intensity_one_mode)) > SQW_IMAG_PART_THRESHOLD:
                 logger.warning(
                     f"Significant imaginary part in Sqw for {q_label}, mode {mode_index}: {np.imag(intensity_one_mode)}"
                 )
             sqw_complex_accumulator[mode_index] = intensity_one_mode
-
         intensities: npt.NDArray[np.float_] = np.real(sqw_complex_accumulator)
         intensities[intensities < 0] = 0
+        # --- End intensity calculation ---
+
         return q_vector, energies, intensities
 
-    except Exception:  # Catch errors during intensity calculation part
+    except Exception:
         logger.exception(f"Error during intensity calculation for {q_label}.")
         return nan_result
 
@@ -905,6 +920,7 @@ def calc_Sqw(
     Ud_sym: sp.Matrix
 
     try:
+        # Load original symbolic matrices
         HMat_sym, Ud_sym = process_matrix(
             cache_mode, k_sym, S_sym, params_sym, cache_file_base
         )
@@ -912,25 +928,37 @@ def calc_Sqw(
         logger.error(f"Failed to get symbolic matrices: {e}")
         return None, None, None
 
-    param_substitutions: List[Tuple[sp.Symbol, float]] = [
+    # --- Optimization: Substitute into Ud_sym once, keep HMat_sym symbolic ---
+    # Ud only depends on S and params, not k
+    param_substitutions_ud: List[Tuple[sp.Symbol, float]] = [
         (S_sym, spin_magnitude)
     ] + list(zip(params_sym, hamiltonian_params))
-    HMat_num_sym: sp.Matrix
-    Ud_num_sym: sp.Matrix
     Ud_numeric: npt.NDArray[np.complex_]
     try:
-        HMat_num_sym = HMat_sym.subs(param_substitutions, simultaneous=True).evalf()
-        Ud_num_sym = Ud_sym.subs(param_substitutions, simultaneous=True).evalf()
+        Ud_num_sym = Ud_sym.subs(param_substitutions_ud, simultaneous=True).evalf()
         Ud_numeric = np.array(Ud_num_sym, dtype=np.complex128)
     except Exception:
-        logger.exception("Error during substitution of numerical parameters.")
+        logger.exception("Error during substitution into symbolic Ud matrix.")
         return None, None, None
+    # --- End Optimization ---
 
     logger.info("Running S(q,w) calculation via multiprocessing...")
     start_time: float = timeit.default_timer()
 
+    # Combine all symbols needed for HMat lambdification
+    full_symbol_list = k_sym + [S_sym] + list(params_sym)  # Convert params_sym
+
+    # Prepare arguments for the pool
     pool_args: List[Tuple] = [
-        (HMat_num_sym, Ud_numeric, k_sym, q_vec, nspins, spin_magnitude)
+        (
+            HMat_sym,
+            Ud_numeric,
+            full_symbol_list,
+            q_vec,
+            nspins,
+            spin_magnitude,
+            hamiltonian_params,
+        )
         for q_vec in q_vectors
     ]
     results: List[
@@ -956,7 +984,6 @@ def calc_Sqw(
     try:
         if not results:
             raise ValueError("Multiprocessing returned empty results list.")
-        # Check if results have the expected structure (e.g., 3 elements per tuple)
         if len(results[0]) != 3:
             raise ValueError(
                 f"Multiprocessing returned malformed results: {results[0]}"
@@ -981,22 +1008,44 @@ def calc_Sqw(
 
 
 def process_calc_disp(
-    args: Tuple[sp.Matrix, List[sp.Symbol], npt.NDArray[np.float_], int],
+    args: Tuple[
+        sp.Matrix,  # HMat_sym (original symbolic)
+        List[sp.Symbol],  # Full symbol list (k_sym + [S_sym] + params_sym)
+        npt.NDArray[np.float_],  # q_vector
+        int,  # nspins
+        float,  # spin_magnitude_num
+        Union[List[float], npt.NDArray[np.float_]],  # hamiltonian_params_num
+    ],
 ) -> npt.NDArray[np.float_]:
     """Worker function for multiprocessing calculation of dispersion for a single q-point."""
-    HMat_sym, k_sym, q_vector, nspins = args
-    q_label = f"q={q_vector}"  # For logging
+    # Unpack arguments
+    (
+        HMat_sym,
+        full_symbol_list,
+        q_vector,
+        nspins,
+        spin_magnitude_num,
+        hamiltonian_params_num,
+    ) = args
+
+    q_label = f"q={q_vector}"
     nan_energies: npt.NDArray[np.float_] = np.full((nspins,), np.nan)
 
     try:
-        HMat_func = lambdify(k_sym, HMat_sym, modules=["numpy"])
+        # Lambdify with ALL symbols as arguments
+        HMat_func = lambdify(full_symbol_list, HMat_sym, modules=["numpy"])
     except Exception:
         logger.exception(f"Error during lambdify at {q_label}.")
         return nan_energies
 
     try:
+        # Prepare numerical arguments in the correct order
+        numerical_args = (
+            list(q_vector) + [spin_magnitude_num] + list(hamiltonian_params_num)
+        )
+        # Evaluate numerical matrix by passing all numerical arguments
         HMat_numeric: npt.NDArray[np.complex_] = np.array(
-            HMat_func(*q_vector), dtype=np.complex128
+            HMat_func(*numerical_args), dtype=np.complex128
         )
     except Exception:
         logger.exception(f"Error evaluating HMat function at {q_label}.")
@@ -1066,6 +1115,7 @@ def calc_disp(
     HMat_sym: sp.Matrix
 
     try:
+        # Load original symbolic matrix HMat_sym
         HMat_sym, _ = process_matrix(
             cache_mode, k_sym, S_sym, params_sym, cache_file_base
         )
@@ -1073,21 +1123,26 @@ def calc_disp(
         logger.error(f"Failed to get symbolic matrix HMat: {e}")
         return None
 
-    param_substitutions: List[Tuple[sp.Symbol, float]] = [
-        (S_sym, spin_magnitude)
-    ] + list(zip(params_sym, hamiltonian_params))
-    HMat_num_sym: sp.Matrix
-    try:
-        HMat_num_sym = HMat_sym.subs(param_substitutions, simultaneous=True).evalf()
-    except Exception:
-        logger.exception("Error during substitution of numerical parameters.")
-        return None
+    # --- Optimization: No symbolic substitution here ---
+    # param_substitutions: List[Tuple[sp.Symbol, float]] = [(S_sym, spin_magnitude)] + list(zip(params_sym, hamiltonian_params))
+    # HMat_num_sym: sp.Matrix
+    # try:
+    #     HMat_num_sym = HMat_sym.subs(param_substitutions, simultaneous=True).evalf()
+    # except Exception:
+    #     logger.exception("Error during substitution of numerical parameters.")
+    #     return None
+    # --- End Optimization ---
 
     logger.info("Running dispersion calculation via multiprocessing...")
     start_time: float = timeit.default_timer()
 
+    # Combine all symbols needed by the lambdified function
+    full_symbol_list = k_sym + [S_sym] + list(params_sym)  # Convert params_sym to list
+
+    # Prepare arguments for the pool, passing original HMat_sym and numerical params
     pool_args: List[Tuple] = [
-        (HMat_num_sym, k_sym, q_vec, nspins) for q_vec in q_vectors
+        (HMat_sym, full_symbol_list, q_vec, nspins, spin_magnitude, hamiltonian_params)
+        for q_vec in q_vectors
     ]
     energies_list: List[npt.NDArray[np.float_]] = []
     try:
@@ -1102,7 +1157,7 @@ def calc_disp(
             )
     except Exception:
         logger.exception("Error during multiprocessing pool execution for dispersion.")
-        return None  # Return None on pool error
+        return None
 
     # Check for failures within workers (indicated by NaNs)
     num_failures = sum(np.isnan(en).any() for en in energies_list)
@@ -1118,16 +1173,36 @@ def calc_disp(
     return energies_list
 
 
-# Example usage
+# --- Update __main__ block for dual profiling ---
 if __name__ == "__main__":
+    # --- Add imports for profiling ---
+    import cProfile
+    import pstats
+
+    # --- End profiling imports ---
+
     # --- User Configuration ---
     spin_S_val: float = 1.0
-    hamiltonian_params_val: List[float] = [1.0, 0.1]
+    hamiltonian_params_val: List[float] = [
+        1.0,
+        0.5,
+        0.1,
+        0.1,
+        0.0,
+    ]  # Correct number of params
     cache_file_base_name: str = "my_model_cache"
-    cache_operation_mode: str = "r"
+    # --- IMPORTANT: Use 'r' for profiling the numerical part ---
+    cache_operation_mode: str = "r"  # Should be 'r' now
+    if cache_operation_mode == "w":
+        logger.error(
+            "Cache mode is 'w'. Set to 'r' to profile numerical part after generating cache."
+        )
+        sys.exit(1)  # Exit if trying to profile with 'w'
 
+    # Define q points (fewer points for faster profiling)
     q_points_list: List[List[float]] = []
-    N_points_per_segment = 20
+    N_points_per_segment = 5  # Reduced number of points for profiling
+    logger.info(f"Using {N_points_per_segment} points per segment for profiling.")
     q_points_list.extend(
         np.linspace([0, 0, 0], [np.pi, 0, 0], N_points_per_segment, endpoint=False)
     )
@@ -1142,9 +1217,13 @@ if __name__ == "__main__":
     q_points_array: npt.NDArray[np.float_] = np.array(q_points_list)
     # --- End User Configuration ---
 
-    logger.info("Starting example calculation...")
+    logger.info("Starting example calculation with profiling...")
 
-    # --- Calculate dispersion ---
+    # === Profile calc_disp ===
+    profiler_disp = cProfile.Profile()
+    logger.info("Profiling calc_disp...")
+    profiler_disp.enable()
+
     dispersion_energies: Optional[List[npt.NDArray[np.float_]]] = calc_disp(
         spin_S_val,
         q_points_array,
@@ -1153,27 +1232,38 @@ if __name__ == "__main__":
         cache_operation_mode,
     )
 
+    profiler_disp.disable()
+    logger.info("calc_disp profiling finished.")
+
+    # --- Print calc_disp Profiling Stats ---
+    print("\n--- calc_disp Profiling Results (Top 30 Cumulative Time) ---")
+    stats_disp = pstats.Stats(profiler_disp).sort_stats("cumulative")
+    stats_disp.print_stats(30)
+    print("--- End calc_disp Profiling Results ---")
+
+    # --- Display calc_disp Results (Optional) ---
     if dispersion_energies is not None:
-        print("\n--- Dispersion Energies ---")
+        print("\n--- Dispersion Energies (Sample) ---")
         for i, q_vec in enumerate(q_points_array):
             if (
                 i < len(dispersion_energies)
                 and isinstance(dispersion_energies[i], np.ndarray)
                 and not np.isnan(dispersion_energies[i]).any()
             ):
-                if i < 5 or i >= len(q_points_array) - 5:
+                if i < 5:
                     print(
                         f"q = {np.round(q_vec, 3)}: E = {np.round(dispersion_energies[i], 4)}"
                     )
                 elif i == 5:
                     print("...")
-            # else: logger.warning(f"Dispersion calculation failed for q = {np.round(q_vec, 3)}") # Covered by summary log now
     else:
         logger.error("Dispersion calculation failed to start.")
+    # === End Profile calc_disp ===
 
-    # --- Calculate S(q,w) ---
-    sqw_cache_mode = cache_operation_mode
-    logger.info(f"Calculating S(q,w) using cache mode: '{sqw_cache_mode}'")
+    # === Profile calc_Sqw ===
+    profiler_sqw = cProfile.Profile()
+    logger.info("Profiling calc_Sqw...")
+    profiler_sqw.enable()
 
     sqw_results: Tuple[
         Optional[Tuple[npt.NDArray[np.float_], ...]],
@@ -1185,16 +1275,26 @@ if __name__ == "__main__":
         q_points_array,
         hamiltonian_params_val,
         cache_file_base_name,
-        sqw_cache_mode,
+        cache_operation_mode,  # Should still be 'r'
     )
     q_vectors_out, energies_sqw, intensities_sqw = sqw_results
 
+    profiler_sqw.disable()
+    logger.info("calc_Sqw profiling finished.")
+
+    # --- Print calc_Sqw Profiling Stats ---
+    print("\n--- calc_Sqw Profiling Results (Top 30 Cumulative Time) ---")
+    stats_sqw = pstats.Stats(profiler_sqw).sort_stats("cumulative")
+    stats_sqw.print_stats(30)
+    print("--- End calc_Sqw Profiling Results ---")
+
+    # --- Display calc_Sqw Results (Optional) ---
     if (
         q_vectors_out is not None
         and energies_sqw is not None
         and intensities_sqw is not None
     ):
-        print("\n--- Scattering Intensities ---")
+        print("\n--- Scattering Intensities (Sample) ---")
         for i, q_vec in enumerate(q_vectors_out):
             if (
                 i < len(energies_sqw)
@@ -1204,14 +1304,14 @@ if __name__ == "__main__":
                 and isinstance(intensities_sqw[i], np.ndarray)
                 and not np.isnan(intensities_sqw[i]).any()
             ):
-                if i < 5 or i >= len(q_vectors_out) - 5:
+                if i < 5:
                     print(
                         f"q = {np.round(q_vec, 3)}: E = {np.round(energies_sqw[i], 4)}, S(q,w) = {np.round(intensities_sqw[i], 4)}"
                     )
                 elif i == 5:
                     print("...")
-            # else: logger.warning(f"S(q,w) calculation failed for q = {np.round(q_vec, 3)}") # Covered by summary log now
     else:
         logger.error("S(q,w) calculation failed to start.")
+    # === End Profile calc_Sqw ===
 
     logger.info("Example calculation finished.")
