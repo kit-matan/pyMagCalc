@@ -544,7 +544,13 @@ def _match_and_reorder_minus_q(
     npt.NDArray[np.complex_], npt.NDArray[np.complex_], npt.NDArray[np.complex_]
 ]:
     """
-    Matches -q eigenvectors to +q, reorders, and adjusts phases.
+    Matches -q eigenvectors to +q, reorders, and adjusts phases using dot product.
+
+    Matches columns of conj(swap(eigvecs_m_ortho)) [source] to columns of
+    conj(swap(eigvecs_p_ortho)) [target] based on maximum projection.
+    Reorders eigvecs_m_ortho, eigvals_m_sorted, alpha_m_sorted according to the match.
+    Adjusts the phase of the reordered alpha_m using the phase of the dot product
+    between the original +q vector and the matched conj(swap(-q)) vector.
 
     Args:
         eigvecs_p_ortho: Orthonormalized eigenvectors for +q.
@@ -553,33 +559,33 @@ def _match_and_reorder_minus_q(
         eigvals_m_sorted: Eigenvalues for -q (initial sorting).
         alpha_m_sorted: Alpha matrix for -q (initial sorting).
         nspins: Number of spins.
-        match_tol: Tolerance for eigenvector matching projection.
-        zero_tol: Tolerance for zero checks.
+        match_tol: Tolerance for eigenvector matching projection (|projection|^2 > 1-match_tol^2).
+        zero_tol: Tolerance for zero checks (vector norms, dot products).
         q_vector_label: Label for logging (e.g., "q=[0,0,0]").
 
     Returns:
         Tuple containing the reordered/phase-adjusted:
         - eigenvectors_minus_q_final
-        - eigenvalues_minus_q_reordered (Note: might not be strictly needed later)
+        - eigenvalues_minus_q_reordered
         - alpha_matrix_minus_q_final
     """
     nspins2 = 2 * nspins
 
-    # Prepare swapped +q vectors for matching target
+    # Prepare swapped+conjugated +q vectors (target vectors for matching)
     eigenvectors_plus_q_swapped_conj: npt.NDArray[np.complex_] = np.conj(
         np.vstack(
             (
-                eigvecs_p_ortho[nspins:nspins2, :],
-                eigvecs_p_ortho[0:nspins, :],
+                eigvecs_p_ortho[nspins:nspins2, :],  # Lower block
+                eigvecs_p_ortho[0:nspins, :],  # Upper block
             )
         )
     )
-    # Prepare swapped -q vectors for projection calculation
+    # Prepare swapped+conjugated -q vectors (source vectors for matching)
     eigenvectors_minus_q_swapped_conj: npt.NDArray[np.complex_] = np.conj(
         np.vstack(
             (
-                eigvecs_m_ortho[nspins:nspins2, :],
-                eigvecs_m_ortho[0:nspins, :],
+                eigvecs_m_ortho[nspins:nspins2, :],  # Lower block
+                eigvecs_m_ortho[0:nspins, :],  # Upper block
             )
         )
     )
@@ -595,45 +601,48 @@ def _match_and_reorder_minus_q(
         alpha_m_sorted, dtype=complex
     )
 
-    matched_indices_m: set[int] = set()
+    matched_indices_m: set[int] = (
+        set()
+    )  # Keep track of which source vectors (j) are used
     num_matched_vectors: int = 0
 
-    # Match each +q vector (target) to a -q vector (source)
+    # Match each target vector (i, derived from +q) to a source vector (j, derived from -q)
     for i in range(nspins2):
         best_match_j: int = -1
         max_proj_metric: float = -1.0
-        vec_i_plus_q_target: npt.NDArray[np.complex_] = (
-            eigenvectors_plus_q_swapped_conj[:, i]
-        )  # Target vector
-        vec_i_norm_sq: float = np.real(
-            np.dot(np.conj(vec_i_plus_q_target), vec_i_plus_q_target)
-        )
+        # Target vector 'i' (column i of eigenvectors_plus_q_swapped_conj)
+        vec_i_target: npt.NDArray[np.complex_] = eigenvectors_plus_q_swapped_conj[:, i]
+        vec_i_norm_sq: float = np.real(np.dot(np.conj(vec_i_target), vec_i_target))
 
         if vec_i_norm_sq < zero_tol**2:
+            logger.warning(
+                f"Target vector {i} has near-zero norm at {q_vector_label}. Skipping match."
+            )
             continue
 
-        # Compare target to all unmatched source vectors
+        # Compare target 'i' to all unmatched source vectors 'j'
         for j in range(nspins2):
             if j in matched_indices_m:
-                continue
+                continue  # Skip if source 'j' already matched
 
-            vec_j_minus_q_source: npt.NDArray[np.complex_] = (
-                eigenvectors_minus_q_swapped_conj[:, j]
-            )  # Source vector
-            vec_j_norm_sq: float = np.real(
-                np.dot(np.conj(vec_j_minus_q_source), vec_j_minus_q_source)
-            )
+            # Source vector 'j' (column j of eigenvectors_minus_q_swapped_conj)
+            vec_j_source: npt.NDArray[np.complex_] = eigenvectors_minus_q_swapped_conj[
+                :, j
+            ]
+            vec_j_norm_sq: float = np.real(np.dot(np.conj(vec_j_source), vec_j_source))
             if vec_j_norm_sq < zero_tol**2:
-                continue
+                continue  # Skip zero-norm source vectors
 
-            projection: complex = np.dot(
-                np.conj(vec_i_plus_q_target), vec_j_minus_q_source
-            )
+            # Calculate normalized projection squared |<target_i|source_j>|^2 / (|target_i|^2 * |source_j|^2)
+            projection: complex = np.dot(np.conj(vec_i_target), vec_j_source)
             projection_mag_sq: float = np.abs(projection) ** 2
-            normalized_projection_mag_sq: float = projection_mag_sq / (
-                vec_i_norm_sq * vec_j_norm_sq
-            )
+            # Avoid division by zero just in case norms were exactly zero (though skipped above)
+            norm_product_sq = vec_i_norm_sq * vec_j_norm_sq
+            if norm_product_sq < zero_tol**4:
+                continue
+            normalized_projection_mag_sq: float = projection_mag_sq / norm_product_sq
 
+            # Check if this is the best match found so far for target 'i'
             if (
                 normalized_projection_mag_sq > max_proj_metric
                 and normalized_projection_mag_sq > (1.0 - match_tol**2)
@@ -641,59 +650,70 @@ def _match_and_reorder_minus_q(
                 max_proj_metric = normalized_projection_mag_sq
                 best_match_j = j
 
-        # Process the best match found
+        # Process the best match found for target 'i'
         if best_match_j != -1:
             matched_indices_m.add(best_match_j)
             num_matched_vectors += 1
 
-            # The target index 'i' from the swapped +q corresponds to the final position
-            # in the reordered -q matrices.
+            # Determine the original +q index ('orig_i') corresponding to the target index 'i'
+            # This is the reverse of the swap operation used to create the target vectors
+            orig_i = i + nspins if i < nspins else i - nspins
+
+            # The target index 'i' becomes the column index in the reordered -q matrices
             target_index = i
 
-            # Assign the matched eigenvector/value from original -q results
+            # Assign the matched eigenvector/value from the original -q results
             eigenvectors_minus_q_reordered[:, target_index] = eigvecs_m_ortho[
                 :, best_match_j
             ]
             eigenvalues_minus_q_reordered[target_index] = eigvals_m_sorted[best_match_j]
 
-            # Adjust phase of alpha_m based on phase difference between matched vectors
-            # Use original (unswapped) +q vector corresponding to target index 'i'
-            # The original index 'orig_i' corresponds to the column 'i' in the swapped matrix
-            orig_i = i + nspins if i < nspins else i - nspins
+            # --- Robust Phase Calculation ---
+            # We need the phase relating the original +q vector (eigvecs_p_ortho[:, orig_i])
+            # and the matched source vector (eigenvectors_minus_q_swapped_conj[:, best_match_j]).
             vec_i_plus_q_orig = eigvecs_p_ortho[:, orig_i]
+            vec_j_minus_q_source = eigenvectors_minus_q_swapped_conj[
+                :, best_match_j
+            ]  # Already computed above
 
-            idx_nonzero_i: npt.NDArray[np.int_] = np.where(
-                np.abs(vec_i_plus_q_orig) > zero_tol
-            )[0]
-            idx_nonzero_j: npt.NDArray[np.int_] = np.where(
-                np.abs(vec_j_minus_q_source) > zero_tol
-            )[
-                0
-            ]  # Use source vec for phase
+            # Calculate the dot product between them
+            dot_product: complex = np.dot(
+                np.conj(vec_j_minus_q_source), vec_i_plus_q_orig
+            )
+            dot_product_mag: float = np.abs(dot_product)
 
-            if len(idx_nonzero_i) > 0 and len(idx_nonzero_j) > 0:
-                # Phase factor relating original +q vector and swapped/conj -q vector
-                phase_factor: complex = (
-                    vec_i_plus_q_orig[idx_nonzero_i[0]]
-                    / vec_j_minus_q_source[idx_nonzero_j[0]]
+            phase_factor: complex
+            if dot_product_mag < zero_tol:
+                # If dot product is zero (vectors are orthogonal or one is zero), phase is undefined/arbitrary.
+                # Setting phase_factor to 1.0 is a neutral choice.
+                logger.warning(
+                    f"Near-zero dot product ({dot_product_mag:.2e}) during phase calculation for match ({i} -> {best_match_j}) at {q_vector_label}. Setting phase factor to 1."
                 )
-                # Apply phase adjustment: alpha_m_reordered[i] ~ conj(alpha_p[orig_i] * phase_factor)
-                alpha_matrix_minus_q_reordered[target_index, target_index] = np.conj(
-                    alpha_p[orig_i, orig_i] * phase_factor
-                )
+                phase_factor = 1.0 + 0.0j
             else:
-                alpha_matrix_minus_q_reordered[target_index, target_index] = 0
+                # Phase factor is the phase of the dot product
+                phase_factor = dot_product / dot_product_mag
+
+            # Apply the phase adjustment rule: alpha_m_reordered[i] ~ conj(alpha_p[orig_i] * phase_factor)
+            # This ensures the Bogoliubov transformation matrices T(+q) and T(-q) have the correct relative phase.
+            alpha_matrix_minus_q_reordered[target_index, target_index] = np.conj(
+                alpha_p[orig_i, orig_i] * phase_factor
+            )
+            # --- End Robust Phase Calculation ---
+
         else:
+            # No suitable match found for target vector 'i'
             logger.warning(
-                f"No matching eigenvector found for +q vector index {i} at {q_vector_label}"
+                f"No matching eigenvector found for target vector index {i} at {q_vector_label}"
             )
 
+    # Final checks and cleanup
     if num_matched_vectors != nspins2:
         logger.warning(
             f"Number of matched vectors ({num_matched_vectors}) does not equal {nspins2} at {q_vector_label}"
         )
 
-    # Clean up final alpha matrix
+    # Clean up near-zero elements in the final alpha matrix
     alpha_matrix_minus_q_reordered[
         np.abs(alpha_matrix_minus_q_reordered) < zero_tol
     ] = 0
