@@ -1185,7 +1185,7 @@ class MagCalc:
         if not os.path.exists(cache_dir):
             logger.info(f"Creating directory '{cache_dir}' for caching.")
             try:
-                os.makedirs(cache_dir)
+                os.makedirs(cache_dir, exist_ok=True)  # Allow directory to exist
             except OSError as e:
                 logger.error(f"Failed to create cache directory '{cache_dir}': {e}")
                 raise
