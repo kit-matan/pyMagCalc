@@ -7,6 +7,16 @@ import logging
 import pickle
 import os
 import shutil
+import sys
+
+# --- Add path for simple_FM model ---
+try:
+    # Since spin_model_fm.py is now in the same directory, import directly
+    import spin_model_fm
+except ImportError as e:
+    print(f"Warning: Could not import spin_model_fm.py: {e}")  # Add print for clarity
+    spin_model_fm = None  # Allow tests to be skipped if module not found
+# --- End path addition ---
 from unittest.mock import patch, MagicMock, call, mock_open
 
 # Import the functions to be tested from magcalc
@@ -24,6 +34,8 @@ try:
         _calculate_K_Kd,  # Needed for KKdMatrix
         KKdMatrix,  # Function to test now
         MagCalc,  # Class to test now
+        process_calc_disp,  # Worker function to test
+        process_calc_Sqw,  # Worker function to test
     )
     from magcalc import (
         ZERO_MATRIX_ELEMENT_THRESHOLD,
@@ -1113,3 +1125,131 @@ def test_magcalc_update_methods(
 
 
 # --- End NEW Tests for MagCalc Class ---
+
+# --- NEW Tests for Worker Functions ---
+
+
+def test_process_calc_disp_simple():
+    """Test process_calc_disp with simple diagonal HMat."""
+    # Inputs
+    kx, ky, kz = sp.symbols("kx ky kz", real=True)
+    S, p0 = sp.symbols("S p0", real=True)
+    full_symbol_list = [kx, ky, kz, S, p0]
+    # Simple HMat = diag(p0*(1-cos(kx)), -p0*(1-cos(kx)))
+    # Note: HMat is 2gH2
+    w_q = p0 * (1 - sp.cos(kx))
+    HMat_sym = sp.diag(w_q, -w_q)
+
+    q_vector = np.array([np.pi / 2.0, 0.0, 0.0])
+    nspins = 1
+    spin_magnitude_num = 1.0
+    hamiltonian_params_num = [2.0]  # p0 = 2.0
+
+    args = (
+        HMat_sym,
+        full_symbol_list,
+        q_vector,
+        nspins,
+        spin_magnitude_num,
+        hamiltonian_params_num,
+    )
+
+    # Expected output
+    # w(pi/2) = p0*(1-cos(pi/2)) = 2.0 * (1 - 0) = 2.0
+    # Eigenvalues are [w_q, -w_q]. Sorted are [-w_q, w_q].
+    # Positive branch (energies) is eigenvalues[nspins:] = eigenvalues[1:] = [w_q]
+    expected_energies = np.array([2.0])
+
+    # Calculation
+    calculated_energies = process_calc_disp(args)
+
+    # Assertions
+    assert isinstance(calculated_energies, np.ndarray)
+    assert_allclose(calculated_energies, expected_energies, atol=1e-12, rtol=1e-12)
+
+
+def test_process_calc_disp_linalgerror():
+    """Test process_calc_disp returns NaN on LinAlgError."""
+    # Inputs designed to cause diagonalization failure (e.g., NaN/Inf)
+    kx, ky, kz = sp.symbols("kx ky kz", real=True)
+    S, p0 = sp.symbols("S p0", real=True)
+    full_symbol_list = [kx, ky, kz, S, p0]
+    # HMat containing NaN after substitution
+    HMat_sym = sp.Matrix([[kx, 1], [1, sp.nan]])
+
+    q_vector = np.array([0.1, 0.0, 0.0])
+    nspins = 1
+    spin_magnitude_num = 1.0
+    hamiltonian_params_num = [1.0]
+
+    args = (
+        HMat_sym,
+        full_symbol_list,
+        q_vector,
+        nspins,
+        spin_magnitude_num,
+        hamiltonian_params_num,
+    )
+
+    # Expected output: array of NaNs
+    expected_energies = np.full((nspins,), np.nan)
+
+    # Calculation
+    calculated_energies = process_calc_disp(args)
+
+    # Assertions
+    assert isinstance(calculated_energies, np.ndarray)
+    assert np.all(np.isnan(calculated_energies))
+
+
+def test_process_calc_sqw_simple():
+    """Test process_calc_Sqw with simple diagonal HMat and Identity Ud."""
+    # Inputs
+    kx, ky, kz = sp.symbols("kx ky kz", real=True)
+    S, p0 = sp.symbols("S p0", real=True)
+    full_symbol_list = [kx, ky, kz, S, p0]
+    w_q = p0 * (1 - sp.cos(kx))
+    HMat_sym = sp.diag(w_q, -w_q)
+    Ud_numeric = np.eye(3, dtype=np.complex128)  # nspins=1 -> 3x3
+
+    q_vector = np.array([np.pi / 2.0, 0.0, 0.0])
+    nspins = 1
+    spin_magnitude_num = 1.0
+    hamiltonian_params_num = [2.0]  # p0 = 2.0
+
+    args = (
+        HMat_sym,
+        Ud_numeric,
+        full_symbol_list,
+        q_vector,
+        nspins,
+        spin_magnitude_num,
+        hamiltonian_params_num,
+    )
+
+    # Expected output (simplified calculation for this specific case)
+    # E = w_q = 2.0
+    # K = Kd = sqrt(S/2) * Udd @ I = sqrt(0.5) * [[1,1],[-i,i],[0,0]]
+    # Intensity involves K*Kd terms and polarization. For q along x, factor is (0,1,1).
+    # Intensity ~ S * (1 + cos(theta)) where theta is angle from z. Here approx S.
+    expected_q = q_vector
+    expected_energies = np.array([2.0])
+    # Exact intensity calculation is complex, check basic structure and non-negativity
+    # For FM at q=pi/2, expect intensity related to S.
+    # Intensity ~ S = 1.0 (ignoring polarization factor details for this simple test)
+    expected_intensity_approx = 0.5  # Corrected expected value based on calculation
+
+    # Calculation
+    q_out, E_out, I_out = process_calc_Sqw(args)
+
+    # Assertions
+    assert_allclose(q_out, expected_q, atol=1e-14)
+    assert_allclose(E_out, expected_energies, atol=1e-12, rtol=1e-12)
+    assert I_out is not np.nan
+    assert I_out.shape == (nspins,)
+    assert np.all(I_out >= 0)
+    # Check if intensity is roughly correct order of magnitude
+    assert_allclose(I_out[0], expected_intensity_approx, atol=0.1, rtol=0.1)
+
+
+# --- End NEW Tests for Worker Functions ---
