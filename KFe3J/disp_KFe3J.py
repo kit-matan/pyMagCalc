@@ -64,8 +64,8 @@ def calculate_and_save_dispersion(
             spin_magnitude=S,
             hamiltonian_params=p,
             cache_file_base=cache_base,
-            spin_model_module=kfe3j_model,
             cache_mode=wr,
+            spin_model_module=kfe3j_model,
         )
 
         logger.info("Calculating dispersion...")

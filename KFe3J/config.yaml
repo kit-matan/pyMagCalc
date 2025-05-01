@@ -17,10 +17,18 @@ q_path:
   # These might need refinement based on the specific Brillouin zone definition used.
   Gamma: [0, 0, 0]
   M: [0.5, 0, 0] # Example M point, adjust based on convention
-  K: [1/3, 1/3, 0] # Example K point, adjust based on convention
+  K: [0.33333333, 0.33333333, 0] # Example K point, adjust based on convention
   points_per_segment: 50 # Number of q-points between high-symmetry points
   path: ["Gamma", "M", "K", "Gamma"] # Define the path sequence
 
 output:
   data_filename: "KFe3J_disp_data.npz" # File to save calculated data
   # plot_filename: "KFe3J_disp_plot.png" # Optional: filename to save plot image
+  sqw_data_filename: "KFe3J_sqw_data.npz" # Added for S(q,w)
+
+plotting: # Added section
+  save_plot: false
+  plot_filename: "KFe3J_disp_plot.png"
+  energy_limits: [0, 20] # Example limits
+  title: "KFe3J Spin Wave Dispersion (Calculated)"
+  show_plot: true

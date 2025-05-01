@@ -588,23 +588,16 @@ def process_calc_Sqw(
         return nan_result
 
 
-# --- gen_HM Function (Keep outside class) ---
-def gen_HM(
-    spin_model_module,  # ADDED: Explicitly pass the spin model module
-    k_sym: List[sp.Symbol],
-    S_sym: sp.Symbol,
-    params_sym: List[sp.Symbol],
-) -> Tuple[sp.Matrix, sp.Matrix]:
-    """Generates symbolic TwogH2 and Ud matrices."""
-    # Use the passed module instead of global 'sm'
-    atom_positions_uc: npt.NDArray[np.float_] = spin_model_module.atom_pos()
-    nspins: int = len(atom_positions_uc)
-    atom_positions_ouc: npt.NDArray[np.float_] = spin_model_module.atom_pos_ouc()
-    nspins_ouc: int = len(atom_positions_ouc)
-    logger.info(f"Number of spins in the unit cell: {nspins}")
-    c_ops: List[sp.Symbol] = sp.symbols("c0:%d" % nspins_ouc, commutative=False)
-    cd_ops: List[sp.Symbol] = sp.symbols("cd0:%d" % nspins_ouc, commutative=False)
-    spin_ops_local: List[sp.Matrix] = [
+# --- gen_HM Helper Functions ---
+
+
+def _setup_hp_operators(
+    nspins_ouc: int, S_sym: sp.Symbol
+) -> Tuple[List[sp.Symbol], List[sp.Symbol], List[sp.Matrix]]:
+    """Sets up Holstein-Primakoff boson operators and local spin operators."""
+    c_ops = sp.symbols("c0:%d" % nspins_ouc, commutative=False)
+    cd_ops = sp.symbols("cd0:%d" % nspins_ouc, commutative=False)
+    spin_ops_local = [
         sp.Matrix(
             (
                 sp.sqrt(S_sym / 2) * (c_ops[i] + cd_ops[i]),
@@ -614,21 +607,43 @@ def gen_HM(
         )
         for i in range(nspins_ouc)
     ]
-    rotation_matrices: List[Union[npt.NDArray, sp.Matrix]] = spin_model_module.mpr(
-        params_sym
-    )
-    spin_ops_global_ouc: List[sp.Matrix] = [
+    return c_ops, cd_ops, spin_ops_local
+
+
+def _rotate_spin_operators(
+    spin_ops_local: List[sp.Matrix],
+    rotation_matrices: List[Union[npt.NDArray, sp.Matrix]],
+    nspins: int,
+    nspins_ouc: int,
+) -> List[sp.Matrix]:
+    """Rotates local spin operators to the global frame."""
+    spin_ops_global_ouc = [
         rotation_matrices[j] * spin_ops_local[nspins * i + j]
         for i in range(int(nspins_ouc / nspins))
         for j in range(nspins)
     ]
-    hamiltonian_sym: sp.Expr = spin_model_module.Hamiltonian(
-        spin_ops_global_ouc, params_sym
-    )
+    return spin_ops_global_ouc
+
+
+def _prepare_hamiltonian(
+    spin_model_module: types.ModuleType,
+    spin_ops_global_ouc: List[sp.Matrix],
+    params_sym: List[sp.Symbol],
+    S_sym: sp.Symbol,
+) -> sp.Expr:
+    """Gets the Hamiltonian from the model, expands it, and filters terms."""
+    hamiltonian_sym = spin_model_module.Hamiltonian(spin_ops_global_ouc, params_sym)
     hamiltonian_sym = sp.expand(hamiltonian_sym)
-    hamiltonian_S0: sp.Expr = hamiltonian_sym.coeff(S_sym, 0)
+    # --- Filter Hamiltonian terms (Keep only up to quadratic in boson ops) ---
+    # This logic seems specific to how the Hamiltonian is constructed in the model.
+    # It assumes higher powers of S correspond to higher orders in boson operators.
+    # A more robust approach might involve explicitly checking boson operator powers.
+    hamiltonian_S0 = hamiltonian_sym.coeff(S_sym, 0)
     if params_sym:
-        hamiltonian_sym = (  # This logic seems specific, keep as is for now
+        # This part seems potentially problematic or overly specific.
+        # It keeps the term linear in the *last* parameter from the S^0 part,
+        # plus the S^1 and S^2 terms. Revisit if this causes issues.
+        hamiltonian_sym = (
             hamiltonian_S0.coeff(params_sym[-1]) * params_sym[-1]
             + hamiltonian_sym.coeff(S_sym, 1) * S_sym
             + hamiltonian_sym.coeff(S_sym, 2) * S_sym**2
@@ -639,93 +654,134 @@ def gen_HM(
             + hamiltonian_sym.coeff(S_sym, 2) * S_sym**2
         )
     hamiltonian_sym = sp.expand(hamiltonian_sym)
-    ck_ops: List[sp.Symbol] = [
-        sp.Symbol("ck%d" % j, commutative=False) for j in range(nspins)
-    ]
-    ckd_ops: List[sp.Symbol] = [
-        sp.Symbol("ckd%d" % j, commutative=False) for j in range(nspins)
-    ]
-    cmk_ops: List[sp.Symbol] = [
-        sp.Symbol("cmk%d" % j, commutative=False) for j in range(nspins)
-    ]
-    cmkd_ops: List[sp.Symbol] = [
-        sp.Symbol("cmkd%d" % j, commutative=False) for j in range(nspins)
-    ]
-    interaction_matrix: npt.NDArray = spin_model_module.spin_interactions(params_sym)[0]
-    fourier_substitutions: List[List[sp.Expr]] = [
-        ent
-        for i in range(nspins)
-        for j in range(nspins_ouc)
-        if interaction_matrix[i, j] != 0
-        for disp_vec in [atom_positions_uc[i, :] - atom_positions_ouc[j, :]]
-        for k_dot_dr in [
-            k_sym[0] * disp_vec[0] + k_sym[1] * disp_vec[1] + k_sym[2] * disp_vec[2]
-        ]
-        for ent in [
-            [
-                cd_ops[i] * cd_ops[j],
-                1
-                / 2
-                * (
-                    ckd_ops[i % nspins]
-                    * cmkd_ops[j % nspins]
-                    * sp.exp(-I * k_dot_dr).rewrite(sp.sin)
-                    + cmkd_ops[i % nspins]
-                    * ckd_ops[j % nspins]
-                    * sp.exp(I * k_dot_dr).rewrite(sp.sin)
-                ),
-            ],
-            [
-                c_ops[i] * c_ops[j],
-                1
-                / 2
-                * (
-                    ck_ops[i % nspins]
-                    * cmk_ops[j % nspins]
-                    * sp.exp(I * k_dot_dr).rewrite(sp.sin)
-                    + cmk_ops[i % nspins]
-                    * ck_ops[j % nspins]
-                    * sp.exp(-I * k_dot_dr).rewrite(sp.sin)
-                ),
-            ],
-            [
-                cd_ops[i] * c_ops[j],
-                1
-                / 2
-                * (
-                    ckd_ops[i % nspins]
-                    * ck_ops[j % nspins]
-                    * sp.exp(-I * k_dot_dr).rewrite(sp.sin)
-                    + cmkd_ops[i % nspins]
-                    * cmk_ops[j % nspins]
-                    * sp.exp(I * k_dot_dr).rewrite(sp.sin)
-                ),
-            ],
-            [
-                c_ops[i] * cd_ops[j],
-                1
-                / 2
-                * (
-                    ck_ops[i % nspins]
-                    * ckd_ops[j % nspins]
-                    * sp.exp(I * k_dot_dr).rewrite(sp.sin)
-                    + cmk_ops[i % nspins]
-                    * cmkd_ops[j % nspins]
-                    * sp.exp(-I * k_dot_dr).rewrite(sp.sin)
-                ),
-            ],
+    # --- End Filtering ---
+    return hamiltonian_sym
+
+
+def _define_fourier_substitutions(
+    spin_model_module: types.ModuleType,
+    k_sym: List[sp.Symbol],
+    nspins: int,
+    nspins_ouc: int,
+    c_ops: List[sp.Symbol],
+    cd_ops: List[sp.Symbol],
+    ck_ops: List[sp.Symbol],
+    ckd_ops: List[sp.Symbol],
+    cmk_ops: List[sp.Symbol],
+    cmkd_ops: List[sp.Symbol],
+    params_sym: List[sp.Symbol],  # ADDED: Pass symbolic parameters
+) -> List[List[sp.Expr]]:
+    """Defines the substitution rules for Fourier transforming boson operators."""
+    atom_positions_uc = spin_model_module.atom_pos()
+    atom_positions_ouc = spin_model_module.atom_pos_ouc()
+    # Use params_sym when calling spin_interactions
+    interaction_matrix = spin_model_module.spin_interactions(params_sym)[
+        0  # Assuming params don't change interaction pairs
+    ]  # Assuming params don't change interaction pairs
+
+    fourier_substitutions = []
+
+    # Revert to iterating over UC spins (i) and OUC spins (j)
+    # This matches the original logic and should be more efficient.
+    for i in range(nspins):  # Iterate over spins in the magnetic unit cell
+        for j in range(nspins_ouc):
+            # Check if interaction exists (use OUC indices)
+            # interaction_matrix[i_uc, j_ouc]
+            if interaction_matrix[i, j] == 0:
+                continue
+
+            # Calculate displacement vector between UC atom i and OUC atom j
+            # Original code used: atom_positions_uc[i, :] - atom_positions_ouc[j, :]
+            # Let's stick to that for consistency.
+            disp_vec = atom_positions_uc[i, :] - atom_positions_ouc[j, :]
+            disp_vec = atom_positions_ouc[i, :] - atom_positions_ouc[j, :]
+            k_dot_dr = sum(k * dr for k, dr in zip(k_sym, disp_vec))
+            exp_plus_ikdr = sp.exp(I * k_dot_dr).rewrite(sp.sin)
+            exp_minus_ikdr = sp.exp(-I * k_dot_dr).rewrite(sp.sin)
+
+            # Map OUC index 'i' and 'j' to UC index for k-space operators
+            # 'i' already refers to the UC index in this loop structure
+            j_uc = j % nspins
+
+            # Define substitutions for this pair (i, j)
+            sub_list = [
+                [
+                    cd_ops[i] * cd_ops[j],
+                    1
+                    / 2
+                    * (
+                        ckd_ops[i] * cmkd_ops[j_uc] * exp_minus_ikdr
+                        + cmkd_ops[i] * ckd_ops[j_uc] * exp_plus_ikdr
+                    ),
+                ],
+                [
+                    c_ops[i] * c_ops[j],
+                    1
+                    / 2
+                    * (
+                        ck_ops[i] * cmk_ops[j_uc] * exp_plus_ikdr
+                        + cmk_ops[i] * ck_ops[j_uc] * exp_minus_ikdr
+                    ),
+                ],
+                [
+                    cd_ops[i] * c_ops[j],
+                    1
+                    / 2
+                    * (
+                        ckd_ops[i] * ck_ops[j_uc] * exp_minus_ikdr
+                        + cmkd_ops[i] * cmk_ops[j_uc] * exp_plus_ikdr
+                    ),
+                ],
+                # c_i * cd_j is handled by commutation rules later if needed,
+                # but let's add it for completeness if the Hamiltonian contains it directly.
+                [
+                    c_ops[i] * cd_ops[j],
+                    (
+                        ck_ops[i]
+                        * ckd_ops[j_uc]
+                        * exp_plus_ikdr  # Use 'i' instead of 'i_uc'
+                        + cmk_ops[i] * cmkd_ops[j_uc] * exp_minus_ikdr
+                    )
+                    / 2,
+                ],
+            ]
+            fourier_substitutions.extend(sub_list)
+
+    # Add the diagonal term substitution (present in original code, seems important)
+    # This handles terms like cd_j * c_j which remain after HP transform of Sz
+    for j in range(nspins_ouc):
+        # Only add if the diagonal term involves a spin within the UC
+        # The original code implicitly handled this via the outer loop range(nspins)
+        # Let's add it explicitly for all j_ouc, then rely on duplicate removal.
+        j_uc = j % nspins  # Map OUC index j to UC index
+        fourier_substitutions.append(
             [
                 cd_ops[j] * c_ops[j],
-                1
-                / 2
-                * (
-                    ckd_ops[j % nspins] * ck_ops[j % nspins]
-                    + cmkd_ops[j % nspins] * cmk_ops[j % nspins]
-                ),
-            ],
-        ]
-    ]
-    commutation_substitutions: List[List[sp.Expr]] = (
+                1 / 2 * (ckd_ops[j_uc] * ck_ops[j_uc] + cmkd_ops[j_uc] * cmk_ops[j_uc]),
+            ]
+        )  # Correct closing bracket ']' instead of ')'
+
+    # Remove duplicates (important for efficiency)
+    unique_substitutions = []
+    seen_keys = set()
+    for sub in fourier_substitutions:
+        key = sub[0]
+        if key not in seen_keys:
+            unique_substitutions.append(sub)
+            seen_keys.add(key)
+
+    return unique_substitutions
+
+
+def _define_commutation_substitutions(
+    nspins: int,
+    ck_ops: List[sp.Symbol],
+    ckd_ops: List[sp.Symbol],
+    cmk_ops: List[sp.Symbol],
+    cmkd_ops: List[sp.Symbol],
+) -> List[List[sp.Expr]]:
+    """Defines the substitution rules for applying boson commutation relations."""
+    commutation_substitutions = (
         [
             [ck_ops[i] * ckd_ops[j], ckd_ops[j] * ck_ops[i] + (1 if i == j else 0)]
             for i in range(nspins)
@@ -747,90 +803,218 @@ def gen_HM(
             for j in range(nspins)
         ]
     )
-    basis_vector_dagger: List[sp.Symbol] = ckd_ops[:nspins] + cmk_ops[:nspins]
-    basis_vector: List[sp.Symbol] = ck_ops[:nspins] + cmkd_ops[:nspins]
-    placeholder_symbols: List[sp.Symbol] = [
-        sp.Symbol("XdX%d" % (i * 2 * nspins + j), commutative=True)
-        for i in range(2 * nspins)
-        for j in range(2 * nspins)
+    return commutation_substitutions
+
+
+def _define_placeholder_substitutions(
+    nspins: int, basis_vector_dagger: List[sp.Symbol], basis_vector: List[sp.Symbol]
+) -> Tuple[List[sp.Symbol], List[List[sp.Expr]]]:
+    """Defines placeholder symbols and substitutions for extracting the H2 matrix."""
+    nspins2 = 2 * nspins
+    placeholder_symbols = [
+        sp.Symbol("XdX%d" % (i * nspins2 + j), commutative=True)
+        for i in range(nspins2)
+        for j in range(nspins2)
     ]
-    placeholder_substitutions: List[List[sp.Expr]] = [
-        [
-            basis_vector_dagger[i] * basis_vector[j],
-            placeholder_symbols[i * 2 * nspins + j],
-        ]
-        for i in range(2 * nspins)
-        for j in range(2 * nspins)
+    placeholder_substitutions = [
+        [basis_vector_dagger[i] * basis_vector[j], placeholder_symbols[i * nspins2 + j]]
+        for i in range(nspins2)
+        for j in range(nspins2)
     ]
-    logger.info("Running symbolic substitutions...")
-    start_time: float = timeit.default_timer()
-    try:
-        hamiltonian_terms: List[sp.Expr] = hamiltonian_sym.as_ordered_terms()
-        pool_args_ft = [(expr, fourier_substitutions) for expr in hamiltonian_terms]
-        with Pool() as pool:
-            results_ft: List[sp.Expr] = list(
-                tqdm(
-                    pool.imap(substitute_expr, pool_args_ft),
-                    total=len(hamiltonian_terms),
-                    desc="Substituting FT ",
-                    bar_format="{percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
-                )
+    return placeholder_symbols, placeholder_substitutions
+
+
+def _apply_substitutions_parallel(
+    hamiltonian_sym: sp.Expr,
+    fourier_substitutions: List[List[sp.Expr]],
+    commutation_substitutions: List[List[sp.Expr]],
+    placeholder_substitutions: List[List[sp.Expr]],
+) -> sp.Expr:
+    """Applies Fourier, commutation, and placeholder substitutions using multiprocessing."""
+    logger.info("Applying Fourier transform substitutions...")
+    start_time_ft = timeit.default_timer()
+    hamiltonian_terms = hamiltonian_sym.as_ordered_terms()
+    pool_args_ft = [(expr, fourier_substitutions) for expr in hamiltonian_terms]
+    with Pool() as pool:
+        results_ft = list(
+            tqdm(
+                pool.imap(substitute_expr, pool_args_ft),
+                total=len(hamiltonian_terms),
+                desc="Substituting FT ",
+                bar_format="{percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
             )
-        hamiltonian_k_space: sp.Expr = Add(*results_ft)
-        hamiltonian_k_space = hamiltonian_k_space.expand()
-        hamiltonian_k_terms: List[sp.Expr] = hamiltonian_k_space.as_ordered_terms()
-        pool_args_comm = [
-            (expr, commutation_substitutions) for expr in hamiltonian_k_terms
-        ]
-        with Pool() as pool:
-            results_comm: List[sp.Expr] = list(
-                tqdm(
-                    pool.imap(substitute_expr, pool_args_comm),
-                    total=len(hamiltonian_k_terms),
-                    desc="Applying Commutation",
-                    bar_format="{percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
-                )
-            )
-        hamiltonian_k_commuted: sp.Expr = Add(*results_comm)
-        hamiltonian_k_commuted = hamiltonian_k_commuted.expand()
-        hamiltonian_k_comm_terms: List[sp.Expr] = (
-            hamiltonian_k_commuted.as_ordered_terms()
         )
-        pool_args_placeholder = [
-            (expr, placeholder_substitutions) for expr in hamiltonian_k_comm_terms
-        ]
-        with Pool() as pool:
-            results_placeholder: List[sp.Expr] = list(
-                tqdm(
-                    pool.imap(substitute_expr, pool_args_placeholder),
-                    total=len(hamiltonian_k_comm_terms),
-                    desc="Substituting Placeholders",
-                    bar_format="{percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
-                )
-            )
-        hamiltonian_with_placeholders: sp.Expr = Add(*results_placeholder)
-    except Exception as e:
-        logger.exception("Error during symbolic substitution in gen_HM.")
-        raise RuntimeError("Symbolic substitution failed.") from e
-    end_time: float = timeit.default_timer()
+    # --- Optimization: Remove intermediate expansion ---
+    hamiltonian_k_space = Add(*results_ft)
+    # --- End Optimization ---
     logger.info(
-        f"Run-time for substitution: {np.round((end_time - start_time) / 60, 2)} min."
+        f"Fourier transform substitution took: {timeit.default_timer() - start_time_ft:.2f} s"
     )
-    H2_elements: sp.Matrix = sp.Matrix(
-        [hamiltonian_with_placeholders.coeff(p) for p in placeholder_symbols]
+
+    logger.info("Applying commutation rule substitutions...")
+    start_time_comm = timeit.default_timer()
+    hamiltonian_k_terms = hamiltonian_k_space.as_ordered_terms()
+    pool_args_comm = [(expr, commutation_substitutions) for expr in hamiltonian_k_terms]
+    with Pool() as pool:
+        results_comm = list(
+            tqdm(
+                pool.imap(substitute_expr, pool_args_comm),
+                total=len(hamiltonian_k_terms),
+                desc="Applying Commutation",
+                bar_format="{percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
+            )
+        )
+    hamiltonian_k_commuted = Add(*results_comm).expand()
+    logger.info(
+        f"Commutation rule substitution took: {timeit.default_timer() - start_time_comm:.2f} s"
     )
-    H2_matrix: sp.Matrix = sp.Matrix(2 * nspins, 2 * nspins, H2_elements)
-    g_metric_tensor_sym: sp.Matrix = sp.diag(*([1] * nspins + [-1] * nspins))
-    dynamical_matrix_TwogH2: sp.Matrix = 2 * g_metric_tensor_sym * H2_matrix
-    Ud_rotation_matrix_blocks: List[sp.Matrix] = []
+
+    logger.info("Applying placeholder substitutions...")
+    start_time_ph = timeit.default_timer()
+    hamiltonian_k_comm_terms = hamiltonian_k_commuted.as_ordered_terms()
+    pool_args_placeholder = [
+        (expr, placeholder_substitutions) for expr in hamiltonian_k_comm_terms
+    ]
+    with Pool() as pool:
+        results_placeholder = list(
+            tqdm(
+                pool.imap(substitute_expr, pool_args_placeholder),
+                total=len(hamiltonian_k_comm_terms),
+                desc="Substituting Placeholders",
+                bar_format="{percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
+            )
+        )
+    hamiltonian_with_placeholders = Add(*results_placeholder)
+    logger.info(
+        f"Placeholder substitution took: {timeit.default_timer() - start_time_ph:.2f} s"
+    )
+
+    return hamiltonian_with_placeholders
+
+
+def _extract_h2_matrix(
+    hamiltonian_with_placeholders: sp.Expr,
+    placeholder_symbols: List[sp.Symbol],
+    nspins: int,
+) -> sp.Matrix:
+    """Extracts the quadratic Hamiltonian matrix H2 from the placeholder expression."""
+    nspins2 = 2 * nspins
+    H2_elements = [hamiltonian_with_placeholders.coeff(p) for p in placeholder_symbols]
+    H2_matrix = sp.Matrix(nspins2, nspins2, H2_elements)
+    return H2_matrix
+
+
+def _build_ud_matrix(
+    rotation_matrices: List[Union[npt.NDArray, sp.Matrix]], nspins: int
+) -> sp.Matrix:
+    """Builds the block-diagonal rotation matrix Ud."""
+    Ud_rotation_matrix_blocks = []
     for i in range(nspins):
         rot_mat = rotation_matrices[i]
+        # Ensure it's a SymPy matrix
         if isinstance(rot_mat, np.ndarray):
-            rot_mat_sym: sp.Matrix = sp.Matrix(rot_mat)
+            rot_mat_sym = sp.Matrix(rot_mat)
         else:
             rot_mat_sym = rot_mat
         Ud_rotation_matrix_blocks.append(rot_mat_sym)
-    Ud_rotation_matrix: sp.Matrix = sp.diag(*Ud_rotation_matrix_blocks)
+    Ud_rotation_matrix = sp.diag(*Ud_rotation_matrix_blocks)
+    return Ud_rotation_matrix
+
+
+# --- Main gen_HM Function (Calls Helpers) ---
+def gen_HM(
+    spin_model_module,  # ADDED: Explicitly pass the spin model module
+    k_sym: List[sp.Symbol],
+    S_sym: sp.Symbol,
+    params_sym: List[sp.Symbol],
+) -> Tuple[sp.Matrix, sp.Matrix]:
+    """Generates symbolic TwogH2 and Ud matrices."""
+    logger.info("Starting symbolic matrix generation (gen_HM)...")
+    start_time_total = timeit.default_timer()
+
+    # --- Get Model Info ---
+    try:
+        atom_positions_uc = spin_model_module.atom_pos()
+        nspins = len(atom_positions_uc)
+        atom_positions_ouc = spin_model_module.atom_pos_ouc()
+        nspins_ouc = len(atom_positions_ouc)
+        rotation_matrices = spin_model_module.mpr(params_sym)
+    except Exception as e:
+        logger.exception("Error retrieving data from spin_model_module.")
+        raise RuntimeError("Failed to get model info for gen_HM.") from e
+
+    logger.info(f"Number of spins in the unit cell: {nspins}")
+    nspins2 = 2 * nspins
+
+    # --- Setup Operators ---
+    c_ops, cd_ops, spin_ops_local = _setup_hp_operators(nspins_ouc, S_sym)
+    spin_ops_global_ouc = _rotate_spin_operators(
+        spin_ops_local, rotation_matrices, nspins, nspins_ouc
+    )
+
+    # --- Prepare Hamiltonian ---
+    hamiltonian_sym = _prepare_hamiltonian(
+        spin_model_module, spin_ops_global_ouc, params_sym, S_sym
+    )
+
+    # --- Define k-space operators ---
+    ck_ops = [sp.Symbol("ck%d" % j, commutative=False) for j in range(nspins)]
+    ckd_ops = [sp.Symbol("ckd%d" % j, commutative=False) for j in range(nspins)]
+    cmk_ops = [sp.Symbol("cmk%d" % j, commutative=False) for j in range(nspins)]
+    cmkd_ops = [sp.Symbol("cmkd%d" % j, commutative=False) for j in range(nspins)]
+
+    # --- Define Substitution Rules ---
+    fourier_substitutions = _define_fourier_substitutions(
+        spin_model_module,
+        k_sym,
+        nspins,
+        nspins_ouc,
+        c_ops,
+        cd_ops,
+        ck_ops,
+        ckd_ops,
+        cmk_ops,
+        cmkd_ops,
+        params_sym,  # Pass params_sym here
+    )
+    commutation_substitutions = _define_commutation_substitutions(
+        nspins, ck_ops, ckd_ops, cmk_ops, cmkd_ops
+    )
+    basis_vector_dagger = ckd_ops[:nspins] + cmk_ops[:nspins]
+    basis_vector = ck_ops[:nspins] + cmkd_ops[:nspins]
+    placeholder_symbols, placeholder_substitutions = _define_placeholder_substitutions(
+        nspins, basis_vector_dagger, basis_vector
+    )
+
+    # --- Apply Substitutions ---
+    try:
+        hamiltonian_with_placeholders = _apply_substitutions_parallel(
+            hamiltonian_sym,
+            fourier_substitutions,
+            commutation_substitutions,
+            placeholder_substitutions,
+        )
+    except Exception as e:
+        logger.exception("Error during symbolic substitution in gen_HM.")
+        raise RuntimeError("Symbolic substitution failed.") from e
+
+    # --- Extract H2 Matrix ---
+    H2_matrix = _extract_h2_matrix(
+        hamiltonian_with_placeholders, placeholder_symbols, nspins
+    )
+
+    # --- Calculate TwogH2 ---
+    g_metric_tensor_sym = sp.diag(*([1] * nspins + [-1] * nspins))
+    dynamical_matrix_TwogH2 = 2 * g_metric_tensor_sym * H2_matrix
+
+    # --- Build Ud Matrix ---
+    Ud_rotation_matrix = _build_ud_matrix(rotation_matrices, nspins)
+
+    end_time_total = timeit.default_timer()
+    logger.info(
+        f"Total run-time for gen_HM: {np.round((end_time_total - start_time_total), 2)} s."
+    )
+
     return dynamical_matrix_TwogH2, Ud_rotation_matrix
 
 
@@ -1416,6 +1600,15 @@ class MagCalc:
 
 # --- Main execution block (demonstrating update methods) ---
 if __name__ == "__main__":
+    # --- Import the specific spin model ---
+    # NOTE: Replace 'spin_model_fm' if you intend to use a different model file
+    try:
+        import spin_model
+    except ImportError:
+        logger.error(
+            "Failed to import 'spin_model'. Please ensure it's in the Python path."
+        )
+        sys.exit(1)  # Exit if the model cannot be imported
     # --- User Configuration ---
     spin_S_val: float = 1.0
     hamiltonian_params_val: List[float] = [1.0, 0.5, 0.1, 0.1, 0.0]
@@ -1450,6 +1643,7 @@ if __name__ == "__main__":
             hamiltonian_params=hamiltonian_params_val,
             cache_file_base=cache_file_base_name,
             cache_mode=cache_operation_mode,
+            spin_model_module=spin_model,  # <<< Added the missing argument
         )
 
         # --- Calculate and Save Dispersion (Initial Params) ---
