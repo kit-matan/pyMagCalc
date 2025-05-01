@@ -14,8 +14,6 @@ from timeit import default_timer
 import matplotlib.pyplot as plt
 import magcalc as mc  # Import the refactored magcalc module
 import spin_model as kfe3j_model  # Import the specific spin modelimport sys
-import yaml  # Import YAML library
-import sys
 
 # It's often good practice to configure logging in the main script too
 import logging
@@ -28,14 +26,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def calculate_and_save_dispersion(
-    p, S, wr, cache_base, output_filename
-):  # Added cache_base
+def calculate_and_save_dispersion(p, S, wr, output_filename):
     """Calculate spin-wave dispersion for KFe3(OH)6(SO4)2 and save results.
     Inputs:
         p: list of parameters
         S: spin value
-        cache_base: base name for cache files
         wr: 'w' for write cache, 'r' for read cache
         output_filename: path to save the calculated data (.npz)
     Returns:
@@ -64,7 +59,7 @@ def calculate_and_save_dispersion(
             spin_magnitude=S,
             hamiltonian_params=p,
             cache_file_base=cache_base,
-            spin_model_module=kfe3j_model,
+            spin_model_module=kfe3j_model,  # Pass the imported model
             cache_mode=wr,
         )
 
@@ -266,42 +261,24 @@ def plot_dispersion_from_file(filename):
 
 
 if __name__ == "__main__":
-    st_main = default_timer()  # Start timer at the beginning
+    st_main = default_timer()
+    # KFe3Jarosite
+    S_val = 5.0 / 2.0  # spin value
+    params_val = [3.23, 0.11, 0.218, -0.195, 0]
 
-    # --- Load Configuration ---
-    config_filename = "/Users/kmatan/Library/CloudStorage/OneDrive-MahidolUniversity/research/magcalc/pyMagCalc/KFe3J/config.yaml"
-    config = {}
-    try:
-        with open(config_filename, "r") as f:
-            config = yaml.safe_load(f)
-        logger.info(f"Loaded configuration from {config_filename}")
-    except FileNotFoundError:
-        logger.error(f"Configuration file not found: {config_filename}. Exiting.")
-        sys.exit(1)
-    except yaml.YAMLError as e:
-        logger.error(
-            f"Error parsing configuration file {config_filename}: {e}. Exiting."
-        )
-        sys.exit(1)
-    except Exception as e:
-        logger.error(f"Unexpected error loading configuration: {e}. Exiting.")
-        sys.exit(1)
+    # Set cache mode: 'w' for first run, 'r' afterwards
+    write_read_mode = "r"  # Change to 'w' to regenerate cache
 
-    # Extract parameters from config
-    model_p = config.get("model_params", {})
-    calc_p = config.get("calculation", {})
-    output_p = config.get("output", {})
+    # Define the output file for calculated data
+    data_filename = "KFe3J_disp_data.npz"
 
-    S_val = model_p.get("S", 2.5)
-    params_val = [model_p.get(k, 0.0) for k in ["J1", "J2", "Dy", "Dz", "H"]]
-    write_read_mode = calc_p.get("cache_mode", "r")
-    cache_base_name = calc_p.get("cache_file_base", "KFe3J_cache")
-    data_filename = output_p.get("data_filename", "KFe3J_disp_data.npz")
-    # --- End Configuration Loading ---
-
+    logger.info(
+        f"Starting KFe3J dispersion calculation with mode='{write_read_mode}'..."
+    )
     calculation_successful = calculate_and_save_dispersion(
-        params_val, S_val, write_read_mode, cache_base_name, data_filename
-    )  # Pass cache_base_name
+        params_val, S_val, write_read_mode, data_filename
+    )
+
     if calculation_successful:
         logger.info("Calculation successful, proceeding to plot...")
         plot_dispersion_from_file(data_filename)

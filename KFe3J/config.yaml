@@ -1,0 +1,26 @@
+# Configuration for KFe3J LSWT calculation
+
+model_params:
+  S: 2.5      # Spin magnitude (5/2)
+  J1: 3.23    # J1 exchange parameter (meV)
+  J2: 0.11    # J2 exchange parameter (meV)
+  Dy: 0.218   # DM vector y-component parameter (meV)
+  Dz: -0.195  # DM vector z-component parameter (meV)
+  H: 0.0      # External magnetic field H (Tesla or appropriate units)
+
+calculation:
+  cache_mode: "w"  # 'r' to read cache, 'w' to write/regenerate cache
+  cache_file_base: "KFe3J_cache" # Base name for cache files in pckFiles/
+
+q_path:
+  # Define high-symmetry points (using fractional coordinates for now, adjust if needed)
+  # These might need refinement based on the specific Brillouin zone definition used.
+  Gamma: [0, 0, 0]
+  M: [0.5, 0, 0] # Example M point, adjust based on convention
+  K: [1/3, 1/3, 0] # Example K point, adjust based on convention
+  points_per_segment: 50 # Number of q-points between high-symmetry points
+  path: ["Gamma", "M", "K", "Gamma"] # Define the path sequence
+
+output:
+  data_filename: "KFe3J_disp_data.npz" # File to save calculated data
+  # plot_filename: "KFe3J_disp_plot.png" # Optional: filename to save plot image
