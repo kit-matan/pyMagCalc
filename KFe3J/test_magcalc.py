@@ -806,13 +806,13 @@ def mock_spin_model():
     return mock_sm
 
 
-@patch("magcalc.sm", new_callable=MagicMock)  # Mock sm globally for these tests
-def test_magcalc_init_valid_read(mock_sm_global):
+# @patch("magcalc.sm", new_callable=MagicMock) # REMOVED: No longer needed as sm is not global in magcalc
+def test_magcalc_init_valid_read(mock_spin_model):  # Renamed argument
     """Test MagCalc initialization in 'r' mode with valid cache."""
-    mock_sm_global.atom_pos.return_value = np.array([[0, 0, 0]])  # nspins = 1
+    mock_spin_model.atom_pos.return_value = np.array([[0, 0, 0]])  # nspins = 1
     base_name = "test_cache_read"  # Define a base name for consistency
-    mock_sm_global.__name__ = "mock_spin_model"  # Add name attribute to mock
-    mock_sm_global.mpr.return_value = [
+    mock_spin_model.__name__ = "mock_spin_model"  # Add name attribute to mock
+    mock_spin_model.mpr.return_value = [
         sp.Matrix([[sp.Symbol("p0"), 0], [0, 1]])
     ]  # Match dummy Ud
 
@@ -883,8 +883,8 @@ def test_magcalc_init_valid_read(mock_sm_global):
             spin_magnitude=S_val,
             hamiltonian_params=params_val,
             cache_file_base=base_name,
+            spin_model_module=mock_spin_model,  # Use renamed argument
             cache_mode="r",
-            spin_model_module=mock_sm_global,
         )
         # If it succeeds without error (it shouldn't based on previous runs)
         # We can still print what was passed
@@ -909,7 +909,7 @@ def test_magcalc_init_valid_read(mock_sm_global):
     assert_allclose(calculator.Ud_numeric, expected_Ud_numeric, atol=1e-14)
 
 
-@patch("magcalc.sm", new_callable=MagicMock)
+# @patch("magcalc.sm", new_callable=MagicMock) # REMOVED
 @patch("magcalc.gen_HM")
 @patch("pickle.dump")
 @patch("magcalc.MagCalc._calculate_numerical_ud")  # Patch the problematic method
@@ -917,14 +917,16 @@ def test_magcalc_init_valid_write(
     mock_calc_ud,
     mock_pickle_dump,
     mock_gen_HM,
-    mock_sm_global,
+    mock_spin_model,  # Renamed argument
     tmp_path,  # Add mock_calc_ud
 ):
     """Test MagCalc initialization in 'w' mode."""
-    mock_sm_global.atom_pos.return_value = np.array([[0, 0, 0]])  # nspins = 1
-    mock_sm_global.__name__ = "mock_spin_model"  # Add name attribute to mock
-    mock_sm_global.__name__ = "mock_spin_model"  # Add name attribute to mock
-    mock_sm_global.mpr.return_value = [sp.Matrix([[sp.Symbol("p0"), 0], [0, 1]])]
+    mock_spin_model.atom_pos.return_value = np.array([[0, 0, 0]])  # nspins = 1
+    mock_spin_model.__name__ = "mock_spin_model"  # Add name attribute to mock
+    mock_spin_model.__name__ = "mock_spin_model"  # Add name attribute to mock
+    mock_spin_model.mpr.return_value = [
+        sp.Matrix([[sp.Symbol("p0"), 0], [0, 1]])
+    ]  # Use renamed argument
 
     # Define symbols beforehand for consistency (still needed for dummy matrices)
     kx_local, ky_local, kz_local = sp.symbols("kx ky kz")
@@ -966,8 +968,8 @@ def test_magcalc_init_valid_write(
             spin_magnitude=S_val,
             hamiltonian_params=params_val,
             cache_file_base=base_name,
+            spin_model_module=mock_spin_model,  # Use renamed argument
             cache_mode="w",
-            spin_model_module=mock_sm_global,
         )
 
     mock_gen_HM.assert_called_once()
@@ -985,24 +987,32 @@ def test_magcalc_init_valid_write(
     # Cannot assert calculator.Ud_numeric value.
 
 
-@patch("magcalc.sm", new_callable=MagicMock)  # Mock sm globally for these tests
-def test_magcalc_init_invalid_inputs(mock_sm_global):
+# @patch("magcalc.sm", new_callable=MagicMock) # REMOVED
+def test_magcalc_init_invalid_inputs(mock_spin_model):  # Renamed argument
     """Test MagCalc initialization with various invalid inputs."""
-    mock_sm_global.atom_pos.return_value = np.array([[0, 0, 0]])
-    mock_sm_global.__name__ = "mock_spin_model"  # Add name attribute to mock
-    mock_sm_global.__name__ = "mock_spin_model"  # Add name attribute to mock
-    mock_sm_global.mpr.return_value = [sp.eye(3)]
+    mock_spin_model.atom_pos.return_value = np.array([[0, 0, 0]])
+    mock_spin_model.__name__ = "mock_spin_model"  # Add name attribute to mock
+    mock_spin_model.__name__ = "mock_spin_model"  # Add name attribute to mock
+    mock_spin_model.mpr.return_value = [sp.eye(3)]
 
     with pytest.raises(ValueError, match="spin_magnitude must be positive"):
-        MagCalc(0.0, [1.0], "base", "r", mock_sm_global)
+        MagCalc(
+            0.0, [1.0], "base", mock_spin_model, cache_mode="r"
+        )  # Use renamed argument
     with pytest.raises(TypeError, match="hamiltonian_params must be a non-empty list"):
-        MagCalc(1.0, [], "base", "r", mock_sm_global)
+        MagCalc(
+            1.0, [], "base", mock_spin_model, cache_mode="r"
+        )  # Use renamed argument
     with pytest.raises(
         TypeError, match="All elements in hamiltonian_params must be numbers"
     ):
-        MagCalc(1.0, ["a"], "base", "r", mock_sm_global)
+        MagCalc(
+            1.0, ["a"], "base", mock_spin_model, cache_mode="r"
+        )  # Use renamed argument
     with pytest.raises(ValueError, match="Invalid cache_mode"):
-        MagCalc(1.0, [1.0], "base", "x", mock_sm_global)
+        MagCalc(
+            1.0, [1.0], "base", mock_spin_model, cache_mode="x"
+        )  # Use renamed argument
     with pytest.raises(FileNotFoundError):  # Check 'r' mode file not found
         # Use a non-existent base name and path
         with patch(
@@ -1011,18 +1021,22 @@ def test_magcalc_init_invalid_inputs(mock_sm_global):
             "magcalc.os.makedirs"
         ):  # Mock makedirs to prevent FileExistsError
             # Ensure exists returns False
-            MagCalc(1.0, [1.0], "non_existent_cache", "r", mock_sm_global)
+            MagCalc(
+                1.0, [1.0], "non_existent_cache", mock_spin_model, cache_mode="r"
+            )  # Use renamed argument
 
 
-@patch("magcalc.sm", new_callable=MagicMock)
+# @patch("magcalc.sm", new_callable=MagicMock) # REMOVED
 @patch("magcalc.MagCalc._calculate_numerical_ud")  # Mock the recalculation method
-def test_magcalc_update_methods(mock_calc_ud, mock_sm_global, dummy_cache_files):
+def test_magcalc_update_methods(
+    mock_calc_ud, mock_spin_model, dummy_cache_files
+):  # Renamed argument
     """Test update_spin_magnitude and update_hamiltonian_params."""
     tmp_path, base_name = dummy_cache_files
-    mock_sm_global.atom_pos.return_value = np.array([[0, 0, 0]])
-    mock_sm_global.__name__ = "mock_spin_model"  # Add name attribute to mock
-    mock_sm_global.__name__ = "mock_spin_model"  # Add name attribute to mock
-    mock_sm_global.mpr.return_value = [sp.Matrix([[sp.Symbol("p0"), 0], [0, 1]])]
+    mock_spin_model.atom_pos.return_value = np.array([[0, 0, 0]])
+    mock_spin_model.__name__ = "mock_spin_model"  # Add name attribute to mock
+    mock_spin_model.__name__ = "mock_spin_model"  # Add name attribute to mock
+    mock_spin_model.mpr.return_value = [sp.Matrix([[sp.Symbol("p0"), 0], [0, 1]])]
 
     # Define symbols beforehand for consistency in mock pickle.load
     kx_local, ky_local, kz_local = sp.symbols("kx ky kz")  # Removed real=True
@@ -1071,8 +1085,8 @@ def test_magcalc_update_methods(mock_calc_ud, mock_sm_global, dummy_cache_files)
             spin_magnitude=S_val,
             hamiltonian_params=params_val,
             cache_file_base=base_name,
+            spin_model_module=mock_spin_model,  # Use renamed argument
             cache_mode="r",
-            spin_model_module=mock_sm_global,
         )
 
     # Test update_spin_magnitude

@@ -13,7 +13,7 @@ import numpy as np
 from timeit import default_timer
 import matplotlib.pyplot as plt
 import magcalc as mc  # Import the refactored magcalc module
-import sys
+import spin_model as kfe3j_model  # Import the specific spin modelimport sys
 
 # It's often good practice to configure logging in the main script too
 import logging
@@ -59,6 +59,7 @@ def calculate_and_save_dispersion(p, S, wr, output_filename):
             spin_magnitude=S,
             hamiltonian_params=p,
             cache_file_base=cache_base,
+            spin_model_module=kfe3j_model,  # Pass the imported model
             cache_mode=wr,
         )
 

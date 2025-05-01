@@ -6,7 +6,7 @@ LSWT Calculator Module
 @author: Kit Matan and Pharit Piyawongwatthana
 Refactored by AI Assistant
 """
-import spin_model as sm  # User-defined spin model
+# import spin_model as sm # REMOVED: User-defined spin model will be passed explicitly
 import sympy as sp
 from sympy import I, lambdify, Add
 import numpy as np
@@ -20,6 +20,7 @@ import logging
 import os
 
 # Type Hinting Imports
+import types  # Added for ModuleType hint
 from typing import List, Tuple, Dict, Any, Optional, Union, NoReturn
 import numpy.typing as npt
 
@@ -589,13 +590,16 @@ def process_calc_Sqw(
 
 # --- gen_HM Function (Keep outside class) ---
 def gen_HM(
-    k_sym: List[sp.Symbol], S_sym: sp.Symbol, params_sym: List[sp.Symbol]
+    spin_model_module,  # ADDED: Explicitly pass the spin model module
+    k_sym: List[sp.Symbol],
+    S_sym: sp.Symbol,
+    params_sym: List[sp.Symbol],
 ) -> Tuple[sp.Matrix, sp.Matrix]:
     """Generates symbolic TwogH2 and Ud matrices."""
-    # Assumes 'sm' is globally available or correctly imported where needed
-    atom_positions_uc: npt.NDArray[np.float_] = sm.atom_pos()
+    # Use the passed module instead of global 'sm'
+    atom_positions_uc: npt.NDArray[np.float_] = spin_model_module.atom_pos()
     nspins: int = len(atom_positions_uc)
-    atom_positions_ouc: npt.NDArray[np.float_] = sm.atom_pos_ouc()
+    atom_positions_ouc: npt.NDArray[np.float_] = spin_model_module.atom_pos_ouc()
     nspins_ouc: int = len(atom_positions_ouc)
     logger.info(f"Number of spins in the unit cell: {nspins}")
     c_ops: List[sp.Symbol] = sp.symbols("c0:%d" % nspins_ouc, commutative=False)
@@ -610,17 +614,21 @@ def gen_HM(
         )
         for i in range(nspins_ouc)
     ]
-    rotation_matrices: List[Union[npt.NDArray, sp.Matrix]] = sm.mpr(params_sym)
+    rotation_matrices: List[Union[npt.NDArray, sp.Matrix]] = spin_model_module.mpr(
+        params_sym
+    )
     spin_ops_global_ouc: List[sp.Matrix] = [
         rotation_matrices[j] * spin_ops_local[nspins * i + j]
         for i in range(int(nspins_ouc / nspins))
         for j in range(nspins)
     ]
-    hamiltonian_sym: sp.Expr = sm.Hamiltonian(spin_ops_global_ouc, params_sym)
+    hamiltonian_sym: sp.Expr = spin_model_module.Hamiltonian(
+        spin_ops_global_ouc, params_sym
+    )
     hamiltonian_sym = sp.expand(hamiltonian_sym)
     hamiltonian_S0: sp.Expr = hamiltonian_sym.coeff(S_sym, 0)
     if params_sym:
-        hamiltonian_sym = (
+        hamiltonian_sym = (  # This logic seems specific, keep as is for now
             hamiltonian_S0.coeff(params_sym[-1]) * params_sym[-1]
             + hamiltonian_sym.coeff(S_sym, 1) * S_sym
             + hamiltonian_sym.coeff(S_sym, 2) * S_sym**2
@@ -643,7 +651,7 @@ def gen_HM(
     cmkd_ops: List[sp.Symbol] = [
         sp.Symbol("cmkd%d" % j, commutative=False) for j in range(nspins)
     ]
-    interaction_matrix: npt.NDArray = sm.spin_interactions(params_sym)[0]
+    interaction_matrix: npt.NDArray = spin_model_module.spin_interactions(params_sym)[0]
     fourier_substitutions: List[List[sp.Expr]] = [
         ent
         for i in range(nspins)
@@ -856,8 +864,8 @@ class MagCalc:
         spin_magnitude: float,
         hamiltonian_params: Union[List[float], npt.NDArray[np.float_]],
         cache_file_base: str,
+        spin_model_module: types.ModuleType,  # Moved before cache_mode
         cache_mode: str = "r",
-        spin_model_module=sm,
     ):
         """
         Initializes the MagCalc LSWT calculator.
@@ -875,14 +883,14 @@ class MagCalc:
             cache_file_base (str): The base filename (without path or extension)
                 used for storing/retrieving cached symbolic matrices (HMat, Ud)
                 in the 'pckFiles' subdirectory.
+            spin_model_module (module): The imported Python module
+                containing the spin model definitions (e.g., Hamiltonian, mpr, atom_pos).
+                This argument is REQUIRED.
             cache_mode (str, optional): Specifies the cache behavior.
                 'r': Read symbolic matrices from cache files. Fails if files
                      don't exist or are invalid. (Default)
                 'w': Generate symbolic matrices (potentially slow) and write
-                     them to cache files, overwriting existing ones.
-            spin_model_module (module, optional): The imported Python module
-                containing the spin model definitions (e.g., Hamiltonian, mpr,
-                atom_pos). Defaults to the globally imported `sm`.
+                This argument is REQUIRED.
 
         Raises:
             TypeError: If spin_magnitude is not a number or hamiltonian_params
@@ -1006,7 +1014,10 @@ class MagCalc:
             try:
                 # gen_HM expects list of param symbols
                 self.HMat_sym, self.Ud_sym = gen_HM(
-                    self.k_sym, self.S_sym, list(self.params_sym)
+                    self.sm,
+                    self.k_sym,
+                    self.S_sym,
+                    list(self.params_sym),  # Pass self.sm
                 )
             except Exception as e:
                 logger.exception("Failed to generate symbolic matrices in gen_HM.")
