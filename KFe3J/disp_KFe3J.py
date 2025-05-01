@@ -26,13 +26,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def plot_disp(p, S, wr):
-    """Plot spin-wave dispersion for KFe3(OH)6(SO4)2
+def calculate_and_save_dispersion(p, S, wr, output_filename):
+    """Calculate spin-wave dispersion for KFe3(OH)6(SO4)2 and save results.
     Inputs:
         p: list of parameters
         S: spin value
-        wr: 'w' for write to file, 'r' for read from file"""
-
+        wr: 'w' for write cache, 'r' for read cache
+        output_filename: path to save the calculated data (.npz)
+    Returns:
+        bool: True if calculation and saving were successful, False otherwise."""
     # --- q-point generation (exactly as in the old version) ---
     intv = 0.05
     qsx = np.arange(0 - intv / 2, 2 * np.pi / np.sqrt(3) + intv / 2, intv)
@@ -65,15 +67,84 @@ def plot_disp(p, S, wr):
         En = calculator.calculate_dispersion(q_vectors_array)
         # --- End NEW WAY ---
 
+        # --- Save Results ---
+        if En is not None:
+            logger.info(f"Saving calculation results to {output_filename}...")
+            try:
+                # Ensure En is suitable for saving (list of arrays or similar)
+                results_to_save = {"q_vectors": q_vectors_array, "energies": En}
+                calculator.save_results(output_filename, results_to_save)
+                logger.info("Results saved successfully.")
+                return True  # Indicate success
+            except Exception as e:
+                logger.error(
+                    f"Failed to save results to {output_filename}: {e}", exc_info=True
+                )
+                return False  # Indicate failure
+        else:
+            logger.error("Calculation returned None, cannot save results.")
+            return False  # Indicate failure
+
     except (FileNotFoundError, AttributeError, RuntimeError, ValueError) as e:
         logger.error(f"Error during MagCalc setup or calculation: {e}", exc_info=True)
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}", exc_info=True)
+    return False  # Indicate failure if try block failed before saving
 
+
+def plot_dispersion_from_file(filename):
+    """Loads dispersion data from a .npz file and plots it."""
     # --- Plotting (only if calculation succeeded) ---
-    if En is None:
-        logger.error("Dispersion calculation failed or returned None. Cannot plot.")
-        return  # Exit the function if En is None
+    logger.info(f"Loading data from {filename} for plotting...")
+    try:
+        data = np.load(
+            filename, allow_pickle=True
+        )  # allow_pickle needed if En was saved as list of arrays
+        q_vectors_array = data["q_vectors"]
+        En = data["energies"]
+        logger.info("Data loaded successfully.")
+    except FileNotFoundError:
+        logger.error(f"Data file not found: {filename}. Cannot plot.")
+        return
+    except KeyError as e:
+        logger.error(
+            f"Missing expected key '{e}' in data file {filename}. Cannot plot."
+        )
+        return
+    except Exception as e:
+        logger.error(f"Error loading data from {filename}: {e}", exc_info=True)
+        return
+
+    # Need to recalculate qsx, qsy lengths based on loaded data
+    # This assumes the q-path structure is consistent with how it was saved
+    # Find the split point between qx and qy paths
+    split_index = -1
+    for i in range(1, len(q_vectors_array)):
+        # Check if y-component becomes non-zero (start of qy path)
+        # or if x-component becomes zero after being non-zero (end of qx path)
+        if (
+            abs(q_vectors_array[i, 1]) > 1e-9 and abs(q_vectors_array[i - 1, 1]) < 1e-9
+        ) or (
+            abs(q_vectors_array[i, 0]) < 1e-9 and abs(q_vectors_array[i - 1, 0]) > 1e-9
+        ):
+            # A more robust check might be needed depending on q-path generation
+            # This simple check assumes qx path comes first, then qy path
+            if (
+                abs(q_vectors_array[i - 1, 1]) < 1e-9
+            ):  # Check if previous was on qx path
+                split_index = i
+                break
+
+    if split_index == -1:
+        logger.warning(
+            "Could not reliably determine split between qx and qy paths from loaded data. Assuming first half is qx."
+        )
+        split_index = len(q_vectors_array) // 2  # Fallback, might be incorrect
+
+    qsx = q_vectors_array[:split_index, 0]  # Extract x-component for the first part
+    qsy = q_vectors_array[split_index:, 1]  # Extract y-component for the second part
+    len_qsx = len(qsx)
+    len_qsy = len(qsy)
 
     if len(En) != len(q_vectors_array):
         logger.error(
@@ -83,21 +154,43 @@ def plot_disp(p, S, wr):
 
     logger.info("Processing results for plotting...")
     # --- Energy extraction (exactly as in the old version, with added safety) ---
+    # Use len_qsx and len_qsy derived from loaded data
     try:
-        Ekx1 = [En[i][0] if En[i] is not None else np.nan for i in range(len(qsx))]
-        Ekx2 = [En[i][1] if En[i] is not None else np.nan for i in range(len(qsx))]
-        Ekx3 = [En[i][2] if En[i] is not None else np.nan for i in range(len(qsx))]
+        Ekx1 = [
+            En[i][0] if En[i] is not None and len(En[i]) > 0 else np.nan
+            for i in range(len_qsx)
+        ]
+        Ekx2 = [
+            En[i][1] if En[i] is not None and len(En[i]) > 1 else np.nan
+            for i in range(len_qsx)
+        ]
+        Ekx3 = [
+            En[i][2] if En[i] is not None and len(En[i]) > 2 else np.nan
+            for i in range(len_qsx)
+        ]
         Eky1 = [
-            En[len(qsx) + i][0] if En[len(qsx) + i] is not None else np.nan
-            for i in range(len(qsy))
+            (
+                En[len_qsx + i][0]
+                if En[len_qsx + i] is not None and len(En[len_qsx + i]) > 0
+                else np.nan
+            )
+            for i in range(len_qsy)
         ]
         Eky2 = [
-            En[len(qsx) + i][1] if En[len(qsx) + i] is not None else np.nan
-            for i in range(len(qsy))
+            (
+                En[len_qsx + i][1]
+                if En[len_qsx + i] is not None and len(En[len_qsx + i]) > 1
+                else np.nan
+            )
+            for i in range(len_qsy)
         ]
         Eky3 = [
-            En[len(qsx) + i][2] if En[len(qsx) + i] is not None else np.nan
-            for i in range(len(qsy))
+            (
+                En[len_qsx + i][2]
+                if En[len_qsx + i] is not None and len(En[len_qsx + i]) > 2
+                else np.nan
+            )
+            for i in range(len_qsy)
         ]
     except (IndexError, TypeError) as e:
         logger.error(
@@ -110,9 +203,10 @@ def plot_disp(p, S, wr):
     logger.info("Generating plot...")
     plt.figure()  # Ensure a new figure is created
 
-    qsyn = (
-        2 * np.pi + 2 * np.pi / np.sqrt(3) - qsy
-    )  # Keep original x-axis transformation
+    # Use qsx and qsy derived from loaded data
+    qsyn = qsx[-1] + (
+        qsy[-1] - qsy
+    )  # More robust transformation based on actual ranges  # Keep original x-axis transformation
     plt.plot(
         qsx,
         Ekx1,
@@ -132,18 +226,19 @@ def plot_disp(p, S, wr):
         qsyn,
         Eky3,
         "b-",
+        marker=".",
+        markersize=2,  # Optional: add markers to see points
     )
     # Vertical lines
-    plt.plot([2 * np.pi / np.sqrt(3), 2 * np.pi / np.sqrt(3)], [-1, 25], "k:")
+    plt.plot([qsx[-1], qsx[-1]], [-1, 25], "k:")  # Use end of loaded qsx
     plt.plot(
         [
-            2 * np.pi / np.sqrt(3) + 2 * np.pi - 4 * np.pi / 3,
-            2 * np.pi / np.sqrt(3) + 2 * np.pi - 4 * np.pi / 3,
+            qsyn[len(qsyn) // 2],  # Approximate K point location on transformed axis
+            qsyn[len(qsyn) // 2],
         ],
         [-1, 25],
         "k:",
     )
-    # Limits and labels
     plt.xlim([0, 2 * np.pi / np.sqrt(3) + 2 * np.pi])
     plt.ylim([0, 20])
     plt.xticks([])  # Remove numerical ticks
@@ -168,13 +263,24 @@ if __name__ == "__main__":
     st_main = default_timer()
     # KFe3Jarosite
     S_val = 5.0 / 2.0  # spin value
-    params = [3.23, 0.11, 0.218, -0.195, 0]
+    params_val = [3.23, 0.11, 0.218, -0.195, 0]
 
     # Set cache mode: 'w' for first run, 'r' afterwards
-    write_read_mode = "w"  # Default to read mode
+    write_read_mode = "r"  # Change to 'w' to regenerate cache
 
-    logger.info(f"Starting KFe3J dispersion plot with mode='{write_read_mode}'...")
-    plot_disp(params, S_val, write_read_mode)
+    # Define the output file for calculated data
+    data_filename = "KFe3J_disp_data.npz"
+
+    logger.info(
+        f"Starting KFe3J dispersion calculation with mode='{write_read_mode}'..."
+    )
+    calculation_successful = calculate_and_save_dispersion(
+        params_val, S_val, write_read_mode, data_filename
+    )
+
+    if calculation_successful:
+        logger.info("Calculation successful, proceeding to plot...")
+        plot_dispersion_from_file(data_filename)
 
     et_main = default_timer()
     logger.info(f"Total run-time: {np.round((et_main - st_main) / 60, 2)} min.")
