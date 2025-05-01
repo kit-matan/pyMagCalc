@@ -1,9 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-LSWT Calculator Module
+Linear Spin-Wave Theory (LSWT) Calculator Module.
+
+This module provides the `MagCalc` class and supporting functions to perform
+LSWT calculations for magnetic materials. It takes a user-defined spin model
+(Hamiltonian, structure, interactions) and computes:
+
+1.  Spin-wave dispersion relations (energy vs. momentum).
+2.  Dynamic structure factor S(q, ω) (neutron scattering intensity).
+
+Key features include symbolic manipulation using SymPy, numerical diagonalization
+using SciPy/NumPy, parallel processing for performance, and caching of
+computationally expensive symbolic results.
 
 @author: Kit Matan and Pharit Piyawongwatthana
+@contributor: AI Assistant (Refactoring, Docstrings)
 Refactored by AI Assistant
 """
 # import spin_model as sm # REMOVED: User-defined spin model will be passed explicitly
@@ -52,14 +64,38 @@ PROJECTION_CHECK_TOLERANCE: float = 1e-5
 def substitute_expr(
     args: Tuple[sp.Expr, Union[Dict, List[Tuple[sp.Expr, sp.Expr]]]],
 ) -> sp.Expr:
-    """Helper function for multiprocessing substitution."""
+    """
+    Perform symbolic substitution on a SymPy expression.
+
+    This helper function is designed to be used with `multiprocessing.Pool.imap`
+    to parallelize the substitution process across multiple terms of a larger
+    expression.
+
+    Args:
+        args: A tuple containing:
+            expr (sp.Expr): The SymPy expression to perform substitution on.
+            subs_dict (Union[Dict, List[Tuple[sp.Expr, sp.Expr]]]):
+                A dictionary or list of (old, new) pairs for substitution.
+
+    Returns:
+        sp.Expr: The SymPy expression after substitution.
+    """
     expr, subs_dict = args
     result: sp.Expr = expr.subs(subs_dict, simultaneous=True)
     return result
 
 
 def gram_schmidt(x: npt.NDArray[np.complex_]) -> npt.NDArray[np.complex_]:
-    """Performs Gram-Schmidt orthogonalization using QR decomposition."""
+    """
+    Perform Gram-Schmidt orthogonalization on a set of vectors using QR decomposition.
+
+    Args:
+        x (npt.NDArray[np.complex_]): A matrix where columns represent the vectors
+                                       to be orthogonalized.
+    Returns:
+        npt.NDArray[np.complex_]: A matrix with orthonormal columns spanning the
+                                  same space as the input vectors.
+    """
     q, r = np.linalg.qr(x, mode="reduced")
     return q
 
@@ -70,6 +106,25 @@ def gram_schmidt(x: npt.NDArray[np.complex_]) -> npt.NDArray[np.complex_]:
 def _diagonalize_and_sort(
     Hmat: npt.NDArray[np.complex_], nspins: int, q_vector_label: str
 ) -> Tuple[Optional[npt.NDArray[np.complex_]], Optional[npt.NDArray[np.complex_]]]:
+    """
+    Diagonalize the numerical Hamiltonian matrix and sort eigenvalues/vectors.
+
+    Sorts eigenvalues in ascending order. The corresponding eigenvectors are
+    rearranged accordingly. The sorting separates the positive energy (magnon)
+    modes from the negative energy modes.
+
+    Args:
+        Hmat (npt.NDArray[np.complex_]): The numerical Hamiltonian matrix (2N x 2N).
+        nspins (int): The number of spins in the magnetic unit cell (N).
+        q_vector_label (str): A string label identifying the q-vector (for logging).
+
+    Returns:
+        Tuple[Optional[npt.NDArray[np.complex_]], Optional[npt.NDArray[np.complex_]]]:
+            A tuple containing:
+            - Sorted eigenvalues (2N, complex).
+            - Sorted eigenvectors (columns, 2N x 2N, complex).
+            Returns (None, None) if diagonalization fails.
+    """
     try:
         eigvals, eigvecs = la.eig(Hmat)
     except np.linalg.LinAlgError as e:
@@ -100,6 +155,24 @@ def _apply_gram_schmidt(
     degeneracy_threshold: float,
     q_vector_label: str,
 ) -> npt.NDArray[np.complex_]:
+    """
+    Apply Gram-Schmidt orthogonalization to blocks of degenerate eigenvectors.
+
+    Iterates through sorted eigenvectors and applies Gram-Schmidt to sets
+    of eigenvectors whose corresponding eigenvalues are closer than the
+    `degeneracy_threshold`. This ensures orthogonality within degenerate subspaces.
+
+    Args:
+        eigenvalues (npt.NDArray[np.complex_]): Sorted eigenvalues.
+        eigenvectors (npt.NDArray[np.complex_]): Corresponding sorted eigenvectors (columns).
+        degeneracy_threshold (float): The threshold below which eigenvalues are
+                                      considered degenerate.
+        q_vector_label (str): A string label identifying the q-vector (for logging).
+
+    Returns:
+        npt.NDArray[np.complex_]: The eigenvectors matrix with degenerate blocks
+                                  orthogonalized.
+    """
     nspins2 = eigenvectors.shape[0]
     orthonormalized_eigenvectors = eigenvectors.copy()
     degeneracy_count: int = 0
@@ -157,6 +230,29 @@ def _calculate_alpha_matrix(
     zero_threshold: float,
     q_vector_label: str,
 ) -> Optional[npt.NDArray[np.complex_]]:
+    """
+    Calculate the diagonal alpha matrix used in the transformation T.
+
+    The transformation matrix T relates the original boson operators to the
+    diagonal magnon operators. T = V @ alpha, where V is the matrix of
+    eigenvectors and alpha is a diagonal matrix.
+    alpha_ii = sqrt(g_ii / N_ii), where g is the metric tensor (+1/-1) and
+    N_ii = V_i^dagger @ g @ V_i is the pseudo-norm.
+
+    Handles potential issues like near-zero pseudo-norms and sign mismatches
+    between g_ii and N_ii, setting alpha_ii to zero in problematic cases.
+
+    Args:
+        eigenvectors (npt.NDArray[np.complex_]): Orthonormalized eigenvectors (columns).
+        G_metric (npt.NDArray[np.float_]): The diagonal metric tensor [1,..1,-1,..-1].
+        zero_threshold (float): Threshold below which norms or alpha values are
+                                treated as zero.
+        q_vector_label (str): A string label identifying the q-vector (for logging).
+
+    Returns:
+        Optional[npt.NDArray[np.complex_]]: The diagonal alpha matrix (2N x 2N).
+                                           Returns None if calculation fails.
+    """
     nspins2 = eigenvectors.shape[0]
     alpha_diag_sq: npt.NDArray[np.float_] = np.zeros(nspins2, dtype=float)
     zero_threshold_sq = zero_threshold**2  # Pre-calculate square
@@ -217,6 +313,36 @@ def _match_and_reorder_minus_q(
 ) -> Tuple[
     npt.NDArray[np.complex_], npt.NDArray[np.complex_], npt.NDArray[np.complex_]
 ]:
+    """
+    Match and reorder eigenvectors and alpha matrix for the -q calculation.
+
+    The calculation of S(q,w) requires relating the solutions at +q and -q.
+    This function reorders the eigenvectors (`eigvecs_m_ortho`), eigenvalues
+    (`eigvals_m_sorted`), and alpha matrix (`alpha_m_sorted`) obtained from the
+    -q diagonalization to match the ordering derived from the +q solution.
+
+    Matching is based on maximizing the projection between the appropriately
+    transformed +q eigenvectors and the -q eigenvectors. A phase factor is
+    calculated and applied to the reordered -q alpha matrix elements to ensure
+    consistency.
+
+    Args:
+        eigvecs_p_ortho (npt.NDArray[np.complex_]): Orthonormalized eigenvectors for +q.
+        alpha_p (npt.NDArray[np.complex_]): Diagonal alpha matrix for +q.
+        eigvecs_m_ortho (npt.NDArray[np.complex_]): Orthonormalized eigenvectors for -q (initial sort).
+        eigvals_m_sorted (npt.NDArray[np.complex_]): Eigenvalues for -q (initial sort).
+        alpha_m_sorted (npt.NDArray[np.complex_]): Diagonal alpha matrix for -q (initial sort).
+        nspins (int): Number of spins in the unit cell.
+        match_tol (float): Tolerance for eigenvector matching projection (|proj|^2 > 1 - tol^2).
+        zero_tol (float): Threshold below which vector norms or dot products are treated as zero.
+        q_vector_label (str): A string label identifying the q-vector (for logging).
+
+    Returns:
+        Tuple[npt.NDArray[np.complex_], npt.NDArray[np.complex_], npt.NDArray[np.complex_]]:
+            - Reordered eigenvectors for -q.
+            - Reordered eigenvalues for -q.
+            - Reordered and phase-corrected alpha matrix for -q.
+    """
     nspins2 = 2 * nspins
     eigenvectors_plus_q_swapped_conj: npt.NDArray[np.complex_] = np.conj(
         np.vstack((eigvecs_p_ortho[nspins:nspins2, :], eigvecs_p_ortho[0:nspins, :]))
@@ -318,6 +444,27 @@ def _calculate_K_Kd(
     inv_T_m_reordered: npt.NDArray[np.complex_],
     zero_threshold: float,
 ) -> Tuple[npt.NDArray[np.complex_], npt.NDArray[np.complex_]]:
+    """
+    Calculate the K and Kd matrices for S(q,w) intensity calculation.
+
+    These matrices relate the original spin operators (in global coordinates)
+    to the diagonal magnon creation/annihilation operators.
+    S^alpha(q) = sum_mu [ K_{alpha, mu} * b_mu + Kd_{alpha, mu} * b_{-mu}^dagger ]
+
+    K = sqrt(S/2) * Ud * Udd * T^{-1}(+q)
+    Kd = sqrt(S/2) * Ud * Udd * T^{-1}(-q, reordered)
+    where Ud maps local spin axes to global, Udd maps spin components to bosons.
+
+    Args:
+        Ud_numeric (npt.NDArray[np.complex_]): Numerical rotation matrix (3N x 3N).
+        spin_magnitude (float): Numerical value of spin S.
+        nspins (int): Number of spins in the unit cell.
+        inv_T_p (npt.NDArray[np.complex_]): Inverse transformation matrix T^{-1} for +q.
+        inv_T_m_reordered (npt.NDArray[np.complex_]): Inverse transformation matrix T^{-1} for -q (reordered).
+        zero_threshold (float): Threshold below which matrix elements are set to zero.
+    Returns:
+        Tuple[npt.NDArray[np.complex_], npt.NDArray[np.complex_]]: K matrix (3N x 2N) and Kd matrix (3N x 2N).
+    """
     Udd_local_boson_map: npt.NDArray[np.complex_] = np.zeros(
         (3 * nspins, 2 * nspins), dtype=complex
     )
@@ -349,7 +496,31 @@ def KKdMatrix(
 ) -> Tuple[
     npt.NDArray[np.complex_], npt.NDArray[np.complex_], npt.NDArray[np.complex_]
 ]:
-    """Calculates K, Kd, and eigenvalues by orchestrating helper functions."""
+    """
+    Calculate K, Kd matrices and eigenvalues for S(q,w) calculation.
+
+    This function orchestrates the numerical steps required after obtaining the
+    Hamiltonian matrices H(+q) and H(-q):
+    1. Diagonalize H(+q) and H(-q).
+    2. Sort eigenvalues and eigenvectors.
+    3. Apply Gram-Schmidt to degenerate eigenvectors.
+    4. Calculate the alpha matrices for +q and -q.
+    5. Match and reorder the -q results based on the +q results.
+    6. Calculate the inverse transformation matrices T^{-1} = V @ alpha.
+    7. Calculate the final K and Kd matrices.
+
+    Args:
+        spin_magnitude (float): Numerical value of spin S.
+        Hmat_plus_q (npt.NDArray[np.complex_]): Numerical Hamiltonian matrix for +q.
+        Hmat_minus_q (npt.NDArray[np.complex_]): Numerical Hamiltonian matrix for -q.
+        Ud_numeric (npt.NDArray[np.complex_]): Numerical rotation matrix Ud.
+        q_vector (npt.NDArray[np.float_]): The momentum vector q.
+        nspins (int): Number of spins in the unit cell.
+
+    Returns:
+        Tuple[npt.NDArray[np.complex_], npt.NDArray[np.complex_], npt.NDArray[np.complex_]]:
+            K matrix, Kd matrix, and sorted eigenvalues from the +q calculation. Returns NaN arrays on failure.
+    """
     q_label = f"q={q_vector}"
     nan_matrix = np.full((3 * nspins, 2 * nspins), np.nan, dtype=np.complex_)
     nan_eigs = np.full((2 * nspins,), np.nan, dtype=np.complex_)
@@ -415,7 +586,28 @@ def process_calc_disp(
         Union[List[float], npt.NDArray[np.float_]],
     ],
 ) -> npt.NDArray[np.float_]:
-    """Worker function for dispersion calculation."""
+    """
+    Worker function for parallel dispersion calculation at a single q-point.
+
+    This function is designed to be called by `multiprocessing.Pool.imap`.
+    It takes the symbolic Hamiltonian, symbols, numerical parameters, and a
+    single q-vector. It then:
+    1. Lambdifies the symbolic Hamiltonian for fast numerical evaluation.
+    2. Substitutes the numerical values (q, S, params) into the lambdified function.
+    3. Calculates the eigenvalues of the resulting numerical matrix.
+    4. Sorts the eigenvalues and extracts the positive energy modes (magnon energies).
+
+    Args:
+        args (Tuple): A tuple containing:
+            HMat_sym (sp.Matrix): Symbolic Hamiltonian matrix (2gH).
+            full_symbol_list (List[sp.Symbol]): List of all symbols [kx,ky,kz,S,p0,...].
+            q_vector (npt.NDArray[np.float_]): The specific q-vector [qx, qy, qz].
+            nspins (int): Number of spins in the unit cell.
+            spin_magnitude_num (float): Numerical value of S.
+            hamiltonian_params_num (Union[List[float], npt.NDArray[np.float_]]): Numerical parameters [p0, p1,...].
+    Returns:
+        npt.NDArray[np.float_]: Array of calculated magnon energies (N,) for the given q-point. Returns NaN array on failure.
+    """
     (
         HMat_sym,
         full_symbol_list,
@@ -487,7 +679,31 @@ def process_calc_Sqw(
         Union[List[float], npt.NDArray[np.float_]],
     ],
 ) -> Tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]]:
-    """Worker function for S(q,w) calculation."""
+    """
+    Worker function for parallel S(q,w) calculation at a single q-point.
+
+    This function is designed to be called by `multiprocessing.Pool.imap`.
+    It takes the symbolic Hamiltonian, numerical Ud matrix, symbols, parameters,
+    and a single q-vector. It then:
+    1. Lambdifies the symbolic Hamiltonian.
+    2. Evaluates the numerical Hamiltonian matrix at +q and -q.
+    3. Calls `KKdMatrix` to perform diagonalization, matching, and calculate K, Kd, and eigenvalues.
+    4. Calculates the spin-spin correlation functions using K and Kd.
+    5. Applies the neutron scattering polarization factor.
+    6. Returns the q-vector, calculated energies, and intensities.
+
+    Args:
+        args (Tuple): A tuple containing:
+            HMat_sym (sp.Matrix): Symbolic Hamiltonian matrix (2gH).
+            Ud_numeric (npt.NDArray[np.complex_]): Numerical rotation matrix Ud.
+            full_symbol_list (List[sp.Symbol]): List of all symbols [kx,ky,kz,S,p0,...].
+            q_vector (npt.NDArray[np.float_]): The specific q-vector [qx, qy, qz].
+            nspins (int): Number of spins in the unit cell.
+            spin_magnitude_num (float): Numerical value of S.
+            hamiltonian_params_num (Union[List[float], npt.NDArray[np.float_]]): Numerical parameters [p0, p1,...].
+    Returns:
+        Tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]]: q-vector, energies (N,), intensities (N,). Returns NaNs on failure.
+    """
     (
         HMat_sym,
         Ud_numeric,
@@ -594,7 +810,15 @@ def process_calc_Sqw(
 def _setup_hp_operators(
     nspins_ouc: int, S_sym: sp.Symbol
 ) -> Tuple[List[sp.Symbol], List[sp.Symbol], List[sp.Matrix]]:
-    """Sets up Holstein-Primakoff boson operators and local spin operators."""
+    """
+    Create symbolic Holstein-Primakoff boson operators and local spin operators.
+
+    Args:
+        nspins_ouc (int): Number of spins in the original unit cell + neighbors (OUC).
+        S_sym (sp.Symbol): Symbolic representation of the spin magnitude S.
+    Returns:
+        Tuple[List[sp.Symbol], List[sp.Symbol], List[sp.Matrix]]: Boson annihilation operators (c), creation operators (cd), and local spin operators (Sx, Sy, Sz) expressed in terms of bosons.
+    """
     c_ops = sp.symbols("c0:%d" % nspins_ouc, commutative=False)
     cd_ops = sp.symbols("cd0:%d" % nspins_ouc, commutative=False)
     spin_ops_local = [
@@ -616,7 +840,17 @@ def _rotate_spin_operators(
     nspins: int,
     nspins_ouc: int,
 ) -> List[sp.Matrix]:
-    """Rotates local spin operators to the global frame."""
+    """
+    Rotate local spin operators (defined along local z-axis) to the global frame.
+
+    Args:
+        spin_ops_local (List[sp.Matrix]): List of local spin operators (3x1 matrices) for each spin in OUC.
+        rotation_matrices (List[Union[npt.NDArray, sp.Matrix]]): List of rotation matrices (3x3) for each spin in the magnetic unit cell. These are applied cyclically to the OUC spins.
+        nspins (int): Number of spins in the magnetic unit cell.
+        nspins_ouc (int): Number of spins in the OUC.
+    Returns:
+        List[sp.Matrix]: List of global spin operators (3x1 matrices) for each spin in OUC.
+    """
     spin_ops_global_ouc = [
         rotation_matrices[j] * spin_ops_local[nspins * i + j]
         for i in range(int(nspins_ouc / nspins))
@@ -631,7 +865,21 @@ def _prepare_hamiltonian(
     params_sym: List[sp.Symbol],
     S_sym: sp.Symbol,
 ) -> sp.Expr:
-    """Gets the Hamiltonian from the model, expands it, and filters terms."""
+    """
+    Construct the symbolic Hamiltonian using the user-defined model.
+
+    Retrieves the Hamiltonian expression from the `spin_model_module`, expands it,
+    and attempts to filter out terms higher than quadratic in boson operators
+    by analyzing powers of the symbolic spin S.
+
+    Args:
+        spin_model_module (types.ModuleType): The user-provided spin model module.
+        spin_ops_global_ouc (List[sp.Matrix]): List of global spin operators for OUC spins.
+        params_sym (List[sp.Symbol]): List of symbolic Hamiltonian parameters.
+        S_sym (sp.Symbol): Symbolic spin magnitude.
+    Returns:
+        sp.Expr: The expanded and filtered symbolic Hamiltonian expression (up to quadratic boson terms).
+    """
     hamiltonian_sym = spin_model_module.Hamiltonian(spin_ops_global_ouc, params_sym)
     hamiltonian_sym = sp.expand(hamiltonian_sym)
     # --- Filter Hamiltonian terms (Keep only up to quadratic in boson ops) ---
@@ -671,7 +919,30 @@ def _define_fourier_substitutions(
     cmkd_ops: List[sp.Symbol],
     params_sym: List[sp.Symbol],  # ADDED: Pass symbolic parameters
 ) -> List[List[sp.Expr]]:
-    """Defines the substitution rules for Fourier transforming boson operators."""
+    """
+    Define the substitution rules for Fourier transforming boson operator pairs.
+
+    Generates a list of [old_expression, new_expression] pairs to substitute
+    real-space boson operator products (e.g., c_i*c_j, cd_i*c_j) with their
+    k-space equivalents involving ck, ckd, cmk, cmkd operators and phase factors
+    exp(+/-(I * k . dr_ij)). Only pairs corresponding to non-zero interactions
+    in the `spin_model_module` are considered. Includes diagonal terms (cd_j*c_j).
+
+    Args:
+        spin_model_module (types.ModuleType): The user spin model module.
+        k_sym (List[sp.Symbol]): Symbolic momentum vector [kx, ky, kz].
+        nspins (int): Number of spins in the magnetic unit cell.
+        nspins_ouc (int): Number of spins in the OUC.
+        c_ops (List[sp.Symbol]): Real-space annihilation operators (OUC).
+        cd_ops (List[sp.Symbol]): Real-space creation operators (OUC).
+        ck_ops (List[sp.Symbol]): k-space annihilation operators (UC).
+        ckd_ops (List[sp.Symbol]): k-space creation operators (UC).
+        cmk_ops (List[sp.Symbol]): -k-space annihilation operators (UC).
+        cmkd_ops (List[sp.Symbol]): -k-space creation operators (UC).
+        params_sym (List[sp.Symbol]): Symbolic Hamiltonian parameters (used to get interaction matrix).
+    Returns:
+        List[List[sp.Expr]]: A list of [old_expr, new_expr] substitution pairs for the Fourier transform.
+    """
     atom_positions_uc = spin_model_module.atom_pos()
     atom_positions_ouc = spin_model_module.atom_pos_ouc()
     # Use params_sym when calling spin_interactions
@@ -780,7 +1051,19 @@ def _define_commutation_substitutions(
     cmk_ops: List[sp.Symbol],
     cmkd_ops: List[sp.Symbol],
 ) -> List[List[sp.Expr]]:
-    """Defines the substitution rules for applying boson commutation relations."""
+    """
+    Define substitution rules for applying boson commutation relations in k-space.
+
+    Generates [old, new] pairs to enforce commutation rules like [ck_i, ckd_j] = delta_ij,
+    [cmkd_i, cmk_j] = delta_ij, and others ([ck, cmk]=0, [cmkd, ckd]=0). This puts
+    the Hamiltonian into normal order (creation operators to the left).
+
+    Args:
+        nspins (int): Number of spins in the magnetic unit cell.
+        ck_ops, ckd_ops, cmk_ops, cmkd_ops (List[sp.Symbol]): k-space boson operators.
+    Returns:
+        List[List[sp.Expr]]: Substitution pairs for commutation rules.
+    """
     commutation_substitutions = (
         [
             [ck_ops[i] * ckd_ops[j], ckd_ops[j] * ck_ops[i] + (1 if i == j else 0)]
@@ -809,7 +1092,21 @@ def _define_commutation_substitutions(
 def _define_placeholder_substitutions(
     nspins: int, basis_vector_dagger: List[sp.Symbol], basis_vector: List[sp.Symbol]
 ) -> Tuple[List[sp.Symbol], List[List[sp.Expr]]]:
-    """Defines placeholder symbols and substitutions for extracting the H2 matrix."""
+    """
+    Define placeholder symbols and substitutions to extract the H2 matrix elements.
+
+    Creates unique commutative symbols (e.g., "XdX0", "XdX1", ...) and substitution
+    rules to replace the normal-ordered k-space boson pairs (e.g., ckd_i * ck_j)
+    with these placeholders. This allows extracting the coefficients of these pairs,
+    which form the elements of the quadratic Hamiltonian matrix H2.
+
+    Args:
+        nspins (int): Number of spins in the magnetic unit cell.
+        basis_vector_dagger (List[sp.Symbol]): Combined list [ckd_ops, cmk_ops].
+        basis_vector (List[sp.Symbol]): Combined list [ck_ops, cmkd_ops].
+    Returns:
+        Tuple[List[sp.Symbol], List[List[sp.Expr]]]: List of placeholder symbols and the corresponding substitution rules.
+    """
     nspins2 = 2 * nspins
     placeholder_symbols = [
         sp.Symbol("XdX%d" % (i * nspins2 + j), commutative=True)
@@ -830,7 +1127,22 @@ def _apply_substitutions_parallel(
     commutation_substitutions: List[List[sp.Expr]],
     placeholder_substitutions: List[List[sp.Expr]],
 ) -> sp.Expr:
-    """Applies Fourier, commutation, and placeholder substitutions using multiprocessing."""
+    """
+    Apply sequential substitutions (Fourier, Commutation, Placeholder) in parallel.
+
+    Uses `multiprocessing.Pool` to apply the substitution rules defined by
+    `_define_fourier_substitutions`, `_define_commutation_substitutions`, and
+    `_define_placeholder_substitutions` to the terms of the Hamiltonian expression.
+    This is often the most time-consuming part of the symbolic calculation.
+
+    Args:
+        hamiltonian_sym (sp.Expr): The initial symbolic Hamiltonian (quadratic in bosons).
+        fourier_substitutions (List[List[sp.Expr]]): Substitutions for Fourier transform.
+        commutation_substitutions (List[List[sp.Expr]]): Substitutions for commutation rules.
+        placeholder_substitutions (List[List[sp.Expr]]): Substitutions for placeholders.
+    Returns:
+        sp.Expr: The Hamiltonian expression with all substitutions applied, containing placeholder symbols.
+    """
     logger.info("Applying Fourier transform substitutions...")
     start_time_ft = timeit.default_timer()
     hamiltonian_terms = hamiltonian_sym.as_ordered_terms()
@@ -897,7 +1209,20 @@ def _extract_h2_matrix(
     placeholder_symbols: List[sp.Symbol],
     nspins: int,
 ) -> sp.Matrix:
-    """Extracts the quadratic Hamiltonian matrix H2 from the placeholder expression."""
+    """
+    Extract the quadratic Hamiltonian matrix H2 from the placeholder expression.
+
+    After substitutions, the Hamiltonian is expressed as a sum of terms, each
+    being a coefficient multiplied by a placeholder symbol (XdXij). This function
+    extracts these coefficients to form the H2 matrix. H = C + X^dagger H2 X.
+
+    Args:
+        hamiltonian_with_placeholders (sp.Expr): Hamiltonian with placeholder symbols.
+        placeholder_symbols (List[sp.Symbol]): The list of placeholder symbols used.
+        nspins (int): Number of spins in the unit cell.
+    Returns:
+        sp.Matrix: The symbolic H2 matrix (2N x 2N).
+    """
     nspins2 = 2 * nspins
     H2_elements = [hamiltonian_with_placeholders.coeff(p) for p in placeholder_symbols]
     H2_matrix = sp.Matrix(nspins2, nspins2, H2_elements)
@@ -907,7 +1232,19 @@ def _extract_h2_matrix(
 def _build_ud_matrix(
     rotation_matrices: List[Union[npt.NDArray, sp.Matrix]], nspins: int
 ) -> sp.Matrix:
-    """Builds the block-diagonal rotation matrix Ud."""
+    """
+    Construct the block-diagonal rotation matrix Ud.
+
+    Ud transforms vectors of local spin components (for all N spins) to vectors
+    of global spin components. It's a block diagonal matrix where each block is
+    one of the 3x3 rotation matrices provided by the spin model's `mpr` function.
+
+    Args:
+        rotation_matrices (List[Union[npt.NDArray, sp.Matrix]]): List of 3x3 rotation matrices (one per spin in UC).
+        nspins (int): Number of spins in the unit cell.
+    Returns:
+        sp.Matrix: The symbolic block-diagonal Ud matrix (3N x 3N).
+    """
     Ud_rotation_matrix_blocks = []
     for i in range(nspins):
         rot_mat = rotation_matrices[i]
@@ -928,7 +1265,30 @@ def gen_HM(
     S_sym: sp.Symbol,
     params_sym: List[sp.Symbol],
 ) -> Tuple[sp.Matrix, sp.Matrix]:
-    """Generates symbolic TwogH2 and Ud matrices."""
+    """
+    Generate the symbolic dynamical matrix (2gH) and rotation matrix (Ud).
+
+    This is the main function for the symbolic part of the LSWT calculation.
+    It orchestrates the process:
+    1. Get model info (positions, rotations) from `spin_model_module`.
+    2. Set up Holstein-Primakoff boson operators.
+    3. Rotate local spin operators to global frame.
+    4. Construct the Hamiltonian using the model's `Hamiltonian` function.
+    5. Filter Hamiltonian to keep only terms up to quadratic in bosons.
+    6. Define Fourier transform, commutation, and placeholder substitutions.
+    7. Apply substitutions (often using multiprocessing).
+    8. Extract the quadratic Hamiltonian matrix H2.
+    9. Calculate the dynamical matrix TwogH2 = 2 * g * H2.
+    10. Build the block-diagonal rotation matrix Ud.
+
+    Args:
+        spin_model_module (module): The user-provided spin model module.
+        k_sym (List[sp.Symbol]): Symbolic momentum vector [kx, ky, kz].
+        S_sym (sp.Symbol): Symbolic spin magnitude S.
+        params_sym (List[sp.Symbol]): List of symbolic Hamiltonian parameters [p0, p1,...].
+    Returns:
+        Tuple[sp.Matrix, sp.Matrix]: The symbolic dynamical matrix (2gH, 2N x 2N) and the symbolic rotation matrix (Ud, 3N x 3N).
+    """
     logger.info("Starting symbolic matrix generation (gen_HM)...")
     start_time_total = timeit.default_timer()
 
@@ -1074,7 +1434,7 @@ class MagCalc:
                 'r': Read symbolic matrices from cache files. Fails if files
                      don't exist or are invalid. (Default)
                 'w': Generate symbolic matrices (potentially slow) and write
-                This argument is REQUIRED.
+                     them to cache files.
 
         Raises:
             TypeError: If spin_magnitude is not a number or hamiltonian_params
@@ -1179,7 +1539,11 @@ class MagCalc:
         logger.info("MagCalc initialization complete.")
 
     def _load_or_generate_matrices(self):
-        """Loads symbolic matrices from cache or generates them."""
+        """
+        Load symbolic HMat (2gH) and Ud matrices from cache or generate them.
+
+        Handles reading from `.pck` files in `pckFiles/` if `cache_mode='r'`, or calling `gen_HM` and writing the files if `cache_mode='w'`. Ensures the cache directory exists.
+        """
         # Ensure cache directory exists
         cache_dir = "pckFiles"
         if not os.path.exists(cache_dir):
@@ -1265,7 +1629,13 @@ class MagCalc:
             raise TypeError("Loaded cache files do not contain valid SymPy Matrices.")
 
     def _calculate_numerical_ud(self):
-        """Substitutes numerical parameters into Ud_sym."""
+        """
+        Calculate the numerical Ud matrix by substituting parameters into Ud_sym.
+
+        Uses the current `self.spin_magnitude` and `self.hamiltonian_params`
+        to substitute values into the symbolic `self.Ud_sym` matrix and stores
+        the result in `self.Ud_numeric`.
+        """
         # Ud_sym existence checked in __init__ before calling this
         logger.info("Calculating numerical Ud matrix...")
         # Ensure correct number of symbols/params match
@@ -1294,7 +1664,7 @@ class MagCalc:
     # --- NEW METHODS ---
     def update_spin_magnitude(self, new_spin_magnitude: float):
         """
-        Updates the spin magnitude S and recalculates dependent numerical matrices.
+        Update the spin magnitude S and recalculate dependent numerical matrices.
 
         Args:
             new_spin_magnitude (float): The new numerical value for S. Must be positive.
@@ -1319,7 +1689,7 @@ class MagCalc:
         self, new_hamiltonian_params: Union[List[float], npt.NDArray[np.float_]]
     ):
         """
-        Updates the Hamiltonian parameters and recalculates dependent numerical matrices.
+        Update the Hamiltonian parameters and recalculate dependent numerical matrices.
 
         Args:
             new_hamiltonian_params (Union[List[float], npt.NDArray[np.float_]]):
@@ -1359,7 +1729,7 @@ class MagCalc:
         q_vectors: Union[List[npt.NDArray[np.float_]], npt.NDArray[np.float_]],
     ) -> Optional[List[npt.NDArray[np.float_]]]:
         """
-        Calculates the spin-wave dispersion relation over a list of q-points.
+        Calculate the spin-wave dispersion relation over a list of q-points.
 
         Args:
             q_vectors (Union[List[npt.NDArray[np.float_]], npt.NDArray[np.float_]]):
@@ -1454,7 +1824,7 @@ class MagCalc:
         Optional[Tuple[npt.NDArray[np.float_], ...]],
     ]:
         """
-        Calculates the dynamical structure factor S(q,w) over a list of q-points.
+        Calculate the dynamical structure factor S(q,w) over a list of q-points.
 
         Args:
             q_vectors (Union[List[npt.NDArray[np.float_]], npt.NDArray[np.float_]]):
@@ -1561,7 +1931,7 @@ class MagCalc:
 
     def save_results(self, filename: str, results_dict: Dict[str, Any]):
         """
-        Saves calculation results to a compressed NumPy (.npz) file.
+        Save calculation results to a compressed NumPy (.npz) file.
 
         Args:
             filename (str): The name of the file to save the results to.
@@ -1600,6 +1970,15 @@ class MagCalc:
 
 # --- Main execution block (demonstrating update methods) ---
 if __name__ == "__main__":
+    """
+    Example script demonstrating the usage of the MagCalc class.
+
+    1. Imports a spin model (`spin_model.py` by default).
+    2. Defines parameters, q-points, and cache settings.
+    3. Instantiates `MagCalc`.
+    4. Calculates and saves initial dispersion.
+    5. Updates parameters and recalculates/saves dispersion and S(q,w).
+    """
     # --- Import the specific spin model ---
     # NOTE: Replace 'spin_model_fm' if you intend to use a different model file
     try:
