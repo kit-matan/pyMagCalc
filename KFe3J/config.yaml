@@ -22,13 +22,25 @@ q_path:
   path: ["Gamma", "M", "K", "Gamma"] # Define the path sequence
 
 output:
-  data_filename: "KFe3J_disp_data.npz" # File to save calculated data
-  # plot_filename: "KFe3J_disp_plot.png" # Optional: filename to save plot image
-  sqw_data_filename: "KFe3J_sqw_data.npz" # Added for S(q,w)
+  disp_data_filename: "KFe3J_disp_data.npz" # File to save calculated dispersion data
+  sqw_data_filename: "KFe3J_sqw_data.npz" # File to save calculated S(q,w) data
 
 plotting: # Added section
   save_plot: false
-  plot_filename: "KFe3J_disp_plot.png"
-  energy_limits: [0, 20] # Example limits
-  title: "KFe3J Spin Wave Dispersion (Calculated)"
+  disp_plot_filename: "KFe3J_disp_plot.png" # Filename for saved dispersion plot
+  combined_plot_filename: "KFe3J_combined_plot.png" # Filename for combined plot
+  sqw_plot_filename: "KFe3J_sqw_plot.png"   # Filename for saved S(q,w) map plot
+  energy_limits_disp: [0, 20] # Energy limits for dispersion plot
+  energy_limits_sqw: [0, 20]  # Energy limits for S(q,w) map
+  disp_title: "KFe3J Spin Wave Dispersion"
+  sqw_title: "KFe3J S(Q,ω) Intensity Map"
   show_plot: true
+
+tasks:
+  run_dispersion: true             # Master switch for dispersion calculation and plotting
+  calculate_dispersion_new: true   # true: run calculation; false: load from disp_data_filename for plotting
+  plot_dispersion: true            # Switch for plotting dispersion
+
+  run_sqw_map: true                # Master switch for S(q,w) map calculation and plotting
+  calculate_sqw_map_new: true      # true: run calculation; false: load from sqw_data_filename for plotting
+  plot_sqw_map: true               # Switch for plotting S(q,w) map
