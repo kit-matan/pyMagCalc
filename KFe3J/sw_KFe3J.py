@@ -14,11 +14,26 @@ import numpy as np
 from timeit import default_timer
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
-import magcalc as mc
+
+# Original import that causes issues when sw_CVO.py is run directly
+# import magcalc as mc
+
+import sys
+import os
+
+# Adjust sys.path to correctly locate the pyMagCalc package
+# Get the directory of the current script (aCVO)
+current_script_dir = os.path.dirname(os.path.abspath(__file__))
+# Get the project root directory (parent of pyMagCalc)
+project_root_dir = os.path.dirname(os.path.dirname(current_script_dir))
+
+if project_root_dir not in sys.path:
+    sys.path.insert(0, project_root_dir)
+
+from pyMagCalc import magcalc as mc
+
 import spin_model as kfe3j_spin_model  # Using a consistent alias
 import yaml
-import sys
-import os  # For path joining
 
 import logging
 

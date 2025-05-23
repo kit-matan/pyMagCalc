@@ -34,6 +34,10 @@ import os
 # Type Hinting Imports
 import types  # Added for ModuleType hint
 from typing import List, Tuple, Dict, Any, Optional, Union, NoReturn
+
+# --- Imports for Configuration-Driven Model ---
+from .config_loader import load_spin_model_config
+from . import generic_spin_model
 import numpy.typing as npt
 
 # --- Basic Logging Setup ---
@@ -1436,6 +1440,144 @@ def _build_ud_matrix(
 
 
 # --- Main gen_HM Function (Calls Helpers) ---
+
+
+# --- NEW HELPER for config-driven Fourier substitutions ---
+def _define_fourier_substitutions_generic(
+    k_sym: List[sp.Symbol],
+    nspins_uc: int,
+    c_ops_ouc: List[sp.Symbol],  # (N_ouc)
+    cd_ops_ouc: List[sp.Symbol],  # (N_ouc)
+    ck_ops_uc: List[sp.Symbol],  # (N_uc)
+    ckd_ops_uc: List[sp.Symbol],  # (N_uc)
+    cmk_ops_uc: List[sp.Symbol],  # (N_uc)
+    cmkd_ops_uc: List[sp.Symbol],  # (N_uc)
+    atom_pos_uc_cart: np.ndarray,  # (N_uc, 3)
+    atom_pos_ouc_cart: np.ndarray,  # (N_ouc, 3)
+    Jex_sym_matrix: sp.Matrix,  # (N_uc, N_ouc)
+) -> List[List[sp.Expr]]:
+    """
+    Define Fourier substitutions for the configuration-driven model.
+    """
+    nspins_ouc = len(atom_pos_ouc_cart)
+    if len(c_ops_ouc) != nspins_ouc or len(cd_ops_ouc) != nspins_ouc:
+        raise ValueError(
+            f"Length of OUC boson operators ({len(c_ops_ouc)}) does not match nspins_ouc ({nspins_ouc})."
+        )
+    if not (
+        len(ck_ops_uc) == nspins_uc
+        and len(ckd_ops_uc) == nspins_uc
+        and len(cmk_ops_uc) == nspins_uc
+        and len(cmkd_ops_uc) == nspins_uc
+    ):
+        raise ValueError(
+            f"Length of UC k-space boson operators does not match nspins_uc ({nspins_uc})."
+        )
+    if Jex_sym_matrix.shape != (nspins_uc, nspins_ouc):
+        raise ValueError(
+            f"Jex_sym_matrix shape {Jex_sym_matrix.shape} mismatch. Expected ({nspins_uc}, {nspins_ouc})"
+        )
+
+    fourier_substitutions = []
+
+    for i_uc in range(nspins_uc):
+        for j_ouc in range(nspins_ouc):
+            if Jex_sym_matrix[i_uc, j_ouc] == 0:
+                continue
+
+            disp_vec = atom_pos_uc_cart[i_uc, :] - atom_pos_ouc_cart[j_ouc, :]
+            k_dot_dr = sum(k_comp * dr_comp for k_comp, dr_comp in zip(k_sym, disp_vec))
+
+            exp_plus_ikdr = sp.exp(I * k_dot_dr).rewrite(sp.sin)
+            exp_minus_ikdr = sp.exp(-I * k_dot_dr).rewrite(sp.sin)
+
+            idx_op1_real_space = i_uc
+            idx_op2_real_space = j_ouc
+
+            idx_op1_k_space = i_uc
+            idx_op2_k_space = j_ouc % nspins_uc
+
+            sub_list_for_pair = [
+                [
+                    cd_ops_ouc[idx_op1_real_space] * cd_ops_ouc[idx_op2_real_space],
+                    sp.S(1)
+                    / 2
+                    * (
+                        ckd_ops_uc[idx_op1_k_space]
+                        * cmkd_ops_uc[idx_op2_k_space]
+                        * exp_minus_ikdr
+                        + cmkd_ops_uc[idx_op1_k_space]
+                        * ckd_ops_uc[idx_op2_k_space]
+                        * exp_plus_ikdr
+                    ),
+                ],
+                [
+                    c_ops_ouc[idx_op1_real_space] * c_ops_ouc[idx_op2_real_space],
+                    sp.S(1)
+                    / 2
+                    * (
+                        ck_ops_uc[idx_op1_k_space]
+                        * cmk_ops_uc[idx_op2_k_space]
+                        * exp_plus_ikdr
+                        + cmk_ops_uc[idx_op1_k_space]
+                        * ck_ops_uc[idx_op2_k_space]
+                        * exp_minus_ikdr
+                    ),
+                ],
+                [
+                    cd_ops_ouc[idx_op1_real_space] * c_ops_ouc[idx_op2_real_space],
+                    sp.S(1)
+                    / 2
+                    * (
+                        ckd_ops_uc[idx_op1_k_space]
+                        * ck_ops_uc[idx_op2_k_space]
+                        * exp_minus_ikdr
+                        + cmkd_ops_uc[idx_op1_k_space]
+                        * cmk_ops_uc[idx_op2_k_space]
+                        * exp_plus_ikdr
+                    ),
+                ],
+                [
+                    c_ops_ouc[idx_op1_real_space] * cd_ops_ouc[idx_op2_real_space],
+                    sp.S(1)
+                    / 2
+                    * (
+                        ck_ops_uc[idx_op1_k_space]
+                        * ckd_ops_uc[idx_op2_k_space]
+                        * exp_plus_ikdr
+                        + cmk_ops_uc[idx_op1_k_space]
+                        * cmkd_ops_uc[idx_op2_k_space]
+                        * exp_minus_ikdr
+                    ),
+                ],
+            ]
+            fourier_substitutions.extend(sub_list_for_pair)
+
+    for j_ouc_diag in range(nspins_ouc):
+        j_uc_diag = j_ouc_diag % nspins_uc
+        fourier_substitutions.append(
+            [
+                cd_ops_ouc[j_ouc_diag] * c_ops_ouc[j_ouc_diag],
+                sp.S(1)
+                / 2
+                * (
+                    ckd_ops_uc[j_uc_diag] * ck_ops_uc[j_uc_diag]
+                    + cmkd_ops_uc[j_uc_diag] * cmk_ops_uc[j_uc_diag]
+                ),
+            ]
+        )
+
+    unique_substitutions = []
+    seen_keys = set()
+    for sub_pair in fourier_substitutions:
+        key = sub_pair[0]
+        if key not in seen_keys:
+            unique_substitutions.append(sub_pair)
+            seen_keys.add(key)
+
+    return unique_substitutions
+
+
 def gen_HM(
     spin_model_module,  # ADDED: Explicitly pass the spin model module
     k_sym: List[sp.Symbol],
@@ -1585,11 +1727,12 @@ class MagCalc:
         spin_magnitude: float,
         hamiltonian_params: Union[List[float], npt.NDArray[np.float_]],
         cache_file_base: str,
-        spin_model_module: types.ModuleType,  # Moved before cache_mode
+        spin_model_module: Optional[types.ModuleType] = None,
         cache_mode: str = "r",
         Ud_numeric_override: Optional[
             npt.NDArray[np.complex_]
         ] = None,  # New optional parameter
+        config_filepath: Optional[str] = None,  # For configuration-driven model
     ):
         """
         Initializes the MagCalc LSWT calculator.
@@ -1607,9 +1750,9 @@ class MagCalc:
             cache_file_base (str): The base filename (without path or extension)
                 used for storing/retrieving cached symbolic matrices (HMat, Ud)
                 in the 'pckFiles' subdirectory.
-            spin_model_module (module): The imported Python module
+            spin_model_module (Optional[module]): The imported Python module
                 containing the spin model definitions (e.g., Hamiltonian, mpr, atom_pos).
-                This argument is REQUIRED.
+                Required if `config_filepath` is None.
             cache_mode (str, optional): Specifies the cache behavior.
                 'r': Read symbolic matrices from cache files. Fails if files
                      don't exist or are invalid. (Default)
@@ -1617,7 +1760,10 @@ class MagCalc:
                      them to cache files.
             Ud_numeric_override (Optional[npt.NDArray[np.complex_]], optional):
                      them to cache files.
-
+            config_filepath (Optional[str], optional): Path to the YAML configuration
+                file. If provided, the spin model is loaded from this file, and
+                `spin_model_module`, `spin_magnitude`, and `hamiltonian_params` might
+                be overridden or ignored (partially, `spin_magnitude` and `hamiltonian_params` are used as fallback if not in config or for specific cases).
         Raises:
             TypeError: If spin_magnitude is not a number or hamiltonian_params
                        is not a list/array of numbers.
@@ -1631,62 +1777,127 @@ class MagCalc:
         """
         logger.info(f"Initializing MagCalc (cache_mode='{cache_mode}')...")
 
-        # --- Input Validation ---
-        if not isinstance(spin_magnitude, (int, float)):
-            raise TypeError("spin_magnitude must be a number.")
-        if spin_magnitude <= 0:
-            raise ValueError("spin_magnitude must be positive.")
-        self.spin_magnitude = float(spin_magnitude)
-
-        if isinstance(hamiltonian_params, np.ndarray):
-            hamiltonian_params = hamiltonian_params.tolist()  # Convert numpy array
-        if not isinstance(hamiltonian_params, list) or not hamiltonian_params:
-            raise TypeError(
-                "hamiltonian_params must be a non-empty list or NumPy array."
-            )
-        if not all(isinstance(p, (int, float)) for p in hamiltonian_params):
-            raise TypeError("All elements in hamiltonian_params must be numbers.")
-        self.hamiltonian_params = [float(p) for p in hamiltonian_params]
-
         if not isinstance(cache_file_base, str) or not cache_file_base:
             raise ValueError("cache_file_base must be a non-empty string.")
         self.cache_file_base = cache_file_base
-
         if cache_mode not in ["r", "w"]:
             raise ValueError(f"Invalid cache_mode '{cache_mode}'. Use 'r' or 'w'.")
         self.cache_mode = cache_mode
 
-        if not hasattr(spin_model_module, "__name__"):
-            raise TypeError("spin_model_module does not appear to be a valid module.")
-        self.sm = spin_model_module
-        # --- End Input Validation ---
+        self.config_data: Optional[Dict[str, Any]] = None
+        self.p_numerical: Optional[Dict[str, float]] = (
+            None  # Stores numerical params by name
+        )
 
-        # --- Check spin_model validity ---
-        required_funcs = [
-            "atom_pos",
-            "atom_pos_ouc",
-            "mpr",
-            "Hamiltonian",
-            "spin_interactions",
-        ]
-        missing_funcs = [
-            f
-            for f in required_funcs
-            if not hasattr(self.sm, f) or not callable(getattr(self.sm, f))
-        ]
-        if missing_funcs:
-            raise AttributeError(
-                f"Required function(s) {missing_funcs} not found or not callable in spin_model_module '{self.sm.__name__}'."
+        if config_filepath:
+            logger.info(f"Using configuration file: {config_filepath}")
+            self.config_data = load_spin_model_config(config_filepath)
+            self.sm = generic_spin_model  # Use the generic spin model module
+
+            # Extract spin_magnitude from config
+            atoms_uc_config = self.config_data["crystal_structure"].get("atoms_uc", [])
+            if not atoms_uc_config:
+                raise ValueError(
+                    "Configuration error: 'atoms_uc' is missing or empty in 'crystal_structure'."
+                )
+            if "spin_S" not in atoms_uc_config[0]:
+                raise ValueError(
+                    "Configuration error: 'spin_S' is missing for the first atom in 'atoms_uc'."
+                )
+            self.spin_magnitude = float(atoms_uc_config[0]["spin_S"])
+            if self.spin_magnitude <= 0:
+                raise ValueError(
+                    f"Spin magnitude from config ({self.spin_magnitude}) must be positive."
+                )
+
+            # Extract numerical Hamiltonian parameters from config
+            self.p_numerical = self.config_data.get("parameters")
+            if self.p_numerical is None or not isinstance(self.p_numerical, dict):
+                raise ValueError(
+                    "Configuration error: 'parameters' section is missing or not a dictionary."
+                )
+            if not all(isinstance(v, (int, float)) for v in self.p_numerical.values()):
+                raise TypeError(
+                    "All values in 'parameters' section of config must be numbers."
+                )
+
+            # Ordered list of parameter names and symbols
+            _parameter_names_ordered = list(self.p_numerical.keys())
+            self.params_sym: List[sp.Symbol] = [
+                sp.Symbol(name, real=True) for name in _parameter_names_ordered
+            ]
+            # Ordered list of numerical parameter values
+            self.hamiltonian_params: List[float] = [
+                float(self.p_numerical[name]) for name in _parameter_names_ordered
+            ]
+
+            # Determine nspins from config
+            self.nspins = len(atoms_uc_config)
+            if self.nspins == 0:  # Should have been caught by atoms_uc_config check
+                raise ValueError(
+                    "Configuration error: 'atoms_uc' in config led to zero spins."
+                )
+            logger.info(
+                f"Model loaded from config: {self.nspins} spins, S={self.spin_magnitude}, {len(self.hamiltonian_params)} parameters."
             )
 
-        # --- Setup symbolic variables ---
-        try:
-            self.nspins = len(self.sm.atom_pos())
-            if self.nspins == 0:
-                raise ValueError("spin_model.atom_pos() returned an empty list.")
-        except Exception as e:
-            logger.exception("Error getting nspins from spin_model.atom_pos()")
-            raise RuntimeError("Failed to determine nspins from spin model.") from e
+        else:  # Traditional spin_model_module approach
+            logger.info("Using spin_model_module approach.")
+            if spin_model_module is None:
+                raise ValueError(
+                    "spin_model_module must be provided if config_filepath is not set."
+                )
+            if not hasattr(spin_model_module, "__name__"):  # Basic check
+                raise TypeError(
+                    "spin_model_module does not appear to be a valid module."
+                )
+            self.sm = spin_model_module
+
+            # Validate and set spin_magnitude
+            if not isinstance(spin_magnitude, (int, float)):
+                raise TypeError("spin_magnitude must be a number.")
+            if spin_magnitude <= 0:
+                raise ValueError("spin_magnitude must be positive.")
+            self.spin_magnitude = float(spin_magnitude)
+
+            # Validate and set hamiltonian_params (list of floats)
+            if isinstance(hamiltonian_params, np.ndarray):
+                hamiltonian_params_list = hamiltonian_params.tolist()
+            elif isinstance(hamiltonian_params, list):
+                hamiltonian_params_list = hamiltonian_params
+            else:
+                raise TypeError("hamiltonian_params must be a list or NumPy array.")
+            if not hamiltonian_params_list:  # Allow empty if model needs no params
+                logger.warning("hamiltonian_params is empty.")
+            if not all(isinstance(p, (int, float)) for p in hamiltonian_params_list):
+                raise TypeError("All elements in hamiltonian_params must be numbers.")
+            self.hamiltonian_params = [float(p) for p in hamiltonian_params_list]
+
+            # Create symbolic parameters (p0, p1, ...)
+            num_params = len(self.hamiltonian_params)
+            _params_sym_tuple = sp.symbols(f"p0:{num_params}", real=True)
+            if num_params == 0:
+                self.params_sym = []
+            elif num_params == 1:
+                self.params_sym = [_params_sym_tuple]
+            else:
+                self.params_sym = list(_params_sym_tuple)
+
+            # For consistency, create p_numerical for the old path too
+            self.p_numerical = {
+                sym.name: val
+                for sym, val in zip(self.params_sym, self.hamiltonian_params)
+            }
+
+            # Check spin_model_module validity and get nspins
+            self._validate_spin_model_module()
+            try:
+                self.nspins = len(self.sm.atom_pos())  # type: ignore
+                if self.nspins == 0:
+                    raise ValueError("spin_model.atom_pos() returned an empty list.")
+            except Exception as e:
+                logger.exception("Error getting nspins from spin_model.atom_pos()")
+                raise RuntimeError("Failed to determine nspins from spin model.") from e
 
         self.kx, self.ky, self.kz = sp.symbols("kx ky kz", real=True)
         self.k_sym: List[sp.Symbol] = [self.kx, self.ky, self.kz]
@@ -1694,10 +1905,8 @@ class MagCalc:
         # Ensure correct number of symbols matches parameters provided
         num_params = len(self.hamiltonian_params)
         self.params_sym: Tuple[sp.Symbol, ...] = sp.symbols(
-            f"p0:{num_params}", real=True
-        )
-        if num_params == 1:  # sp.symbols('p0:1') returns a single symbol, not tuple
-            self.params_sym = (self.params_sym,)
+            f"p0:{num_params}", real=True  # This line is now conditional
+        )  # This line is now conditional. self.params_sym is set in the if/else block.
 
         self.full_symbol_list: List[sp.Symbol] = (
             self.k_sym + [self.S_sym] + list(self.params_sym)
@@ -1728,6 +1937,35 @@ class MagCalc:
             raise RuntimeError("Ud_numeric was not set during initialization.")
         logger.info("MagCalc initialization complete.")
 
+    def _validate_spin_model_module(self):
+        """Checks if the provided spin_model_module has required functions."""
+        if self.config_data:  # Skip if using config file
+            return
+
+        if self.sm is None or not hasattr(
+            self.sm, "__name__"
+        ):  # Should not happen if logic is correct
+            raise RuntimeError(
+                "Spin model module (self.sm) is not properly set for validation."
+            )
+
+        required_funcs = [
+            "atom_pos",
+            "atom_pos_ouc",
+            "mpr",
+            "Hamiltonian",
+            "spin_interactions",
+        ]
+        missing_funcs = [
+            f
+            for f in required_funcs
+            if not hasattr(self.sm, f) or not callable(getattr(self.sm, f))
+        ]
+        if missing_funcs:
+            raise AttributeError(
+                f"Required function(s) {missing_funcs} not found or not callable in spin_model_module '{self.sm.__name__}'."
+            )
+
     def _load_or_generate_matrices(self):
         """
         Load symbolic HMat (2gH) and Ud matrices from cache or generate them.
@@ -1749,17 +1987,27 @@ class MagCalc:
 
         if self.cache_mode == "w":
             logger.info("Generating symbolic matrices (HMat, Ud)...")
-            try:
-                # gen_HM expects list of param symbols
-                self.HMat_sym, self.Ud_sym = gen_HM(
-                    self.sm,
-                    self.k_sym,
-                    self.S_sym,
-                    list(self.params_sym),  # Pass self.sm
-                )
-            except Exception as e:
-                logger.exception("Failed to generate symbolic matrices in gen_HM.")
-                raise RuntimeError("Symbolic matrix generation failed.") from e
+            if self.config_data:
+                try:
+                    self.HMat_sym, self.Ud_sym = self._generate_matrices_from_config()
+                except Exception as e:
+                    logger.exception(
+                        "Failed to generate symbolic matrices from configuration."
+                    )
+                    raise RuntimeError(
+                        "Symbolic matrix generation from config failed."
+                    ) from e
+            else:  # Old path
+                try:
+                    self.HMat_sym, self.Ud_sym = gen_HM(
+                        self.sm,  # type: ignore
+                        self.k_sym,
+                        self.S_sym,
+                        list(self.params_sym),
+                    )
+                except Exception as e:
+                    logger.exception("Failed to generate symbolic matrices in gen_HM.")
+                    raise RuntimeError("Symbolic matrix generation failed.") from e
 
             if not isinstance(self.HMat_sym, sp.Matrix) or not isinstance(
                 self.Ud_sym, sp.Matrix
@@ -1938,6 +2186,134 @@ class MagCalc:
         logger.info(
             f"External Ud_numeric matrix has been set. Shape: {self.Ud_numeric.shape}"
         )
+
+    def _generate_matrices_from_config(self) -> Tuple[sp.Matrix, sp.Matrix]:
+        """
+        Generate symbolic HMat (2gH) and Ud matrices using the loaded configuration.
+        """
+        logger.info("Starting symbolic matrix generation from configuration...")
+        start_time_total = timeit.default_timer()
+
+        if not self.config_data or self.sm is not generic_spin_model:
+            raise RuntimeError(
+                "Configuration data not loaded or incorrect spin model module for _generate_matrices_from_config."
+            )
+
+        # 1. Get Model Info from Config
+        uc_vecs_cart = self.sm.unit_cell_from_config(
+            self.config_data["crystal_structure"]
+        )
+        atom_pos_uc_cart = self.sm.atom_pos_from_config(
+            self.config_data["crystal_structure"], uc_vecs_cart
+        )
+        # self.nspins is already set from config in __init__
+
+        atom_pos_ouc_cart = self.sm.atom_pos_ouc_from_config(
+            atom_pos_uc_cart,
+            uc_vecs_cart,
+            self.config_data.get("calculation_settings", {}),
+        )
+        nspins_ouc = len(atom_pos_ouc_cart)
+
+        symbolic_params_map_for_gsm = {sym.name: sym for sym in self.params_sym}
+
+        rotation_matrices_sym_list = self.sm.mpr_from_config(
+            self.config_data["crystal_structure"],
+            self.p_numerical,  # mpr_from_config expects numerical_parameters
+        )
+
+        # 2. Setup Holstein-Primakoff Operators (for OUC)
+        c_ops_ouc, cd_ops_ouc, spin_ops_local_ouc = self._setup_hp_operators(
+            nspins_ouc, self.S_sym
+        )
+
+        # 3. Rotate Spin Operators (OUC spins, UC rotations applied cyclically)
+        spin_ops_global_ouc = self._rotate_spin_operators(
+            spin_ops_local_ouc, rotation_matrices_sym_list, self.nspins, nspins_ouc
+        )
+
+        # 4. Prepare Hamiltonian from Config
+        hamiltonian_sym_config = self.sm.Hamiltonian_from_config(
+            spin_ops_global_ouc, symbolic_params_map_for_gsm, self.config_data
+        )
+        # Hamiltonian_from_config already calls .expand()
+
+        # 5. Define k-space operators (UC scope)
+        ck_ops_uc = [sp.Symbol(f"ck{j}", commutative=False) for j in range(self.nspins)]
+        ckd_ops_uc = [
+            sp.Symbol(f"ckd{j}", commutative=False) for j in range(self.nspins)
+        ]
+        cmk_ops_uc = [
+            sp.Symbol(f"cmk{j}", commutative=False) for j in range(self.nspins)
+        ]
+        cmkd_ops_uc = [
+            sp.Symbol(f"cmkd{j}", commutative=False) for j in range(self.nspins)
+        ]
+
+        # 6. Define Fourier Substitutions
+        Jex_sym_matrix, _ = (
+            self.sm.spin_interactions_from_config(  # DM matrix also returned but not used here
+                symbolic_params_map_for_gsm,
+                self.config_data["interactions"],
+                atom_pos_uc_cart,
+                atom_pos_ouc_cart,
+                uc_vecs_cart,
+            )
+        )
+
+        fourier_substitutions = _define_fourier_substitutions_generic(
+            self.k_sym,
+            self.nspins,
+            c_ops_ouc,
+            cd_ops_ouc,
+            ck_ops_uc,
+            ckd_ops_uc,
+            cmk_ops_uc,
+            cmkd_ops_uc,
+            atom_pos_uc_cart,
+            atom_pos_ouc_cart,
+            Jex_sym_matrix,
+        )
+
+        # 7. Define Commutation and Placeholder Substitutions
+        commutation_substitutions = self._define_commutation_substitutions(
+            self.nspins, ck_ops_uc, ckd_ops_uc, cmk_ops_uc, cmkd_ops_uc
+        )
+        basis_vector_dagger = ckd_ops_uc + cmk_ops_uc
+        basis_vector = ck_ops_uc + cmkd_ops_uc
+        placeholder_symbols, placeholder_substitutions = (
+            self._define_placeholder_substitutions(
+                self.nspins, basis_vector_dagger, basis_vector
+            )
+        )
+
+        # 8. Apply Substitutions
+        hamiltonian_with_placeholders = self._apply_substitutions_parallel(
+            hamiltonian_sym_config,
+            fourier_substitutions,
+            commutation_substitutions,
+            placeholder_substitutions,
+        )
+
+        # 9. Extract H2 Matrix
+        H2_matrix = self._extract_h2_matrix(
+            hamiltonian_with_placeholders, placeholder_symbols, self.nspins
+        )
+
+        # 10. Calculate TwogH2
+        g_metric_tensor_sym = sp.diag(*([1] * self.nspins + [-1] * self.nspins))
+        dynamical_matrix_TwogH2 = 2 * g_metric_tensor_sym * H2_matrix
+
+        # 11. Build Ud Matrix from Config
+        Ud_rotation_matrix = self._build_ud_matrix(
+            rotation_matrices_sym_list, self.nspins
+        )
+
+        end_time_total = timeit.default_timer()
+        logger.info(
+            f"Total run-time for _generate_matrices_from_config: {np.round((end_time_total - start_time_total), 2)} s."
+        )
+        return dynamical_matrix_TwogH2, Ud_rotation_matrix
 
     # --- END NEW METHODS ---
 
@@ -2239,7 +2615,7 @@ if __name__ == "__main__":
             hamiltonian_params=hamiltonian_params_val,
             cache_file_base=cache_file_base_name,
             cache_mode=cache_operation_mode,
-            spin_model_module=spin_model,  # <<< Added the missing argument
+            spin_model_module=spin_model,
         )
 
         # --- Calculate and Save Dispersion (Initial Params) ---
