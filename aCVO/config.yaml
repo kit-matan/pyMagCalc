@@ -8,7 +8,7 @@ cvo_model:
     J3_ratio: 2.03 # J3 = J3_ratio * J1
     G1: 0.28
     Dx: 2.67
-    H: 0.0
+    H: 14.0
   calculation:
     cache_mode: "r" # 'r' to read, 'w' to write MagCalc's internal cache
     cache_file_base: "CVO_model_cache" # Base name for MagCalc's internal cache files
@@ -20,11 +20,11 @@ cvo_model:
     disp_plot_filename: "CVO_disp_plot.png" # Filename for saved dispersion plot
     sqw_plot_filename: "CVO_sqw_plot.png"    # Filename for saved S(Q,w) map plot
     energy_limits_disp: [0, 10] # Energy limits for dispersion plot
-    energy_limits_sqw: [0, 12]  # Energy limits for S(Q,w) map plot
+    energy_limits_sqw: [0, 10]  # Energy limits for S(Q,w) map plot
     q_limits_disp: [1, 3]       # q-limits for the plot (in r.l.u. as per original script)
-    q_limits_sqw: [-5, 5]       # q-limits for S(Q,w) map plot (in r.l.u.)
+    q_limits_sqw: [1, 3]       # q-limits for S(Q,w) map plot (in r.l.u.)
     q_ticks_disp: [1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0] # q-ticks for the plot
-    q_ticks_sqw: [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5] # q-ticks for S(Q,w) map plot
+    q_ticks_sqw: [1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0] # q-ticks for S(Q,w) map plot
     disp_title: "CVO Spin Wave Dispersion (Calculated)"
     sqw_title: "CVO S(Q,ω) Intensity Map (Calculated)"
     show_plot: true
@@ -36,8 +36,8 @@ cvo_model:
     run_sqw_map: true                # Master switch for S(q,w) map calculation and plotting
     calculate_sqw_map_new: true      # true: run calculation; false: load from sqw_data_filename for plotting
     plot_sqw_map: true               # Switch for plotting S(q,w) map
-    sqw_energy_step: 0.05            # Energy step for S(Q,w) map convolution
-    sqw_q_step: 0.02                 # Q step for S(Q,w) map calculation (in r.l.u.)
-    sqw_resolution_width: 0.2        # Resolution width for S(Q,w) map convolution
+    sqw_energy_step: 0.03            # Energy step for S(Q,w) map convolution
+    sqw_q_step: 0.01                 # Q step for S(Q,w) map calculation (in r.l.u.)
+    sqw_resolution_width: 0.1        # Resolution width for S(Q,w) map convolution
 
 # ... (other configurations) ...

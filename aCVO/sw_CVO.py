@@ -4,6 +4,7 @@
 Combined script for CVO-like material:
 Calculates and plots spin-wave dispersion and S(Q,omega) intensity map.
 Reads parameters from config.yaml.
+Includes handling for applied magnetic field to find classical ground state.
 """
 import numpy as np
 from timeit import default_timer
@@ -14,17 +15,18 @@ import yaml
 import sys
 import os
 
+# Import the CVO spin model that now includes minimization
 try:
-    import spin_model_cvo
+    import spin_model_hc as cvo_spin_model  # MODIFIED: Use the new model
 except ImportError:
-    print("Error: Could not import spin_model_cvo.py.")
+    print("Error: Could not import spin_model_hc.py.")
     print("Please ensure it exists and is in your Python path or the aCVO directory.")
     sys.exit(1)
 
 import logging
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
@@ -32,21 +34,20 @@ logger = logging.getLogger(__name__)
 
 
 # --- Q-point Generation ---
-def generate_dispersion_q_vectors_cvo(plotting_config):
+def generate_dispersion_q_vectors_cvo(plotting_config, tasks_config):
     """Generates q-vectors for CVO dispersion plot based on config."""
-    # qsy represents q-points in r.l.u. for plotting
     q_limits_disp = plotting_config.get("q_limits_disp", [1, 3])
-    # Use a q_step from tasks_config or a default for dispersion q-points
-    # This assumes tasks_config is accessible or passed if different from sqw_q_step
-    q_step_disp = plotting_config.get(
+    q_step_disp = tasks_config.get(
         "disp_q_step", 0.02
-    )  # Add disp_q_step to config if needed
+    )  # Use disp_q_step from tasks_config
     qsy_plot_axis = np.arange(
         q_limits_disp[0], q_limits_disp[1] + q_step_disp, q_step_disp
     )
 
     q_list_calc = []
-    qy_conversion_factor = 2 * np.pi / 8.383  # As in disp_CVO.py
+    # Lattice parameter b for CVO, ensure this is consistent with spin_model_cvo_Hc.py if used there
+    lb_cvo = plotting_config.get("lattice_b_cvo", 8.383)
+    qy_conversion_factor = 2 * np.pi / lb_cvo
     for qy_rlu_val in qsy_plot_axis:
         q_list_calc.append(np.array([0, qy_rlu_val * qy_conversion_factor, 0]))
     return np.array(q_list_calc), qsy_plot_axis
@@ -57,10 +58,12 @@ def generate_sqw_q_vectors_cvo(plotting_config, tasks_config):
     qmin_rlu_config = plotting_config.get("q_limits_sqw", [-5, 5])[0]
     qmax_rlu_config = plotting_config.get("q_limits_sqw", [-5, 5])[1]
     qstep_rlu = tasks_config.get("sqw_q_step", 0.02)
-    lb = 8.383
-    qy_conversion_factor = 2 * np.pi / lb
+    lb_cvo = plotting_config.get("lattice_b_cvo", 8.383)
+    qy_conversion_factor = 2 * np.pi / lb_cvo
 
-    q_shift = np.e / 1e5  # The q-shift from EQmap_CVO.py
+    q_shift = plotting_config.get(
+        "q_shift_sqw", np.e / 1e5
+    )  # Make q_shift configurable
     logger.info(
         f"Applying q-shift of {q_shift:.6f} r.l.u. to S(Q,w) calculation range."
     )
@@ -73,7 +76,6 @@ def generate_sqw_q_vectors_cvo(plotting_config, tasks_config):
     q_list_calc = []
     for qy_rlu_shifted_val in qsy_calc_axis_shifted:
         q_list_calc.append(np.array([0, qy_rlu_shifted_val * qy_conversion_factor, 0]))
-    # Return both the calculation vectors and the shifted r.l.u. axis for plotting
     return np.array(q_list_calc), qsy_calc_axis_shifted
 
 
@@ -88,7 +90,7 @@ def calculate_and_save_dispersion_cvo(
             logger.info(f"Saving CVO dispersion results to {output_filename}...")
             results_to_save = {
                 "q_vectors_calc": q_vectors_array,
-                "q_plot_axis": q_plot_axis,  # This is the r.l.u. axis
+                "q_plot_axis": q_plot_axis,
                 "energies": En,
             }
             calculator.save_results(output_filename, results_to_save)
@@ -116,7 +118,7 @@ def calculate_and_save_sqw_cvo(
             logger.info(f"Saving CVO S(Q,w) results to {output_filename}...")
             results_to_save = {
                 "q_vectors_calc": qout,
-                "q_plot_axis": q_plot_axis_shifted,  # This is the SHIFTED r.l.u. axis
+                "q_plot_axis": q_plot_axis_shifted,
                 "energies": En,
                 "sqw_values": Sqwout,
             }
@@ -137,16 +139,13 @@ def calculate_and_save_sqw_cvo(
 
 # --- Plotting Functions ---
 def plot_dispersion_from_file_cvo(filename, config, ax):
-    """Loads CVO dispersion data and plots it."""
     plotting_p_config = config["cvo_model"]["plotting"]
     logger.info(f"Loading CVO dispersion data from {filename} for plotting...")
     try:
         data = np.load(filename, allow_pickle=True)
-        qsy_for_plot = data["q_plot_axis"]  # This is the r.l.u. axis
+        qsy_for_plot = data["q_plot_axis"]
         En_loaded_tuples = data["energies"]
-        En_loaded = [
-            np.array(e) for e in En_loaded_tuples
-        ]  # Convert tuple of arrays to list
+        En_loaded = [np.array(e) for e in En_loaded_tuples]
         logger.info("CVO dispersion data loaded successfully.")
     except Exception as e:
         logger.error(
@@ -154,15 +153,12 @@ def plot_dispersion_from_file_cvo(filename, config, ax):
         )
         return
 
-    nspins = config["cvo_model"][
-        "nspins_for_plot"
-    ]  # Get nspins from config for plotting
+    nspins = config["cvo_model"]["nspins_for_plot"]
 
     if len(En_loaded) != len(qsy_for_plot):
         logger.warning(
             "Mismatch in q-points and energies for CVO dispersion. Plotting may be incorrect."
         )
-        # Truncate to shorter length
         min_len = min(len(En_loaded), len(qsy_for_plot))
         qsy_for_plot = qsy_for_plot[:min_len]
         En_loaded = En_loaded[:min_len]
@@ -198,19 +194,18 @@ def plot_dispersion_from_file_cvo(filename, config, ax):
     ax.set_xlabel(r"q$_y$ (r.l.u.)", fontsize=12)
     ax.set_ylabel(r"$\hbar\omega$ (meV)", fontsize=12)
     y_lim_plot = ax.get_ylim()
-    ax.set_yticks(np.arange(y_lim_plot[0], y_lim_plot[1] + 1, 2))
+    ax.set_yticks(np.arange(np.floor(y_lim_plot[0]), np.ceil(y_lim_plot[1]) + 1, 2))
     ax.set_title(plotting_p_config.get("disp_title", "CVO Spin Wave Dispersion"))
     ax.grid(axis="y", linestyle="--", alpha=0.7)
 
 
 def plot_sqw_map_from_file_cvo(filename, config, ax, fig):
-    """Loads CVO S(Q,w) data and plots the intensity map."""
     plotting_p_config = config["cvo_model"]["plotting"]
     tasks_p_config = config["cvo_model"]["tasks"]
     logger.info(f"Loading CVO S(Q,w) data from {filename} for plotting...")
     try:
         data = np.load(filename, allow_pickle=True)
-        qsy_plot_loaded_shifted = data["q_plot_axis"]  # This is the SHIFTED r.l.u. axis
+        qsy_plot_loaded_shifted = data["q_plot_axis"]
         En_loaded_tuples = data["energies"]
         Sqwout_loaded_tuples = data["sqw_values"]
         En_loaded = [np.array(e) for e in En_loaded_tuples]
@@ -288,7 +283,7 @@ def plot_sqw_map_from_file_cvo(filename, config, ax, fig):
             max_intensity = min_val_for_plot * 100
         else:
             min_val_for_plot = 1e-6
-            max_intensity = 1e-4
+            max_intensity = 1e-4  # Fallback if all else fails
 
     logger.info(
         f"CVO Plotting with LogNorm: vmin={min_val_for_plot:.2e}, vmax={max_intensity:.2e}"
@@ -305,20 +300,30 @@ def plot_sqw_map_from_file_cvo(filename, config, ax, fig):
             f"CVO Setting x-axis limits (xlim) to: [{np.min(qsy_plot_loaded_shifted):.2f}, {np.max(qsy_plot_loaded_shifted):.2f}] based on shifted data."
         )
 
-        q_tick_min = np.min(qsy_plot_loaded_shifted)
-        q_tick_max = np.max(qsy_plot_loaded_shifted)
-        start_tick = np.ceil(q_tick_min)
-        end_tick = np.floor(q_tick_max)
-        q_ticks_actual_range = (
-            np.arange(start_tick, end_tick + 1, 1.0)
-            if start_tick <= end_tick
-            else np.array([q_tick_min, q_tick_max])
-        )
-        ax.set_xticks(q_ticks_actual_range)
-    else:  # Fallback if qsy_plot_loaded_shifted is empty
+        # Use q_ticks_sqw from config if available
+        q_ticks_from_config = plotting_p_config.get("q_ticks_sqw")
+        if q_ticks_from_config is not None:
+            ax.set_xticks(q_ticks_from_config)
+        else:  # Fallback if not specified in config
+            q_tick_min = np.min(qsy_plot_loaded_shifted)
+            q_tick_max = np.max(qsy_plot_loaded_shifted)
+            start_tick = np.ceil(q_tick_min)
+            end_tick = np.floor(q_tick_max)
+            q_ticks_actual_range = (
+                np.arange(start_tick, end_tick + 1, 1.0)
+                if start_tick <= end_tick
+                else np.array([q_tick_min, q_tick_max])
+            )
+            ax.set_xticks(q_ticks_actual_range)
+    else:
         qmin_rlu_config = plotting_p_config.get("q_limits_sqw", [-5, 5])[0]
         qmax_rlu_config = plotting_p_config.get("q_limits_sqw", [-5, 5])[1]
-        ax.set_xticks(np.arange(qmin_rlu_config, qmax_rlu_config + 1, 1))
+        # Use q_ticks_sqw from config if available, else fallback
+        q_ticks_from_config = plotting_p_config.get("q_ticks_sqw")
+        if q_ticks_from_config is not None:
+            ax.set_xticks(q_ticks_from_config)
+        else:  # Fallback if not specified in config
+            ax.set_xticks(np.arange(qmin_rlu_config, qmax_rlu_config + 1, 1))
 
     ax.set_ylim(plotting_p_config.get("energy_limits_sqw", [0, 12]))
     ax.set_xlabel(r"q$_y$ (r.l.u.)", fontsize=12)
@@ -389,16 +394,64 @@ if __name__ == "__main__":
     config["cvo_model"]["output"]["sqw_data_filename"] = sqw_data_file
     config["cvo_model"]["plotting"] = plotting_p_config
 
+    # --- Perform Classical Minimization if H_field is non-zero (BEFORE MagCalc init) ---
+    Ud_numeric_for_magcalc = None
+    H_field_val_from_config = params_val[-1]  # Assuming H is the last param
+
+    # Perform classical minimization only if:
+    # 1. The magnetic field is non-zero.
+    # 2. cache_mode is not 'r' (i.e., we are in a mode that might regenerate symbolic matrices).
+    if abs(H_field_val_from_config) > 1e-9 and cache_mode != "r":
+        logger.info(
+            f"Non-zero H_field ({H_field_val_from_config}) detected. "
+            "Performing classical energy minimization for CVO before MagCalc initialization."
+        )  # Now calling the function from the new model
+        optimal_thetas, Ud_numeric_optimized, final_classical_energy = (
+            cvo_spin_model.get_field_optimized_state_for_lswt(params_val, S_val)
+        )
+        if Ud_numeric_optimized is not None:
+            logger.info(
+                f"Classical ground state found with energy: {final_classical_energy:.6f} meV."
+            )
+            Ud_numeric_for_magcalc = Ud_numeric_optimized
+            # Log the canting angles
+            if optimal_thetas is not None:
+                canting_angles_degrees_sw = 90.0 - np.degrees(optimal_thetas)
+                logger.info(
+                    f"Canting angles from a-b plane (degrees towards +z): {canting_angles_degrees_sw}"
+                )
+                logger.info(
+                    f"Mean canting angle (degrees): {np.mean(canting_angles_degrees_sw):.4f}"
+                )
+        else:
+            logger.error(
+                "Failed to determine field-optimized classical ground state. "
+                "MagCalc will proceed with Ud derived from zero-field mpr."
+            )
+    else:
+        if abs(H_field_val_from_config) <= 1e-9:
+            logger.info(
+                "H_field is zero. Classical energy minimization skipped. "
+                "MagCalc will use spin structure from mpr (likely zero-field or based on any existing angle cache in spin_model_hc)."
+            )
+        elif cache_mode == "r":
+            logger.info(
+                f"cache_mode is 'r'. Classical energy minimization skipped for H_field={H_field_val_from_config}. "
+                "MagCalc will use spin structure from mpr (likely based on cached symbolic matrices or any existing angle cache in spin_model_hc)."
+            )
+
     try:
         calculator = mc.MagCalc(
             spin_magnitude=S_val,
             hamiltonian_params=params_val,
             cache_file_base=cache_file_base,
             cache_mode=cache_mode,
-            spin_model_module=spin_model_cvo,
+            spin_model_module=cvo_spin_model,  # Use the field-capable CVO model
+            # Ud_numeric_override is no longer needed if mpr provides field-specific rotations
+            Ud_numeric_override=None,
         )
-        # Store nspins in config for plotting functions to access
         config["cvo_model"]["nspins_for_plot"] = calculator.nspins
+
     except Exception as e:
         logger.error(f"Failed to initialize MagCalc for CVO: {e}", exc_info=True)
         sys.exit(1)
@@ -414,7 +467,7 @@ if __name__ == "__main__":
     if tasks_config.get("run_dispersion", False):
         logger.info("--- Starting CVO Dispersion Workflow ---")
         q_vectors_disp, qsy_plot_axis_disp = generate_dispersion_q_vectors_cvo(
-            plotting_p_config
+            plotting_p_config, tasks_config
         )
         if disp_calc_requested:
             calculate_and_save_dispersion_cvo(

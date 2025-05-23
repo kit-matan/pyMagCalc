@@ -21,7 +21,7 @@ import sympy as sp  # Added for sp.Matrix check if needed, though DM should be n
 # --- Basic Logging Setup ---
 # Configure logging early, before any custom log messages are emitted.
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # Use DEBUG to see more details during minimization
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
@@ -33,22 +33,20 @@ logger = logging.getLogger(__name__)  # Get the logger for this module
 # We need functions like atom_pos, atom_pos_ouc, spin_interactions, and the al list
 cvo_model = None  # Initialize cvo_model
 AL_SPIN_PREFERENCE = None  # Initialize AL_SPIN_PREFERENCE
+NSPINS_MODEL = 16  # Default for CVO model
 try:
-    import spin_model_cvo_Hc as cvo_model
+    import spin_model_hc as cvo_model  # Use the active spin_model_hc
 
-    # Directly try to access 'al' after successful import.
-    # The previous debug print confirmed 'al' is an attribute.
-    if hasattr(cvo_model, "al"):
-        AL_SPIN_PREFERENCE = cvo_model.al
+    if hasattr(cvo_model, "AL_SPIN_PREFERENCE"):
+        AL_SPIN_PREFERENCE = cvo_model.AL_SPIN_PREFERENCE
+        NSPINS_MODEL = len(AL_SPIN_PREFERENCE)
     else:
-        # This case should ideally not be reached if the debug output was correct.
         logging.error(
-            "Failed to access 'al' list from 'spin_model_cvo_Hc.py'. "
-            "Ensure 'al' is defined at the module level in spin_model_cvo_Hc.py."
+            "Failed to access 'AL_SPIN_PREFERENCE' list from 'spin_model_hc.py'."
         )
 except ImportError:
     logging.error(
-        "Failed to import 'spin_model_cvo_Hc.py'. "
+        "Failed to import 'spin_model_hc.py'. "
         "Please ensure this file exists and is in the Python path."
     )
 
@@ -57,7 +55,7 @@ def classical_energy(theta_angles, params, S, spin_model_module):
     """
     Calculates the classical energy of the spin system for given spin orientations.
 
-    Assumes spins are in the global x-z plane (a-c plane) with azimuthal angle
+    Assumes spins are primarily in the global x-z plane with azimuthal angle
     fixed at 0 or pi based on the spin's +/- a-axis preference (defined by AL_SPIN_PREFERENCE).
     Minimization is performed over the polar angles (theta).
 
@@ -76,8 +74,8 @@ def classical_energy(theta_angles, params, S, spin_model_module):
         )
         return np.inf
 
-    if len(theta_angles) != 16:
-        logger.error(f"Expected 16 theta angles, got {len(theta_angles)}")
+    if len(theta_angles) != NSPINS_MODEL:
+        logger.error(f"Expected {NSPINS_MODEL} theta angles, got {len(theta_angles)}")
         return np.inf
 
     try:
@@ -87,10 +85,18 @@ def classical_energy(theta_angles, params, S, spin_model_module):
         apos_ouc = spin_model_module.atom_pos_ouc()
         nspin_ouc = len(apos_ouc)
 
-        # Get interaction matrices (Jex, Gex, DM_matrix_of_matrices, H_field) using numerical params
+        # spin_interactions in spin_model_hc.py expects symbolic params to return symbolic DM.
+        # If passed numerical params, Dx becomes numerical, and DM vectors become numerical.
+        # This is suitable for classical energy calculation.
+        # params = [J1, J2, J3, G1, Dx_num, H_field_num]
         Jex, Gex, DM_matrix_of_matrices, H_field = spin_model_module.spin_interactions(
             params
         )
+        # H_field from spin_interactions is the symbolic H if symbolic p was passed.
+        # Here, params is numerical, so H_field is numerical H_field_num.
+        H_field_num_from_params = params[
+            5
+        ]  # Explicitly use H from input params for Zeeman
 
         # Convert the SymPy Matrix of SymPy 1x3 Matrices for DM into a NumPy array of 3D vectors
         DM_numerical_vectors = np.zeros((nspin, nspin_ouc, 3), dtype=float)
@@ -170,15 +176,24 @@ def classical_energy(theta_angles, params, S, spin_model_module):
                     )
 
         # Zeeman term
+        # Field is applied along the global x-axis.
         gamma = 2.0
         mu = 5.7883818066e-2
-        H_field_strength = params[5]
+        # H_field_strength = params[5] # This is H_field_num_from_params
 
+        zeeman_energy_contribution = 0.0
         for i in range(nspin):
             S_vec_i = classical_spin_vectors[i, :]
-            # Corrected Zeeman term: - S . H. If H is along +z, then - S_z * H_magnitude
-            total_energy += gamma * mu * S_vec_i[2] * H_field_strength
+            # Zeeman term: - S . H. If H is along +x, then - Sx * H_magnitude
+            zeeman_energy_contribution -= (
+                gamma * mu * S_vec_i[2] * H_field_num_from_params
+            )
 
+        if abs(H_field_num_from_params) > 1e-6:
+            logger.debug(
+                f"H_field={H_field_num_from_params}, Zeeman E: {zeeman_energy_contribution:.4f}, Sum Sx/S: {np.sum(classical_spin_vectors[:,0])/S:.4f}"
+            )
+        total_energy += zeeman_energy_contribution
         return total_energy
 
     except Exception as e:
@@ -206,12 +221,13 @@ def find_ground_state_orientations(params, S, spin_model_module):
         )
         return None
 
-    logger.info(f"Starting classical energy minimization for H={params[5]}...")
+    H_field_val = params[5]
+    logger.info(f"Starting classical energy minimization for H={H_field_val}...")
 
-    initial_theta_guess = np.full(16, np.pi / 2.0)
-    bounds = [
-        (1e-9, np.pi - 1e-9)
-    ] * 16  # Avoid exact 0 or pi for stability if sin(theta) is in denominator
+    initial_theta_guess = np.full(
+        NSPINS_MODEL, np.pi / 2.0 - (0.05 if H_field_val != 0 else 0.0)
+    )  # Perturb if H is non-zero
+    bounds = [(1e-9, np.pi - 1e-9)] * NSPINS_MODEL
 
     method = "L-BFGS-B"
 
@@ -223,10 +239,10 @@ def find_ground_state_orientations(params, S, spin_model_module):
             method=method,
             bounds=bounds,
             tol=1e-6,
-            options={
-                "maxiter": 2000,
-                "ftol": 1e-7,
-                "gtol": 1e-5,
+            options={  # Tighter tolerances might be needed
+                "maxiter": 5000,  # Increased maxiter
+                "ftol": 1e-9,  # Tighter function tolerance
+                "gtol": 1e-7,  # Tighter gradient tolerance
             },  # More options for robustness
         )
 
@@ -283,43 +299,26 @@ if __name__ == "__main__":
             logger.info(np.degrees(optimal_angles_h0))
             # For H=0, if the ground state is spins in a-b plane, angles should be ~90 deg.
             logger.info(
-                f"Mean angle from a-b plane (degrees): {np.mean(np.abs(90 - np.degrees(optimal_angles_h0))):.4f}"
+                f"Mean canting angle at H=0 (degrees): {np.mean(90.0 - np.degrees(optimal_angles_h0)):.6f}"
             )
 
         # Define example parameters with H field
-        example_params_h5 = [2.49, 1.12 * 2.49, 2.03 * 2.49, 0.28, 2.67, 5.0]  # H=5.0
-        logger.info(f"\n--- Test Case: H={example_params_h5[5]} ---")
-        optimal_angles_h5 = find_ground_state_orientations(
-            example_params_h5, example_S_val, cvo_model
-        )
-        if optimal_angles_h5 is not None:
-            logger.info(f"Optimal theta angles at H={example_params_h5[5]} (degrees):")
-            logger.info(np.degrees(optimal_angles_h5))
-            canting_degrees_h5 = 90.0 - np.degrees(optimal_angles_h5)
-            logger.info(f"Canting towards +z (degrees, 90 - theta):")
-            logger.info(canting_degrees_h5)
-            logger.info(f"Mean canting (degrees): {np.mean(canting_degrees_h5):.4f}")
-
-        example_params_h_neg = [
+        example_params_h14 = [
             2.49,
             1.12 * 2.49,
             2.03 * 2.49,
             0.28,
             2.67,
-            -5.0,
-        ]  # H=-5.0
-        logger.info(f"\n--- Test Case: H={example_params_h_neg[5]} ---")
-        optimal_angles_h_neg = find_ground_state_orientations(
-            example_params_h_neg, example_S_val, cvo_model
+            14.0,
+        ]  # H=14.0
+        logger.info(f"\n--- Test Case: H={example_params_h14[5]} ---")
+        optimal_angles_h14 = find_ground_state_orientations(
+            example_params_h14, example_S_val, cvo_model
         )
-        if optimal_angles_h_neg is not None:
-            logger.info(
-                f"Optimal theta angles at H={example_params_h_neg[5]} (degrees):"
-            )
-            logger.info(np.degrees(optimal_angles_h_neg))
-            canting_degrees_h_neg = 90.0 - np.degrees(optimal_angles_h_neg)
-            logger.info(
-                f"Canting towards +z (degrees, 90 - theta):"
-            )  # Positive canting means theta < 90
-            logger.info(canting_degrees_h_neg)
-            logger.info(f"Mean canting (degrees): {np.mean(canting_degrees_h_neg):.4f}")
+        if optimal_angles_h14 is not None:
+            logger.info(f"Optimal theta angles at H={example_params_h14[5]} (degrees):")
+            logger.info(np.degrees(optimal_angles_h14))
+            canting_degrees_h14 = 90.0 - np.degrees(optimal_angles_h14)
+            logger.info(f"Canting towards +z (degrees, 90 - theta):")
+            logger.info(canting_degrees_h14)
+            logger.info(f"Mean canting (degrees): {np.mean(canting_degrees_h14):.6f}")

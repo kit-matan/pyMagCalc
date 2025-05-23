@@ -791,6 +791,7 @@ def process_calc_disp(
         spin_magnitude_num,
         hamiltonian_params_num,
     ) = args
+    logger.debug(f"Processing dispersion for q-vector: {q_vector}")  # Log the q-vector
     q_label = f"q={q_vector}"
     nan_energies: npt.NDArray[np.float_] = np.full((nspins,), np.nan)
     try:
@@ -888,6 +889,7 @@ def process_calc_Sqw(
         spin_magnitude_num,
         hamiltonian_params_num,
     ) = args
+    logger.debug(f"Processing S(q,w) for q-vector: {q_vector}")  # Log the q-vector
     q_label = f"q={q_vector}"
     nan_energies: npt.NDArray[np.float_] = np.full((nspins,), np.nan)
     nan_intensities: npt.NDArray[np.float_] = np.full((nspins,), np.nan)
@@ -1585,6 +1587,9 @@ class MagCalc:
         cache_file_base: str,
         spin_model_module: types.ModuleType,  # Moved before cache_mode
         cache_mode: str = "r",
+        Ud_numeric_override: Optional[
+            npt.NDArray[np.complex_]
+        ] = None,  # New optional parameter
     ):
         """
         Initializes the MagCalc LSWT calculator.
@@ -1609,6 +1614,8 @@ class MagCalc:
                 'r': Read symbolic matrices from cache files. Fails if files
                      don't exist or are invalid. (Default)
                 'w': Generate symbolic matrices (potentially slow) and write
+                     them to cache files.
+            Ud_numeric_override (Optional[npt.NDArray[np.complex_]], optional):
                      them to cache files.
 
         Raises:
@@ -1704,13 +1711,21 @@ class MagCalc:
 
         # --- Pre-calculate numerical Ud ---
         self.Ud_numeric: Optional[npt.NDArray[np.complex_]] = None
-        if self.Ud_sym is not None:
-            # _calculate_numerical_ud raises exceptions on failure
-            self._calculate_numerical_ud()
+        if Ud_numeric_override is not None:
+            logger.info("Using externally provided Ud_numeric_override.")
+            self.set_external_Ud_numeric(Ud_numeric_override)  # Use the existing setter
         else:
-            # This case should ideally be caught by _load_or_generate_matrices
-            raise RuntimeError("Ud_sym is None after matrix loading/generation.")
+            if self.Ud_sym is not None:
+                # _calculate_numerical_ud raises exceptions on failure
+                self._calculate_numerical_ud()
+            else:
+                # This case should ideally be caught by _load_or_generate_matrices
+                raise RuntimeError(
+                    "Ud_sym is None after matrix loading/generation and no Ud_numeric_override was provided."
+                )
 
+        if self.Ud_numeric is None:  # Final check
+            raise RuntimeError("Ud_numeric was not set during initialization.")
         logger.info("MagCalc initialization complete.")
 
     def _load_or_generate_matrices(self):
@@ -1896,6 +1911,33 @@ class MagCalc:
         # Recalculate Ud_numeric as it depends on parameters
         self._calculate_numerical_ud()
         logger.info("Hamiltonian parameters updated and Ud_numeric recalculated.")
+
+    def set_external_Ud_numeric(self, Ud_matrix_numerical: npt.NDArray[np.complex_]):
+        """
+        Allows setting the Ud_numeric matrix externally.
+        This is useful if Ud_numeric is derived from a field-dependent classical ground state
+        that is determined outside the initial symbolic generation of Ud_sym.
+
+        Args:
+            Ud_matrix_numerical (npt.NDArray[np.complex_]): The externally calculated
+                numerical Ud matrix (3N x 3N).
+        """
+        if (
+            not isinstance(Ud_matrix_numerical, np.ndarray)
+            or Ud_matrix_numerical.ndim != 2
+        ):
+            raise TypeError("Ud_matrix_numerical must be a 2D NumPy array.")
+
+        expected_dim = 3 * self.nspins
+        if Ud_matrix_numerical.shape != (expected_dim, expected_dim):
+            raise ValueError(
+                f"Ud_matrix_numerical has incorrect shape {Ud_matrix_numerical.shape}. Expected ({expected_dim}, {expected_dim})."
+            )
+
+        self.Ud_numeric = Ud_matrix_numerical.astype(np.complex128)
+        logger.info(
+            f"External Ud_numeric matrix has been set. Shape: {self.Ud_numeric.shape}"
+        )
 
     # --- END NEW METHODS ---
 
