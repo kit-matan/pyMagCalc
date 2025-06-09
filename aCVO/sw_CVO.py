@@ -39,6 +39,7 @@ except ImportError:
     sys.exit(1)
 
 import logging
+import tkinter as tk  # For screen size detection
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -46,6 +47,40 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+
+
+def get_screen_size_inches():
+    """Gets screen size in inches and screen DPI."""
+    try:
+        root = tk.Tk()
+        root.withdraw()  # Hide the main Tkinter window
+        screen_width_pixels = root.winfo_screenwidth()
+        screen_height_pixels = root.winfo_screenheight()
+
+        # Get DPI. winfo_fpixels('1i') returns pixels per inch.
+        dpi = root.winfo_fpixels("1i")
+        root.destroy()
+
+        if dpi <= 0:  # Fallback DPI if detection fails
+            logger.warning(
+                "Could not determine screen DPI accurately, using default 100."
+            )
+            dpi = 100.0
+        else:
+            logger.info(f"Detected screen DPI: {dpi:.2f}")
+
+        screen_width_inches = screen_width_pixels / dpi
+        screen_height_inches = screen_height_pixels / dpi
+        logger.info(
+            f"Detected screen size: {screen_width_pixels}x{screen_height_pixels} pixels; "
+            f"{screen_width_inches:.2f}x{screen_height_inches:.2f} inches."
+        )
+        return screen_width_inches, screen_height_inches, dpi
+    except Exception as e:
+        logger.warning(
+            f"Could not get screen size using tkinter: {e}. Plot will use default figsize."
+        )
+        return None, None, None
 
 
 # --- Q-point Generation ---
@@ -525,10 +560,66 @@ if __name__ == "__main__":
     plot_disp = disp_plotting_requested and disp_data_exists
     plot_sqw = sqw_plotting_requested and sqw_data_exists
 
+    # --- Determine Figsizes ---
+    default_figsize_combined = (10, 13)
+    default_figsize_disp_only = (8, 6)
+    default_figsize_sqw_only = (10, 6)
+
+    final_figsize_combined = default_figsize_combined
+    final_figsize_disp_only = default_figsize_disp_only
+    final_figsize_sqw_only = default_figsize_sqw_only
+
+    adjust_to_screen = plotting_p_config.get("adjust_height_to_screen", False)
+    screen_height_fraction = plotting_p_config.get("screen_height_fraction", 0.85)
+
+    if adjust_to_screen:
+        logger.info("Attempting to adjust CVO plot height to screen size...")
+        screen_w_in, screen_h_in, screen_dpi = get_screen_size_inches()
+        if screen_h_in is not None and screen_h_in > 0:
+            target_fig_height_inches = screen_h_in * screen_height_fraction
+
+            orig_w, orig_h = default_figsize_combined
+            aspect_ratio = orig_w / orig_h
+            final_figsize_combined = (
+                target_fig_height_inches * aspect_ratio,
+                target_fig_height_inches,
+            )
+            logger.info(
+                f"Adjusted CVO combined figsize to: ({final_figsize_combined[0]:.2f}, {final_figsize_combined[1]:.2f}) inches."
+            )
+
+            orig_w, orig_h = default_figsize_disp_only
+            aspect_ratio = orig_w / orig_h
+            final_figsize_disp_only = (
+                target_fig_height_inches
+                * aspect_ratio
+                * (orig_h / default_figsize_combined[1]),
+                target_fig_height_inches * (orig_h / default_figsize_combined[1]),
+            )
+            logger.info(
+                f"Adjusted CVO dispersion-only figsize to: ({final_figsize_disp_only[0]:.2f}, {final_figsize_disp_only[1]:.2f}) inches."
+            )
+
+            orig_w, orig_h = default_figsize_sqw_only
+            aspect_ratio = orig_w / orig_h
+            final_figsize_sqw_only = (
+                target_fig_height_inches
+                * aspect_ratio
+                * (orig_h / default_figsize_combined[1]),
+                target_fig_height_inches * (orig_h / default_figsize_combined[1]),
+            )
+            logger.info(
+                f"Adjusted CVO S(Q,w)-only figsize to: ({final_figsize_sqw_only[0]:.2f}, {final_figsize_sqw_only[1]:.2f}) inches."
+            )
+        else:
+            logger.warning(
+                "Failed to get screen height for CVO plot, using default figsizes."
+            )
+
     if plot_disp and plot_sqw:
         logger.info("Plotting both CVO Dispersion and S(Q,w) map.")
         fig_to_show_save, (ax_disp, ax_sqw) = plt.subplots(
-            2, 1, figsize=(10, 13), sharex=False
+            2, 1, figsize=final_figsize_combined, sharex=False
         )
         plot_dispersion_from_file_cvo(disp_data_file, config, ax_disp)
         plot_sqw_map_from_file_cvo(sqw_data_file, config, ax_sqw, fig_to_show_save)
@@ -536,12 +627,12 @@ if __name__ == "__main__":
         fig_to_show_save.tight_layout(rect=[0, 0.03, 1, 0.95])
     elif plot_disp:
         logger.info("Plotting CVO Dispersion only.")
-        fig_to_show_save, ax_disp = plt.subplots(1, 1, figsize=(8, 6))
+        fig_to_show_save, ax_disp = plt.subplots(1, 1, figsize=final_figsize_disp_only)
         plot_dispersion_from_file_cvo(disp_data_file, config, ax_disp)
         fig_to_show_save.tight_layout()
     elif plot_sqw:
         logger.info("Plotting CVO S(Q,w) map only.")
-        fig_to_show_save, ax_sqw = plt.subplots(1, 1, figsize=(10, 6))
+        fig_to_show_save, ax_sqw = plt.subplots(1, 1, figsize=final_figsize_sqw_only)
         plot_sqw_map_from_file_cvo(sqw_data_file, config, ax_sqw, fig_to_show_save)
         fig_to_show_save.tight_layout()
 

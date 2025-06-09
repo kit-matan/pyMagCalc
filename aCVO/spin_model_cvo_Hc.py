@@ -15,6 +15,7 @@ import sympy as sp
 import numpy as np
 from numpy import linalg as la
 from scipy.optimize import minimize
+from tqdm.auto import tqdm  # Added for progress bar
 import logging
 
 # Define logging for this module
@@ -445,6 +446,7 @@ def find_ground_state_orientations(
     n_spins_uc = len(atom_pos())
     current_al = al
 
+    options = {"maxiter": 5000, "ftol": 2.22e-09, "gtol": 1e-06, "disp": False}
     if initial_theta_guess_rad is None:
         H_field_val = params_numerical[-1]
         if abs(H_field_val) > 1e-9:
@@ -461,15 +463,22 @@ def find_ground_state_orientations(
     )
     logger.debug(f"Initial theta guess (radians): {initial_theta_guess_rad}")
 
-    minimization_result = minimize(
-        classical_energy,
-        initial_theta_guess_rad,
-        args=(params_numerical, S_numerical, current_al),
-        method="L-BFGS-B",
-        bounds=bounds_theta,
-        tol=1e-8,
-        options={"maxiter": 5000, "ftol": 2.22e-09, "gtol": 1e-06, "disp": False},
-    )
+    with tqdm(
+        total=options.get("maxiter", 5000),
+        desc="Classical Minimization (sm_cvo_Hc)",
+        unit="iter",
+        leave=False,
+    ) as pbar:
+        minimization_result = minimize(
+            classical_energy,
+            initial_theta_guess_rad,
+            args=(params_numerical, S_numerical, current_al),
+            method="L-BFGS-B",
+            bounds=bounds_theta,
+            tol=1e-8,
+            options=options,
+            callback=lambda xk: pbar.update(1),
+        )
 
     if minimization_result.success:
         optimal_theta_angles_rad = np.clip(minimization_result.x, 0, np.pi)

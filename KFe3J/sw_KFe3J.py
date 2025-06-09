@@ -32,10 +32,11 @@ if project_root_dir not in sys.path:
 
 from pyMagCalc import magcalc as mc
 
-import spin_model as kfe3j_spin_model  # Using a consistent alias
+import spin_model as kfe3j_spin_model
 import yaml
-
 import logging
+import tkinter as tk  # For screen size detection
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -43,6 +44,41 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+
+
+def get_screen_size_inches():
+    """Gets screen size in inches and screen DPI."""
+    try:
+        root = tk.Tk()
+        root.withdraw()  # Hide the main Tkinter window
+        screen_width_pixels = root.winfo_screenwidth()
+        screen_height_pixels = root.winfo_screenheight()
+
+        # Get DPI. winfo_fpixels('1i') returns pixels per inch.
+        # This might vary by axis, take x-axis DPI or average if necessary.
+        # For simplicity, assuming square pixels and using x-axis DPI.
+        dpi = root.winfo_fpixels("1i")
+        root.destroy()
+
+        if dpi <= 0:  # Fallback DPI if detection fails
+            logger.warning(
+                "Could not determine screen DPI accurately, using default 100."
+            )
+            dpi = 100.0
+        else:
+            logger.info(f"Detected screen DPI: {dpi:.2f}")
+
+        screen_width_inches = screen_width_pixels / dpi
+        screen_height_inches = screen_height_pixels / dpi
+        logger.info(
+            f"Detected screen size: {screen_width_pixels}x{screen_height_pixels} pixels; {screen_width_inches:.2f}x{screen_height_inches:.2f} inches."
+        )
+        return screen_width_inches, screen_height_inches, dpi
+    except Exception as e:
+        logger.warning(
+            f"Could not get screen size using tkinter: {e}. Plot will use default figsize."
+        )
+        return None, None, None
 
 
 # --- Q-point generation (consistent with original scripts) ---
@@ -584,6 +620,65 @@ if __name__ == "__main__":
     fig_to_show_save = None
     ax_disp, ax_sqw = None, None
 
+    # --- Determine Figsizes ---
+    # Default figsizes from the script's original hardcoded values
+    default_figsize_combined = (10, 13)  # width, height
+    default_figsize_disp_only = (8, 6)
+    default_figsize_sqw_only = (10, 6)
+
+    # Initialize final figsizes with defaults
+    final_figsize_combined = default_figsize_combined
+    final_figsize_disp_only = default_figsize_disp_only
+    final_figsize_sqw_only = default_figsize_sqw_only
+
+    adjust_to_screen = plotting_p_config.get("adjust_height_to_screen", False)
+    screen_height_fraction = plotting_p_config.get("screen_height_fraction", 0.85)
+
+    if adjust_to_screen:
+        logger.info("Attempting to adjust plot height to screen size...")
+        screen_w_in, screen_h_in, screen_dpi = get_screen_size_inches()
+        if screen_h_in is not None and screen_h_in > 0:
+            target_fig_height_inches = screen_h_in * screen_height_fraction
+
+            # Adjust combined plot
+            orig_w, orig_h = default_figsize_combined
+            aspect_ratio = orig_w / orig_h
+            final_figsize_combined = (
+                target_fig_height_inches * aspect_ratio,
+                target_fig_height_inches,
+            )
+            logger.info(
+                f"Adjusted combined figsize to: ({final_figsize_combined[0]:.2f}, {final_figsize_combined[1]:.2f}) inches."
+            )
+
+            # Adjust dispersion only plot
+            orig_w, orig_h = default_figsize_disp_only
+            aspect_ratio = orig_w / orig_h
+            final_figsize_disp_only = (
+                target_fig_height_inches
+                * aspect_ratio
+                * (orig_h / default_figsize_combined[1]),
+                target_fig_height_inches * (orig_h / default_figsize_combined[1]),
+            )  # Scale a bit for single plots
+            logger.info(
+                f"Adjusted dispersion-only figsize to: ({final_figsize_disp_only[0]:.2f}, {final_figsize_disp_only[1]:.2f}) inches."
+            )
+
+            # Adjust S(Q,w) only plot
+            orig_w, orig_h = default_figsize_sqw_only
+            aspect_ratio = orig_w / orig_h
+            final_figsize_sqw_only = (
+                target_fig_height_inches
+                * aspect_ratio
+                * (orig_h / default_figsize_combined[1]),
+                target_fig_height_inches * (orig_h / default_figsize_combined[1]),
+            )
+            logger.info(
+                f"Adjusted S(Q,w)-only figsize to: ({final_figsize_sqw_only[0]:.2f}, {final_figsize_sqw_only[1]:.2f}) inches."
+            )
+        else:
+            logger.warning("Failed to get screen height, using default figsizes.")
+
     if (
         disp_plotting_requested
         and disp_data_available
@@ -592,7 +687,7 @@ if __name__ == "__main__":
     ):
         logger.info("Plotting both Dispersion and S(Q,w) map on subplots.")
         fig_to_show_save, (ax_disp, ax_sqw) = plt.subplots(
-            2, 1, figsize=(10, 13), sharex=False
+            2, 1, figsize=final_figsize_combined, sharex=False
         )
         plot_dispersion_from_file(disp_data_file, config, ax_disp)
 
@@ -621,13 +716,13 @@ if __name__ == "__main__":
 
     elif disp_plotting_requested and disp_data_available:
         logger.info("Plotting Dispersion only.")
-        fig_to_show_save, ax_disp = plt.subplots(1, 1, figsize=(8, 6))
+        fig_to_show_save, ax_disp = plt.subplots(1, 1, figsize=final_figsize_disp_only)
         plot_dispersion_from_file(disp_data_file, config, ax_disp)
         fig_to_show_save.tight_layout()
 
     elif sqw_plotting_requested and sqw_data_available:
         logger.info("Plotting S(Q,w) map only.")
-        fig_to_show_save, ax_sqw = plt.subplots(1, 1, figsize=(10, 6))
+        fig_to_show_save, ax_sqw = plt.subplots(1, 1, figsize=final_figsize_sqw_only)
         _, qsx_sqw_for_plot, qsy_sqw_for_plot = generate_sqw_q_vectors()
         plot_sqw_map_from_file(
             sqw_data_file,

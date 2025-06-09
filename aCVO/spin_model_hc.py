@@ -20,6 +20,7 @@ import numpy as np
 from numpy import linalg as la
 from scipy.optimize import minimize
 import logging
+from tqdm.auto import tqdm  # Added for progress bar
 import sys
 
 logger = logging.getLogger(__name__)
@@ -516,18 +517,26 @@ def find_ground_state_orientations(params_numerical, S_val_numerical, current_mo
     )
     bounds = [(1e-9, np.pi - 1e-9)] * n_spins
 
-    logger.info(
-        f"Starting classical energy minimization for H={params_numerical[-1]}..."
-    )
-    result = minimize(
-        classical_energy,
-        initial_theta_guess,
-        args=(params_numerical, S_val_numerical, current_module),
-        method="L-BFGS-B",
-        bounds=bounds,
-        tol=1e-6,
-        options={"maxiter": 5000, "ftol": 1e-9, "gtol": 1e-7},
-    )
+    logger.info(f"Starting classical energy minimization for H={H_field_val}...")
+
+    options = {"maxiter": 5000, "ftol": 1e-9, "gtol": 1e-7}
+
+    with tqdm(
+        total=options.get("maxiter", 5000),
+        desc="Classical Minimization (sm_hc)",
+        unit="iter",
+        leave=False,
+    ) as pbar:
+        result = minimize(
+            classical_energy,
+            initial_theta_guess,
+            args=(params_numerical, S_val_numerical, current_module),
+            method="L-BFGS-B",
+            bounds=bounds,
+            tol=1e-6,
+            options=options,
+            callback=lambda xk: pbar.update(1),
+        )
 
     if result.success:
         logger.info(

@@ -28,6 +28,7 @@ import sys
 import pickle
 from multiprocessing import Pool
 from tqdm import tqdm
+import hashlib  # For numerical cache key generation
 import logging
 import os
 
@@ -35,10 +36,28 @@ import os
 import types  # Added for ModuleType hint
 from typing import List, Tuple, Dict, Any, Optional, Union, NoReturn
 
-# --- Imports for Configuration-Driven Model ---
-from .config_loader import load_spin_model_config
-from . import generic_spin_model
+# --- Imports for Configuration-Driven Model (with fallback for direct script execution) ---
+try:
+    # This works when magcalc.py is imported as part of the pyMagCalc package
+    from .config_loader import load_spin_model_config
+    from . import generic_spin_model
+except ImportError:
+    # This block executes if the relative import fails.
+    # This can happen when run as a script or by multiprocessing spawns.
+    # Add the script's directory to sys.path to allow direct imports.
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    if current_dir not in sys.path:
+        sys.path.insert(0, current_dir)
+    try:
+        from config_loader import load_spin_model_config
+        import generic_spin_model
+    except ImportError as e:
+        # If direct import also fails, then there's a more fundamental issue.
+        raise ImportError(
+            f"Failed to import local modules config_loader or generic_spin_model. Original error: {e}"
+        ) from e
 import numpy.typing as npt
+import matplotlib.pyplot as plt  # Added for plotting
 
 # --- Basic Logging Setup ---
 logging.basicConfig(
@@ -764,7 +783,7 @@ def process_calc_disp(
         float,
         Union[List[float], npt.NDArray[np.float_]],
     ],
-) -> npt.NDArray[np.float_]:
+) -> Tuple[npt.NDArray[np.float_], Optional[npt.NDArray[np.complex_]]]:
     """
     Worker function for parallel dispersion calculation at a single q-point.
 
@@ -785,7 +804,9 @@ def process_calc_disp(
             spin_magnitude_num (float): Numerical value of S.
             hamiltonian_params_num (Union[List[float], npt.NDArray[np.float_]]): Numerical parameters [p0, p1,...].
     Returns:
-        npt.NDArray[np.float_]: Array of calculated magnon energies (N,) for the given q-point. Returns NaN array on failure.
+        Tuple[npt.NDArray[np.float_], Optional[npt.NDArray[np.complex_]]]:
+            - Array of calculated magnon energies (N,) for the given q-point. Returns NaN array on failure.
+            - The numerical Hamiltonian matrix HMat_numeric (2N x 2N, complex) if successful, else None.
     """
     (
         HMat_sym,
@@ -798,32 +819,44 @@ def process_calc_disp(
     logger.debug(f"Processing dispersion for q-vector: {q_vector}")  # Log the q-vector
     q_label = f"q={q_vector}"
     nan_energies: npt.NDArray[np.float_] = np.full((nspins,), np.nan)
+    HMat_numeric: Optional[npt.NDArray[np.complex_]] = None
+    logger.debug(
+        f"[{q_label}] HMat_sym to lambdify: {HMat_sym}"
+    )  # Might be very verbose
+    logger.debug(f"[{q_label}] full_symbol_list for lambdify: {full_symbol_list}")
     try:
         HMat_func = lambdify(full_symbol_list, HMat_sym, modules=["numpy"])
     except Exception:
         logger.exception(f"Error during lambdify at {q_label}.")
-        return nan_energies
+        return nan_energies, None
     try:
         numerical_args = (
             list(q_vector) + [spin_magnitude_num] + list(hamiltonian_params_num)
         )
+        logger.debug(f"[{q_label}] numerical_args for HMat_func: {numerical_args}")
         HMat_numeric: npt.NDArray[np.complex_] = np.array(
             HMat_func(*numerical_args), dtype=np.complex128
         )
     except Exception:
         logger.exception(f"Error evaluating HMat function at {q_label}.")
-        return nan_energies
+        return nan_energies, None
     eigenvalues: npt.NDArray[np.complex_]
     try:
         eigenvalues = la.eigvals(HMat_numeric)
     except np.linalg.LinAlgError:
         logger.error(f"Eigenvalue calculation failed for {q_label}.")
-        return nan_energies
+        return (
+            nan_energies,
+            HMat_numeric,
+        )  # Return HMat even if eigvals failed for inspection
     except Exception:
         logger.exception(
             f"Unexpected error during eigenvalue calculation for {q_label}."
         )
-        return nan_energies
+        return (
+            nan_energies,
+            HMat_numeric,
+        )  # Return HMat even if eigvals failed for inspection
     try:
         imag_part_mags: npt.NDArray[np.float_] = np.abs(np.imag(eigenvalues))
         if np.any(imag_part_mags > ENERGY_IMAG_PART_THRESHOLD):
@@ -842,10 +875,10 @@ def process_calc_disp(
                 energies = np.pad(
                     energies, (0, nspins - len(energies)), constant_values=np.nan
                 )
-        return energies
+        return energies, HMat_numeric
     except Exception:
         logger.exception(f"Error during eigenvalue sorting/selection for {q_label}.")
-        return nan_energies
+        return nan_energies, HMat_numeric  # Return HMat even if sorting failed
 
 
 def process_calc_Sqw(
@@ -1333,7 +1366,7 @@ def _apply_substitutions_parallel(
             tqdm(
                 pool.imap(substitute_expr, pool_args_ft),
                 total=len(hamiltonian_terms),
-                desc="Substituting FT ",
+                desc="Applying Fourier Transform        ",  # Added more descriptive label
                 bar_format="{percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
             )
         )
@@ -1353,7 +1386,7 @@ def _apply_substitutions_parallel(
             tqdm(
                 pool.imap(substitute_expr, pool_args_comm),
                 total=len(hamiltonian_k_terms),
-                desc="Applying Commutation",
+                desc="Applying Commutation Rules      ",  # Added more descriptive label
                 bar_format="{percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
             )
         )
@@ -1373,7 +1406,7 @@ def _apply_substitutions_parallel(
             tqdm(
                 pool.imap(substitute_expr, pool_args_placeholder),
                 total=len(hamiltonian_k_comm_terms),
-                desc="Substituting Placeholders",
+                desc="Applying Placeholder Substitutions",  # Added more descriptive label
                 bar_format="{percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
             )
         )
@@ -1635,6 +1668,10 @@ def gen_HM(
     hamiltonian_sym = _prepare_hamiltonian(
         spin_model_module, spin_ops_global_ouc, params_sym, S_sym
     )
+    logger.debug(
+        f"Hardcoded-path: Initial symbolic Hamiltonian has {len(hamiltonian_sym.as_ordered_terms())} terms."
+    )
+    # logger.debug(f"Hardcoded-path: Hamiltonian_sym (first 500 chars): {str(hamiltonian_sym)[:500]}")
 
     # --- Define k-space operators ---
     ck_ops = [sp.Symbol("ck%d" % j, commutative=False) for j in range(nspins)]
@@ -1655,6 +1692,9 @@ def gen_HM(
         cmk_ops,
         cmkd_ops,
         params_sym,  # Pass params_sym here
+    )
+    logger.debug(
+        f"Hardcoded-path: Number of Fourier substitution rules: {len(fourier_substitutions)}"
     )
     commutation_substitutions = _define_commutation_substitutions(
         nspins, ck_ops, ckd_ops, cmk_ops, cmkd_ops
@@ -1724,14 +1764,14 @@ class MagCalc:
 
     def __init__(
         self,
-        spin_magnitude: float,
-        hamiltonian_params: Union[List[float], npt.NDArray[np.float_]],
-        cache_file_base: str,
+        spin_magnitude: Optional[float] = None,
+        hamiltonian_params: Optional[Union[List[float], npt.NDArray[np.float_]]] = None,
+        cache_file_base: Optional[
+            str
+        ] = None,  # Made optional, will be derived from config if possible
         spin_model_module: Optional[types.ModuleType] = None,
         cache_mode: str = "r",
-        Ud_numeric_override: Optional[
-            npt.NDArray[np.complex_]
-        ] = None,  # New optional parameter
+        Ud_numeric_override: Optional[npt.NDArray[np.complex_]] = None,
         config_filepath: Optional[str] = None,  # For configuration-driven model
     ):
         """
@@ -1742,11 +1782,11 @@ class MagCalc:
         the numerical rotation matrix Ud_numeric.
 
         Args:
-            spin_magnitude (float): The numerical value of the spin magnitude S.
-                Must be positive.
-            hamiltonian_params (Union[List[float], npt.NDArray[np.float_]]):
+            spin_magnitude (Optional[float]): The numerical value of the spin magnitude S.
+                Must be positive. Required if config_filepath is None.
+            hamiltonian_params (Optional[Union[List[float], npt.NDArray[np.float_]]]):
                 A list or NumPy array containing the numerical values for the
-                Hamiltonian parameters expected by the spin_model_module.
+                Hamiltonian parameters. Required if config_filepath is None.
             cache_file_base (str): The base filename (without path or extension)
                 used for storing/retrieving cached symbolic matrices (HMat, Ud)
                 in the 'pckFiles' subdirectory.
@@ -1777,25 +1817,85 @@ class MagCalc:
         """
         logger.info(f"Initializing MagCalc (cache_mode='{cache_mode}')...")
 
-        if not isinstance(cache_file_base, str) or not cache_file_base:
-            raise ValueError("cache_file_base must be a non-empty string.")
-        self.cache_file_base = cache_file_base
         if cache_mode not in ["r", "w"]:
             raise ValueError(f"Invalid cache_mode '{cache_mode}'. Use 'r' or 'w'.")
         self.cache_mode = cache_mode
 
-        self.config_data: Optional[Dict[str, Any]] = None
+        self.raw_config_data: Optional[Dict[str, Any]] = (
+            None  # Stores the full loaded config
+        )
+        self.numerical_cache_dir = os.path.join(
+            os.path.dirname(__file__), "numerical_cache"
+        )
+        os.makedirs(self.numerical_cache_dir, exist_ok=True)
+        self.model_config_data: Optional[Dict[str, Any]] = (
+            None  # Stores the relevant model section
+        )
+        self.config_data: Optional[Dict[str, Any]] = None  # Ensure attribute exists
         self.p_numerical: Optional[Dict[str, float]] = (
-            None  # Stores numerical params by name
+            None  # Stores numerical params by name  # Stores numerical params by name
         )
 
         if config_filepath:
             logger.info(f"Using configuration file: {config_filepath}")
             self.config_data = load_spin_model_config(config_filepath)
+            self.raw_config_data = (
+                self.config_data
+            )  # Keep a reference to the raw loaded data
+
+            # Determine the actual model configuration section
+            current_config_root = self.raw_config_data
+            if (
+                current_config_root is not None
+                and "crystal_structure" not in current_config_root
+            ):
+                if len(current_config_root) == 1:
+                    first_key = list(current_config_root.keys())[0]
+                    potential_model_section = current_config_root[first_key]
+                    if (
+                        isinstance(potential_model_section, dict)
+                        and "crystal_structure" in potential_model_section
+                    ):
+                        logger.info(
+                            f"Model configuration found under top-level key: '{first_key}'"
+                        )
+                        self.model_config_data = potential_model_section
+                    else:
+                        self.model_config_data = current_config_root  # Will likely fail later, but consistently
+                else:
+                    self.model_config_data = (
+                        current_config_root  # Will likely fail later
+                    )
+            else:
+                self.model_config_data = (
+                    current_config_root  # crystal_structure is at the root
+                )
+
+            if (
+                self.model_config_data is None
+            ):  # Should not happen if raw_config_data was not None
+                raise ValueError(
+                    f"Failed to determine model configuration section from: {config_filepath}"
+                )
+
+            # Derive cache_file_base from config_filepath if not provided
+            if cache_file_base is None:
+                base_name_from_config = os.path.splitext(
+                    os.path.basename(config_filepath)
+                )[0]
+                self.cache_file_base = base_name_from_config + "_cache"
+            else:
+                self.cache_file_base = cache_file_base
             self.sm = generic_spin_model  # Use the generic spin model module
 
             # Extract spin_magnitude from config
-            atoms_uc_config = self.config_data["crystal_structure"].get("atoms_uc", [])
+            crystal_structure_data = self.model_config_data.get("crystal_structure")
+            if crystal_structure_data is None:
+                raise ValueError(
+                    f"Missing required section 'crystal_structure' in model configuration from: {config_filepath}"
+                )
+
+            atoms_uc_config = crystal_structure_data.get("atoms_uc", [])
             if not atoms_uc_config:
                 raise ValueError(
                     "Configuration error: 'atoms_uc' is missing or empty in 'crystal_structure'."
@@ -1811,14 +1911,18 @@ class MagCalc:
                 )
 
             # Extract numerical Hamiltonian parameters from config
-            self.p_numerical = self.config_data.get("parameters")
+            # Try "model_params" first as per aCVO/config.yaml, then "parameters" as a fallback.
+            self.p_numerical = self.model_config_data.get("model_params")
+            if self.p_numerical is None:
+                self.p_numerical = self.model_config_data.get("parameters")
+
             if self.p_numerical is None or not isinstance(self.p_numerical, dict):
                 raise ValueError(
-                    "Configuration error: 'parameters' section is missing or not a dictionary."
+                    "Configuration error: Neither 'model_params' nor 'parameters' section found in model configuration, or it's not a dictionary."
                 )
             if not all(isinstance(v, (int, float)) for v in self.p_numerical.values()):
                 raise TypeError(
-                    "All values in 'parameters' section of config must be numbers."
+                    "All values in the parameter section ('model_params' or 'parameters') of config must be numbers."
                 )
 
             # Ordered list of parameter names and symbols
@@ -1847,6 +1951,10 @@ class MagCalc:
                 raise ValueError(
                     "spin_model_module must be provided if config_filepath is not set."
                 )
+            if cache_file_base is None:
+                raise ValueError(
+                    "cache_file_base must be provided if config_filepath is not set."
+                )
             if not hasattr(spin_model_module, "__name__"):  # Basic check
                 raise TypeError(
                     "spin_model_module does not appear to be a valid module."
@@ -1854,6 +1962,9 @@ class MagCalc:
             self.sm = spin_model_module
 
             # Validate and set spin_magnitude
+            assert (
+                spin_magnitude is not None
+            ), "spin_magnitude cannot be None when config_filepath is not used"
             if not isinstance(spin_magnitude, (int, float)):
                 raise TypeError("spin_magnitude must be a number.")
             if spin_magnitude <= 0:
@@ -1861,6 +1972,9 @@ class MagCalc:
             self.spin_magnitude = float(spin_magnitude)
 
             # Validate and set hamiltonian_params (list of floats)
+            assert (
+                hamiltonian_params is not None
+            ), "hamiltonian_params cannot be None when config_filepath is not used"
             if isinstance(hamiltonian_params, np.ndarray):
                 hamiltonian_params_list = hamiltonian_params.tolist()
             elif isinstance(hamiltonian_params, list):
@@ -1873,6 +1987,7 @@ class MagCalc:
                 raise TypeError("All elements in hamiltonian_params must be numbers.")
             self.hamiltonian_params = [float(p) for p in hamiltonian_params_list]
 
+            self.cache_file_base = cache_file_base
             # Create symbolic parameters (p0, p1, ...)
             num_params = len(self.hamiltonian_params)
             _params_sym_tuple = sp.symbols(f"p0:{num_params}", real=True)
@@ -1902,11 +2017,13 @@ class MagCalc:
         self.kx, self.ky, self.kz = sp.symbols("kx ky kz", real=True)
         self.k_sym: List[sp.Symbol] = [self.kx, self.ky, self.kz]
         self.S_sym: sp.Symbol = sp.Symbol("S", real=True)
-        # Ensure correct number of symbols matches parameters provided
-        num_params = len(self.hamiltonian_params)
-        self.params_sym: Tuple[sp.Symbol, ...] = sp.symbols(
-            f"p0:{num_params}", real=True  # This line is now conditional
-        )  # This line is now conditional. self.params_sym is set in the if/else block.
+
+        # self.params_sym is already set in the if/else block above
+        # For the traditional path, it's p0, p1...
+        # For the config path, it's symbols derived from parameter names.
+        if not hasattr(self, "params_sym") or self.params_sym is None:
+            # This should not happen if the logic above is correct
+            raise RuntimeError("self.params_sym was not set during initialization.")
 
         self.full_symbol_list: List[sp.Symbol] = (
             self.k_sym + [self.S_sym] + list(self.params_sym)
@@ -1936,6 +2053,11 @@ class MagCalc:
         if self.Ud_numeric is None:  # Final check
             raise RuntimeError("Ud_numeric was not set during initialization.")
         logger.info("MagCalc initialization complete.")
+
+        # Initialize attribute for storing intermediate Hamiltonian matrices from dispersion calculation
+        self._intermediate_numerical_H_matrices_disp: List[
+            Optional[npt.NDArray[np.complex_]]
+        ] = []
 
     def _validate_spin_model_module(self):
         """Checks if the provided spin_model_module has required functions."""
@@ -2194,7 +2316,7 @@ class MagCalc:
         logger.info("Starting symbolic matrix generation from configuration...")
         start_time_total = timeit.default_timer()
 
-        if not self.config_data or self.sm is not generic_spin_model:
+        if not self.model_config_data or self.sm is not generic_spin_model:
             raise RuntimeError(
                 "Configuration data not loaded or incorrect spin model module for _generate_matrices_from_config."
             )
@@ -2202,41 +2324,129 @@ class MagCalc:
         # 1. Get Model Info from Config
         uc_vecs_cart = self.sm.unit_cell_from_config(
             self.config_data["crystal_structure"]
-        )
+        )  # In generic_spin_model, this takes the crystal_structure dict directly
         atom_pos_uc_cart = self.sm.atom_pos_from_config(
-            self.config_data["crystal_structure"], uc_vecs_cart
+            self.model_config_data["crystal_structure"], uc_vecs_cart
         )
         # self.nspins is already set from config in __init__
 
         atom_pos_ouc_cart = self.sm.atom_pos_ouc_from_config(
             atom_pos_uc_cart,
             uc_vecs_cart,
-            self.config_data.get("calculation_settings", {}),
+            self.model_config_data.get("calculation_settings", {}),
         )
         nspins_ouc = len(atom_pos_ouc_cart)
 
         symbolic_params_map_for_gsm = {sym.name: sym for sym in self.params_sym}
 
         rotation_matrices_sym_list = self.sm.mpr_from_config(
-            self.config_data["crystal_structure"],
-            self.p_numerical,  # mpr_from_config expects numerical_parameters
+            self.model_config_data["crystal_structure"],  # Pass crystal_structure dict
+            # Pass symbolic parameters for symbolic Ud_sym generation
+            # This assumes mpr_from_config can handle symbolic dict or may need adjustment
+            # in generic_spin_model.py if it strictly expects numerical values.
+            symbolic_params_map_for_gsm,  # Pass parameters as positional argument
         )
 
         # 2. Setup Holstein-Primakoff Operators (for OUC)
-        c_ops_ouc, cd_ops_ouc, spin_ops_local_ouc = self._setup_hp_operators(
+        c_ops_ouc, cd_ops_ouc, spin_ops_local_ouc = _setup_hp_operators(
             nspins_ouc, self.S_sym
         )
 
         # 3. Rotate Spin Operators (OUC spins, UC rotations applied cyclically)
-        spin_ops_global_ouc = self._rotate_spin_operators(
+        spin_ops_global_ouc = _rotate_spin_operators(
             spin_ops_local_ouc, rotation_matrices_sym_list, self.nspins, nspins_ouc
         )
 
         # 4. Prepare Hamiltonian from Config
         hamiltonian_sym_config = self.sm.Hamiltonian_from_config(
-            spin_ops_global_ouc, symbolic_params_map_for_gsm, self.config_data
+            spin_ops_global_ouc, symbolic_params_map_for_gsm, self.model_config_data
         )
+        # logger.debug(f"Config-driven: Hamiltonian_sym_config (first 500 chars): {str(hamiltonian_sym_config)[:500]}")
+
         # Hamiltonian_from_config already calls .expand()
+        raw_hamiltonian_from_config = hamiltonian_sym_config  # Rename for clarity
+        logger.debug(
+            f"Config-driven: Raw Hamiltonian from config (first 1000 chars): {str(raw_hamiltonian_from_config)[:1000]}"
+        )
+        logger.debug(
+            f"Config-driven: Raw Hamiltonian from config has {len(raw_hamiltonian_from_config.as_ordered_terms())} terms."
+        )
+
+        # --- Filter Hamiltonian terms (Keep only up to quadratic in boson ops) ---
+        # For LSWT (H2), we need terms quadratic in boson operators.
+        # These typically arise from:
+        # 1. S*S type interactions: quadratic boson part is ~ S_sym^1
+        # 2. H*S_z type interactions (Zeeman): quadratic boson part is ~ S_sym^0 (no S_sym factor from HP of Sz)
+        # We must exclude S_sym^2 terms (quartic bosons) and linear boson terms.
+
+        filtered_terms_config = []
+        # Coefficient of S^0 (e.g., Zeeman term H_field*(-cd*c))
+        hamiltonian_S0_conf = raw_hamiltonian_from_config.coeff(self.S_sym, 0)
+        if hamiltonian_S0_conf != 0:
+            filtered_terms_config.append(hamiltonian_S0_conf)
+
+        # Coefficient of S^1 (e.g., J*S_sym*(cd*c + c*c + cd*cd))
+        hamiltonian_S1_conf = raw_hamiltonian_from_config.coeff(self.S_sym, 1)
+        if hamiltonian_S1_conf != 0:
+            filtered_terms_config.append(hamiltonian_S1_conf * self.S_sym)
+
+        # DO NOT include S_sym^2 terms for H2 (LSWT) as they lead to quartic boson terms.
+
+        if not filtered_terms_config:
+            logger.warning(
+                "Config-driven S-based Hamiltonian filtering resulted in zero terms. Using original raw Hamiltonian."
+            )
+            hamiltonian_after_S_filter = raw_hamiltonian_from_config
+        else:
+            hamiltonian_after_S_filter = Add(*filtered_terms_config)
+
+        hamiltonian_after_S_filter = sp.expand(hamiltonian_after_S_filter)
+        # --- End Filtering ---
+
+        # --- Explicitly remove terms linear in c_ops_ouc and cd_ops_ouc ---
+        logger.debug(
+            f"Hamiltonian before explicit linear term removal (first 500): {str(hamiltonian_after_S_filter)[:500]}"
+        )
+        terms_to_process = hamiltonian_after_S_filter.as_ordered_terms()
+        final_H2_terms = []
+        linear_terms_removed_count = 0
+        all_boson_ops_set = set(c_ops_ouc + cd_ops_ouc)
+
+        for term in terms_to_process:
+            boson_ops_in_term = term.free_symbols.intersection(all_boson_ops_set)
+            # Heuristic: if a term has exactly one boson operator symbol among its free symbols,
+            # consider it a linear term to be removed. This is an approximation.
+            if len(boson_ops_in_term) == 1 and not term.has_only_symbol(
+                *boson_ops_in_term,
+                count_ops=True,
+                exact_powers=[(op, 1) for op in boson_ops_in_term],
+            ):  # A more refined check might be needed
+                logger.debug(f"Removing potential linear term: {term}")
+                linear_terms_removed_count += 1
+            else:
+                final_H2_terms.append(term)
+
+        if linear_terms_removed_count > 0:
+            logger.info(
+                f"Explicitly removed {linear_terms_removed_count} terms identified as linear in boson operators."
+            )
+            hamiltonian_sym_config = Add(*final_H2_terms)
+            hamiltonian_sym_config = sp.expand(hamiltonian_sym_config)
+        else:
+            hamiltonian_sym_config = (
+                hamiltonian_after_S_filter  # No linear terms removed by this heuristic
+            )
+
+        logger.debug(
+            f"Config-driven: Hamiltonian_sym_config AFTER filtering (first 1000 chars): {str(hamiltonian_sym_config)[:1000]}"
+        )
+        logger.debug(
+            f"Config-driven: Hamiltonian_sym_config AFTER filtering has {len(hamiltonian_sym_config.as_ordered_terms())} terms."
+        )
+
+        logger.debug(
+            f"Config-driven: Initial symbolic Hamiltonian has {len(hamiltonian_sym_config.as_ordered_terms())} terms."
+        )
 
         # 5. Define k-space operators (UC scope)
         ck_ops_uc = [sp.Symbol(f"ck{j}", commutative=False) for j in range(self.nspins)]
@@ -2253,13 +2463,14 @@ class MagCalc:
         # 6. Define Fourier Substitutions
         Jex_sym_matrix, _ = (
             self.sm.spin_interactions_from_config(  # DM matrix also returned but not used here
-                symbolic_params_map_for_gsm,
-                self.config_data["interactions"],
+                symbolic_params_map_for_gsm,  # This is a dict of {name: symbol}
+                self.model_config_data["interactions"],  # Pass interactions dict
                 atom_pos_uc_cart,
                 atom_pos_ouc_cart,
                 uc_vecs_cart,
             )
         )
+        logger.debug(f"Config-driven: Jex_sym_matrix for FT rules:\n{Jex_sym_matrix}")
 
         fourier_substitutions = _define_fourier_substitutions_generic(
             self.k_sym,
@@ -2274,21 +2485,28 @@ class MagCalc:
             atom_pos_ouc_cart,
             Jex_sym_matrix,
         )
-
-        # 7. Define Commutation and Placeholder Substitutions
-        commutation_substitutions = self._define_commutation_substitutions(
-            self.nspins, ck_ops_uc, ckd_ops_uc, cmk_ops_uc, cmkd_ops_uc
+        logger.debug(
+            f"Config-driven: Number of Fourier substitution rules: {len(fourier_substitutions)}"
         )
+        # Log a few sample FT rules
+        if fourier_substitutions:
+            logger.debug("Config-driven: Sample Fourier substitution rules (first 3):")
+            for i, rule in enumerate(fourier_substitutions[:3]):
+                logger.debug(f"  Rule {i}: {rule[0]} -> {rule[1]}")
+        # 7. Define Commutation and Placeholder Substitutions
+        commutation_substitutions = _define_commutation_substitutions(
+            self.nspins, ck_ops_uc, ckd_ops_uc, cmk_ops_uc, cmkd_ops_uc
+        )  # No self needed
         basis_vector_dagger = ckd_ops_uc + cmk_ops_uc
         basis_vector = ck_ops_uc + cmkd_ops_uc
         placeholder_symbols, placeholder_substitutions = (
-            self._define_placeholder_substitutions(
+            _define_placeholder_substitutions(  # No self needed
                 self.nspins, basis_vector_dagger, basis_vector
             )
         )
 
         # 8. Apply Substitutions
-        hamiltonian_with_placeholders = self._apply_substitutions_parallel(
+        hamiltonian_with_placeholders = _apply_substitutions_parallel(
             hamiltonian_sym_config,
             fourier_substitutions,
             commutation_substitutions,
@@ -2296,31 +2514,83 @@ class MagCalc:
         )
 
         # 9. Extract H2 Matrix
-        H2_matrix = self._extract_h2_matrix(
+        H2_matrix = _extract_h2_matrix(
             hamiltonian_with_placeholders, placeholder_symbols, self.nspins
-        )
+        )  # No self needed
 
         # 10. Calculate TwogH2
         g_metric_tensor_sym = sp.diag(*([1] * self.nspins + [-1] * self.nspins))
         dynamical_matrix_TwogH2 = 2 * g_metric_tensor_sym * H2_matrix
 
         # 11. Build Ud Matrix from Config
-        Ud_rotation_matrix = self._build_ud_matrix(
+        Ud_rotation_matrix = _build_ud_matrix(
             rotation_matrices_sym_list, self.nspins
-        )
+        )  # No self needed
 
         end_time_total = timeit.default_timer()
         logger.info(
             f"Total run-time for _generate_matrices_from_config: {np.round((end_time_total - start_time_total), 2)} s."
         )
+
+        # --- Sanity Check for HMat_sym ---
+        expected_symbols_in_HMat = set(self.k_sym + [self.S_sym] + self.params_sym)
+        actual_symbols_in_HMat = dynamical_matrix_TwogH2.free_symbols
+        unexpected_symbols = actual_symbols_in_HMat - expected_symbols_in_HMat
+        if unexpected_symbols:
+            logger.error(
+                f"Config-driven HMat_sym (dynamical_matrix_TwogH2) contains unexpected free symbols: {unexpected_symbols}"
+            )
+            # Detailed element check (optional, can be very verbose)
+            # for r_idx in range(dynamical_matrix_TwogH2.rows):
+            #     for c_idx in range(dynamical_matrix_TwogH2.cols):
+            #         elem_symbols = dynamical_matrix_TwogH2[r_idx, c_idx].free_symbols
+            #         if elem_symbols - expected_symbols_in_HMat:
+            #             logger.error(f"  Element ({r_idx},{c_idx}) '{dynamical_matrix_TwogH2[r_idx, c_idx]}' has unexpected: {elem_symbols - expected_symbols_in_HMat}")
+            raise RuntimeError(
+                f"Generated HMat_sym from config contains unexpected symbols: {unexpected_symbols}. This will cause lambdify to fail."
+            )
         return dynamical_matrix_TwogH2, Ud_rotation_matrix
+
+    def _generate_numerical_cache_key(
+        self, q_vectors_list: List[npt.NDArray[np.float_]], calculation_type: str
+    ) -> str:
+        """
+        Generates a unique cache key for numerical results.
+        Args:
+            q_vectors_list: List of 1D NumPy arrays representing q-vectors.
+            calculation_type: String identifier like "dispersion" or "sqw".
+        Returns:
+            A hex digest string representing the cache key.
+        """
+        hasher = hashlib.md5()
+
+        # 1. Symbolic model identifier
+        hasher.update(str(self.cache_file_base).encode("utf-8"))
+        # 2. Spin magnitude
+        hasher.update(str(self.spin_magnitude).encode("utf-8"))
+        # 3. Hamiltonian parameters
+        hasher.update(str(self.hamiltonian_params).encode("utf-8"))
+        # 4. Ud_numeric matrix (critical for spin configuration)
+        if self.Ud_numeric is not None:
+            hasher.update(self.Ud_numeric.tobytes())
+        else:
+            # This case should ideally not be reached if __init__ ensures Ud_numeric is set
+            hasher.update(b"Ud_numeric_None")
+            logger.warning("_generate_numerical_cache_key: self.Ud_numeric is None.")
+        # 5. Calculation type
+        hasher.update(calculation_type.encode("utf-8"))
+        # 6. Q-vectors content and order
+        for q_vec in q_vectors_list:
+            hasher.update(q_vec.tobytes())
+
+        return calculation_type + "_" + hasher.hexdigest()
 
     # --- END NEW METHODS ---
 
     def calculate_dispersion(
         self,
         q_vectors: Union[List[npt.NDArray[np.float_]], npt.NDArray[np.float_]],
-    ) -> Optional[List[npt.NDArray[np.float_]]]:
+    ) -> Optional[List[Optional[npt.NDArray[np.float_]]]]:
         """
         Calculate the spin-wave dispersion relation over a list of q-points.
 
@@ -2330,7 +2600,7 @@ class MagCalc:
                 Each vector should be a 1D array/list of 3 numbers.
 
         Returns:
-            Optional[List[npt.NDArray[np.float_]]]: A list containing the
+            Optional[List[Optional[npt.NDArray[np.float_]]]]: A list containing the
             calculated magnon energies (as a NumPy array) for each corresponding
             input q-vector. Returns None if the calculation fails to start
             (e.g., due to setup errors or pool initialization failure).
@@ -2365,6 +2635,30 @@ class MagCalc:
         # --- End q_vector validation ---
 
         logger.info("Running dispersion calculation via multiprocessing...")
+
+        # --- Numerical Cache Check ---
+        cache_key = self._generate_numerical_cache_key(q_vectors_list, "dispersion")
+        cache_filepath = os.path.join(self.numerical_cache_dir, cache_key + ".pkl")
+
+        if os.path.exists(cache_filepath):
+            try:
+                with open(cache_filepath, "rb") as f:
+                    cached_energies = pickle.load(f)
+                logger.info(
+                    f"Loaded dispersion results from numerical cache: {cache_filepath}"
+                )
+                # Note: _intermediate_numerical_H_matrices_disp will not be populated from cache
+                self._intermediate_numerical_H_matrices_disp = [None] * len(
+                    q_vectors_list
+                )
+                return cached_energies
+            except Exception as e:
+                logger.warning(
+                    f"Failed to load from numerical cache {cache_filepath}: {e}. Recalculating."
+                )
+        # Clear previous intermediate matrices if any
+        self._intermediate_numerical_H_matrices_disp = []
+
         start_time: float = timeit.default_timer()
 
         pool_args: List[Tuple] = [
@@ -2378,15 +2672,18 @@ class MagCalc:
             )
             for q_vec in q_vectors_list  # Use validated list
         ]
-        energies_list: List[npt.NDArray[np.float_]] = []
+
+        results_from_pool: List[
+            Tuple[npt.NDArray[np.float_], Optional[npt.NDArray[np.complex_]]]
+        ] = []
         try:
             # Use context manager for Pool
             with Pool() as pool:
-                energies_list = list(
+                results_from_pool = list(
                     tqdm(
                         pool.imap(process_calc_disp, pool_args),
                         total=len(q_vectors_list),
-                        desc="Calculating Dispersion",
+                        desc="Calculating Spin Wave Dispersion",  # Added more descriptive label
                         bar_format="{percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
                     )
                 )
@@ -2396,7 +2693,20 @@ class MagCalc:
             )
             return None
 
-        num_failures = sum(np.isnan(en).any() for en in energies_list)
+        # Unpack results and store intermediate matrices
+        energies_list: List[Optional[npt.NDArray[np.float_]]] = []
+        for res_energies, res_H_matrix in results_from_pool:
+            if res_energies is not None and np.all(
+                np.isnan(res_energies)
+            ):  # if all are nan, treat as None for consistency
+                energies_list.append(None)
+            else:
+                energies_list.append(res_energies)
+            self._intermediate_numerical_H_matrices_disp.append(res_H_matrix)
+
+        num_failures = sum(
+            1 for en in energies_list if en is None or np.isnan(en).any()
+        )
         if num_failures > 0:
             logger.warning(
                 f"Dispersion calculation failed for {num_failures} out of {len(q_vectors_list)} q-points. Check logs for details."
@@ -2406,6 +2716,17 @@ class MagCalc:
         logger.info(
             f"Run-time for dispersion calculation: {np.round((end_time - start_time) / 60, 2)} min."
         )
+
+        # --- Save to Numerical Cache ---
+        try:
+            with open(cache_filepath, "wb") as f:
+                pickle.dump(energies_list, f)
+            logger.info(
+                f"Saved dispersion results to numerical cache: {cache_filepath}"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to save to numerical cache {cache_filepath}: {e}")
+
         return energies_list
 
     def calculate_sqw(
@@ -2462,6 +2783,25 @@ class MagCalc:
         # --- End q_vector validation ---
 
         logger.info("Running S(q,w) calculation via multiprocessing...")
+
+        # --- Numerical Cache Check ---
+        cache_key = self._generate_numerical_cache_key(q_vectors_list, "sqw")
+        cache_filepath = os.path.join(self.numerical_cache_dir, cache_key + ".pkl")
+
+        if os.path.exists(cache_filepath):
+            try:
+                with open(cache_filepath, "rb") as f:
+                    cached_q_out, cached_energies, cached_intensities = pickle.load(f)
+                logger.info(
+                    f"Loaded S(q,w) results from numerical cache: {cache_filepath}"
+                )
+                return cached_q_out, cached_energies, cached_intensities
+            except Exception as e:
+                logger.warning(
+                    f"Failed to load S(q,w) from numerical cache {cache_filepath}: {e}. Recalculating."
+                )
+        # --- End Numerical Cache Check ---
+
         start_time: float = timeit.default_timer()
 
         pool_args: List[Tuple] = [
@@ -2487,7 +2827,7 @@ class MagCalc:
                     tqdm(
                         pool.imap(process_calc_Sqw, pool_args),
                         total=len(q_vectors_list),
-                        desc="Calculating S(q,w)",
+                        desc="Calculating S(q,omega)          ",  # Added more descriptive label
                         bar_format="{percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
                     )
                 )
@@ -2520,6 +2860,19 @@ class MagCalc:
         logger.info(
             f"Run-time for S(q,w) calculation: {np.round((end_time - start_time) / 60, 2)} min."
         )
+
+        # --- Save to Numerical Cache ---
+        results_to_cache = (q_vectors_out, energies_out, intensities_out)
+        try:
+            with open(cache_filepath, "wb") as f:
+                pickle.dump(results_to_cache, f)
+            logger.info(f"Saved S(q,w) results to numerical cache: {cache_filepath}")
+        except Exception as e:
+            logger.warning(
+                f"Failed to save S(q,w) to numerical cache {cache_filepath}: {e}"
+            )
+        # --- End Save to Numerical Cache ---
+
         return q_vectors_out, energies_out, intensities_out
 
     def save_results(self, filename: str, results_dict: Dict[str, Any]):
@@ -2561,7 +2914,124 @@ class MagCalc:
             raise
 
 
-# --- Main execution block (demonstrating update methods) ---
+# --- Plotting Helper Functions ---
+def plot_dispersion_from_data(
+    q_values: np.ndarray,
+    energies_list: List[Optional[npt.NDArray[np.float_]]],
+    title: str = "Spin Wave Dispersion",
+    q_labels: Optional[List[str]] = None,
+    q_ticks_positions: Optional[List[float]] = None,
+    save_filename: Optional[str] = None,
+    show_plot: bool = True,
+):
+    """
+    Plots spin wave dispersion from loaded data.
+
+    Args:
+        q_values (np.ndarray): Array of q-values for the x-axis (e.g., path length).
+        energies_list (List[Optional[npt.NDArray[np.float_]]]): List of energy arrays,
+            one for each q-point. Each array contains energies for different modes.
+        title (str): Title of the plot.
+        q_labels (Optional[List[str]]): Labels for specific q-points on the x-axis.
+        q_ticks_positions (Optional[List[float]]): Positions for q_labels.
+        save_filename (Optional[str]): If provided, saves the plot to this file.
+        show_plot (bool): If True, displays the plot.
+    """
+    logger.info(f"Plotting dispersion: {title}")
+    plt.figure(figsize=(8, 6))
+
+    num_modes = 0
+    if energies_list and energies_list[0] is not None:
+        num_modes = energies_list[0].shape[0]
+
+    for mode_idx in range(num_modes):
+        mode_energies = []
+        valid_q_values_for_mode = []
+        for i, q_energy_array in enumerate(energies_list):
+            if q_energy_array is not None and mode_idx < len(q_energy_array):
+                mode_energies.append(q_energy_array[mode_idx])
+                valid_q_values_for_mode.append(q_values[i])
+        if mode_energies:
+            plt.plot(valid_q_values_for_mode, mode_energies, marker=".", linestyle="-")
+
+    plt.xlabel("q (path length or index)")
+    plt.ylabel("Energy (meV)")
+    plt.title(title)
+    if q_labels and q_ticks_positions:
+        plt.xticks(q_ticks_positions, q_labels)
+    plt.grid(True, linestyle="--", alpha=0.7)
+    plt.tight_layout()
+
+    if save_filename:
+        plt.savefig(save_filename)
+        logger.info(f"Dispersion plot saved to {save_filename}")
+    if show_plot:
+        plt.show()
+    plt.close()
+
+
+def plot_sqw_from_data(
+    q_values: np.ndarray,
+    energies_list: List[Optional[npt.NDArray[np.float_]]],
+    intensities_list: List[Optional[npt.NDArray[np.float_]]],
+    title: str = "S(q,w) Intensity Map",
+    energy_max: Optional[float] = None,
+    q_labels: Optional[List[str]] = None,
+    q_ticks_positions: Optional[List[float]] = None,
+    save_filename: Optional[str] = None,
+    show_plot: bool = True,
+):
+    """
+    Plots S(q,w) intensity map from loaded data using a scatter plot.
+    Size and color of points represent intensity.
+    """
+    logger.info(f"Plotting S(q,w) map: {title}")
+    plt.figure(figsize=(10, 6))
+
+    all_q = []
+    all_e = []
+    all_i = []
+
+    for i, (q_val, e_arr, i_arr) in enumerate(
+        zip(q_values, energies_list, intensities_list)
+    ):
+        if e_arr is not None and i_arr is not None:
+            for energy, intensity in zip(e_arr, i_arr):
+                if (
+                    not np.isnan(energy)
+                    and not np.isnan(intensity)
+                    and intensity > 1e-3
+                ):  # Threshold intensity
+                    all_q.append(q_val)
+                    all_e.append(energy)
+                    all_i.append(intensity)
+
+    if not all_q:
+        logger.warning("No data to plot for S(q,w).")
+        return
+
+    scatter = plt.scatter(
+        all_q, all_e, c=all_i, s=np.sqrt(all_i) * 20, cmap="viridis", alpha=0.7
+    )  # Scale size for visibility
+    plt.colorbar(scatter, label="Intensity (arb. units)")
+    plt.xlabel("q (path length or index)")
+    plt.ylabel("Energy (meV)")
+    plt.title(title)
+    if energy_max:
+        plt.ylim(0, energy_max)
+    if q_labels and q_ticks_positions:
+        plt.xticks(q_ticks_positions, q_labels)
+    plt.grid(True, linestyle="--", alpha=0.7)
+    plt.tight_layout()
+
+    if save_filename:
+        plt.savefig(save_filename)
+        logger.info(f"S(q,w) map saved to {save_filename}")
+    if show_plot:
+        plt.show()
+    plt.close()
+
+
 if __name__ == "__main__":
     """
     Example script demonstrating the usage of the MagCalc class.
@@ -2571,116 +3041,261 @@ if __name__ == "__main__":
     3. Instantiates `MagCalc`.
     4. Calculates and saves initial dispersion.
     5. Updates parameters and recalculates/saves dispersion and S(q,w).
+    6. Optionally loads and plots S(q,w) from file.
     """
-    # --- Import the specific spin model ---
-    # NOTE: Replace 'spin_model_fm' if you intend to use a different model file
+    # --- Control Flags for KFe3J Example ---
+    CALCULATE_NEW_DATA = True  # Calculate new data or use existing files for plotting
+    PLOT_FROM_DISP_FILE = False  # Plot dispersion from a saved file
+    PLOT_FROM_SQW_FILE = False  # Plot S(q,w) from a saved file
+    SHOW_PLOTS_AFTER_CALC = True  # Show plots immediately after calculation
+
+    # --- Import the KFe3J spin model ---
     try:
-        import spin_model
+        # Assuming KFe3J package is in a directory accessible by Python
+        # If KFe3J is in the same directory as pyMagCalc or a subdirectory of project_root_dir
+        # and project_root_dir is in sys.path, this should work.
+        # For a typical project structure where KFe3J is a sibling to pyMagCalc:
+        current_script_dir_for_example = os.path.dirname(os.path.abspath(__file__))
+        project_root_dir_for_example = os.path.dirname(
+            current_script_dir_for_example
+        )  # pyMagCalc's parent
+        kfe3j_module_dir = os.path.join(project_root_dir_for_example, "KFe3J")
+        if kfe3j_module_dir not in sys.path:
+            sys.path.insert(0, kfe3j_module_dir)
+        import spin_model as kfe3j_spin_model
     except ImportError:
         logger.error(
-            "Failed to import 'spin_model'. Please ensure it's in the Python path."
+            "Failed to import 'KFe3J.spin_model'. Ensure KFe3J directory is accessible."
         )
         sys.exit(1)  # Exit if the model cannot be imported
-    # --- User Configuration ---
-    spin_S_val: float = 1.0
-    hamiltonian_params_val: List[float] = [1.0, 0.5, 0.1, 0.1, 0.0]
-    cache_file_base_name: str = "my_model_cache"
-    cache_operation_mode: str = "r"  # Use 'r' after cache is generated
-    output_filename_base: str = "calc_results"
 
-    # Define q points
+    # --- KFe3J User Configuration ---
+    spin_S_val: float = 2.5  # S for Fe3+
+    # Order for KFe3J model: J1, J2, Dy, Dz, H_field
+    hamiltonian_params_val: List[float] = [3.23, 0.11, 0.218, -0.195, 0.0]
+    cache_file_base_name: str = "kfe3j_example_cache"
+    cache_operation_mode: str = "w"  # Use 'w' to generate cache first time, then 'r'
+    output_filename_base: str = "kfe3j_example_results"
+
+    # Define q points for KFe3J (example path from test script)
     q_points_list: List[List[float]] = []
-    N_points_per_segment = 20
-    logger.info(f"Using {N_points_per_segment} points per segment.")
-    q_points_list.extend(
-        np.linspace([0, 0, 0], [np.pi, 0, 0], N_points_per_segment, endpoint=False)
-    )
-    q_points_list.extend(
-        np.linspace(
-            [np.pi, 0, 0], [np.pi, np.pi, 0], N_points_per_segment, endpoint=False
-        )
-    )
-    q_points_list.extend(
-        np.linspace([np.pi, np.pi, 0], [0, 0, 0], N_points_per_segment, endpoint=True)
-    )
+    # Gamma to M path (along kx up to 2*pi/sqrt(3))
+    N_gamma_m = 10
+    for qx_val in np.linspace(
+        0, 2 * np.pi / np.sqrt(3), N_gamma_m, endpoint=True
+    ):  # Include M
+        q_points_list.append([qx_val, 0, 0])
+
+    # M to K path (example, M is (2pi/sqrt(3),0,0), K is (2pi/sqrt(3), 2pi/3,0) )
+    # For this example, let's go from M towards K along ky
+    N_m_k_segment = 6  # Number of points from M (exclusive) to K (inclusive)
+    m_point = np.array([2 * np.pi / np.sqrt(3), 0, 0])
+    k_point_approx = np.array([2 * np.pi / np.sqrt(3), 2 * np.pi / 3, 0])
+
+    # Generate points from M (exclusive) to K (inclusive)
+    for i in range(1, N_m_k_segment + 1):
+        frac = i / N_m_k_segment
+        q_pt = m_point + frac * (k_point_approx - m_point)
+        q_points_list.append(q_pt.tolist())
+
     q_points_array: npt.NDArray[np.float_] = np.array(q_points_list)
     # --- End User Configuration ---
 
     logger.info("Starting example calculation using MagCalc class...")
 
-    try:
-        # --- Instantiate the Calculator ---
-        calculator = MagCalc(
-            spin_magnitude=spin_S_val,
-            hamiltonian_params=hamiltonian_params_val,
-            cache_file_base=cache_file_base_name,
-            cache_mode=cache_operation_mode,
-            spin_model_module=spin_model,
+    # Define q-path labels and positions (example)
+    # These should correspond to your q_points_array structure
+    # For KFe3J path: Gamma -> M -> K
+    q_path_distances = np.zeros(len(q_points_array))
+    for i in range(1, len(q_points_array)):
+        q_path_distances[i] = q_path_distances[i - 1] + np.linalg.norm(
+            q_points_array[i] - q_points_array[i - 1]
         )
 
-        # --- Calculate and Save Dispersion (Initial Params) ---
-        logger.info("Calculating dispersion (Initial Params)...")
-        dispersion_energies = calculator.calculate_dispersion(q_points_array)
-        if dispersion_energies is not None:
-            disp_filename = f"{output_filename_base}_disp_initial.npz"
-            calculator.save_results(
-                disp_filename,
-                {"q_vectors": q_points_array, "energies": dispersion_energies},
+    q_special_labels = ["Γ", "M", "K"]
+    q_special_positions = [
+        q_path_distances[0],  # Gamma
+        q_path_distances[N_gamma_m - 1],  # M
+        q_path_distances[-1],  # K
+    ]
+
+    disp_filename_initial = f"{output_filename_base}_disp_initial.npz"
+    disp_filename_updated = f"{output_filename_base}_disp_updated.npz"
+    sqw_filename_updated = f"{output_filename_base}_sqw_updated.npz"
+
+    if CALCULATE_NEW_DATA:
+        try:
+            # --- Instantiate the Calculator ---
+            calculator = MagCalc(
+                spin_magnitude=spin_S_val,
+                hamiltonian_params=hamiltonian_params_val,
+                cache_file_base=cache_file_base_name,
+                cache_mode=cache_operation_mode,  # Use 'w' to generate cache first time
+                spin_model_module=kfe3j_spin_model,
             )
-        else:
-            logger.error("Initial dispersion calculation failed.")
 
-        # --- Update Parameters ---
-        logger.info("Updating parameters for recalculation...")
-        new_params = [
-            p * 1.1 for p in hamiltonian_params_val
-        ]  # Example: Increase params by 10%
-        calculator.update_hamiltonian_params(new_params)
-        # calculator.update_spin_magnitude(spin_S_val * 1.2) # Example if needed
-
-        # --- Recalculate and Save Dispersion (Updated Params) ---
-        logger.info("Calculating dispersion (Updated Params)...")
-        dispersion_energies_updated = calculator.calculate_dispersion(q_points_array)
-        if dispersion_energies_updated is not None:
-            disp_filename_updated = f"{output_filename_base}_disp_updated.npz"
-            calculator.save_results(
-                disp_filename_updated,
-                {"q_vectors": q_points_array, "energies": dispersion_energies_updated},
+            # --- Calculate and Save Dispersion (Initial Params) ---
+            logger.info("Calculating dispersion (Initial Params)...")
+            dispersion_energies_initial = calculator.calculate_dispersion(
+                q_points_array
             )
-        else:
-            logger.error("Updated dispersion calculation failed.")
+            if dispersion_energies_initial is not None:
+                calculator.save_results(
+                    disp_filename_initial,
+                    {
+                        "q_values_path": q_path_distances,
+                        "energies_list": dispersion_energies_initial,
+                        "q_labels": q_special_labels,
+                        "q_ticks_positions": q_special_positions,
+                    },
+                )
+                if SHOW_PLOTS_AFTER_CALC:
+                    plot_dispersion_from_data(
+                        q_path_distances,
+                        dispersion_energies_initial,
+                        title="Dispersion (Initial Params)",
+                        q_labels=q_special_labels,
+                        q_ticks_positions=q_special_positions,
+                    )
+            else:
+                logger.error("Initial dispersion calculation failed.")
 
-        # --- Calculate and Save S(q,w) (Using Updated Params) ---
-        logger.info("Calculating S(q,w) (Updated Params)...")
-        sqw_results = calculator.calculate_sqw(q_points_array)
-        q_vectors_out, energies_sqw, intensities_sqw = sqw_results
-        if (
-            q_vectors_out is not None
-            and energies_sqw is not None
-            and intensities_sqw is not None
-        ):
-            sqw_filename = f"{output_filename_base}_sqw_updated.npz"
-            calculator.save_results(
-                sqw_filename,
-                {
-                    "q_vectors": q_vectors_out,
-                    "energies": energies_sqw,
-                    "intensities": intensities_sqw,
-                },
+            # --- Update Parameters ---
+            logger.info("Updating parameters for recalculation...")
+            new_params = [
+                p * 1.1 for p in hamiltonian_params_val
+            ]  # Example: Increase params by 10%
+            calculator.update_hamiltonian_params(new_params)
+
+            # --- Recalculate and Save Dispersion (Updated Params) ---
+            logger.info("Calculating dispersion (Updated Params)...")
+            dispersion_energies_updated = calculator.calculate_dispersion(
+                q_points_array
             )
-        else:
-            logger.error("S(q,w) calculation failed.")
+            if dispersion_energies_updated is not None:
+                calculator.save_results(
+                    disp_filename_updated,
+                    {
+                        "q_values_path": q_path_distances,
+                        "energies_list": dispersion_energies_updated,
+                        "q_labels": q_special_labels,
+                        "q_ticks_positions": q_special_positions,
+                    },
+                )
+                if SHOW_PLOTS_AFTER_CALC:
+                    plot_dispersion_from_data(
+                        q_path_distances,
+                        dispersion_energies_updated,
+                        title="Dispersion (Updated Params)",
+                        q_labels=q_special_labels,
+                        q_ticks_positions=q_special_positions,
+                    )
+            else:
+                logger.error("Updated dispersion calculation failed.")
 
-    except (
-        FileNotFoundError,
-        AttributeError,
-        RuntimeError,
-        ValueError,
-        TypeError,
-        pickle.PickleError,
-    ) as e:  # Catch specific init/load errors
-        logger.error(f"Calculation failed during setup or execution: {e}")
-    except Exception as e:
-        logger.exception("An unexpected error occurred.")
+            # --- Calculate and Save S(q,w) (Using Updated Params) ---
+            logger.info("Calculating S(q,w) (Updated Params)...")
+            sqw_results = calculator.calculate_sqw(q_points_array)
+            q_vectors_out_sqw, energies_sqw, intensities_sqw = sqw_results
+            if (
+                q_vectors_out_sqw is not None  # q_vectors_out_sqw is a tuple of arrays
+                and energies_sqw is not None
+                and intensities_sqw is not None
+            ):
+                # For S(q,w) plotting, we typically use the same q_path_indices if q_vectors_out_sqw matches q_points_array
+                calculator.save_results(
+                    sqw_filename_updated,
+                    {  # Assuming q_vectors_out_sqw corresponds to q_path_distances
+                        "q_values_path": q_path_distances,
+                        "energies_list": energies_sqw,  # This is a tuple of arrays
+                        "intensities_list": intensities_sqw,  # This is a tuple of arrays
+                        "q_labels": q_special_labels,
+                        "q_ticks_positions": q_special_positions,
+                    },
+                )
+                if SHOW_PLOTS_AFTER_CALC:
+                    plot_sqw_from_data(
+                        q_path_distances,
+                        list(energies_sqw),
+                        list(intensities_sqw),
+                        title="S(q,w) Map (Updated Params)",
+                        energy_max=(
+                            np.nanmax(np.hstack(energies_sqw))
+                            if energies_sqw and any(e is not None for e in energies_sqw)
+                            else 10
+                        ),
+                        q_labels=q_special_labels,
+                        q_ticks_positions=q_special_positions,
+                    )
+            else:
+                logger.error("S(q,w) calculation failed.")
+
+        except (
+            FileNotFoundError,
+            AttributeError,
+            RuntimeError,
+            ValueError,
+            TypeError,
+            pickle.PickleError,
+        ) as e:
+            logger.error(
+                f"Calculation failed during setup or execution: {e}", exc_info=True
+            )
+        except Exception as e:
+            logger.exception("An unexpected error occurred during calculations.")
+
+    # --- Plotting from saved files ---
+    if PLOT_FROM_DISP_FILE:
+        logger.info(f"Attempting to plot dispersion from file: {disp_filename_updated}")
+        try:
+            data = np.load(disp_filename_updated, allow_pickle=True)
+            plot_dispersion_from_data(
+                data["q_values_path"],
+                list(data["energies_list"]),
+                title="Dispersion (Loaded from File)",
+                q_labels=(
+                    data["q_labels"].tolist() if "q_labels" in data else None
+                ),  # Convert back to list if saved as array
+                q_ticks_positions=(
+                    data["q_ticks_positions"].tolist()
+                    if "q_ticks_positions" in data
+                    else None
+                ),
+            )
+        except FileNotFoundError:
+            logger.error(f"Dispersion data file not found: {disp_filename_updated}")
+        except Exception as e:
+            logger.exception(f"Error plotting dispersion from file: {e}")
+
+    if PLOT_FROM_SQW_FILE:
+        logger.info(f"Attempting to plot S(q,w) from file: {sqw_filename_updated}")
+        try:
+            data = np.load(sqw_filename_updated, allow_pickle=True)
+            energies_list_sqw = list(
+                data["energies_list"]
+            )  # Convert tuple of arrays to list of arrays
+            intensities_list_sqw = list(data["intensities_list"])
+            plot_sqw_from_data(
+                data["q_values_path"],
+                energies_list_sqw,
+                intensities_list_sqw,
+                title="S(q,w) Map (Loaded from File)",  # Ensure energies_list_sqw is not empty before hstack
+                energy_max=(
+                    np.nanmax(np.hstack(energies_list_sqw))
+                    if energies_list_sqw
+                    and any(e is not None for e in energies_list_sqw)
+                    else 10
+                ),
+                q_labels=data["q_labels"].tolist() if "q_labels" in data else None,
+                q_ticks_positions=(
+                    data["q_ticks_positions"].tolist()
+                    if "q_ticks_positions" in data
+                    else None
+                ),
+            )
+        except FileNotFoundError:
+            logger.error(f"S(q,w) data file not found: {sqw_filename_updated}")
+        except Exception as e:
+            logger.exception(f"Error plotting S(q,w) from file: {e}")
 
     logger.info("Example calculation finished.")

@@ -8,10 +8,11 @@ cvo_model:
     J3_ratio: 2.03 # J3 = J3_ratio * J1
     G1: 0.28
     Dx: 2.67
-    H: 14.0
+    H: 20.0
   calculation:
-    cache_mode: "r" # 'r' to read, 'w' to write MagCalc's internal cache
-    cache_file_base: "CVO_model_cache" # Base name for MagCalc's internal cache files
+    cache_mode: "w" # 'r' to read, 'w' to write MagCalc's internal cache
+    cache_file_base_prefix: "CVO_model_cache" # Base prefix for MagCalc's internal cache files.
+                                             # Script should append params like H (e.g., CVO_model_cache_H40.0)
   output:
     disp_data_filename: "CVO_disp_data.npz" # File to save calculated dispersion data
     sqw_data_filename: "CVO_sqw_data.npz"   # File to save calculated S(Q,w) data
@@ -28,6 +29,8 @@ cvo_model:
     disp_title: "CVO Spin Wave Dispersion (Calculated)"
     sqw_title: "CVO S(Q,ω) Intensity Map (Calculated)"
     show_plot: true
+    adjust_height_to_screen: true  # Set to true to enable dynamic height
+    screen_height_fraction: 0.85   # Optional: Fraction of screen height to use (default 0.85)
   tasks:
     run_dispersion: true             # Master switch for dispersion calculation and plotting
     calculate_dispersion_new: true   # true: run calculation; false: load from disp_data_filename for plotting

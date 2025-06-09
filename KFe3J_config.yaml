@@ -1,0 +1,91 @@
+# Configuration file for KFe3(OH)6(SO4)2 (KFe3J)
+# Iteration 22: Correcting Jex[2,4] based on test output. Also fixed typo in DM list.
+
+crystal_structure:
+  unit_cell_vectors:
+    - [0.8660254037844386, -0.5, 0.0]
+    - [0.0, 1.0, 0.0]
+    - [0.0, 0.0, 1.0] 
+
+  atoms_uc: 
+    - label: "Fe1"
+      element: "Fe"
+      pos: [0.0, 0.0, 0.0] 
+      spin_S: 2.5 
+    - label: "Fe2"
+      element: "Fe"
+      pos: [0.5, 0.0, 0.0] 
+      spin_S: 2.5
+    - label: "Fe3"
+      element: "Fe"
+      pos: [0.0, 0.5, 0.0]
+      spin_S: 2.5
+
+parameters: 
+  J1: 3.23
+  J2: 0.11
+  Dy: 0.218
+  Dz: -0.195 
+  H: 0.0
+
+physical_constants:
+  g_factor: 2.0
+  bohr_magneton_meV_T: 5.7883818066e-2 
+
+interactions:
+  heisenberg: 
+    # Jex[0,idx] interactions (Fe1 with others) - Believed to be correct now
+    - { pair: [Fe1, Fe2], J: J1, rij_offset: [0,0,0] }      
+    - { pair: [Fe1, Fe3], J: J1, rij_offset: [0,0,0] }      
+    - { pair: [Fe1, Fe2], J: J2, rij_offset: [-1,-1,0] }    
+    - { pair: [Fe1, Fe3], J: J2, rij_offset: [-1,-1,0] }    
+    - { pair: [Fe1, Fe2], J: J1, rij_offset: [-1,0,0] }     
+    - { pair: [Fe1, Fe3], J: J1, rij_offset: [0,-1,0] }     
+    - { pair: [Fe1, Fe2], J: J2, rij_offset: [0,1,0] }      
+    - { pair: [Fe1, Fe3], J: J2, rij_offset: [1,0,0] }      # Original Jex[0,23] is J2 
+    # Jex[1,idx] interactions (Fe2 with others) - Believed to be correct now
+    - { pair: [Fe2, Fe1], J: J1, rij_offset: [0,0,0] }      
+    - { pair: [Fe2, Fe3], J: J2, rij_offset: [0,0,0] }      
+    - { pair: [Fe2, Fe1], J: J2, rij_offset: [0,-1,0] }     # Original Jex[1,12] is J2
+    - { pair: [Fe2, Fe3], J: J1, rij_offset: [0,-1,0] }     
+    - { pair: [Fe2, Fe3], J: J2, rij_offset: [1,-1,0] }     # Original Jex[1,20] is J2
+    - { pair: [Fe2, Fe1], J: J1, rij_offset: [1,0,0] }      
+    - { pair: [Fe2, Fe3], J: J1, rij_offset: [1,0,0] }      # Original Jex[1,23] is J1
+    - { pair: [Fe2, Fe1], J: J2, rij_offset: [1,1,0] }      # Original Jex[1,24] is J2
+    # Jex[2,idx] interactions (Fe3 with others) - Applying corrections for Jex[2,4]
+    - { pair: [Fe3, Fe1], J: J1, rij_offset: [0,0,0] }      # Jex[2,0] (Fe3-Fe1@UC)
+    - { pair: [Fe3, Fe2], J: J2, rij_offset: [0,0,0] }      # Jex[2,1] (Fe3-Fe2@UC)
+    # - { pair: [Fe3, Fe1], J: J2, rij_offset: [-1,-1,0] }    # REMOVED: Original Jex[2,3] is 0
+    # - { pair: [Fe3, Fe2], J: J1, rij_offset: [-1,-1,0] }    # REMOVED: Original Jex[2,4] is 0
+    - { pair: [Fe3, Fe2], J: J1, rij_offset: [-1,0,0] }     # Jex[2,7] - Keep this, corresponds to original Jex[2,7]
+    - { pair: [Fe3, Fe1], J: J2, rij_offset: [-1,0,0] }     # ADDED for Jex[2,6]: Original Jex[2,6] is J2
+    - { pair: [Fe3, Fe2], J: J2, rij_offset: [-1,1,0] }     # ADDED for Jex[2,10]: Original Jex[2,10] is J2
+    # - { pair: [Fe3, Fe2], J: J2, rij_offset: [0,-1,0] }     # REMOVED for Jex[2,13]: Original Jex[2,13] is 0
+    - { pair: [Fe3, Fe1], J: J1, rij_offset: [0,1,0] }      # Jex[2,15] - Keep this
+    - { pair: [Fe3, Fe2], J: J1, rij_offset: [0,1,0] }      # Jex[2,16] - Keep this
+    # - { pair: [Fe3, Fe1], J: J1, rij_offset: [1,-1,0] }    # REMOVED for Jex[2,18]: Original Jex[2,18] is 0
+    # - { pair: [Fe3, Fe2], J: J2, rij_offset: [1,-1,0] }    # REMOVED for Jex[2,19]: Original Jex[2,19] is 0
+    # - { pair: [Fe3, Fe1], J: J2, rij_offset: [1,0,0] }      # REMOVED for Jex[2,21]: Original Jex[2,21] is 0
+    - { pair: [Fe3, Fe1], J: J2, rij_offset: [1,1,0] }      # ADDED for Jex[2,24]: Original Jex[2,24] is J2
+
+  dm_interaction: 
+    # Using symbolic sqrt(3) where appropriate to match spin_model.py
+    - { pair: [Fe1, Fe2], D_vector: ["-0.5*Dy", "-sqrt(3)/2*Dy", "-Dz"], rij_offset: [0,0,0] } 
+    - { pair: [Fe1, Fe3], D_vector: ["-Dy", "0", "Dz"], rij_offset: [0,0,0] } 
+    - { pair: [Fe1, Fe2], D_vector: ["-0.5*Dy", "-sqrt(3)/2*Dy", "-Dz"], rij_offset: [-1,0,0] } 
+    - { pair: [Fe1, Fe3], D_vector: ["-Dy", "0", "Dz"], rij_offset: [0,-1,0] } 
+    - { pair: [Fe2, Fe1], D_vector: ["0.5*Dy", "sqrt(3)/2*Dy", "Dz"], rij_offset: [0,0,0] } 
+    - { pair: [Fe2, Fe3], D_vector: ["-0.5*Dy", "sqrt(3)/2*Dy", "-Dz"], rij_offset: [0,-1,0] } 
+    - { pair: [Fe2, Fe1], D_vector: ["0.5*Dy", "sqrt(3)/2*Dy", "Dz"], rij_offset: [1,0,0] } 
+    - { pair: [Fe2, Fe3], D_vector: ["-0.5*Dy", "sqrt(3)/2*Dy", "-Dz"], rij_offset: [1,0,0] } # Corrected typo from previous response
+    - { pair: [Fe3, Fe1], D_vector: ["Dy", "0", "-Dz"], rij_offset: [0,0,0] } 
+    - { pair: [Fe3, Fe2], D_vector: ["0.5*Dy", "-sqrt(3)/2*Dy", "Dz"], rij_offset: [-1,0,0] } 
+    - { pair: [Fe3, Fe1], D_vector: ["Dy", "0", "-Dz"], rij_offset: [0,1,0] } 
+    - { pair: [Fe3, Fe2], D_vector: ["0.5*Dy", "-sqrt(3)/2*Dy", "Dz"], rij_offset: [0,1,0] } 
+
+  applied_field:
+    H_vector: [0,0,1] 
+    H_magnitude_symbol: "H" 
+
+calculation_settings:
+  neighbor_shells: [1,1,0] 

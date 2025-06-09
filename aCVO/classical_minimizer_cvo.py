@@ -16,6 +16,7 @@ which is required for a valid Linear Spin Wave Theory calculation.
 import numpy as np
 from scipy.optimize import minimize
 import logging
+from tqdm.auto import tqdm  # Added for progress bar
 import sympy as sp  # Added for sp.Matrix check if needed, though DM should be numerical
 
 # --- Basic Logging Setup ---
@@ -231,6 +232,11 @@ def find_ground_state_orientations(params, S, spin_model_module):
 
     method = "L-BFGS-B"
 
+    options = {
+        "maxiter": 5000,  # Increased maxiter
+        "ftol": 1e-9,  # Tighter function tolerance
+        "gtol": 1e-7,  # Tighter gradient tolerance
+    }
     try:
         result = minimize(
             classical_energy,
@@ -239,12 +245,19 @@ def find_ground_state_orientations(params, S, spin_model_module):
             method=method,
             bounds=bounds,
             tol=1e-6,
-            options={  # Tighter tolerances might be needed
-                "maxiter": 5000,  # Increased maxiter
-                "ftol": 1e-9,  # Tighter function tolerance
-                "gtol": 1e-7,  # Tighter gradient tolerance
-            },  # More options for robustness
+            options=options,
+            callback=tqdm(
+                total=options.get("maxiter", 5000),
+                desc="Classical Minimization (cm_cvo)",
+                unit="iter",
+                leave=False,
+            ).update,  # Add callback for progress bar
         )
+
+        # Ensure the progress bar is closed if tqdm was used directly in callback
+        # For the above approach, tqdm creates a temporary callable, so manual close isn't strictly needed here
+        # but if we created pbar = tqdm(...) then pbar.close() would be here.
+        # The current callback=tqdm(...).update is a compact way.
 
         if result.success:
             logger.info(

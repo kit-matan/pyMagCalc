@@ -35,8 +35,6 @@ plotting: # Added section
   disp_title: "KFe3J Spin Wave Dispersion"
   sqw_title: "KFe3J S(Q,ω) Intensity Map"
   show_plot: true
-  adjust_height_to_screen: true  # Set to true to enable dynamic height
-  screen_height_fraction: 0.85   # Optional: Fraction of screen height to use (default 0.85 if not specified)
 
 tasks:
   run_dispersion: true             # Master switch for dispersion calculation and plotting
