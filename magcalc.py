@@ -1821,13 +1821,24 @@ class MagCalc:
             raise ValueError(f"Invalid cache_mode '{cache_mode}'. Use 'r' or 'w'.")
         self.cache_mode = cache_mode
 
+        # --- Define Cache Directories ---
+        # Root cache directory, one level above the pyMagCalc package
+        self.cache_root_dir = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "pyMagCalc_cache")
+        )
+        self.symbolic_cache_dir = os.path.join(self.cache_root_dir, "symbolic_matrices")
+        self.numerical_cache_dir = os.path.join(
+            self.cache_root_dir, "numerical_results"
+        )
+
+        os.makedirs(self.cache_root_dir, exist_ok=True)
+        os.makedirs(self.symbolic_cache_dir, exist_ok=True)
+        os.makedirs(self.numerical_cache_dir, exist_ok=True)
+        # --- End Cache Directory Definitions ---
+
         self.raw_config_data: Optional[Dict[str, Any]] = (
             None  # Stores the full loaded config
         )
-        self.numerical_cache_dir = os.path.join(
-            os.path.dirname(__file__), "numerical_cache"
-        )
-        os.makedirs(self.numerical_cache_dir, exist_ok=True)
         self.model_config_data: Optional[Dict[str, Any]] = (
             None  # Stores the relevant model section
         )
@@ -2095,17 +2106,13 @@ class MagCalc:
         Handles reading from `.pck` files in `pckFiles/` if `cache_mode='r'`, or calling `gen_HM` and writing the files if `cache_mode='w'`. Ensures the cache directory exists.
         """
         # Ensure cache directory exists
-        cache_dir = "pckFiles"
-        if not os.path.exists(cache_dir):
-            logger.info(f"Creating directory '{cache_dir}' for caching.")
-            try:
-                os.makedirs(cache_dir, exist_ok=True)  # Allow directory to exist
-            except OSError as e:
-                logger.error(f"Failed to create cache directory '{cache_dir}': {e}")
-                raise
-
-        hm_cache_file: str = os.path.join(cache_dir, self.cache_file_base + "_HM.pck")
-        ud_cache_file: str = os.path.join(cache_dir, self.cache_file_base + "_Ud.pck")
+        # Symbolic cache directory is now self.symbolic_cache_dir
+        hm_cache_file: str = os.path.join(
+            self.symbolic_cache_dir, self.cache_file_base + "_HM.pck"
+        )
+        ud_cache_file: str = os.path.join(
+            self.symbolic_cache_dir, self.cache_file_base + "_Ud.pck"
+        )
 
         if self.cache_mode == "w":
             logger.info("Generating symbolic matrices (HMat, Ud)...")

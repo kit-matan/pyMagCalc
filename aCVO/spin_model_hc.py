@@ -22,6 +22,9 @@ from scipy.optimize import minimize
 import logging
 from tqdm.auto import tqdm  # Added for progress bar
 import sys
+import os  # Added for path operations for theta cache
+import hashlib  # Added for theta cache key generation
+import pickle  # Added for saving/loading theta cache
 
 logger = logging.getLogger(__name__)
 
@@ -509,7 +512,7 @@ def classical_energy(
 
 
 def find_ground_state_orientations(params_numerical, S_val_numerical, current_module):
-    """Finds optimal theta angles by minimizing classical energy."""
+    """Finds optimal theta angles by minimizing classical energy. Internal use."""
     n_spins = len(AL_SPIN_PREFERENCE)
     H_field_val = params_numerical[5]
     initial_theta_guess = np.full(
@@ -564,6 +567,78 @@ def get_field_optimized_state_for_lswt(params_numerical, S_val_numerical):
     final_classical_energy = None
     global _cached_optimal_thetas_for_mpr
 
+    # --- Theta Caching Logic - Use common cache directory ---
+    # Path to .../research/magcalc/pyMagCalc_cache/
+    common_cache_root = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "pyMagCalc_cache")
+    )
+    theta_cache_dir = os.path.join(
+        common_cache_root, "theta_angles", "cvo"
+    )  # Subdirectory for CVO
+
+    os.makedirs(theta_cache_dir, exist_ok=True)
+
+    # Create a hash key from all relevant parameters
+    # Ensure parameters are treated as floats for consistent hashing
+    params_tuple_for_hash = tuple(float(p) for p in params_numerical)
+    hasher = hashlib.md5()
+    hasher.update(str(params_tuple_for_hash).encode("utf-8"))
+    hasher.update(str(S_val_numerical).encode("utf-8"))
+    # Include AL_SPIN_PREFERENCE in hash if it could vary, though it's global here
+    hasher.update(str(tuple(AL_SPIN_PREFERENCE)).encode("utf-8"))
+    cache_key_thetas = hasher.hexdigest()
+    theta_cache_filename = os.path.join(
+        theta_cache_dir, f"optimal_thetas_cvo_{cache_key_thetas}.pkl"
+    )
+
+    # Attempt to load from theta cache
+    loaded_from_theta_cache = False
+    if os.path.exists(theta_cache_filename):
+        try:
+            with open(theta_cache_filename, "rb") as f:
+                optimal_theta_angles, final_classical_energy = pickle.load(f)
+            logger.info(
+                f"Loaded optimal thetas and energy from CVO theta cache: {theta_cache_filename} for H={H_field:.2f}"
+            )
+            loaded_from_theta_cache = True
+        except Exception as e:
+            logger.warning(
+                f"Failed to load from CVO theta cache {theta_cache_filename} for H={H_field:.2f}: {e}. Recalculating."
+            )
+    # --- End Theta Caching Logic ---
+
+    if loaded_from_theta_cache:
+        # If loaded from cache, optimal_theta_angles and final_classical_energy are already set.
+        # We still need to form Ud_numeric_optimized and set _cached_optimal_thetas_for_mpr.
+        pass
+    else:  # Not loaded from cache, so perform minimization
+        logger.info(
+            f"H_field={H_field:.2f}. Finding classical ground state orientations (theta cache miss)..."
+        )
+        # Pass current_module to find_ground_state_orientations
+        optimal_theta_angles, final_classical_energy = find_ground_state_orientations(
+            params_numerical, S_val_numerical, current_module
+        )
+
+        if optimal_theta_angles is None:  # Minimization failed
+            logger.error(
+                "Classical minimization failed. Cannot determine Ud_numeric for LSWT."
+            )
+            _cached_optimal_thetas_for_mpr = None  # Clear cache on failure
+            return None, None, None  # Propagate failure
+        else:  # Minimization succeeded, save to theta cache
+            try:
+                with open(theta_cache_filename, "wb") as f:
+                    pickle.dump((optimal_theta_angles, final_classical_energy), f)
+                logger.info(
+                    f"Saved optimal thetas and energy to CVO theta cache: {theta_cache_filename}"
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to save to CVO theta cache {theta_cache_filename}: {e}"
+                )
+
+    # This block executes if optimal_theta_angles were obtained (either from cache or new minimization)
     if abs(H_field) < 1e-9:  # Effectively zero field
         logger.info(
             "H_field is zero. Using AL_SPIN_PREFERENCE for Ud_numeric consistent with mpr."
@@ -580,27 +655,7 @@ def get_field_optimized_state_for_lswt(params_numerical, S_val_numerical):
             Ud_numeric_optimized[3 * i : 3 * (i + 1), 3 * i : 3 * (i + 1)] = (
                 ud_blocks_h0[i]
             )
-        _cached_optimal_thetas_for_mpr = optimal_theta_angles.copy()  # Cache H=0 angles
-        final_classical_energy = classical_energy(
-            optimal_theta_angles, params_numerical, S_val_numerical, current_module
-        )
-        logger.info(f"Classical energy for H=0 state: {final_classical_energy:.6f} meV")
-
-    else:  # Non-zero field
-        logger.info(
-            f"H_field={H_field}. Finding classical ground state orientations..."
-        )
-        optimal_theta_angles, final_classical_energy = find_ground_state_orientations(
-            params_numerical, S_val_numerical, current_module
-        )
-
-        if optimal_theta_angles is None:
-            logger.error(
-                "Classical minimization failed. Cannot determine Ud_numeric for LSWT."
-            )
-            _cached_optimal_thetas_for_mpr = None  # Clear cache on failure
-            return None, None, None
-
+    elif optimal_theta_angles is not None:  # Non-zero field and thetas are available
         ud_blocks_field = []
         for i in range(nspins):
             theta_i = optimal_theta_angles[i]
@@ -611,6 +666,13 @@ def get_field_optimized_state_for_lswt(params_numerical, S_val_numerical):
             Ud_numeric_optimized[3 * i : 3 * (i + 1), 3 * i : 3 * (i + 1)] = (
                 ud_blocks_field[i]
             )
+    else:  # Should not be reached if logic above is correct (optimal_theta_angles is None only if minimization failed)
+        logger.error(
+            "Inconsistent state in get_field_optimized_state_for_lswt: optimal_theta_angles is None after checks."
+        )
+        return None, None, None
+
+    if optimal_theta_angles is not None:
         _cached_optimal_thetas_for_mpr = (
             optimal_theta_angles.copy()
         )  # Cache in-field angles

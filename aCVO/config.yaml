@@ -8,7 +8,7 @@ cvo_model:
     J3_ratio: 2.03 # J3 = J3_ratio * J1
     G1: 0.28
     Dx: 2.67
-    H: 20.0
+    H: 5.0
   calculation:
     cache_mode: "w" # 'r' to read, 'w' to write MagCalc's internal cache
     cache_file_base_prefix: "CVO_model_cache" # Base prefix for MagCalc's internal cache files.
