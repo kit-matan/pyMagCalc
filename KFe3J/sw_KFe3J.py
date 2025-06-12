@@ -516,7 +516,7 @@ if __name__ == "__main__":
         model_p_config.get("Dz", 0.0),
         model_p_config.get("H", 0.0),
     ]
-    cache_mode = calc_p_config.get("cache_mode", "r")
+    cache_mode = calc_p_config.get("cache_mode", "auto")
     cache_file_base = calc_p_config.get("cache_file_base", "KFe3J_model_cache")
 
     disp_data_file = os.path.join(

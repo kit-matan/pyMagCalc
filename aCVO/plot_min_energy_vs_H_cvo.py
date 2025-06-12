@@ -133,6 +133,10 @@ def plot_min_energy_vs_H_cvo():
     # --- 3. Main Loop Over Magnetic Field Values ---
     results_list = []
 
+    # Define q=(0,2,0) r.l.u. for splitting calculation
+    q_020_rlu = np.array([0, 2.0, 0])
+    q_020_cartesian = np.array([0, q_020_rlu[1] * qy_conversion_factor, 0])
+
     for current_H_field in H_values:
         loop_start_time = timeit.default_timer()
         logger.info(f"Processing H = {current_H_field:.2f} T...")
@@ -153,7 +157,9 @@ def plot_min_energy_vs_H_cvo():
             logger.error(
                 f"  Classical minimization failed for H = {current_H_field:.2f} T. Skipping."
             )
-            results_list.append((current_H_field, np.nan, np.nan))
+            results_list.append(
+                (current_H_field, np.nan, np.nan, np.nan, np.nan, np.nan)
+            )  # Added NaNs for splitting
             continue
 
         mean_canting_angle = np.nan
@@ -222,18 +228,72 @@ def plot_min_energy_vs_H_cvo():
                 f"  Dispersion calculation returned empty or None for H={current_H_field:.2f} T."
             )
 
-        results_list.append((current_H_field, current_min_E, mean_canting_angle))
+        # --- Calculate splitting at (0,2,0) ---
+        splitting_at_020 = np.nan
+        e1_at_020 = np.nan
+        e2_at_020 = np.nan
+        logger.debug(
+            f"  Calculating dispersion at q=(0,2,0) for H={current_H_field:.2f} T..."
+        )
+        disp_at_020_list = calculator.calculate_dispersion([q_020_cartesian])
+
+        if disp_at_020_list and disp_at_020_list[0] is not None:
+            energies_at_020_raw = disp_at_020_list[0]
+            # Filter out very small or negative energies if they are non-physical, then sort
+            valid_energies_at_020 = np.sort(
+                energies_at_020_raw[energies_at_020_raw >= -1e-6]
+            )
+
+            if len(valid_energies_at_020) >= 2:
+                e1_at_020 = valid_energies_at_020[0]
+                e2_at_020 = valid_energies_at_020[1]
+                splitting_at_020 = e2_at_020 - e1_at_020
+                logger.info(
+                    f"  Splitting at (0,2,0) for H={current_H_field:.2f} T: {splitting_at_020:.4f} meV (E1={e1_at_020:.4f}, E2={e2_at_020:.4f})"
+                )
+            elif len(valid_energies_at_020) == 1:
+                e1_at_020 = valid_energies_at_020[0]
+                logger.warning(
+                    f"  Only one valid energy branch ({e1_at_020:.4f} meV) found at (0,2,0) for H={current_H_field:.2f} T. Cannot calculate splitting."
+                )
+            else:
+                logger.warning(
+                    f"  Less than two valid energy branches found at (0,2,0) for H={current_H_field:.2f} T. Cannot calculate splitting."
+                )
+        else:
+            logger.warning(
+                f"  Dispersion calculation at (0,2,0) failed or returned insufficient branches for H={current_H_field:.2f} T."
+            )
+
+        results_list.append(
+            (
+                current_H_field,
+                current_min_E,
+                mean_canting_angle,
+                splitting_at_020,
+                e1_at_020,
+                e2_at_020,
+            )
+        )
         loop_duration = timeit.default_timer() - loop_start_time
         logger.info(
             f"  Finished H = {current_H_field:.2f} T. Min Energy = {current_min_E:.4f} meV. Time: {loop_duration:.2f}s"
         )
 
     # --- 4. Plotting the Results ---
-    H_values_plot = np.array([res[0] for res in results_list])
-    min_energies_plot = np.array([res[1] for res in results_list])
-    mean_canting_plot = np.array([res[2] for res in results_list])
+    H_values_plot = np.array([res[0] for res in results_list], dtype=float)
+    min_energies_plot = np.array([res[1] for res in results_list], dtype=float)
+    mean_canting_plot = np.array([res[2] for res in results_list], dtype=float)
+    splitting_plot = np.array([res[3] for res in results_list], dtype=float)
+    e1_020_plot = np.array([res[4] for res in results_list], dtype=float)
+    e2_020_plot = np.array([res[5] for res in results_list], dtype=float)
 
-    fig, ax1 = plt.subplots(figsize=(10, 7))
+    # Create a figure with two subplots
+    fig, (ax1, ax3_bottom) = plt.subplots(
+        2, 1, figsize=(12, 10), sharex=True
+    )  # sharex for common H-axis
+
+    # --- Top Subplot: Min Energy and Canting Angle ---
     color1 = "tab:red"
     ax1.set_xlabel("Magnetic Field H (T)")
     ax1.set_ylabel("Minimum Spin-Wave Energy (meV)", color=color1)
@@ -248,10 +308,10 @@ def plot_min_energy_vs_H_cvo():
     ax1.tick_params(axis="y", labelcolor=color1)
     ax1.grid(True, linestyle=":", alpha=0.7)
 
-    ax2 = ax1.twinx()
+    ax2_top = ax1.twinx()
     color2 = "tab:blue"
-    ax2.set_ylabel("Mean Canting Angle (degrees from a-b plane)", color=color2)
-    ax2.plot(
+    ax2_top.set_ylabel("Mean Canting Angle (degrees from a-b plane)", color=color2)
+    ax2_top.plot(
         H_values_plot,
         mean_canting_plot,
         marker="s",
@@ -259,16 +319,63 @@ def plot_min_energy_vs_H_cvo():
         color=color2,
         label="Mean Canting Angle",
     )
-    ax2.tick_params(axis="y", labelcolor=color2)
-
-    fig.suptitle(
+    ax2_top.tick_params(axis="y", labelcolor=color2)
+    ax1.set_title(
         f"CVO: Min Magnon Energy & Canting vs. H along (0,qy,0), qy in [{qy_rlu_min:.2f},{qy_rlu_max:.2f}] rlu",
         fontsize=14,
     )
-    fig.tight_layout(rect=[0, 0.03, 1, 0.95])
-    lines, labels = ax1.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax2.legend(lines + lines2, labels + labels2, loc="best")
+    lines_top, labels_top = ax1.get_legend_handles_labels()
+    lines2_top, labels2_top = ax2_top.get_legend_handles_labels()
+    ax2_top.legend(lines_top + lines2_top, labels_top + labels2_top, loc="upper left")
+
+    # --- Bottom Subplot: Splitting at (0,2,0) ---
+    color_e1 = "darkgreen"
+    color_e2 = "purple"
+    ax3_bottom.plot(
+        H_values_plot,
+        e1_020_plot,
+        marker="^",
+        linestyle=":",
+        color=color_e1,
+        label="E1 at (0,2,0)",
+    )
+    ax3_bottom.plot(
+        H_values_plot,
+        e2_020_plot,
+        marker="v",
+        linestyle=":",
+        color=color_e2,
+        label="E2 at (0,2,0)",
+    )
+    ax3_bottom.set_ylabel("Energy at (0,2,0) (meV)", color="black")
+    ax3_bottom.tick_params(axis="y", labelcolor="black")
+    ax3_bottom.grid(True, linestyle=":", alpha=0.7)
+
+    ax4_bottom = ax3_bottom.twinx()
+    color_split = "orangered"
+    ax4_bottom.plot(
+        H_values_plot,
+        splitting_plot,
+        marker="x",
+        linestyle="-",
+        color=color_split,
+        label="Splitting E2-E1 at (0,2,0)",
+    )
+    ax4_bottom.set_ylabel("Energy Splitting at (0,2,0) (meV)", color=color_split)
+    ax4_bottom.tick_params(axis="y", labelcolor=color_split)
+    ax3_bottom.set_xlabel("Magnetic Field H (T)")
+    ax3_bottom.set_title(
+        "CVO: Energy Branches and Splitting at q=(0,2,0) r.l.u. vs. H", fontsize=14
+    )
+    lines_bottom, labels_bottom = ax3_bottom.get_legend_handles_labels()
+    lines2_bottom, labels2_bottom = ax4_bottom.get_legend_handles_labels()
+    ax4_bottom.legend(
+        lines_bottom + lines2_bottom, labels_bottom + labels2_bottom, loc="upper right"
+    )
+
+    fig.tight_layout(
+        rect=[0, 0.03, 1, 0.97]
+    )  # Adjust for overall suptitle if added, or just general spacing
 
     plot_filename = os.path.join(SCRIPT_DIR, "CVO_min_energy_canting_vs_H_plot.png")
     try:
@@ -289,6 +396,7 @@ def plot_min_energy_vs_H_cvo():
             H_values=H_values_plot,
             min_energies=min_energies_plot,
             mean_canting_angles=mean_canting_plot,
+            splitting_at_020=splitting_plot,
         )
         logger.info(f"Data saved to {data_filename}")
     except Exception as e:
