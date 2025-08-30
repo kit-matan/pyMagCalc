@@ -426,7 +426,7 @@ def Hamiltonian(Sxyz_ops, p_sym):
                     )
 
         # Zeeman term: H is applied along the global z-axis
-        HM_expr += (
+        HM_expr -= (
             gamma * mu_B * Sxyz_ops[i][2] * H_sym
         )  # Changed Sxyz_ops[i][0] to Sxyz_ops[i][2]
 
@@ -512,16 +512,16 @@ def classical_energy(  # H is now params_numerical[6]
     sum_Sz_val = 0.0  # Changed from sum_Sx_val
     for i in range(nspin_uc):
         # H is along +z, so energy is - mu.H = - (gamma*mu_B*Sz) * H_field
-        zeeman_energy_contribution += (
+        zeeman_energy_contribution -= (
             gamma * mu_B * classical_spins[i, 2] * H_field_num
         )  # Changed from classical_spins[i, 0]
         sum_Sz_val += classical_spins[i, 2]  # Changed from classical_spins[i,0]
 
     if abs(H_field_num) > 1e-6:
         logger.debug(
-            f"Classical energy func: H={H_field_num:.2f}, Zeeman E: {zeeman_energy_contribution:.4f}, Sum Sz/S: {sum_Sz_val/S_val_numerical:.4f}"  # Changed log message
+            f"Classical energy func: H={H_field_num:.2f}, Zeeman E: {zeeman_energy_contribution:.4f}, Sum Sz/S: {sum_Sz_val/S_val_numerical:.4f}"
         )
-    total_energy += zeeman_energy_contribution
+    total_energy += zeeman_energy_contribution  # zeeman_energy_contribution is now correctly negative
     return total_energy
 
 
