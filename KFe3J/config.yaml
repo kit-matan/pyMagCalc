@@ -9,7 +9,7 @@ model_params:
   H: 0.0      # External magnetic field H (Tesla or appropriate units)
 
 calculation:
-  cache_mode: "w"  # 'r' to read cache, 'w' to write/regenerate cache
+  cache_mode: "auto"  # 'r' to read cache, 'w' to write/regenerate cache
   cache_file_base: "KFe3J_cache" # Base name for cache files in pckFiles/
 
 q_path:

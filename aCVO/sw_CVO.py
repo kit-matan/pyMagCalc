@@ -67,11 +67,11 @@ def get_screen_size_inches():
             )
             dpi = 100.0
         else:
-            logger.info(f"Detected screen DPI: {dpi:.2f}")
+            logger.debug(f"Detected screen DPI: {dpi:.2f}")
 
         screen_width_inches = screen_width_pixels / dpi
         screen_height_inches = screen_height_pixels / dpi
-        logger.info(
+        logger.debug(
             f"Detected screen size: {screen_width_pixels}x{screen_height_pixels} pixels; "
             f"{screen_width_inches:.2f}x{screen_height_inches:.2f} inches."
         )
@@ -307,18 +307,18 @@ def plot_sqw_map_from_file_cvo(filename, config, ax, fig):
 
     X_mesh, Y_mesh = np.meshgrid(qsy_plot_loaded_shifted, Ex_plot_axis)
 
-    logger.info(f"CVO Intensity matrix (intMat) shape: {intMat.shape}")
-    logger.info(
+    logger.debug(f"CVO Intensity matrix (intMat) shape: {intMat.shape}")
+    logger.debug(
         f"CVO Min value in intMat: {np.min(intMat)}, Max value: {np.max(intMat)}"
     )
     min_val_for_plot = 1e-6
     if np.any(intMat > 0):
         min_pos_val = np.min(intMat[intMat > 0])
-        logger.info(f"CVO Min positive value in intMat: {min_pos_val}")
+        logger.debug(f"CVO Min positive value in intMat: {min_pos_val}")
         if min_pos_val >= 1e-6:
             min_val_for_plot = min_pos_val
     else:
-        logger.info("All values in CVO intMat are zero or negative.")
+        logger.debug("All values in CVO intMat are zero or negative.")
 
     max_intensity = np.max(intMat) if np.any(intMat > 0) else 1.0
     if max_intensity <= min_val_for_plot:
@@ -335,7 +335,7 @@ def plot_sqw_map_from_file_cvo(filename, config, ax, fig):
             min_val_for_plot = 1e-6
             max_intensity = 1e-4  # Fallback if all else fails
 
-    logger.info(
+    logger.debug(
         f"CVO Plotting with LogNorm: vmin={min_val_for_plot:.2e}, vmax={max_intensity:.2e}"
     )
     norm_choice = LogNorm(vmin=min_val_for_plot, vmax=max_intensity)
@@ -346,7 +346,7 @@ def plot_sqw_map_from_file_cvo(filename, config, ax, fig):
 
     if qsy_plot_loaded_shifted.size > 0:
         ax.set_xlim([np.min(qsy_plot_loaded_shifted), np.max(qsy_plot_loaded_shifted)])
-        logger.info(
+        logger.debug(
             f"CVO Setting x-axis limits (xlim) to: [{np.min(qsy_plot_loaded_shifted):.2f}, {np.max(qsy_plot_loaded_shifted):.2f}] based on shifted data."
         )
 
@@ -417,8 +417,19 @@ if __name__ == "__main__":
     J3_ratio = model_p_config.get("J3_ratio", 2.03)
     G1 = model_p_config.get("G1", 0.28)
     Dx = model_p_config.get("Dx", 2.67)
+    Dy = model_p_config.get(
+        "Dy", 0.5
+    )  # Added Dy parameter, default to 0.5 if not in config
     H_field = model_p_config.get("H", 0.0)
-    params_val = [J1, J2_ratio * J1, J3_ratio * J1, G1, Dx, H_field]
+    params_val = [
+        J1,
+        J2_ratio * J1,
+        J3_ratio * J1,
+        G1,
+        Dx,
+        Dy,
+        H_field,
+    ]  # Added Dy to the list
 
     cache_mode = calc_p_config.get("cache_mode", "r")
     cache_file_base = calc_p_config.get("cache_file_base", "CVO_model_cache")
@@ -573,7 +584,7 @@ if __name__ == "__main__":
     screen_height_fraction = plotting_p_config.get("screen_height_fraction", 0.85)
 
     if adjust_to_screen:
-        logger.info("Attempting to adjust CVO plot height to screen size...")
+        logger.debug("Attempting to adjust CVO plot height to screen size...")
         screen_w_in, screen_h_in, screen_dpi = get_screen_size_inches()
         if screen_h_in is not None and screen_h_in > 0:
             target_fig_height_inches = screen_h_in * screen_height_fraction
@@ -584,7 +595,7 @@ if __name__ == "__main__":
                 target_fig_height_inches * aspect_ratio,
                 target_fig_height_inches,
             )
-            logger.info(
+            logger.debug(
                 f"Adjusted CVO combined figsize to: ({final_figsize_combined[0]:.2f}, {final_figsize_combined[1]:.2f}) inches."
             )
 
@@ -596,7 +607,7 @@ if __name__ == "__main__":
                 * (orig_h / default_figsize_combined[1]),
                 target_fig_height_inches * (orig_h / default_figsize_combined[1]),
             )
-            logger.info(
+            logger.debug(
                 f"Adjusted CVO dispersion-only figsize to: ({final_figsize_disp_only[0]:.2f}, {final_figsize_disp_only[1]:.2f}) inches."
             )
 
@@ -608,7 +619,7 @@ if __name__ == "__main__":
                 * (orig_h / default_figsize_combined[1]),
                 target_fig_height_inches * (orig_h / default_figsize_combined[1]),
             )
-            logger.info(
+            logger.debug(
                 f"Adjusted CVO S(Q,w)-only figsize to: ({final_figsize_sqw_only[0]:.2f}, {final_figsize_sqw_only[1]:.2f}) inches."
             )
         else:

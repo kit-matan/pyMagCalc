@@ -31,6 +31,7 @@ from tqdm import tqdm
 import hashlib  # For numerical cache key generation
 import logging
 import os
+import json  # For metadata
 
 # Type Hinting Imports
 import types  # Added for ModuleType hint
@@ -1798,6 +1799,7 @@ class MagCalc:
                      don't exist or are invalid. (Default)
                 'w': Generate symbolic matrices (potentially slow) and write
                      them to cache files.
+                "auto": Reads cache if parameters match current settings; otherwise, (re)generates and writes cache.
             Ud_numeric_override (Optional[npt.NDArray[np.complex_]], optional):
                      them to cache files.
             config_filepath (Optional[str], optional): Path to the YAML configuration
@@ -1817,8 +1819,10 @@ class MagCalc:
         """
         logger.info(f"Initializing MagCalc (cache_mode='{cache_mode}')...")
 
-        if cache_mode not in ["r", "w"]:
-            raise ValueError(f"Invalid cache_mode '{cache_mode}'. Use 'r' or 'w'.")
+        if cache_mode not in ["r", "w", "auto"]:
+            raise ValueError(
+                f"Invalid cache_mode '{cache_mode}'. Use 'r', 'w', or 'auto'."
+            )
         self.cache_mode = cache_mode
 
         # --- Define Cache Directories ---
@@ -1842,6 +1846,7 @@ class MagCalc:
         self.model_config_data: Optional[Dict[str, Any]] = (
             None  # Stores the relevant model section
         )
+        self.config_filepath: Optional[str] = config_filepath  # Store config_filepath
         self.config_data: Optional[Dict[str, Any]] = None  # Ensure attribute exists
         self.p_numerical: Optional[Dict[str, float]] = (
             None  # Stores numerical params by name  # Stores numerical params by name
@@ -2099,64 +2104,190 @@ class MagCalc:
                 f"Required function(s) {missing_funcs} not found or not callable in spin_model_module '{self.sm.__name__}'."
             )
 
+    def _read_symbolic_cache_metadata(
+        self, meta_filepath: str
+    ) -> Optional[Dict[str, Any]]:
+        """Reads symbolic cache metadata from a JSON file."""
+        try:
+            with open(meta_filepath, "r") as f:
+                metadata = json.load(f)
+            logger.debug(f"Successfully read metadata from {meta_filepath}")
+            return metadata
+        except FileNotFoundError:
+            logger.info(f"Metadata file not found: {meta_filepath}")
+            return None
+        except json.JSONDecodeError:
+            logger.warning(
+                f"Error decoding JSON from metadata file {meta_filepath}. File might be corrupted."
+            )
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to read metadata file {meta_filepath}: {e}")
+            return None
+
+    def _write_symbolic_cache_metadata(self, meta_filepath: str):
+        """Writes current model parameters to a symbolic cache metadata JSON file."""
+        model_source_type = "config" if self.config_data else "module"
+        model_identifier = self.config_filepath if self.config_data else self.sm.__name__  # type: ignore
+
+        metadata = {
+            "spin_magnitude": self.spin_magnitude,
+            "hamiltonian_params": self.hamiltonian_params,
+            "model_source_type": model_source_type,
+            "model_identifier": model_identifier,
+            # "pyMagCalc_version": __version__ # TODO: Add versioning if MagCalc gets one
+        }
+        try:
+            with open(meta_filepath, "w") as f:
+                json.dump(metadata, f, indent=4)
+            logger.info(f"Symbolic cache metadata saved to {meta_filepath}")
+        except Exception as e:
+            logger.error(f"Failed to write metadata file {meta_filepath}: {e}")
+
+    def _check_parameter_consistency_with_cache(
+        self, cached_meta: Dict[str, Any]
+    ) -> bool:
+        """Compares current parameters with cached metadata."""
+        if cached_meta is None:
+            return False
+
+        current_model_identifier = self.config_filepath if self.config_data else self.sm.__name__  # type: ignore
+
+        s_match = np.isclose(cached_meta.get("spin_magnitude"), self.spin_magnitude)
+        p_match = np.allclose(
+            cached_meta.get("hamiltonian_params", []),
+            self.hamiltonian_params,
+            equal_nan=True,
+        )
+        id_match = cached_meta.get("model_identifier") == current_model_identifier
+
+        if not s_match:
+            logger.info(
+                f"Metadata check: spin_magnitude mismatch (cache: {cached_meta.get('spin_magnitude')}, current: {self.spin_magnitude})."
+            )
+        if not p_match:
+            logger.info(
+                f"Metadata check: hamiltonian_params mismatch (cache: {cached_meta.get('hamiltonian_params')}, current: {self.hamiltonian_params})."
+            )
+        if not id_match:
+            logger.info(
+                f"Metadata check: model_identifier mismatch (cache: {cached_meta.get('model_identifier')}, current: {current_model_identifier})."
+            )
+
+        return s_match and p_match and id_match
+
+    def _generate_and_save_symbolic_matrices(
+        self, hm_cache_file: str, ud_cache_file: str, meta_cache_file: str
+    ):
+        """Generates symbolic matrices and saves them along with metadata."""
+        logger.info(
+            f"Generating symbolic matrices (HMat, Ud) for {self.cache_file_base}..."
+        )
+        if self.config_data:
+            try:
+                self.HMat_sym, self.Ud_sym = self._generate_matrices_from_config()
+            except Exception as e:
+                logger.exception(
+                    "Failed to generate symbolic matrices from configuration."
+                )
+                raise RuntimeError(
+                    "Symbolic matrix generation from config failed."
+                ) from e
+        else:  # Old path
+            try:
+                self.HMat_sym, self.Ud_sym = gen_HM(
+                    self.sm,  # type: ignore
+                    self.k_sym,
+                    self.S_sym,
+                    list(self.params_sym),
+                )
+            except Exception as e:
+                logger.exception("Failed to generate symbolic matrices in gen_HM.")
+                raise RuntimeError("Symbolic matrix generation failed.") from e
+
+        if not isinstance(self.HMat_sym, sp.Matrix) or not isinstance(
+            self.Ud_sym, sp.Matrix
+        ):
+            raise RuntimeError(
+                "Symbolic matrix generation did not return valid SymPy Matrices."
+            )
+
+        logger.info(f"Writing HMat to {hm_cache_file}")
+        try:
+            with open(hm_cache_file, "wb") as outHM:
+                pickle.dump(self.HMat_sym, outHM)
+        except (IOError, pickle.PicklingError) as e:
+            logger.error(f"Error writing HMat cache file: {e}")
+            raise
+        logger.info(f"Writing Ud to {ud_cache_file}")
+        try:
+            with open(ud_cache_file, "wb") as outUd:
+                pickle.dump(self.Ud_sym, outUd)
+        except (IOError, pickle.PicklingError) as e:
+            logger.error(f"Error writing Ud cache file: {e}")
+            raise
+
+        self._write_symbolic_cache_metadata(meta_cache_file)
+
     def _load_or_generate_matrices(self):
         """
         Load symbolic HMat (2gH) and Ud matrices from cache or generate them.
-
-        Handles reading from `.pck` files in `pckFiles/` if `cache_mode='r'`, or calling `gen_HM` and writing the files if `cache_mode='w'`. Ensures the cache directory exists.
+        Handles reading from `.pck` files if `cache_mode='r'` or 'auto' (and valid),
+        or calling `gen_HM` and writing the files if `cache_mode='w'` or 'auto' (and regeneration needed).
         """
-        # Ensure cache directory exists
-        # Symbolic cache directory is now self.symbolic_cache_dir
         hm_cache_file: str = os.path.join(
             self.symbolic_cache_dir, self.cache_file_base + "_HM.pck"
         )
-        ud_cache_file: str = os.path.join(
+        ud_cache_file: str = os.path.join(  # type: ignore
             self.symbolic_cache_dir, self.cache_file_base + "_Ud.pck"
         )
+        meta_cache_file: str = os.path.join(
+            self.symbolic_cache_dir, self.cache_file_base + "_meta.json"
+        )
 
-        if self.cache_mode == "w":
-            logger.info("Generating symbolic matrices (HMat, Ud)...")
-            if self.config_data:
-                try:
-                    self.HMat_sym, self.Ud_sym = self._generate_matrices_from_config()
-                except Exception as e:
-                    logger.exception(
-                        "Failed to generate symbolic matrices from configuration."
-                    )
-                    raise RuntimeError(
-                        "Symbolic matrix generation from config failed."
-                    ) from e
-            else:  # Old path
-                try:
-                    self.HMat_sym, self.Ud_sym = gen_HM(
-                        self.sm,  # type: ignore
-                        self.k_sym,
-                        self.S_sym,
-                        list(self.params_sym),
-                    )
-                except Exception as e:
-                    logger.exception("Failed to generate symbolic matrices in gen_HM.")
-                    raise RuntimeError("Symbolic matrix generation failed.") from e
-
-            if not isinstance(self.HMat_sym, sp.Matrix) or not isinstance(
-                self.Ud_sym, sp.Matrix
+        if self.cache_mode == "auto":
+            perform_generation = True
+            if (
+                os.path.exists(hm_cache_file)
+                and os.path.exists(ud_cache_file)
+                and os.path.exists(meta_cache_file)
             ):
-                raise RuntimeError("gen_HM did not return valid SymPy Matrices.")
+                try:
+                    logger.info(
+                        f"Auto mode: Found existing symbolic cache and metadata for {self.cache_file_base}."
+                    )
+                    with open(hm_cache_file, "rb") as f_hm:
+                        self.HMat_sym = pickle.load(f_hm)
+                    with open(ud_cache_file, "rb") as f_ud:
+                        self.Ud_sym = pickle.load(f_ud)
 
-            logger.info(f"Writing HMat to {hm_cache_file}")
-            try:
-                with open(hm_cache_file, "wb") as outHM:
-                    pickle.dump(self.HMat_sym, outHM)
-            except (IOError, pickle.PicklingError) as e:
-                logger.error(f"Error writing HMat cache file: {e}")
-                raise
-            logger.info(f"Writing Ud to {ud_cache_file}")
-            try:
-                with open(ud_cache_file, "wb") as outUd:
-                    pickle.dump(self.Ud_sym, outUd)
-            except (IOError, pickle.PicklingError) as e:
-                logger.error(f"Error writing Ud cache file: {e}")
-                raise
+                    cached_meta = self._read_symbolic_cache_metadata(meta_cache_file)
+                    if cached_meta and self._check_parameter_consistency_with_cache(
+                        cached_meta
+                    ):
+                        logger.info(
+                            f"Auto mode: Symbolic cache is valid for {self.cache_file_base}. Using cached matrices."
+                        )
+                        perform_generation = False
+                    else:
+                        logger.info(
+                            f"Auto mode: Symbolic cache parameters mismatch or metadata invalid for {self.cache_file_base}. Regenerating."
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Auto mode: Error loading or validating symbolic cache for {self.cache_file_base}. Regenerating. Error: {e}"
+                    )
+                    self.HMat_sym = None
+                    self.Ud_sym = None
+            else:
+                logger.info(
+                    f"Auto mode: Symbolic cache or metadata not found for {self.cache_file_base}. Generating."
+                )
+
+            if perform_generation:
+                self._generate_and_save_symbolic_matrices(
+                    hm_cache_file, ud_cache_file, meta_cache_file
+                )
 
         elif self.cache_mode == "r":
             logger.info(
@@ -2169,29 +2300,33 @@ class MagCalc:
                     self.Ud_sym = pickle.load(inUd)
             except FileNotFoundError as e:
                 logger.error(
-                    f"Cache file not found: {e}. Run with cache_mode='w' first."
+                    f"Cache file not found: {e}. Run with cache_mode='w' or 'auto' first."
                 )
-                raise  # Re-raise specific error
+                raise
             except (pickle.UnpicklingError, EOFError, ImportError, AttributeError) as e:
                 logger.error(
                     f"Error loading cache files (may be corrupted or incompatible): {e}"
                 )
-                raise pickle.PickleError(
-                    "Failed to load cache file."
-                ) from e  # Raise consistent error type
-            except Exception as e:
+                raise pickle.PickleError("Failed to load cache file.") from e
+            except Exception as e:  # Catch any other unexpected error during loading
                 logger.exception("An unexpected error occurred loading cache files.")
-                raise RuntimeError(
-                    "Cache file loading failed."
-                ) from e  # General runtime error
+                raise RuntimeError("Cache file loading failed.") from e
 
+        elif self.cache_mode == "w":
+            self._generate_and_save_symbolic_matrices(
+                hm_cache_file, ud_cache_file, meta_cache_file
+            )
+        else:  # Should have been caught by __init__
+            raise ValueError(
+                f"Internal error: Unhandled cache_mode '{self.cache_mode}' in _load_or_generate_matrices."
+            )
         # Final check after load/generate
         if self.HMat_sym is None or self.Ud_sym is None:
             raise RuntimeError(
-                "Symbolic matrices HMat_sym or Ud_sym are None after loading/generation."
+                f"Symbolic matrices HMat_sym or Ud_sym are None after loading/generation."
             )
         if not isinstance(self.HMat_sym, sp.Matrix) or not isinstance(
-            self.Ud_sym, sp.Matrix
+            self.Ud_sym, sp.Matrix  # type: ignore
         ):
             raise TypeError("Loaded cache files do not contain valid SymPy Matrices.")
 
@@ -2217,8 +2352,8 @@ class MagCalc:
 
         try:
             # Use evalf(subs=...) for potentially better performance/stability
-            Ud_num_sym = self.Ud_sym.evalf(subs=dict(param_substitutions_ud))
-            self.Ud_numeric = np.array(Ud_num_sym, dtype=np.complex128)
+            Ud_num_sym = self.Ud_sym.evalf(subs=dict(param_substitutions_ud))  # type: ignore
+            self.Ud_numeric = np.array(Ud_num_sym, dtype=np.complex128)  # type: ignore
         except Exception as e:
             logger.exception(
                 "Error during substitution/evaluation into symbolic Ud matrix."

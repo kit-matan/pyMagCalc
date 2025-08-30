@@ -19,20 +19,29 @@ import sympy as sp
 import numpy as np
 from numpy import linalg as la
 from scipy.optimize import minimize
-import logging
 from tqdm.auto import tqdm  # Added for progress bar
+import logging
+import sympy
 import sys
 import os  # Added for path operations for theta cache
 import hashlib  # Added for theta cache key generation
 import pickle  # Added for saving/loading theta cache
 
+# --- Basic Logging Setup ---
+# Configure logging early, before any custom log messages are emitted.
+logging.basicConfig(
+    level=logging.INFO,  # Use INFO for general operation, DEBUG for more verbosity
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+# --- End Logging Setup ---
 logger = logging.getLogger(__name__)
 
 # This list defines the preferred azimuthal orientation of spins.
 # 1 means phi=0 (positive x-direction preference in xz-plane),
 # -1 means phi=pi (negative x-direction preference in xz-plane).
 AL_SPIN_PREFERENCE = [1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1]
-
+logger.debug(f"{len(AL_SPIN_PREFERENCE)=}")
 # Module-level cache for optimal theta angles to be used by mpr
 _cached_optimal_thetas_for_mpr = None
 
@@ -277,19 +286,20 @@ def get_nearest_neighbor_distances(
 
 def spin_interactions(p):
     # generate J exchange interactions
-    J1, J2, J3, G1, Dx, H = p
+    J1, J2, J3, G1, Dx, Dy, H = p
     apos = atom_pos()
     nspin = len(apos)
     apos_ouc = atom_pos_ouc()
     nspin_ouc = len(apos_ouc)
     lattice_constants = unit_cell()
-
     neighbor_dist_list = get_nearest_neighbor_distances(apos, apos_ouc, 10)[1:4]
     Jex = sp.zeros(nspin, nspin_ouc)
     Gex = sp.zeros(nspin, nspin_ouc)
+
     # create zeros matrix to fill in the DM vectors for each pair of spins in the unit cell and outside the unit cell
     DMmat = sp.zeros(nspin, nspin_ouc)
     DM1 = sp.MatrixSymbol("DM1", 1, 3)
+
     DMnull = sp.MatrixSymbol("DMnull", 1, 3)
 
     DMmat = sp.zeros(nspin, nspin_ouc)
@@ -297,7 +307,6 @@ def spin_interactions(p):
         for j in range(nspin_ouc):
             DMmat[i, j] = DMnull
 
-    for i in range(nspin):
         for j in range(nspin_ouc):
             if np.round(la.norm(apos[i] - apos_ouc[j]), 2) == np.round(
                 neighbor_dist_list[0], 2
@@ -315,13 +324,15 @@ def spin_interactions(p):
                         DMmat[i, j] = -DMmat[i, j]
                     else:
                         DMmat[i, j] = DMmat[i, j]
+
                 # check if spins_ouc is along the negative x-axis
                 else:
                     DMmat[i, j] = DM1
                     # check if spins_ouc is to the right of spins
                     if is_right_neighbor(apos[i], apos_ouc[j]):
                         DMmat[i, j] = -DMmat[i, j]
-                    else:
+                        # print(f'{i=} {j=} right neigh') # Removed verbose print
+                    else:  # I am not sure why that is needed.
                         DMmat[i, j] = DMmat[i, j]
             elif np.round(la.norm(apos[i] - apos_ouc[j]), 2) == np.round(
                 neighbor_dist_list[1], 2
@@ -339,8 +350,12 @@ def spin_interactions(p):
                 Jex[i, j] = 0.0
                 Gex[i, j] = 0.0
                 DMmat[i, j] = DMnull
-
-    DM = DMmat.subs({DM1: sp.Matrix([Dx, 0, 0]), DMnull: sp.Matrix([0, 0, 0])}).doit()
+    DM = DMmat.subs(
+        {
+            DM1: sp.Matrix([Dx, AL_SPIN_PREFERENCE[i] * Dy, 0]),
+            DMnull: sp.Matrix([0, 0, 0]),
+        }
+    ).doit()
 
     return Jex, Gex, DM, H
 
@@ -367,7 +382,6 @@ def Hamiltonian(Sxyz_ops, p_sym):
             is_DM_non_zero = (
                 isinstance(DM_vec_ij, sp.MatrixBase) and not DM_vec_ij.is_zero_matrix
             )
-
             if is_J_non_zero or is_G_non_zero or is_DM_non_zero:
                 # Heisenberg term
                 if is_J_non_zero:
@@ -421,7 +435,7 @@ def Hamiltonian(Sxyz_ops, p_sym):
 
 
 # --- Functions for Classical Energy Minimization ---
-def classical_energy(
+def classical_energy(  # H is now params_numerical[6]
     theta_angles_rad, params_numerical, S_val_numerical, current_module
 ):
     """Calculates classical energy. Assumes spins in xz-plane. H along z-axis."""  # Modified comment
@@ -431,7 +445,7 @@ def classical_energy(
         )
         return np.inf
 
-    H_field_num = params_numerical[5]
+    H_field_num = params_numerical[6]  # H is now the 7th parameter (index 6)
 
     Jex_sp, Gex_sp, DM_matrix_of_matrices_sp, _ = current_module.spin_interactions(
         params_numerical
@@ -691,9 +705,9 @@ if __name__ == "__main__":
     logger.info(
         "Running standalone test for spin_model_hc.py: get_field_optimized_state_for_lswt"
     )
-
     example_S_val = 0.5
-    base_params = [2.49, 1.12 * 2.49, 2.03 * 2.49, 0.28, 2.67]
+    # base_params now includes Dy (set to 0.5 for this example)
+    base_params = [2.49, 1.12 * 2.49, 2.03 * 2.49, 0.28, 2.67, 0.5]
 
     logger.info("\n--- Test Case: H = 0 T (Field along Z) ---")  # Modified comment
     params_h0 = base_params + [0.0]
