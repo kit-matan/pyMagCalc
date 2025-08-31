@@ -89,6 +89,7 @@ def plot_min_energy_vs_H_cvo():
         J3_ratio = float(model_params_config["J3_ratio"])
         G1 = float(model_params_config["G1"])
         Dx = float(model_params_config["Dx"])
+        Dy = float(model_params_config.get("Dy", 0.5))  # Add Dy, default to 0.5
         H_initial_config = float(model_params_config.get("H", 0.0))
     except KeyError as e:
         logger.error(
@@ -101,8 +102,9 @@ def plot_min_energy_vs_H_cvo():
         )
         return
 
-    base_model_params = [J1, J1 * J2_ratio, J1 * J3_ratio, G1, Dx, H_initial_config]
-    H_param_index = 5
+    # The model expects 7 parameters: J1, J2, J3, G1, Dx, Dy, H
+    base_model_params = [J1, J1 * J2_ratio, J1 * J3_ratio, G1, Dx, Dy, H_initial_config]
+    H_param_index = 6  # H is the 7th parameter, so its index is 6
 
     lb_cvo = plotting_config.get("lattice_b_cvo", 8.383)
     magcalc_cache_file_base_prefix = calc_settings_config.get(
@@ -158,7 +160,7 @@ def plot_min_energy_vs_H_cvo():
                 f"  Classical minimization failed for H = {current_H_field:.2f} T. Skipping."
             )
             results_list.append(
-                (current_H_field, np.nan, np.nan, np.nan, np.nan, np.nan)
+                (current_H_field, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan)
             )  # Added NaNs for splitting
             continue
 
@@ -206,27 +208,28 @@ def plot_min_energy_vs_H_cvo():
         )
 
         current_min_E = np.inf
+        q_at_min_E_rlu = np.nan
         if dispersion_energies_list:
-            all_positive_energies_for_H = []
-            for energies_at_q in dispersion_energies_list:
+            min_E_so_far = np.inf
+            min_E_q_idx = -1
+            for i, energies_at_q in enumerate(dispersion_energies_list):
                 if energies_at_q is not None and energies_at_q.size > 0:
                     positive_energies = energies_at_q[
                         energies_at_q >= -1e-6
                     ]  # Allow small numerical noise
                     if positive_energies.size > 0:
-                        all_positive_energies_for_H.extend(positive_energies)
-            if all_positive_energies_for_H:
-                current_min_E = np.nanmin(all_positive_energies_for_H)
+                        local_min = np.nanmin(positive_energies)
+                        if local_min < min_E_so_far:
+                            min_E_so_far = local_min
+                            min_E_q_idx = i
+            if min_E_q_idx != -1:
+                current_min_E = min_E_so_far
+                q_at_min_E_rlu = qy_values_rlu[min_E_q_idx]
             else:
                 current_min_E = np.nan
                 logger.warning(
                     f"  No valid (>=0) dispersion energies found for H={current_H_field:.2f} T."
                 )
-        else:
-            current_min_E = np.nan
-            logger.warning(
-                f"  Dispersion calculation returned empty or None for H={current_H_field:.2f} T."
-            )
 
         # --- Calculate splitting at (0,2,0) ---
         splitting_at_020 = np.nan
@@ -273,11 +276,12 @@ def plot_min_energy_vs_H_cvo():
                 splitting_at_020,
                 e1_at_020,
                 e2_at_020,
+                q_at_min_E_rlu,
             )
         )
         loop_duration = timeit.default_timer() - loop_start_time
         logger.info(
-            f"  Finished H = {current_H_field:.2f} T. Min Energy = {current_min_E:.4f} meV. Time: {loop_duration:.2f}s"
+            f"  Finished H = {current_H_field:.2f} T. Min E = {current_min_E:.4f} meV at qy={q_at_min_E_rlu:.3f}. Time: {loop_duration:.2f}s"
         )
 
     # --- 4. Plotting the Results ---
@@ -287,6 +291,7 @@ def plot_min_energy_vs_H_cvo():
     splitting_plot = np.array([res[3] for res in results_list], dtype=float)
     e1_020_plot = np.array([res[4] for res in results_list], dtype=float)
     e2_020_plot = np.array([res[5] for res in results_list], dtype=float)
+    q_min_loc_plot = np.array([res[6] for res in results_list], dtype=float)
 
     # Create a figure with two subplots
     fig, (ax1, ax3_bottom) = plt.subplots(
@@ -320,13 +325,34 @@ def plot_min_energy_vs_H_cvo():
         label="Mean Canting Angle",
     )
     ax2_top.tick_params(axis="y", labelcolor=color2)
+
+    # Third y-axis for the location of the minimum energy
+    ax3_top = ax1.twinx()
+    ax3_top.spines["right"].set_position(("axes", 1.18))  # Offset the new spine
+    color3 = "tab:green"
+    ax3_top.set_ylabel("qy of Min Energy (r.l.u.)", color=color3)
+    ax3_top.plot(
+        H_values_plot,
+        q_min_loc_plot,
+        marker="d",
+        linestyle=":",
+        color=color3,
+        label="qy of Min E",
+    )
+    ax3_top.tick_params(axis="y", labelcolor=color3)
+
     ax1.set_title(
         f"CVO: Min Magnon Energy & Canting vs. H along (0,qy,0), qy in [{qy_rlu_min:.2f},{qy_rlu_max:.2f}] rlu",
         fontsize=14,
     )
     lines_top, labels_top = ax1.get_legend_handles_labels()
     lines2_top, labels2_top = ax2_top.get_legend_handles_labels()
-    ax2_top.legend(lines_top + lines2_top, labels_top + labels2_top, loc="upper left")
+    lines3_top, labels3_top = ax3_top.get_legend_handles_labels()
+    ax1.legend(
+        lines_top + lines2_top + lines3_top,
+        labels_top + labels2_top + labels3_top,
+        loc="upper left",
+    )
 
     # --- Bottom Subplot: Splitting at (0,2,0) ---
     color_e1 = "darkgreen"
@@ -374,7 +400,7 @@ def plot_min_energy_vs_H_cvo():
     )
 
     fig.tight_layout(
-        rect=[0, 0.03, 1, 0.97]
+        rect=[0, 0.03, 0.88, 0.97]
     )  # Adjust for overall suptitle if added, or just general spacing
 
     plot_filename = os.path.join(SCRIPT_DIR, "CVO_min_energy_canting_vs_H_plot.png")
@@ -397,6 +423,7 @@ def plot_min_energy_vs_H_cvo():
             min_energies=min_energies_plot,
             mean_canting_angles=mean_canting_plot,
             splitting_at_020=splitting_plot,
+            q_location_of_min_energy=q_min_loc_plot,
         )
         logger.info(f"Data saved to {data_filename}")
     except Exception as e:
