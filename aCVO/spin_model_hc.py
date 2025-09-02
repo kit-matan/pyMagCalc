@@ -291,73 +291,77 @@ def spin_interactions(p):
     nspin = len(apos)
     apos_ouc = atom_pos_ouc()
     nspin_ouc = len(apos_ouc)
-    lattice_constants = unit_cell()
     neighbor_dist_list = get_nearest_neighbor_distances(apos, apos_ouc, 10)[1:4]
     Jex = sp.zeros(nspin, nspin_ouc)
     Gex = sp.zeros(nspin, nspin_ouc)
 
-    # create zeros matrix to fill in the DM vectors for each pair of spins in the unit cell and outside the unit cell
-    DMmat = sp.zeros(nspin, nspin_ouc)
-    DM1 = sp.MatrixSymbol("DM1", 1, 3)
+    # Create a matrix to be filled with DM vectors.
+    # This will be a matrix of SymPy Matrix objects if parameters are symbolic.
+    DMmat = np.empty((nspin, nspin_ouc), dtype=object)
+    DMnull = sp.Matrix([0, 0, 0])
 
-    DMnull = sp.MatrixSymbol("DMnull", 1, 3)
-
-    DMmat = sp.zeros(nspin, nspin_ouc)
     for i in range(nspin):
         for j in range(nspin_ouc):
-            DMmat[i, j] = DMnull
+            dist_ij = la.norm(apos[i] - apos_ouc[j])
 
-        for j in range(nspin_ouc):
-            if np.round(la.norm(apos[i] - apos_ouc[j]), 2) == np.round(
-                neighbor_dist_list[0], 2
-            ):
+            if np.round(dist_ij, 2) == np.round(neighbor_dist_list[0], 2):
                 Jex[i, j] = J1
                 Gex[i, j] = G1
-                # check if spins_ouc is along the positive x-axis
-                if is_vector_parallel_to_another(
-                    apos[i] - apos_ouc[j],
-                    [0, lattice_constants[1, 1], lattice_constants[2, 2]],
-                ):
-                    DMmat[i, j] = -DM1
-                    # check if spins_ouc is to the right of spins
-                    if is_right_neighbor(apos[i], apos_ouc[j]):
-                        DMmat[i, j] = -DMmat[i, j]
-                    else:
-                        DMmat[i, j] = DMmat[i, j]
 
-                # check if spins_ouc is along the negative x-axis
+                # --- DM vector logic from plot_magnetic_structure.py ---
+                # This logic must be compatible with symbolic parameters (Dx, Dy).
+                bond_direction_vec = apos_ouc[j] - apos[i]
+
+                # a-component's sign is determined by the bond's orientation along the b-axis.
+                sign = 1.0
+                if is_right_neighbor(apos[i], apos_ouc[j]):
+                    sign = -1.0
+                dm_a_component = sign * Dx
+
+                # bc-component is perpendicular to the bond in the bc-plane.
+                bond_vec_bc_y = bond_direction_vec[1]
+                bond_vec_bc_z = bond_direction_vec[2]
+
+                # The norm is a numerical value, not symbolic.
+                norm_bond_vec_bc_val = np.sqrt(bond_vec_bc_y**2 + bond_vec_bc_z**2)
+
+                # Avoid division by zero for bonds purely along the a-axis (if any)
+                if norm_bond_vec_bc_val > 1e-9:
+                    # Normalized bc-projection of the bond vector (numerical)
+                    norm_y = bond_vec_bc_y / norm_bond_vec_bc_val
+                    norm_z = bond_vec_bc_z / norm_bond_vec_bc_val
+
+                    # Direction perpendicular to bond in bc-plane: (y, z) -> (-z, y)
+                    dm_vec_bc_direction_y = -norm_z
+                    dm_vec_bc_direction_z = norm_y
+
+                    # Magnitude from Dy, sign from spin preference
+                    dm_bc_component_y = (
+                        AL_SPIN_PREFERENCE[i] * Dy * dm_vec_bc_direction_y
+                    )
+                    dm_bc_component_z = (
+                        AL_SPIN_PREFERENCE[i] * Dy * dm_vec_bc_direction_z
+                    )
                 else:
-                    DMmat[i, j] = DM1
-                    # check if spins_ouc is to the right of spins
-                    if is_right_neighbor(apos[i], apos_ouc[j]):
-                        DMmat[i, j] = -DMmat[i, j]
-                        # print(f'{i=} {j=} right neigh') # Removed verbose print
-                    else:  # I am not sure why that is needed.
-                        DMmat[i, j] = DMmat[i, j]
-            elif np.round(la.norm(apos[i] - apos_ouc[j]), 2) == np.round(
-                neighbor_dist_list[1], 2
-            ):
+                    dm_bc_component_y = 0
+                    dm_bc_component_z = 0
+
+                # Construct the final DM vector (can be symbolic)
+                final_dm_vec = sp.Matrix(
+                    [dm_a_component, dm_bc_component_y, dm_bc_component_z]
+                )
+                DMmat[i, j] = final_dm_vec
+
+            elif np.round(dist_ij, 2) == np.round(neighbor_dist_list[1], 2):
                 Jex[i, j] = J2
-                Gex[i, j] = 0.0
                 DMmat[i, j] = DMnull
-            elif np.round(la.norm(apos[i] - apos_ouc[j]), 2) == np.round(
-                neighbor_dist_list[2], 2
-            ):
+            elif np.round(dist_ij, 2) == np.round(neighbor_dist_list[2], 2):
                 Jex[i, j] = J3
-                Gex[i, j] = 0.0
                 DMmat[i, j] = DMnull
             else:
-                Jex[i, j] = 0.0
-                Gex[i, j] = 0.0
                 DMmat[i, j] = DMnull
-    DM = DMmat.subs(
-        {
-            DM1: sp.Matrix([Dx, AL_SPIN_PREFERENCE[i] * Dy, 0]),
-            DMnull: sp.Matrix([0, 0, 0]),
-        }
-    ).doit()
 
-    return Jex, Gex, DM, H
+    return Jex, Gex, DMmat, H
 
 
 def Hamiltonian(Sxyz_ops, p_sym):
@@ -426,9 +430,8 @@ def Hamiltonian(Sxyz_ops, p_sym):
                     )
 
         # Zeeman term: H is applied along the global z-axis
-        HM_expr -= (
-            gamma * mu_B * Sxyz_ops[i][2] * H_sym
-        )  # Changed Sxyz_ops[i][0] to Sxyz_ops[i][2]
+        # Energy is -mu.B = -(-g*mu_B*S).B = +g*mu_B*S.B
+        HM_expr += gamma * mu_B * Sxyz_ops[i][2] * H_sym
 
     HM_expr = HM_expr.expand()
     return HM_expr
@@ -512,9 +515,8 @@ def classical_energy(  # H is now params_numerical[6]
     sum_Sz_val = 0.0  # Changed from sum_Sx_val
     for i in range(nspin_uc):
         # H is along +z, so energy is - mu.H = - (gamma*mu_B*Sz) * H_field
-        zeeman_energy_contribution -= (
-            gamma * mu_B * classical_spins[i, 2] * H_field_num
-        )  # Changed from classical_spins[i, 0]
+        # The magnetic moment of an electron is mu = -g*mu_B*S. Energy = -mu.B = +g*mu_B*S.B
+        zeeman_energy_contribution += gamma * mu_B * classical_spins[i, 2] * H_field_num
         sum_Sz_val += classical_spins[i, 2]  # Changed from classical_spins[i,0]
 
     if abs(H_field_num) > 1e-6:
@@ -528,7 +530,7 @@ def classical_energy(  # H is now params_numerical[6]
 def find_ground_state_orientations(params_numerical, S_val_numerical, current_module):
     """Finds optimal theta angles by minimizing classical energy. Internal use."""
     n_spins = len(AL_SPIN_PREFERENCE)
-    H_field_val = params_numerical[5]
+    H_field_val = params_numerical[6]  # H is the 7th parameter (index 6)
     initial_theta_guess = np.full(
         n_spins, np.pi / 2.0 - (0.05 if abs(H_field_val) > 1e-9 else 0.0)
     )
