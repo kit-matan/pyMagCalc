@@ -417,9 +417,8 @@ if __name__ == "__main__":
     J3_ratio = model_p_config.get("J3_ratio", 2.03)
     G1 = model_p_config.get("G1", 0.28)
     Dx = model_p_config.get("Dx", 2.67)
-    Dy = model_p_config.get(
-        "Dy", 0.5
-    )  # Added Dy parameter, default to 0.5 if not in config
+    Dy = model_p_config.get("Dy", -2.0)  # DM component for J1
+    D3 = model_p_config.get("D3", 0.0)  # DM component for J3
     H_field = model_p_config.get("H", 0.0)
     params_val = [
         J1,
@@ -428,8 +427,9 @@ if __name__ == "__main__":
         G1,
         Dx,
         Dy,
+        D3,
         H_field,
-    ]  # Added Dy to the list
+    ]  # Added Dy and D3 to the list
 
     cache_mode = calc_p_config.get("cache_mode", "r")
     cache_file_base = calc_p_config.get("cache_file_base", "CVO_model_cache")

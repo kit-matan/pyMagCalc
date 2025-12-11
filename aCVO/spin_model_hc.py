@@ -286,7 +286,7 @@ def get_nearest_neighbor_distances(
 
 def spin_interactions(p):
     # generate J exchange interactions
-    J1, J2, J3, G1, Dx, Dy, H = p
+    J1, J2, J3, G1, Dx, Dy, D3, H = p
     apos = atom_pos()
     nspin = len(apos)
     apos_ouc = atom_pos_ouc()
@@ -357,7 +357,12 @@ def spin_interactions(p):
                 DMmat[i, j] = DMnull
             elif np.round(dist_ij, 2) == np.round(neighbor_dist_list[2], 2):
                 Jex[i, j] = J3
-                DMmat[i, j] = DMnull
+                # The sign of the DM vector's a-component should depend on the
+                # bond orientation to respect crystal symmetry, similar to J1.
+                sign = 1.0
+                if is_right_neighbor(apos[i], apos_ouc[j]):
+                    sign = -1.0
+                DMmat[i, j] = sp.Matrix([sign * D3, 0, 0])
             else:
                 DMmat[i, j] = DMnull
 
@@ -448,7 +453,7 @@ def classical_energy(  # H is now params_numerical[6]
         )
         return np.inf
 
-    H_field_num = params_numerical[6]  # H is now the 7th parameter (index 6)
+    H_field_num = params_numerical[7]  # H is now the 8th parameter (index 7)
 
     Jex_sp, Gex_sp, DM_matrix_of_matrices_sp, _ = current_module.spin_interactions(
         params_numerical
@@ -530,7 +535,7 @@ def classical_energy(  # H is now params_numerical[6]
 def find_ground_state_orientations(params_numerical, S_val_numerical, current_module):
     """Finds optimal theta angles by minimizing classical energy. Internal use."""
     n_spins = len(AL_SPIN_PREFERENCE)
-    H_field_val = params_numerical[6]  # H is the 7th parameter (index 6)
+    H_field_val = params_numerical[7]  # H is the 8th parameter (index 7)
     initial_theta_guess = np.full(
         n_spins, np.pi / 2.0 - (0.05 if abs(H_field_val) > 1e-9 else 0.0)
     )
@@ -708,8 +713,8 @@ if __name__ == "__main__":
         "Running standalone test for spin_model_hc.py: get_field_optimized_state_for_lswt"
     )
     example_S_val = 0.5
-    # base_params now includes Dy (set to 0.5 for this example)
-    base_params = [2.49, 1.12 * 2.49, 2.03 * 2.49, 0.28, 2.67, 0.5]
+    # base_params now includes Dy (set to -2.0) and D3 (set to 0.1)
+    base_params = [2.49, 1.12 * 2.49, 2.03 * 2.49, 0.28, 2.67, -2.0, 0.1]
 
     logger.info("\n--- Test Case: H = 0 T (Field along Z) ---")  # Modified comment
     params_h0 = base_params + [0.0]

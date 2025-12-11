@@ -89,7 +89,8 @@ def plot_min_energy_vs_H_cvo():
         J3_ratio = float(model_params_config["J3_ratio"])
         G1 = float(model_params_config["G1"])
         Dx = float(model_params_config["Dx"])
-        Dy = float(model_params_config.get("Dy", 0.5))  # Add Dy, default to 0.5
+        Dy = float(model_params_config.get("Dy", -2.0))  # DM component for J1
+        D3 = float(model_params_config.get("D3", 0.0))  # DM component for J3
         H_initial_config = float(model_params_config.get("H", 0.0))
     except KeyError as e:
         logger.error(
@@ -102,9 +103,18 @@ def plot_min_energy_vs_H_cvo():
         )
         return
 
-    # The model expects 7 parameters: J1, J2, J3, G1, Dx, Dy, H
-    base_model_params = [J1, J1 * J2_ratio, J1 * J3_ratio, G1, Dx, Dy, H_initial_config]
-    H_param_index = 6  # H is the 7th parameter, so its index is 6
+    # The model expects 8 parameters: J1, J2, J3, G1, Dx, Dy, D3, H
+    base_model_params = [
+        J1,
+        J1 * J2_ratio,
+        J1 * J3_ratio,
+        G1,
+        Dx,
+        Dy,
+        D3,
+        H_initial_config,
+    ]
+    H_param_index = 7  # H is the 8th parameter, so its index is 7
 
     lb_cvo = plotting_config.get("lattice_b_cvo", 8.383)
     magcalc_cache_file_base_prefix = calc_settings_config.get(
