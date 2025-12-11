@@ -477,10 +477,11 @@ if __name__ == "__main__":
     # --- Load Configuration ---
     # Assuming config.yaml is in the same directory as the script
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    default_config_path = os.path.join(script_dir, "config.yaml")
+    # Point to the configuration file (YAML)
+    config_file_path = os.path.join(script_dir, "config.yaml")
 
     # Allow overriding config path via command line argument
-    config_filename = sys.argv[1] if len(sys.argv) > 1 else default_config_path
+    config_filename = sys.argv[1] if len(sys.argv) > 1 else config_file_path
 
     config = {}
     try:
