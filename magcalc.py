@@ -27,7 +27,7 @@ import timeit
 import sys
 import pickle
 from multiprocessing import Pool
-from tqdm import tqdm
+
 import hashlib  # For numerical cache key generation
 import logging
 import os  # Added for cpu_count
@@ -1122,14 +1122,7 @@ def _process_hamiltonian_terms(
     ]
     
     with Pool() as pool:
-        results_ft = list(
-            tqdm(
-                pool.imap(_fourier_transform_terms, pool_args_ft),
-                total=len(chunks),
-                desc="Applying Fourier Transform        ",
-                bar_format="{percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
-            )
-        )
+        results_ft = list(pool.imap(_fourier_transform_terms, pool_args_ft))
         
     hamiltonian_k_space = Add(*results_ft).expand()
     logger.info(
@@ -1154,14 +1147,7 @@ def _process_hamiltonian_terms(
     ]
     
     with Pool() as pool:
-        results_no = list(
-            tqdm(
-                pool.imap(_normal_order_terms, pool_args_no),
-                total=len(chunks),
-                desc="Normal Ordering Terms             ",
-                bar_format="{percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
-            )
-        )
+        results_no = list(pool.imap(_normal_order_terms, pool_args_no))
         
     hamiltonian_normal_ordered = Add(*results_no)
     
@@ -2556,14 +2542,7 @@ class MagCalc:
                 initializer=_init_worker,
                 initargs=(self.HMat_sym, self.full_symbol_list)
             ) as pool:
-                results_from_pool = list(
-                    tqdm(
-                        pool.imap(process_calc_disp, pool_args),
-                        total=len(q_vectors_list),
-                        desc="Calculating Spin Wave Dispersion",  # Added more descriptive label
-                        bar_format="{percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
-                    )
-                )
+                results_from_pool = list(pool.imap(process_calc_disp, pool_args))
         except Exception:
             logger.exception(
                 "Error during multiprocessing pool execution for dispersion."
@@ -2701,14 +2680,7 @@ class MagCalc:
                 initializer=_init_worker, 
                 initargs=(self.HMat_sym, self.full_symbol_list)
             ) as pool:
-                results = list(
-                    tqdm(
-                        pool.imap(process_calc_Sqw, pool_args),
-                        total=len(q_vectors_list),
-                        desc="Calculating S(q,omega)          ",  # Added more descriptive label
-                        bar_format="{percentage:3.0f}%|{bar}| {elapsed}<{remaining}",
-                    )
-                )
+                results = list(pool.imap(process_calc_Sqw, pool_args))
         except Exception:
             logger.exception("Error during multiprocessing pool execution for S(q,w).")
             return None, None, None
