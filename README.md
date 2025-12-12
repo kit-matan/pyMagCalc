@@ -9,20 +9,26 @@
 
 ## Key Features
 
-*   **Object-Oriented Design:** Core calculations managed by the `MagCalc` class within the `magcalc` package.
-*   **Symbolic Hamiltonian:** Generates symbolic quadratic boson Hamiltonians using SymPy.
-*   **Numerical Calculations:** Computes dispersion relations and S(Q,ω) with polarization factors.
-*   **Performance:** Parallelized calculations using `multiprocessing`.
-*   **Caching:** Caches expensive symbolic computations to speed up subsequent runs.
-*   **Flexible Configuration:** Supports both Python-module defined models and YAML-based declarative configurations.
+*   **Diffraction Physics:** Calculates spin-wave dispersion and neutron scattering intensity (S(Q,ω)) with magnetic form factor and polarization factor corrections.
+*   **Modular Architecture:** Separation of concerns with `MagCalc` core logic, linear algebra utilities, and model definitions.
+*   **Symbolic Hamiltonian:** Generates symbolic quadratic boson Hamiltonians using `SymPy` for arbitrary spin interactions.
+*   **Numerical Engine:** Efficient numerical evaluation using `NumPy` and `multiprocessing` for parallel q-point calculations.
+*   **Caching System:** Caches computationally expensive symbolic Hamiltonian diagonalization to disk for faster re-runs.
+*   **Flexible Inputs:** Supports declarative YAML configurations (validated against schema) or Python-based model definitions.
 
 ## Directory Structure
 
-*   `magcalc/`: Core python package containing `MagCalc`, `GenericSpinModel`, and utilities.
-*   `scripts/`: Top-level executable scripts (e.g., `run_magcalc.py`, `inspect_hm.py`).
-*   `examples/`: Sample data, configurations, and scripts (e.g., `KFe3J/`, `ZnCVO/`).
-*   `tests/`: Unit and integration tests.
-*   `archive/`: Deprecated or unused files.
+*   `magcalc/`: Core Python package.
+    *   `core.py`: Main `MagCalc` class and calculation logic.
+    *   `generic_model.py`: `GenericSpinModel` for YAML-based model loading.
+    *   `linalg.py`: Matrix operations and Bogoliubov transformation utilities.
+    *   `config_loader.py`: Utilities for loading and validating configurations.
+*   `scripts/`: Executable scripts for running calculations and inspecting models (e.g., `run_magcalc.py`).
+*   `examples/`: Sample data and scripts for various materials.
+    *   `KFe3J/`: KFe3(OH)6(SO4)2 (Jarosite) - Kagome antiferromagnet.
+    *   `aCVO/`: alpha-Cu2V2O7 - Honeycomb-like antiferromagnet with Dzyaloshinskii-Moriya interactions.
+    *   `ZnCVO/`: Zn-doped CVO examples.
+*   `tests/`: Unit and integration tests ensuring package reliability.
 
 ## Dependencies
 
@@ -43,43 +49,50 @@
     ```bash
     pip install -r requirements.txt
     ```
-3.  Ensure the project root is in your `PYTHONPATH` or run scripts from the project root directory.
+3.  Add the project root to your `PYTHONPATH` or run scripts from the root directory to ensure `import magcalc` works.
 
 ## Basic Usage
 
-### Running the Example Script
+### Running from Command Line
 
-The easiest way to run `pyMagCalc` is using the provided `run_magcalc.py` script with a configuration file.
+Use the `run_magcalc.py` script with a configuration file:
 
 ```bash
 python scripts/run_magcalc.py examples/KFe3J/KFe3J_declarative.yaml
 ```
 
-### Using as a Library
+### Scripting with Python
 
 ```python
 import numpy as np
-import magcalc as mc 
-# ... define model or load config ...
+import magcalc as mc
+from magcalc.generic_model import GenericSpinModel
 
-# Example with configuration file:
+# Example: Using the Calculator programmatically
 # calculator = mc.MagCalc(config_filepath="examples/KFe3J/KFe3J_declarative.yaml")
-# energies = calculator.calculate_dispersion(q_points)
+# dispersion = calculator.calculate_dispersion(q_points)
 ```
 
 ## Spin Model Definition
 
-You can define a spin model in two ways:
-1.  **Declarative YAML (Recommended):** Define crystal structure, interactions, and parameters in a YAML file. See `examples/KFe3J/KFe3J_declarative.yaml` for a complete example.
-2.  **Python Module (Legacy/Advanced):** Create a module implementing `atom_pos`, `spin_interactions`, `Hamiltonian`, etc. See `examples/KFe3J/spin_model.py` for an example.
+Define your physics in a `material_config.yaml` file (recommended) or a Python module. The YAML format allows specifying:
+*   **Crystal Structure**: Lattice parameters and magnetic atoms.
+*   **Interactions**: Heisenberg exchange ($J$), Dzyaloshinskii-Moriya ($D$), and Single-Ion Anisotropy.
+*   **Parameters**: Numerical values for symbolic constants.
+
+See `magcalc/material_config_schema.yaml` for layout details.
 
 ## Examples
 
-The `examples/` directory contains structured examples:
-*   `examples/KFe3J/`: KFe3(OH)6(SO4)2 (Jarosite) example.
-    *   `KFe3J_declarative.yaml`: Configuration for the `GenericSpinModel`.
-    *   `spin_model.py`: Legacy Python-defined model.
-*   `examples/ZnCVO/` & `examples/aCVO/`: Additional material examples.
+The `examples/` directory contains fully functional examples:
+*   **`examples/KFe3J/`**: Extensive example for Jarosite, showcasing:
+    *   Declarative YAML configuration.
+    *   Comparison with legacy Python-defined models.
+    *   Scripts for plotting dispersion and S(Q,ω) cuts.
+*   **`examples/aCVO/`**: Alpha-Cu2V2O7 example.
+    *   Includes `sw_CVO.py` for comprehensive spin-wave calculations.
+    *   demonstrates handling of complex magnetic structures and magnetic fields.
+    *   **Note**: Scripts in this directory may require setting `sys.path` if run directly.t
 
 ## Testing
 
