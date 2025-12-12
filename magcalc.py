@@ -734,30 +734,39 @@ def KKdMatrix(
                     candidate_basis_p_block.shape[1], dtype=complex
                 )
                 for k_deg_block in range(block_size):
-                    # The original code sums these projection vectors. This is not right.
-                    # It should be: sum_of_projections[l] = sum_k vdot(degenerate_block_m[:,k], candidate_basis_p_block[:,l])
-                    # Let's reinterpret: sum_of_projections[l] = sum_k |vdot(degenerate_block_m[:,k], candidate_basis_p_block[:,l])|^2
-                    # No, the original code is `tmpsum = tmpsum + (np.conj(vtmpm1[:, j]).T @ tmpevecswap)`
-                    # This means tmpsum is a vector of accumulated dot products.
-                    # tmpsum[k] = sum_{j in degen_block} (conj(vtmpm1[:,j]) . tmpevecswap[:,k])
                     sum_of_projections += (
                         np.conj(degenerate_block_m[:, k_deg_block])
                         @ candidate_basis_p_block
                     ).flatten()
 
-                selected_indices = np.where(
-                    np.abs(sum_of_projections) > EIGENVECTOR_MATCHING_THRESHOLD
-                )[0]
+                # Robust matching: Pick top 'block_size' matches if available
+                projection_magnitudes = np.abs(sum_of_projections)
+                sorted_indices_desc = np.argsort(projection_magnitudes)[::-1]
+                
+                # Check if the weakest of the top 'block_size' is strong enough
+                match_quality_ok = False
+                if len(sorted_indices_desc) >= block_size:
+                    if projection_magnitudes[sorted_indices_desc[block_size-1]] > EIGENVECTOR_MATCHING_THRESHOLD:
+                         match_quality_ok = True
+                
+                if match_quality_ok:
+                    selected_indices = sorted_indices_desc[:block_size]
+                    # Log if we are filtering out extra matches (e.g. got 4, took 2)
+                    if np.sum(projection_magnitudes > EIGENVECTOR_MATCHING_THRESHOLD) > block_size:
+                         logger.debug(
+                             f"Custom GS: Found more matches than block size at {q_label}. "
+                             f"Selecting top {block_size} strongest projections."
+                         )
 
-                if len(selected_indices) == block_size:
                     new_basis_for_m_block = candidate_basis_p_block[:, selected_indices]
                     eigvecs_m_processed[:, current_block_start_idx:i] = gram_schmidt(
                         new_basis_for_m_block
                     )
                 else:
                     logger.warning(
-                        f"Custom GS for -q: Mismatch in new basis size for block {current_block_start_idx}-{i-1} at {q_label}. "
-                        f"Expected {block_size}, got {len(selected_indices)}. Applying standard GS to original block."
+                        f"Custom GS for -q: Insufficient matching basis size for block {current_block_start_idx}-{i-1} at {q_label}. "
+                        f"Expected {block_size}, but only found {np.sum(projection_magnitudes > EIGENVECTOR_MATCHING_THRESHOLD)} distinct matches > threshold. "
+                        f"Applying standard GS to original block."
                     )
                     eigvecs_m_processed[:, current_block_start_idx:i] = gram_schmidt(
                         degenerate_block_m
