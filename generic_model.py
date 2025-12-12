@@ -191,11 +191,16 @@ class GenericSpinModel:
 
     def _parse_transformations(self, p):
         """Parse transformations section to generate rotation matrices per atom."""
+        print("DEBUG: Entering _parse_transformations")
         trans_config = self.config.get('transformations', {})
         if not trans_config:
+            print("DEBUG: No 'transformations' found in config.")
             return None # Use default
+        
+        print(f"DEBUG: trans_config keys: {list(trans_config.keys())}")  # Added debug
             
         param_map = self._resolve_param_map(p)
+        print(f"DEBUG: Param Map for Transformations: {param_map}")
         
         # 1. Variables
         variables = trans_config.get('variables', {})
@@ -203,9 +208,12 @@ class GenericSpinModel:
         for name, expr in variables.items():
             val = safe_eval(str(expr), param_map)
             param_map[name] = val
+            print(f"DEBUG: Variable '{name}' = {val}") # Added debug print
+        print(f"DEBUG: Variables evaluated: {list(param_map.keys())}")
             
         # 2. Atom Frames
         atom_frames = trans_config.get('atom_frames', [])
+        print(f"DEBUG: atom_frames content: {atom_frames}") # Added debug
         
         # Initialize with Identity
         apos = self.atom_pos()
@@ -226,16 +234,21 @@ class GenericSpinModel:
                 else:
                     # Scalar? Error.
                     raise ValueError(f"Rotation expression for atom {atom_idx} did not return a matrix.")
+            
+            print(f"DEBUG: Rotation Matrix for Atom {atom_idx}:\n{rot_matrices[atom_idx]}") # Added debug
         
         return rot_matrices
 
     def mpr(self, p):
         # Check for declarative transformations
+        print("DEBUG: Calling mpr()")
         matrices = self._parse_transformations(p)
         if matrices:
+            print("DEBUG: mpr returning parsed matrices.")
             return matrices
             
         # Default identity
+        print("DEBUG: mpr returning default Identity matrices.")
         return [sp.eye(3) for _ in self.atom_pos()]
 
     def _resolve_param_map(self, p):
@@ -246,6 +259,7 @@ class GenericSpinModel:
         """
         param_names = self.config.get('parameters')
         if not param_names:
+            print("DEBUG: No 'parameters' list in config. Cannot resolve params.")
             return {} # Cannot resolve names
         
         # Ensure p is long enough
@@ -303,6 +317,7 @@ class GenericSpinModel:
                 for i in range(N_atom):
                     for j in range(N_atom_ouc):
                         d = la.norm(apos[i] - apos_ouc[j])
+                        print(f"DEBUG: J check. i={i}, j={j}, dist={d:.5f}, target={target_dist}, matched={abs(d - target_dist) < dist_tol}")
                         if abs(d - target_dist) < dist_tol:
                             Jex[i, j] += J_val # Additive to support multiple terms
                             
@@ -467,15 +482,25 @@ class GenericSpinModel:
                 
                 # If D_vec is not None
                 if D_vec is not None:
-                    Sc_x = Sxyz[i][1]*Sxyz[j][2] - Sxyz[i][2]*Sxyz[j][1]
-                    Sc_y = Sxyz[i][2]*Sxyz[j][0] - Sxyz[i][0]*Sxyz[j][2]
-                    Sc_z = Sxyz[i][0]*Sxyz[j][1] - Sxyz[i][1]*Sxyz[j][0]
-                    HM += 0.5 * (
-                        D_vec[0] * Sc_x +
-                        D_vec[1] * Sc_y +
-                        D_vec[2] * Sc_z
-                    )
-                    terms_added += 1
+                     # Check if Zero 
+                     is_zero = False
+                     if hasattr(D_vec, 'is_zero_matrix'):
+                         is_zero = D_vec.is_zero_matrix
+                     elif D_vec == sp.Matrix([0,0,0]):
+                         is_zero = True
+                         
+                     if not is_zero:
+                        print(f"DEBUG: Adding DM[{i},{j}] = {D_vec}")
+                        
+                        Sc_x = Sxyz[i][1]*Sxyz[j][2] - Sxyz[i][2]*Sxyz[j][1]
+                        Sc_y = Sxyz[i][2]*Sxyz[j][0] - Sxyz[i][0]*Sxyz[j][2]
+                        Sc_z = Sxyz[i][0]*Sxyz[j][1] - Sxyz[i][1]*Sxyz[j][0]
+                        HM += 0.5 * (
+                            D_vec[0] * Sc_x +
+                            D_vec[1] * Sc_y +
+                            D_vec[2] * Sc_z
+                        )
+                        terms_added += 1
 
         print(f"DEBUG: Hamiltonian END. Total terms added: {terms_added}")
         print(f"DEBUG: HM is zero? {HM == 0}")

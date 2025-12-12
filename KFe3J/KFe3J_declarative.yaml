@@ -26,8 +26,8 @@ model_params:
   S: 2.5
   J1: 3.23
   J2: 0.11
-  Dy: 0.2
-  Dz: 0.2
+  Dy: 0.218
+  Dz: -0.195
   H: 0.0
 
 # Coordinate Transformations to match Ground State
@@ -40,14 +40,16 @@ transformations:
     # x = 2 / (3 * J1) * (-sqrt(3) * Dy) / (1 + Z / J1)
     x_arg: "(2 * (-sqrt(3) * Dy)) / (3 * J1 * (1 + Z / J1))"
     
-    # cos(theta) = sqrt(1 - x^2)
-    cos_theta: "sqrt(1 - x_arg**2)"
+    # Calculate theta directly using asin AND FORCE POSITIVE like Manual Model
+    # theta = abs(asin(x_arg))
+    theta: "abs(asin(x_arg))"
     
-    # Half-angle formulas for ca = theta/2
-    # sin(ca) = sqrt((1 - cos(theta))/2)
-    sin_ca: "sqrt((1 - cos_theta)/2)"
-    # cos(ca) = sqrt((1 + cos(theta))/2)
-    cos_ca: "sqrt((1 + cos_theta)/2)"
+    # Canting angle ca = theta/2 (positive)
+    ca: "theta / 2"
+    
+    # Calculate sin and cos using standard functions
+    sin_ca: "sin(ca)"
+    cos_ca: "cos(ca)"
 
     # Base Rotation Matrix for Canting (mp_rot from spin_model.py)
     # [[cos(ca), 0, -sin(ca)], [0, 1, 0], [sin(ca), 0, cos(ca)]]
@@ -176,7 +178,9 @@ plotting:
   combined_plot_filename: "KFe3J_decl_prim_combined_plot.png" 
   sqw_plot_filename: "KFe3J_decl_prim_sqw_plot.png"   
   energy_limits_disp: [0, 20] 
-  energy_limits_sqw: [0, 20]  
+  energy_limits_sqw: [0, 20]
+  broadening_width: 0.2
+  cmap: "PuBu_r"
   disp_title: "KFe3J (Declarative Primitive) Spin Wave Dispersion"
   sqw_title: "KFe3J (Declarative Primitive) S(Q,w)"
   show_plot: false

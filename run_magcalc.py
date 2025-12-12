@@ -5,6 +5,8 @@ import logging
 import magcalc as mc
 import numpy as np
 from generic_model import GenericSpinModel
+import matplotlib.pyplot as plt
+import matplotlib # Ensure backend setting if needed, though usually fine on mac
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
@@ -123,7 +125,34 @@ def main():
                  if len(q_vectors) == 0:
                      logger.warning("No Q-vectors generated from config 'q_path'. Skipping calculation.")
                  else:
-                     logger.info(f"Generated {len(q_vectors)} Q-vectors for calculation.")
+                     logger.info(f"Generated {len(q_vectors)} Q-vectors (RLU) for calculation.")
+                     
+                     # Convert RLU to Cartesian
+                     try:
+                         uc = spin_model.unit_cell()
+                         a1, a2, a3 = uc[0], uc[1], uc[2]
+                         V = np.dot(a1, np.cross(a2, a3))
+                         b1 = 2 * np.pi * np.cross(a2, a3) / V
+                         b2 = 2 * np.pi * np.cross(a3, a1) / V
+                         b3 = 2 * np.pi * np.cross(a1, a2) / V
+                         B_matrix = np.array([b1, b2, b3])
+                         
+                         logger.info(f"Lattice Vectors:\n{uc}")
+                         logger.info(f"Reciprocal Lattice Vectors:\n{B_matrix}")
+                         
+                         # q_vectors is a list of arrays or array of shape (N, 3)
+                         # Convert to array if not
+                         q_rlu = np.array(q_vectors)
+                         q_cart = np.dot(q_rlu, B_matrix) # shape (N, 3) x (3, 3) -> (N, 3)
+                         
+                         logger.info(f"Converted Q-vectors to Cartesian (Validation: Q[0] RLU={q_rlu[0]} -> Cart={q_cart[0]})")
+                         q_vectors = q_cart
+                         
+                     except Exception as e:
+                         logger.error(f"Failed to convert Q-vectors to Cartesian: {e}")
+                         # Fallback? Or raise? Assuming strict physics engine, we should probably fail or warn.
+                         # But let's verify if unit_cell is valid.
+                         raise e
             
              if len(q_vectors) > 0:
                  logger.info("Calculating dispersion...")
@@ -237,44 +266,101 @@ def main():
             if os.path.exists(sqw_file):
                 try:
                     data = np.load(sqw_file, allow_pickle=True)
-                    q_values = data['q_vectors']
-                    # S(Q,w) map logic usually involves energy bins too?
-                    # mc.plot_sqw_from_data args: q_values, energies_list, intensities_list
-                    # This implies line plots of intensity? Or map?
-                    # "S(q,w) Intensity Map" title suggests map.
-                    # But the signature takes lists... let's check magcalc.py signature again.
-                    # Signature: q_values, energies_list, intensities_list. 
-                    # This looks like it plots "Intensity vs Energy" at each Q? 
-                    # Or "Modes weighted by intensity"? 
-                    # Re-reading plot_sqw_from_data signature...
-                    
+                    q_vectors = data['q_vectors']
                     energies = data['energies']
-                    intensities = data['intensities']
+                    q_vectors = data['q_vectors']
+                    energies = data['energies']
                     
-                    # Calculate path length for plotting if not already done
-                    if 'x_vals' not in locals():
-                         if len(q_values) > 0:
-                            diffs = np.diff(q_values, axis=0)
-                            dists = np.linalg.norm(diffs, axis=1)
-                            path_len = np.concatenate(([0], np.cumsum(dists)))
-                            x_vals = path_len
-                         else:
-                            x_vals = []
+                    # Safely retrieve intensities
+                    if 'sqw_values' in data:
+                        intensities = data['sqw_values']
+                    elif 'intensities' in data:
+                        intensities = data['intensities']
+                    else:
+                         raise KeyError("No 'sqw_values' or 'intensities' key found in data file.")
                     
-                    energies_list = [e for e in energies]
-                    intensities_list = [i for i in intensities]
-                    
+                    # Compute Path Length
+                    if len(q_vectors) > 0:
+                        # q_vectors is (N, 3)
+                        diffs = np.diff(q_vectors, axis=0)
+                        dists = np.linalg.norm(diffs, axis=1)
+                        path_len = np.concatenate(([0], np.cumsum(dists)))
+                        x_vals = path_len
+                    else:
+                        x_vals = np.arange(len(q_vectors))
+
                     plot_filename = plot_config.get('sqw_plot_filename', 'sqw_plot.png')
                     if not os.path.isabs(plot_filename): plot_filename = os.path.join(config_dir, plot_filename)
+                    
+                    # Plotting Parameters
+                    title = plot_config.get('sqw_title', 'S(Q,w)')
+                    ylim = plot_config.get('energy_limits_sqw', [0, 20])
+                    wid = plot_config.get('broadening_width', 0.2)
+                    cmap = plot_config.get('cmap', 'PuBu_r')
+                    
+                    logger.info(f"Plotting S(Q,w) map to {plot_filename} with broadening={wid}...")
+                    
+                    # --- Advanced Plotting Logic (Gaussian Broadening) ---
+                    # Create Grid
+                    y_min, y_max = ylim
+                    dy = 0.05 # Energy resolution
+                    y_grid = np.arange(y_min, y_max + dy, dy)
+                    
+                    # Init Matrix (Energy x Q)
+                    intensity_matrix = np.zeros((len(y_grid), len(x_vals)))
+                    
+                    # Broadening Loop
+                    for i_q in range(len(x_vals)):
+                        ens = energies[i_q]
+                        ints = intensities[i_q]
+                        if ens is None or ints is None: continue
+                        if isinstance(ens, (list, tuple)): ens = np.array(ens)
+                        if isinstance(ints, (list, tuple)): ints = np.array(ints)
+                        
+                        # Filter NaNs
+                        valid = ~np.isnan(ens) & ~np.isnan(ints)
+                        ens = ens[valid]
+                        ints = ints[valid]
+                        
+                        if len(ens) == 0: continue
+                        
+                        # Lorentzian Broadening (matching Manual Script)
+                        for band_idx, en_val in enumerate(ens):
+                            w_val = ints[band_idx]
+                            denom = (y_grid - en_val)**2 + (wid/2)**2
+                            lor = (1.0 / np.pi) * (wid / 2) / denom
+                            intensity_matrix[:, i_q] += w_val * lor
 
-                    mc.plot_sqw_from_data(
-                        q_values=x_vals,
-                        energies_list=energies_list,
-                        intensities_list=intensities_list,
-                        title=plot_config.get('sqw_title', 'S(Q,w)'),
-                        save_filename=plot_filename,
-                        show_plot=plot_config.get('show_plot', False)
-                    )
+                    # Plot
+                    plt.figure(figsize=(10, 6))
+                    
+                    # Log Norm
+                    from matplotlib.colors import LogNorm
+                    
+                    # Determine vmin/vmax
+                    pos_vals = intensity_matrix[intensity_matrix > 1e-6]
+                    if len(pos_vals) > 0:
+                        vmin = np.min(pos_vals)
+                        vmax = np.max(pos_vals)
+                    else:
+                        vmin, vmax = 1e-3, 1.0
+                        
+                    pcm = plt.pcolormesh(x_vals, y_grid, intensity_matrix, 
+                                         norm=LogNorm(vmin=vmin, vmax=vmax),
+                                         cmap=cmap,
+                                         shading='nearest') 
+                                         
+                    plt.colorbar(pcm, label="Intensity (arb. units)")
+                    plt.title(title)
+                    plt.xlabel("Q Path Length ($\AA^{-1}$)")
+                    plt.ylabel("Energy (meV)")
+                    plt.ylim(ylim)
+                    plt.xlim(min(x_vals), max(x_vals))
+                    
+                    plt.tight_layout()
+                    plt.savefig(plot_filename, dpi=150)
+                    plt.close()
+                    logger.info("S(Q,w) plot saved.")
                 except Exception as e:
                     logger.error(f"Failed to plot S(Q,w): {e}")
             else:
