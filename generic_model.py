@@ -1,13 +1,20 @@
-import numpy as np
-import sympy as sp
-from numpy import linalg as la
-from itertools import product
+import logging
 import os
 import sys
+from itertools import product
+from typing import List, Dict, Any, Optional, Tuple, Union
+
+import numpy as np
+from numpy import linalg as la
+import sympy as sp
+
+logger = logging.getLogger(__name__)
+
 try:
     from ase.io import read as read_cif
 except ImportError:
     read_cif = None
+    logger.warning("ASE not installed. CIF loading will be disabled.")
 
 # Ensure we can import cif_utils
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -191,16 +198,16 @@ class GenericSpinModel:
 
     def _parse_transformations(self, p):
         """Parse transformations section to generate rotation matrices per atom."""
-        print("DEBUG: Entering _parse_transformations")
+        logger.debug("Entering _parse_transformations")
         trans_config = self.config.get('transformations', {})
         if not trans_config:
-            print("DEBUG: No 'transformations' found in config.")
+            logger.debug("No 'transformations' found in config.")
             return None # Use default
         
-        print(f"DEBUG: trans_config keys: {list(trans_config.keys())}")  # Added debug
+        logger.debug(f"trans_config keys: {list(trans_config.keys())}")
             
         param_map = self._resolve_param_map(p)
-        print(f"DEBUG: Param Map for Transformations: {param_map}")
+        logger.debug(f"Param Map for Transformations: {param_map}")
         
         # 1. Variables
         variables = trans_config.get('variables', {})
@@ -208,12 +215,12 @@ class GenericSpinModel:
         for name, expr in variables.items():
             val = safe_eval(str(expr), param_map)
             param_map[name] = val
-            print(f"DEBUG: Variable '{name}' = {val}") # Added debug print
-        print(f"DEBUG: Variables evaluated: {list(param_map.keys())}")
+            logger.debug(f"Variable '{name}' = {val}")
+        logger.debug(f"Variables evaluated: {list(param_map.keys())}")
             
         # 2. Atom Frames
         atom_frames = trans_config.get('atom_frames', [])
-        print(f"DEBUG: atom_frames content: {atom_frames}") # Added debug
+        logger.debug(f"atom_frames content: {atom_frames}")
         
         # Initialize with Identity
         apos = self.atom_pos()
@@ -235,31 +242,29 @@ class GenericSpinModel:
                     # Scalar? Error.
                     raise ValueError(f"Rotation expression for atom {atom_idx} did not return a matrix.")
             
-            print(f"DEBUG: Rotation Matrix for Atom {atom_idx}:\n{rot_matrices[atom_idx]}") # Added debug
+            logger.debug(f"Rotation Matrix for Atom {atom_idx}:\n{rot_matrices[atom_idx]}")
         
         return rot_matrices
 
     def mpr(self, p):
         # Check for declarative transformations
-        print("DEBUG: Calling mpr()")
+        logger.debug("Calling mpr()")
         matrices = self._parse_transformations(p)
         if matrices:
-            print("DEBUG: mpr returning parsed matrices.")
+            logger.debug("mpr returning parsed matrices.")
             return matrices
             
         # Default identity
-        print("DEBUG: mpr returning default Identity matrices.")
+        logger.debug("mpr returning default Identity matrices.")
         return [sp.eye(3) for _ in self.atom_pos()]
 
     def _resolve_param_map(self, p):
         """
         Map parameter names to values in p based on 'parameters' config.
-        If 'parameters' list is missing, fall back to index-based logic?
-        Better to require 'parameters' list for named resolution.
         """
         param_names = self.config.get('parameters')
         if not param_names:
-            print("DEBUG: No 'parameters' list in config. Cannot resolve params.")
+            logger.debug("No 'parameters' list in config. Cannot resolve params.")
             return {} # Cannot resolve names
         
         # Ensure p is long enough
@@ -317,7 +322,6 @@ class GenericSpinModel:
                 for i in range(N_atom):
                     for j in range(N_atom_ouc):
                         d = la.norm(apos[i] - apos_ouc[j])
-                        print(f"DEBUG: J check. i={i}, j={j}, dist={d:.5f}, target={target_dist}, matched={abs(d - target_dist) < dist_tol}")
                         if abs(d - target_dist) < dist_tol:
                             Jex[i, j] += J_val # Additive to support multiple terms
                             
@@ -404,30 +408,40 @@ class GenericSpinModel:
                     
         return Jex, DM
 
-    def Hamiltonian(self, Sxyz, pr):
+    def Hamiltonian(self, Sxyz: List[Any], pr: List[Any]) -> sp.Expr:
         """
         Define Hamiltonian using config logic.
         """
-        """
-        Define Hamiltonian using config logic.
-        """
-        # We need to separate Exchange params from SIA/Zeeman params in pr
+        # Parse params
+        Jex, DM, p_rest, param_map = self._parse_hamiltonian_params(pr)
         
-        # Count params consumed by 'spin_interactions'
-        # Iterate config to count
+        HM = 0
+        gamma = 2.0
+        mu_B = 5.788e-2
+        
+        # 1. Exchange Terms (Heisenberg + DM)
+        HM += self._compute_heisenberg_dm_terms(Sxyz, Jex, DM)
+        
+        # 2. Extra Terms (SIA)
+        HM += self._compute_sia_terms(Sxyz, p_rest)
+
+        # 3. Zeeman
+        HM += self._compute_zeeman_terms(Sxyz, p_rest, param_map, gamma, mu_B)
+
+        # 4. Substitution and Filtering
+        HM = self._apply_substitution_and_filter(HM, pr)
+        
+        return HM
+
+    def _parse_hamiltonian_params(self, pr: List[Any]) -> Tuple[Any, Any, List[Any], Dict[str, Any]]:
+        """Helper to parse parameters into Jex, DM, and remaining params."""
         if self.config.get('parameters'):
-            # New Named Mode: Pass full params
+            # New Named Mode
             Jex, DM = self.spin_interactions(pr)
-            
             param_map = self._resolve_param_map(pr)
-            
-            # Param consumption for legacy logic is bypassed
-            p_rest = [] # Unused in loop
-            
+            p_rest = [] 
         else:
-            # Old Positional Mode: Split params
-            # Count params consumed by 'spin_interactions'
-            # Iterate config to count
+            # Old Positional Mode
             param_counter = 0
             for interaction in self.interactions_config:
                 itype = interaction.get('type')
@@ -436,36 +450,30 @@ class GenericSpinModel:
                 elif itype == 'dm':
                     param_counter += 3
             
-            # Split pr
             p_ex = pr[0:param_counter]
             p_rest = pr[param_counter:]
-            
             Jex, DM = self.spin_interactions(p_ex)   
-        
+            param_map = {}
+            
+        return Jex, DM, p_rest, param_map
+
+    def _compute_heisenberg_dm_terms(self, Sxyz: List[Any], Jex: Any, DM: Any) -> sp.Expr:
+        """Compute Heisenberg and Dzyaloshinskii-Moriya terms."""
         HM = 0
-        gamma = 2.0
-        mu_B = 5.788e-2
-        
         apos = self.atom_pos()
         N_uc = len(apos)
         atoms_ouc = self.atom_pos_ouc()
         N_ouc = len(atoms_ouc)
         
-        # 1. Exchange Terms (Heisenberg + DM)
-        print(f"DEBUG: Hamiltonian START. N_uc={N_uc}, N_ouc={N_ouc}")
-        print(f"DEBUG: Sxyz len={len(Sxyz)}")
-        if len(Sxyz) > 0:
-             print(f"DEBUG: Sxyz[0] type: {type(Sxyz[0])}")
-             print(f"DEBUG: Sxyz[0] content: {Sxyz[0]}")
-
+        logger.debug(f"Hamiltonian START. N_uc={N_uc}, N_ouc={N_ouc}")
+        
         terms_added = 0
         for i in range(N_uc):
             for j in range(N_ouc):
+                # Heisenberg
                 if Jex[i, j] != 0:
                      if terms_added < 3:
-                          print(f"DEBUG: Adding Jex[{i},{j}] = {Jex[i,j]}")
-                          print(f"DEBUG: Spin i types: {[type(s) for s in Sxyz[i]]}")
-                          print(f"DEBUG: Spin j types: {[type(s) for s in Sxyz[j]]}")
+                          logger.debug(f"Adding Jex[{i},{j}] = {Jex[i,j]}")
                      
                      term_heis = 0.5 * Jex[i, j] * (
                         Sxyz[i][0] * Sxyz[j][0] + 
@@ -474,15 +482,10 @@ class GenericSpinModel:
                      )
                      HM += term_heis
                      terms_added += 1
-                    # print(f"DEBUG: Added Jex term for i={i} j={j}. HM is now type {type(HM)}")
                 
-                # Check for Non-Zero DM vector (symbolic check can be tricky, check element-wise)
-                # DM[i,j] is a Matrix 3x1 or None
+                # DM Interaction
                 D_vec = DM[i][j]
-                
-                # If D_vec is not None
                 if D_vec is not None:
-                     # Check if Zero 
                      is_zero = False
                      if hasattr(D_vec, 'is_zero_matrix'):
                          is_zero = D_vec.is_zero_matrix
@@ -490,7 +493,7 @@ class GenericSpinModel:
                          is_zero = True
                          
                      if not is_zero:
-                        print(f"DEBUG: Adding DM[{i},{j}] = {D_vec}")
+                        logger.debug(f"Adding DM[{i},{j}] = {D_vec}")
                         
                         Sc_x = Sxyz[i][1]*Sxyz[j][2] - Sxyz[i][2]*Sxyz[j][1]
                         Sc_y = Sxyz[i][2]*Sxyz[j][0] - Sxyz[i][0]*Sxyz[j][2]
@@ -501,134 +504,98 @@ class GenericSpinModel:
                             D_vec[2] * Sc_z
                         )
                         terms_added += 1
+        return HM
 
-        print(f"DEBUG: Hamiltonian END. Total terms added: {terms_added}")
-        print(f"DEBUG: HM is zero? {HM == 0}")
-        if hasattr(HM, 'as_ordered_terms'):
-             print(f"DEBUG: HM terms count: {len(HM.as_ordered_terms())}")
-        
-        # 2. Extra Terms (SIA) from Interactions Config
-        # We need to find 'sia' entries and consume p_rest?
-        # WAIT: spin_interactions logic handles inter-site.
-        # SIA is local. 
-        # GenericModel needs to handle SIA here in Hamiltonian.
-        
-        # Let's count/consume p_rest for SIA
+    def _compute_sia_terms(self, Sxyz: List[Any], p_rest: List[Any]) -> sp.Expr:
+        """Compute Single Ion Anisotropy terms."""
+        HM = 0
+        N_uc = len(self.atom_pos())
         rest_idx = 0
         for interaction in self.interactions_config:
             itype = interaction.get('type')
             if itype == 'sia':
-                D_sia = p_rest[rest_idx]
-                rest_idx += 1
-                
-                # Axis? Default Z
-                # axis = interaction.get('axis', [0,0,1])
-                # For simplicity, assume Sz^2
-                
-                for i in range(N_uc):
-                     HM += D_sia * (Sxyz[i][2])**2
+                if rest_idx < len(p_rest):
+                    D_sia = p_rest[rest_idx]
+                    rest_idx += 1
+                    # Assume Sz^2 for now
+                    for i in range(N_uc):
+                         HM += D_sia * (Sxyz[i][2])**2
+        return HM
 
-        # 3. Zeeman
-        # Assume last remaining is H, if any
-        # 3. Zeeman
-        # Need to determine H_mag
-        # If Named Mode:
+    def _compute_zeeman_terms(self, Sxyz: List[Any], p_rest: List[Any], param_map: Dict[str, Any], gamma: float, mu_B: float) -> sp.Expr:
+        """Compute Zeeman energy terms."""
+        HM = 0
+        N_uc = len(self.atom_pos())
+        H_mag = None
+        
         if self.config.get('parameters'):
-            # Looking for 'H'
-            param_map = self._resolve_param_map(pr)
             if 'H' in param_map:
                 H_mag = param_map['H']
-                for i in range(N_uc):
-                     HM += gamma * mu_B * Sxyz[i][2] * H_mag
         else:
-            # Assume last remaining is H, if any
-            if len(p_rest) > 0: # Check if list not empty AND if we consumed SIA?
-                # Original logic assumed H is last of p_rest.
-                # But we have SIA logic above consuming p_rest[rest_idx].
-                # If rest_idx < len, use it.
-                if rest_idx < len(p_rest):
-                    H_mag = p_rest[-1]
-                    for i in range(N_uc):
-                        HM += gamma * mu_B * Sxyz[i][2] * H_mag
+             # Heuristic: H is last parameter if not consumed by SIA
+             # Re-counting logic needed or just trust p_rest remainder?
+             # Implementation above passed p_rest. 
+             # We need to know how many SIA were consumed.
+             # Actually, simpler to just check if p_rest has unused items.
+             # This is tricky because _compute_sia consumed items but didn't modify p_rest in place.
+             # Let's count SIA items again.
+             sia_count = 0
+             for interaction in self.interactions_config:
+                 if interaction.get('type') == 'sia':
+                     sia_count += 1
+             
+             if len(p_rest) > sia_count:
+                 H_mag = p_rest[-1]
 
-        # DEBUG: Substitute numerical values to fix zero HM
-        # Correctly parsing config structure: parameters is LIST, model_params is DICT
+        if H_mag is not None:
+             for i in range(N_uc):
+                  HM += gamma * mu_B * Sxyz[i][2] * H_mag
+        
+        return HM
+
+    def _apply_substitution_and_filter(self, HM: sp.Expr, pr: List[Any]) -> sp.Expr:
+        """Substitute numerical parameters and filter for quadratic terms."""
         if self.config.get('model_params'):
             p_names = self.config.get('parameters', [])
             p_values_dict = self.config.get('model_params', {})
             
-            # Substitute all parameters defined in model_params (including S, etc.)
             subs_map = {}
-            
-            # 1. Map ordered parameters (p0, p1...) matched by name
             for i, p_sym in enumerate(pr):
                 if i < len(p_names):
                     name = p_names[i]
                     if name in p_values_dict:
                          subs_map[p_sym] = p_values_dict[name]
             
-            # 2. Also map any other symbols found in model_params (like S)
-            # CRITICAL FIX: Use the actual Symbol instances from HM.free_symbols
-            # matching by name, to avoid assumption mismatches.
             free_syms = list(HM.free_symbols)
             for sym in free_syms:
                 if sym.name in p_values_dict:
-                     # Only add if not already covered (p0, p1... might be separate or same)
-                     # p0 etc are likely not in p_values_dict keys directly (keys are 'J1', 'J2'...)
-                     # But 'S' is in p_values_dict.
                      if sym not in subs_map:
                           subs_map[sym] = p_values_dict[sym.name]
             
             if subs_map:
-                print(f"DEBUG: Substituting parameters with values: {subs_map}")
+                logger.debug(f"Substituting parameters with values: {subs_map}")
                 HM = HM.subs(subs_map)
-            else:
-                 print("DEBUG: No parameters matched for substitution!")
 
-        print("DEBUG: Using HM.expand()")
+        logger.debug("Using HM.expand()")
         HM = HM.expand()
         
-        # Filter terms to keep only Quadratic terms (degree 2 in c/cd)
         if hasattr(HM, 'as_ordered_terms'):
              terms = HM.as_ordered_terms()
              kept = []
-             dropped_const = 0
-             dropped_linear = 0
-             dropped_higher = 0
-             
              for term in terms:
                  syms = term.atoms(sp.Symbol)
                  pow_dict = term.as_powers_dict()
                  degree = 0
                  for s in syms:
-                     # Calculate total degree of 'c' or 'cd' operators
                      if s.name.startswith('c'):
                          degree += pow_dict.get(s, 0)
                  
                  if degree == 2:
                      kept.append(term)
-                 elif degree == 0:
-                     dropped_const += 1
-                 elif degree == 1:
-                     dropped_linear += 1
-                 else:
-                     dropped_higher += 1
-             
-             print(f"DEBUG: Filtering HM. Total terms: {len(terms)}")
-             print(f"DEBUG: Kept {len(kept)} quadratic terms.")
-             print(f"DEBUG: Dropped {dropped_const} const, {dropped_linear} linear, {dropped_higher} higher order.")
              
              if len(kept) == 0:
-                 print("WARNING: All terms filtered out! HM will be zero.")
+                 logger.warning("All terms filtered out! HM will be zero.")
                  
              HM = sp.Add(*kept)
              
-        if hasattr(HM, 'as_ordered_terms'):
-            terms = HM.as_ordered_terms()
-            print(f"DEBUG: HM Final. Terms count: {len(terms)}")
-            # Print type of first term
-            if len(terms) > 0:
-                print(f"DEBUG: First term: {terms[0]}")
-                print(f"DEBUG: First term type: {type(terms[0])}")
-        
         return HM

@@ -352,7 +352,7 @@ def main():
                                          
                     plt.colorbar(pcm, label="Intensity (arb. units)")
                     plt.title(title)
-                    plt.xlabel("Q Path Length ($\AA^{-1}$)")
+                    plt.xlabel(r"Q Path Length ($\AA^{-1}$)")
                     plt.ylabel("Energy (meV)")
                     plt.ylim(ylim)
                     plt.xlim(min(x_vals), max(x_vals))

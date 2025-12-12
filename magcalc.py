@@ -58,6 +58,35 @@ except ImportError:
             f"Failed to import local modules config_loader or generic_spin_model. Original error: {e}"
         ) from e
 import numpy.typing as npt
+
+# --- Modularized Linalg Imports ---
+try:
+    from .magcalc_linalg import (
+        gram_schmidt,
+        _diagonalize_and_sort,
+        _apply_gram_schmidt,
+        _calculate_alpha_matrix,
+        _match_and_reorder_minus_q,
+        _calculate_K_Kd,
+        DEGENERACY_THRESHOLD,
+        ZERO_MATRIX_ELEMENT_THRESHOLD,
+        ALPHA_MATRIX_ZERO_NORM_WARNING_THRESHOLD,
+        EIGENVECTOR_MATCHING_THRESHOLD
+    )
+except ImportError:
+     from magcalc_linalg import (
+        gram_schmidt,
+        _diagonalize_and_sort,
+        _apply_gram_schmidt,
+        _calculate_alpha_matrix,
+        _match_and_reorder_minus_q,
+        _calculate_K_Kd,
+        DEGENERACY_THRESHOLD,
+        ZERO_MATRIX_ELEMENT_THRESHOLD,
+        ALPHA_MATRIX_ZERO_NORM_WARNING_THRESHOLD,
+        EIGENVECTOR_MATCHING_THRESHOLD
+    )
+
 import matplotlib.pyplot as plt  # Added for plotting
 
 # --- Basic Logging Setup ---
@@ -70,12 +99,8 @@ logger = logging.getLogger(__name__)
 # --- End Logging Setup ---
 
 # --- Numerical Constants ---
-DEGENERACY_THRESHOLD: float = 1e-12
-ZERO_MATRIX_ELEMENT_THRESHOLD: float = 1e-6
-# --- NEW CONSTANT for suppressing alpha matrix norm warnings ---
-ALPHA_MATRIX_ZERO_NORM_WARNING_THRESHOLD: float = 1e-14  # Suppress warnings below this
-# --- END NEW CONSTANT ---
-EIGENVECTOR_MATCHING_THRESHOLD: float = 1e-5
+# Constants moved to magcalc_linalg.py
+
 ENERGY_IMAG_PART_THRESHOLD: float = 1e-5
 SQW_IMAG_PART_THRESHOLD: float = 1e-4
 Q_ZERO_THRESHOLD: float = 1e-10
@@ -131,501 +156,6 @@ def substitute_expr(
     return result
 
 
-def gram_schmidt(x: npt.NDArray[np.complex128]) -> npt.NDArray[np.complex128]:
-    """
-    Perform Gram-Schmidt orthogonalization on a set of vectors using QR decomposition.
-
-    Args:
-        x (npt.NDArray[np.complex128]): A matrix where columns represent the vectors
-                                       to be orthogonalized.
-    Returns:
-        npt.NDArray[np.complex128]: A matrix with orthonormal columns spanning the
-                                  same space as the input vectors.
-    """
-    q, r = np.linalg.qr(x, mode="reduced")
-    return q
-
-
-# --- KKdMatrix Helper Functions (Keep outside class) ---
-# _diagonalize_and_sort, _apply_gram_schmidt, _calculate_alpha_matrix,
-# _match_and_reorder_minus_q, _calculate_K_Kd
-def _diagonalize_and_sort(
-    Hmat: npt.NDArray[np.complex128], nspins: int, q_vector_label: str
-) -> Tuple[Optional[npt.NDArray[np.complex128]], Optional[npt.NDArray[np.complex128]]]:
-    """
-    Diagonalize the numerical Hamiltonian matrix and sort eigenvalues/vectors.
-
-    Sorts eigenvalues in ascending order. The corresponding eigenvectors are
-    rearranged accordingly. The sorting separates the positive energy (magnon)
-    modes from the negative energy modes.
-
-    Args:
-        Hmat (npt.NDArray[np.complex128]): The numerical Hamiltonian matrix (2N x 2N).
-        nspins (int): The number of spins in the magnetic unit cell (N).
-        q_vector_label (str): A string label identifying the q-vector (for logging).
-
-    Returns:
-        Tuple[Optional[npt.NDArray[np.complex128]], Optional[npt.NDArray[np.complex128]]]:
-            A tuple containing:
-            - Sorted eigenvalues (2N, complex).
-            - Sorted eigenvectors (columns, 2N x 2N, complex).
-            Returns (None, None) if diagonalization fails.
-    """
-    try:
-        eigvals, eigvecs = la.eig(Hmat)
-    except np.linalg.LinAlgError as e:
-        logger.error(f"Eigenvalue calculation failed for {q_vector_label}: {e}")
-        return None, None
-    sort_indices: npt.NDArray[np.int_] = eigvals.argsort()
-    eigvecs_tmp1: npt.NDArray[np.complex128] = eigvecs[:, sort_indices][
-        :, nspins : 2 * nspins
-    ]
-    eigvals_tmp1: npt.NDArray[np.complex128] = eigvals[sort_indices][nspins : 2 * nspins]
-    eigvecs_tmp2: npt.NDArray[np.complex128] = eigvecs[:, sort_indices][:, 0:nspins]
-    eigvals_tmp2: npt.NDArray[np.complex128] = eigvals[sort_indices][0:nspins]
-    sort_indices_neg: npt.NDArray[np.int_] = (np.abs(eigvals_tmp2)).argsort()
-    eigvecs_tmp3: npt.NDArray[np.complex128] = eigvecs_tmp2[:, sort_indices_neg]
-    eigvals_tmp3: npt.NDArray[np.complex128] = eigvals_tmp2[sort_indices_neg]
-    eigenvalues_sorted: npt.NDArray[np.complex128] = np.concatenate(
-        (eigvals_tmp1, eigvals_tmp3)
-    )
-    eigenvectors_sorted: npt.NDArray[np.complex128] = np.hstack(
-        (eigvecs_tmp1, eigvecs_tmp3)
-    )
-    return eigenvalues_sorted, eigenvectors_sorted
-
-
-def _apply_gram_schmidt(
-    eigenvalues: npt.NDArray[np.complex128],
-    eigenvectors: npt.NDArray[np.complex128],
-    degeneracy_threshold: float,
-    q_vector_label: str,
-) -> npt.NDArray[np.complex128]:
-    """
-    Apply Gram-Schmidt orthogonalization to blocks of degenerate eigenvectors.
-
-    Iterates through sorted eigenvectors and applies Gram-Schmidt to sets
-    of eigenvectors whose corresponding eigenvalues are closer than the
-    `degeneracy_threshold`. This ensures orthogonality within degenerate subspaces.
-
-    Args:
-        eigenvalues (npt.NDArray[np.complex128]): Sorted eigenvalues.
-        eigenvectors (npt.NDArray[np.complex128]): Corresponding sorted eigenvectors (columns).
-        degeneracy_threshold (float): The threshold below which eigenvalues are
-                                      considered degenerate.
-        q_vector_label (str): A string label identifying the q-vector (for logging).
-
-    Returns:
-        npt.NDArray[np.complex128]: The eigenvectors matrix with degenerate blocks
-                                  orthogonalized.
-    """
-    nspins2 = eigenvectors.shape[0]
-    orthonormalized_eigenvectors = eigenvectors.copy()
-    degeneracy_count: int = 0
-    for i in range(1, nspins2):
-        if abs(eigenvalues[i] - eigenvalues[i - 1]) < degeneracy_threshold:
-            degeneracy_count += 1
-        elif degeneracy_count > 0:
-            start_idx = i - degeneracy_count - 1
-            end_idx = i
-            logger.debug(
-                f"Applying Gram-Schmidt to block [{start_idx}:{end_idx}] for {q_vector_label}"
-            )
-            vec_block = orthonormalized_eigenvectors[:, start_idx:end_idx]
-            orthonormal_vecs = gram_schmidt(vec_block)
-            if orthonormal_vecs.shape[1] == vec_block.shape[1]:
-                orthonormalized_eigenvectors[:, start_idx:end_idx] = orthonormal_vecs
-            else:
-                logger.warning(
-                    f"Rank deficiency detected during GS for {q_vector_label} at index {i}. Original block size: {vec_block.shape[1]}, Orthonormal basis size: {orthonormal_vecs.shape[1]}"
-                )
-                orthonormalized_eigenvectors[
-                    :, start_idx : start_idx + orthonormal_vecs.shape[1]
-                ] = orthonormal_vecs
-                orthonormalized_eigenvectors[
-                    :, start_idx + orthonormal_vecs.shape[1] : end_idx
-                ] = 0
-            degeneracy_count = 0
-    if degeneracy_count > 0:
-        start_idx = nspins2 - 1 - degeneracy_count
-        end_idx = nspins2
-        logger.debug(
-            f"Applying Gram-Schmidt to final block [{start_idx}:{end_idx}] for {q_vector_label}"
-        )
-        vec_block = orthonormalized_eigenvectors[:, start_idx:end_idx]
-        orthonormal_vecs = gram_schmidt(vec_block)
-        if orthonormal_vecs.shape[1] == vec_block.shape[1]:
-            orthonormalized_eigenvectors[:, start_idx:end_idx] = orthonormal_vecs
-        else:
-            logger.warning(
-                f"Rank deficiency detected during GS for {q_vector_label} at end of array. Original block size: {vec_block.shape[1]}, Orthonormal basis size: {orthonormal_vecs.shape[1]}"
-            )
-            orthonormalized_eigenvectors[
-                :, start_idx : start_idx + orthonormal_vecs.shape[1]
-            ] = orthonormal_vecs
-            orthonormalized_eigenvectors[
-                :, start_idx + orthonormal_vecs.shape[1] : end_idx
-            ] = 0
-    return orthonormalized_eigenvectors
-
-
-# --- MODIFIED FUNCTION ---
-def _calculate_alpha_matrix(
-    eigenvectors: npt.NDArray[np.complex128],
-    G_metric: npt.NDArray[np.float64],
-    zero_threshold: float,
-    q_vector_label: str,
-) -> Optional[npt.NDArray[np.complex128]]:
-    """
-    Calculate the diagonal alpha matrix used in the transformation T.
-
-    The transformation matrix T relates the original boson operators to the
-    diagonal magnon operators. T = V @ alpha, where V is the matrix of
-    eigenvectors and alpha is a diagonal matrix.
-    alpha_ii = sqrt(g_ii / N_ii), where g is the metric tensor (+1/-1) and
-    N_ii = V_i^dagger @ g @ V_i is the pseudo-norm.
-
-    Handles potential issues like near-zero pseudo-norms and sign mismatches
-    between g_ii and N_ii, setting alpha_ii to zero in problematic cases.
-
-    Args:
-        eigenvectors (npt.NDArray[np.complex128]): Orthonormalized eigenvectors (columns).
-        G_metric (npt.NDArray[np.float64]): The diagonal metric tensor [1,..1,-1,..-1].
-        zero_threshold (float): Threshold below which norms or alpha values are
-                                treated as zero.
-        q_vector_label (str): A string label identifying the q-vector (for logging).
-
-    Returns:
-        Optional[npt.NDArray[np.complex128]]: The diagonal alpha matrix (2N x 2N).
-                                           Returns None if calculation fails.
-    """
-    nspins2 = eigenvectors.shape[0]
-    alpha_diag_sq: npt.NDArray[np.float64] = np.zeros(nspins2, dtype=float)
-    zero_threshold_sq = zero_threshold**2  # Pre-calculate square
-
-    for i in range(nspins2):
-        V_i = eigenvectors[:, i]
-        norm_sq_N_ii = np.real(np.vdot(V_i, G_metric @ V_i))
-        G_ii = G_metric[i, i]
-
-        # Check if norm is below the main threshold for setting alpha to zero
-        if abs(norm_sq_N_ii) < zero_threshold_sq:
-            # Only warn if the norm is not extremely close to zero
-            if abs(norm_sq_N_ii) >= ALPHA_MATRIX_ZERO_NORM_WARNING_THRESHOLD:
-                logger.warning(
-                    f"Near-zero pseudo-norm N_ii ({norm_sq_N_ii:.2e}) for eigenvector {i} at {q_vector_label}. Setting alpha_ii to 0."
-                )
-            # Always set alpha to 0 if below the main threshold
-            alpha_diag_sq[i] = 0.0
-            continue  # Skip the sign mismatch check
-
-        # Check for sign mismatch only if norm is not near zero
-        # Use the squared threshold here as well for consistency
-        if G_ii * norm_sq_N_ii < -zero_threshold_sq:
-            logger.warning(
-                f"Sign mismatch between G_ii ({G_ii}) and N_ii ({norm_sq_N_ii:.2e}) for eigenvector {i} at {q_vector_label}. Setting alpha_ii to 0."
-            )
-            alpha_diag_sq[i] = 0.0
-        else:
-            # This case implies abs(norm_sq_N_ii) >= zero_threshold_sq
-            # AND G_ii * norm_sq_N_ii >= -zero_threshold_sq
-            # If G_ii is +1, norm_sq_N_ii must be >= zero_threshold_sq (positive)
-            # If G_ii is -1, norm_sq_N_ii must be <= -zero_threshold_sq (negative)
-            # So G_ii / norm_sq_N_ii should always be positive here.
-            alpha_diag_sq[i] = G_ii / norm_sq_N_ii
-
-    # Ensure no negative values remain due to potential floating point issues near zero
-    alpha_diag_sq[alpha_diag_sq < 0] = 0
-    alpha_diag: npt.NDArray[np.float64] = np.sqrt(alpha_diag_sq)
-    # Set very small resulting alphas to zero
-    alpha_diag[np.abs(alpha_diag) < zero_threshold] = 0.0
-    alpha_matrix: npt.NDArray[np.complex128] = np.diag(alpha_diag).astype(np.complex128)
-    return alpha_matrix
-
-
-# --- END MODIFIED FUNCTION ---
-
-
-def _match_and_reorder_minus_q(
-    eigvecs_p_ortho: npt.NDArray[np.complex128],
-    alpha_p: npt.NDArray[np.complex128],
-    eigvecs_m_ortho: npt.NDArray[np.complex128],
-    eigvals_m_sorted: npt.NDArray[np.complex128],
-    alpha_m_sorted: npt.NDArray[np.complex128],
-    nspins: int,
-    match_tol: float,  # Tolerance for norm comparison in matching (corresponds to 1e-5 in origin)
-    zero_tol_comp_phase: float,  # Tolerance for selecting non-zero components for phase factor (corresponds to 1e-5 in origin)
-    zero_tol_alpha_final: float,  # Tolerance for truncating final alpha values (corresponds to 1e-6 in origin)
-    q_vector_label: str,
-) -> Tuple[
-    npt.NDArray[np.complex128], npt.NDArray[np.complex128], npt.NDArray[np.complex128]
-]:
-    """
-    Match and reorder eigenvectors and alpha matrix for the -q calculation.
-
-    The calculation of S(q,w) requires relating the solutions at +q and -q.
-    This function reorders the eigenvectors (`eigvecs_m_ortho`), eigenvalues
-    (`eigvals_m_sorted`), and alpha matrix (`alpha_m_sorted`) obtained from the
-    -q diagonalization to match the ordering derived from the +q solution.
-
-    Matching is based on maximizing the projection between the appropriately
-    transformed +q eigenvectors and the -q eigenvectors. A phase factor is
-    calculated and applied to the reordered -q alpha matrix elements to ensure
-    consistency.
-
-    Args:
-        eigvecs_p_ortho (npt.NDArray[np.complex128]): Orthonormalized eigenvectors for +q.
-        alpha_p (npt.NDArray[np.complex128]): Diagonal alpha matrix for +q.
-        eigvecs_m_ortho (npt.NDArray[np.complex128]): Orthonormalized eigenvectors for -q (initial sort).
-        eigvals_m_sorted (npt.NDArray[np.complex128]): Eigenvalues for -q (initial sort, corresponds to eigvecs_m_ortho).
-        alpha_m_sorted (npt.NDArray[np.complex128]): Diagonal alpha matrix for -q (initial sort).
-        nspins (int): Number of spins in the unit cell.
-        match_tol (float): Tolerance for eigenvector norm comparison during matching.
-        zero_tol_comp_phase (float): Threshold for selecting non-zero components for phase factor calculation.
-        zero_tol_alpha_final (float): Threshold below which final alpha matrix elements are set to zero.
-        q_vector_label (str): A string label identifying the q-vector (for logging).
-
-    Returns:
-        Tuple[npt.NDArray[np.complex128], npt.NDArray[np.complex128], npt.NDArray[np.complex128]]:
-            - Reordered eigenvectors for -q.
-            - Reordered eigenvalues for -q.
-            - Reordered and phase-corrected alpha matrix for -q.
-    """
-    nspins2 = 2 * nspins
-
-    # Initialize outputs
-    eigenvectors_minus_q_reordered: npt.NDArray[np.complex128] = np.zeros_like(
-        eigvecs_m_ortho, dtype=complex
-    )
-    eigenvalues_minus_q_reordered: npt.NDArray[np.complex128] = np.zeros_like(
-        eigvals_m_sorted, dtype=complex
-    )
-    # Store diagonal elements of alpha_m_reordered, then form diagonal matrix
-    alpha_m_reordered_diag_elements: npt.NDArray[np.complex128] = np.zeros(
-        nspins2, dtype=complex
-    )
-
-    # Create block-swapped and conjugated version of -q eigenvectors (source for matching)
-    # This is Vm_orig_swap_conj in our code, evecmswap in magcalc_origin.py
-    Vm_orig_swap_conj: npt.NDArray[np.complex128] = np.conj(
-        np.vstack((eigvecs_m_ortho[nspins:nspins2, :], eigvecs_m_ortho[0:nspins, :]))
-    )
-
-    matched_original_m_indices: set[int] = set()  # To track used original -q indices
-
-    # Loop 1: Match first nspins of +q (eigvecs_p_ortho[:, i_p])
-    # with last nspins of -q (Vm_orig_swap_conj[:, j_m_orig_idx])
-    for i_p in range(nspins):
-        target_Vp_col = eigvecs_p_ortho[:, i_p]  # This is e_vec[:, i] in magcalc_origin
-        norm_target_Vp_col_sq = np.real(np.vdot(target_Vp_col, target_Vp_col))
-        if (
-            norm_target_Vp_col_sq < zero_tol_comp_phase**2
-        ):  # Check against squared tolerance
-            logger.warning(
-                f"Target +q vector {i_p} has near-zero norm at {q_vector_label}. Skipping match."
-            )
-            continue
-
-        found_match_for_ip = False
-        for j_m_orig_idx in range(
-            nspins, nspins2
-        ):  # Original -q indices for the second block (j in magcalc_origin)
-            if j_m_orig_idx in matched_original_m_indices:
-                continue
-
-            source_Vm_swap_conj_col = Vm_orig_swap_conj[
-                :, j_m_orig_idx
-            ]  # This is evecmswap[:,j]
-            norm_source_Vm_swap_conj_col_sq = np.real(
-                np.vdot(source_Vm_swap_conj_col, source_Vm_swap_conj_col)
-            )
-            if norm_source_Vm_swap_conj_col_sq < zero_tol_comp_phase**2:
-                continue
-
-            # Matching condition from magcalc_origin.py
-            # np.abs(np.dot(np.conj((e_vec[:, i]).T), evecmswap[:, j])) >
-            # np.sqrt(np.dot(np.conj((e_vec[:, i]).T), e_vec[:, i]) * np.dot(np.conj((evecmswap[:, j]).T), evecmswap[:, j])) - 1.0e-5
-            dot_product_abs = np.abs(np.vdot(target_Vp_col, source_Vm_swap_conj_col))
-            if (
-                dot_product_abs
-                > np.sqrt(norm_target_Vp_col_sq * norm_source_Vm_swap_conj_col_sq)
-                - match_tol
-            ):
-                reordered_m_idx = (
-                    i_p + nspins
-                )  # As per magcalc_origin.py logic for this loop
-                eigenvectors_minus_q_reordered[:, reordered_m_idx] = eigvecs_m_ortho[
-                    :, j_m_orig_idx
-                ]
-                eigenvalues_minus_q_reordered[reordered_m_idx] = eigvals_m_sorted[
-                    j_m_orig_idx
-                ]
-
-                # Phase factor calculation based on magcalc_origin.py
-                # np.divide(e_vec[np.abs(e_vec[:, i]) > 1e-5, i], evecmswap[np.abs(evecmswap[:, j]) > 1e-5, j])[0]
-                comp_Vp_for_phase = target_Vp_col[
-                    np.abs(target_Vp_col) > zero_tol_comp_phase
-                ]
-                comp_Vm_swap_for_phase = source_Vm_swap_conj_col[
-                    np.abs(source_Vm_swap_conj_col) > zero_tol_comp_phase
-                ]
-                phase_term = 1.0 + 0.0j
-                if (
-                    len(comp_Vp_for_phase) > 0
-                    and len(comp_Vm_swap_for_phase) > 0
-                    and np.abs(comp_Vm_swap_for_phase[0])
-                    > zero_tol_comp_phase  # Check divisor
-                ):
-                    phase_term = comp_Vp_for_phase[0] / comp_Vm_swap_for_phase[0]
-                else:
-                    logger.warning(
-                        f"Could not determine phase for +q vec {i_p} and -q vec {j_m_orig_idx} (original index) at {q_vector_label}. Using phase=1."
-                    )
-
-                alpha_m_reordered_diag_elements[reordered_m_idx] = np.conj(
-                    alpha_p[i_p, i_p] * phase_term
-                )
-                matched_original_m_indices.add(j_m_orig_idx)
-                found_match_for_ip = True
-                break  # Found match for this i_p
-
-        if not found_match_for_ip:
-            logger.warning(
-                f"No matching -q eigenvector found for +q eigenvector index {i_p} in first block at {q_vector_label}"
-            )
-
-    # Loop 2: Match last nspins of +q (eigvecs_p_ortho[:, i_p])
-    # with first nspins of -q (Vm_orig_swap_conj[:, j_m_orig_idx])
-    for i_p in range(nspins, nspins2):
-        target_Vp_col = eigvecs_p_ortho[:, i_p]
-        norm_target_Vp_col_sq = np.real(np.vdot(target_Vp_col, target_Vp_col))
-        if norm_target_Vp_col_sq < zero_tol_comp_phase**2:
-            logger.warning(
-                f"Target +q vector {i_p} has near-zero norm at {q_vector_label}. Skipping match."
-            )
-            continue
-
-        found_match_for_ip = False
-        for j_m_orig_idx in range(nspins):  # Original -q indices for the first block
-            if j_m_orig_idx in matched_original_m_indices:
-                continue
-
-            source_Vm_swap_conj_col = Vm_orig_swap_conj[:, j_m_orig_idx]
-            norm_source_Vm_swap_conj_col_sq = np.real(
-                np.vdot(source_Vm_swap_conj_col, source_Vm_swap_conj_col)
-            )
-            if norm_source_Vm_swap_conj_col_sq < zero_tol_comp_phase**2:
-                continue
-
-            dot_product_abs = np.abs(np.vdot(target_Vp_col, source_Vm_swap_conj_col))
-            if (
-                dot_product_abs
-                > np.sqrt(norm_target_Vp_col_sq * norm_source_Vm_swap_conj_col_sq)
-                - match_tol
-            ):
-                reordered_m_idx = (
-                    i_p - nspins
-                )  # As per magcalc_origin.py logic for this loop
-                eigenvectors_minus_q_reordered[:, reordered_m_idx] = eigvecs_m_ortho[
-                    :, j_m_orig_idx
-                ]
-                eigenvalues_minus_q_reordered[reordered_m_idx] = eigvals_m_sorted[
-                    j_m_orig_idx
-                ]
-
-                # Phase factor calculation
-                comp_Vp_for_phase = target_Vp_col[
-                    np.abs(target_Vp_col) > zero_tol_comp_phase
-                ]
-                comp_Vm_swap_for_phase = source_Vm_swap_conj_col[
-                    np.abs(source_Vm_swap_conj_col) > zero_tol_comp_phase
-                ]
-                phase_term = 1.0 + 0.0j
-                if (
-                    len(comp_Vp_for_phase) > 0
-                    and len(comp_Vm_swap_for_phase) > 0
-                    and np.abs(comp_Vm_swap_for_phase[0]) > zero_tol_comp_phase
-                ):
-                    phase_term = comp_Vp_for_phase[0] / comp_Vm_swap_for_phase[0]
-                else:
-                    logger.warning(
-                        f"Could not determine phase for +q vec {i_p} and -q vec {j_m_orig_idx} (original index) at {q_vector_label}. Using phase=1."
-                    )
-
-                alpha_m_reordered_diag_elements[reordered_m_idx] = np.conj(
-                    alpha_p[i_p, i_p] * phase_term
-                )
-                matched_original_m_indices.add(j_m_orig_idx)
-                found_match_for_ip = True
-                break  # Found match for this i_p
-        if not found_match_for_ip:
-            logger.warning(
-                f"No matching -q eigenvector found for +q eigenvector index {i_p} in second block at {q_vector_label}"
-            )
-
-    if len(matched_original_m_indices) != nspins2:
-        logger.warning(
-            f"Number of matched original -q vectors ({len(matched_original_m_indices)}) does not equal {nspins2} at {q_vector_label}"
-        )
-
-    alpha_matrix_minus_q_reordered = np.diag(alpha_m_reordered_diag_elements)
-    alpha_matrix_minus_q_reordered[  # Truncate small alpha values
-        np.abs(alpha_matrix_minus_q_reordered) < zero_tol_alpha_final
-    ] = 0
-    return (
-        eigenvectors_minus_q_reordered,
-        eigenvalues_minus_q_reordered,
-        alpha_matrix_minus_q_reordered,
-    )
-
-
-def _calculate_K_Kd(
-    Ud_numeric: npt.NDArray[np.complex128],
-    spin_magnitude: float,
-    nspins: int,
-    inv_T_p: npt.NDArray[np.complex128],
-    inv_T_m_reordered: npt.NDArray[np.complex128],
-    zero_threshold: float,
-) -> Tuple[npt.NDArray[np.complex128], npt.NDArray[np.complex128]]:
-    """
-    Calculate the K and Kd matrices for S(q,w) intensity calculation.
-
-    These matrices relate the original spin operators (in global coordinates)
-    to the diagonal magnon creation/annihilation operators.
-    S^alpha(q) = sum_mu [ K_{alpha, mu} * b_mu + Kd_{alpha, mu} * b_{-mu}^dagger ]
-
-    K = sqrt(S/2) * Ud * Udd * T^{-1}(+q)
-    Kd = sqrt(S/2) * Ud * Udd * T^{-1}(-q, reordered)
-    where Ud maps local spin axes to global, Udd maps spin components to bosons.
-
-    Args:
-        Ud_numeric (npt.NDArray[np.complex128]): Numerical rotation matrix (3N x 3N).
-        spin_magnitude (float): Numerical value of spin S.
-        nspins (int): Number of spins in the unit cell.
-        inv_T_p (npt.NDArray[np.complex128]): Inverse transformation matrix T^{-1} for +q.
-        inv_T_m_reordered (npt.NDArray[np.complex128]): Inverse transformation matrix T^{-1} for -q (reordered).
-        zero_threshold (float): Threshold below which matrix elements are set to zero.
-    Returns:
-        Tuple[npt.NDArray[np.complex128], npt.NDArray[np.complex128]]: K matrix (3N x 2N) and Kd matrix (3N x 2N).
-    """
-    Udd_local_boson_map: npt.NDArray[np.complex128] = np.zeros(
-        (3 * nspins, 2 * nspins), dtype=complex
-    )
-    for i in range(nspins):
-        Udd_local_boson_map[3 * i, i] = 1.0
-        Udd_local_boson_map[3 * i, i + nspins] = 1.0
-        Udd_local_boson_map[3 * i + 1, i] = 1.0 / I
-        Udd_local_boson_map[3 * i + 1, i + nspins] = -1.0 / I
-    prefactor: float = np.sqrt(spin_magnitude / 2.0)
-    K_matrix: npt.NDArray[np.complex128] = (
-        prefactor * Ud_numeric @ Udd_local_boson_map @ inv_T_p
-    )
-    Kd_matrix: npt.NDArray[np.complex128] = (
-        prefactor * Ud_numeric @ Udd_local_boson_map @ inv_T_m_reordered
-    )
-    K_matrix[np.abs(K_matrix) < zero_threshold] = 0
-    Kd_matrix[np.abs(Kd_matrix) < zero_threshold] = 0
-    return K_matrix, Kd_matrix
 
 
 # --- Main KKdMatrix Function (Keep outside class) ---
@@ -1760,12 +1290,8 @@ class MagCalc:
             # Create symbolic parameters (p0, p1, ...)
             num_params = len(self.hamiltonian_params)
             _params_sym_tuple = sp.symbols(f"p0:{num_params}", real=True)
-            if num_params == 0:
-                self.params_sym = []
-            elif num_params == 1:
-                self.params_sym = [_params_sym_tuple]
-            else:
-                self.params_sym = list(_params_sym_tuple)
+            # _params_sym_tuple is always a sequence when using slice notation "p0:N"
+            self.params_sym = list(_params_sym_tuple)
 
             # For consistency, create p_numerical for the old path too
             self.p_numerical = {
