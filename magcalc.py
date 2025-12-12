@@ -1070,24 +1070,29 @@ def _prepare_hamiltonian(
     hamiltonian_sym = spin_model_module.Hamiltonian(spin_ops_global_ouc, params_sym)
     hamiltonian_sym = sp.expand(hamiltonian_sym)
     # --- Filter Hamiltonian terms (Keep only up to quadratic in boson ops) ---
-    # This logic seems specific to how the Hamiltonian is constructed in the model.
-    # It assumes higher powers of S correspond to higher orders in boson operators.
-    # A more robust approach might involve explicitly checking boson operator powers.
-    hamiltonian_S0 = hamiltonian_sym.coeff(S_sym, 0)
-    if params_sym:
-        # This part seems potentially problematic or overly specific.
-        # It keeps the term linear in the *last* parameter from the S^0 part,
-        # plus the S^1 and S^2 terms. Revisit if this causes issues.
-        hamiltonian_sym = (
-            hamiltonian_S0.coeff(params_sym[-1]) * params_sym[-1]
-            + hamiltonian_sym.coeff(S_sym, 1) * S_sym
-            + hamiltonian_sym.coeff(S_sym, 2) * S_sym**2
-        )
+    # Check if S_sym is present. If not (substituted), we assume filtering was done by module.
+    if not hamiltonian_sym.has(S_sym):
+        logger.info("S_sym not found in Hamiltonian (likely substituted). Skipping S-power filtering.")
     else:
-        hamiltonian_sym = (
-            hamiltonian_sym.coeff(S_sym, 1) * S_sym
-            + hamiltonian_sym.coeff(S_sym, 2) * S_sym**2
-        )
+        # Legacy filtering logic
+        # This logic seems specific to how the Hamiltonian is constructed in the model.
+        # It assumes higher powers of S correspond to higher orders in boson operators.
+        # A more robust approach might involve explicitly checking boson operator powers.
+        hamiltonian_S0 = hamiltonian_sym.coeff(S_sym, 0)
+        if params_sym:
+            # This part seems potentially problematic or overly specific.
+            # It keeps the term linear in the *last* parameter from the S^0 part,
+            # plus the S^1 and S^2 terms. Revisit if this causes issues.
+            hamiltonian_sym = (
+                hamiltonian_S0.coeff(params_sym[-1]) * params_sym[-1]
+                + hamiltonian_sym.coeff(S_sym, 1) * S_sym
+                + hamiltonian_sym.coeff(S_sym, 2) * S_sym**2
+            )
+        else:
+            hamiltonian_sym = (
+                hamiltonian_sym.coeff(S_sym, 1) * S_sym
+                + hamiltonian_sym.coeff(S_sym, 2) * S_sym**2
+            )
     hamiltonian_sym = sp.expand(hamiltonian_sym)
     # --- End Filtering ---
     return hamiltonian_sym
@@ -1110,6 +1115,14 @@ def _process_hamiltonian_terms(
     logger.info("Applying Fourier transform substitutions...")
     start_time_ft = timeit.default_timer()
     hamiltonian_terms = hamiltonian_sym.as_ordered_terms()
+
+    # DEBUG: Check fourier_lookup
+    # logger.info(f"DEBUG: fourier_lookup size: {len(fourier_lookup)}")
+    
+    # if fourier_lookup:
+    #     sample_key = next(iter(fourier_lookup))
+    #     sample_val = fourier_lookup[sample_key]
+    #     logger.info(f"DEBUG: fourier_lookup sample: {sample_key} -> {sample_val}")
     
     # Use parallel substitution for F.T. with dictionary lookup
     
@@ -1118,16 +1131,26 @@ def _process_hamiltonian_terms(
     chunks = [hamiltonian_terms[i:i + chunk_size] for i in range(0, len(hamiltonian_terms), chunk_size)]
     
     pool_args_ft = [
-        (Add(*chunk), fourier_lookup) for chunk in chunks
+        (sp.Add(*chunk), fourier_lookup) for chunk in chunks
     ]
     
     with Pool() as pool:
         results_ft = list(pool.imap(_fourier_transform_terms, pool_args_ft))
         
     hamiltonian_k_space = Add(*results_ft).expand()
+    end_time_ft = timeit.default_timer()
     logger.info(
-        f"Fourier transform substitution took: {timeit.default_timer() - start_time_ft:.2f} s"
+        f"Fourier transform substitution took: {np.round(end_time_ft - start_time_ft, 2)} s"
     )
+    # DEBUG: Check k-space hamiltonian
+    ft_terms = hamiltonian_k_space.as_ordered_terms()
+    # logger.info(f"DEBUG: hamiltonian_k_space terms count: {len(ft_terms)}")
+    if not ft_terms:
+        # logger.error("DEBUG: hamiltonian_k_space is ZERO/EMPTY after FT!")
+         pass
+    else:
+        # logger.debug(f"DEBUG: First FT term: {ft_terms[0]}")
+         pass
 
     logger.info("Applying Normal Ordering (Commutation Rules)...")
     start_time_comm = timeit.default_timer()
@@ -1691,9 +1714,10 @@ class MagCalc:
                 raise ValueError(
                     "cache_file_base must be provided if config_filepath is not set."
                 )
-            if not hasattr(spin_model_module, "__name__"):  # Basic check
+            # Relaxed check: Allow class instances (like GenericSpinModel) that have necessary methods
+            if not hasattr(spin_model_module, "Hamiltonian"): 
                 raise TypeError(
-                    "spin_model_module does not appear to be a valid module."
+                    "spin_model_module validation failed: missing 'Hamiltonian' method/attribute."
                 )
             self.sm = spin_model_module
 
@@ -1800,9 +1824,7 @@ class MagCalc:
         if self.config_data:  # Skip if using config file
             return
 
-        if self.sm is None or not hasattr(
-            self.sm, "__name__"
-        ):  # Should not happen if logic is correct
+        if self.sm is None: # Should not happen if logic is correct
             raise RuntimeError(
                 "Spin model module (self.sm) is not properly set for validation."
             )
@@ -2374,8 +2396,6 @@ class MagCalc:
             commutation_substitutions,
             placeholder_substitutions,
         )
-
-        # 9. Extract H2 Matrix
         H2_matrix = _extract_h2_matrix(
             hamiltonian_with_placeholders, placeholder_symbols, self.nspins
         )  # No self needed
@@ -3225,6 +3245,10 @@ def _normal_order_terms(args: Tuple[sp.Expr, List[sp.Symbol], List[sp.Symbol], i
              if exp == 2:
                  op1 = base
                  op2 = base
+             else:
+                 # This shouldn't happen for quadratic Hamiltonian
+                 new_terms.append(term)
+                 continue
         elif len(args_nc) > 2:
             # This shouldn't happen for quadratic Hamiltonian
              new_terms.append(term)
@@ -3352,51 +3376,130 @@ def _build_TwogH2_matrix(
     
     terms = hamiltonian_normal_ordered.as_ordered_terms()
     
+    # DEBUG: Track dropped terms
+    dropped_log = []
+    
     for term in terms:
         coeff, ops = term.as_coeff_Mul()
         nc_part = term / coeff
         args_nc = nc_part.args
         
         if not args_nc and nc_part.is_Symbol:
-             # handle simple case coeff * Symbol * Symbol where one is hidden?
-             # Or coeff * Symbol**2
              args_nc = [nc_part]
         
-        op1 = None
-        op2 = None
+    # Map operators to indices
+    # Psi = [ck, cmkd]^T
+    # Psi.dag = [ckd, cmk]
+    # Row index i corresponds to Psi.dag[i]
+    # Col index j corresponds to Psi[j]
+    
+    row_map = {} # Maps op1 to row index
+    col_map = {} # Maps op2 to col index
+    
+    for i in range(nspins):
+        # Rows: Psi.dag
+        row_map[ckd_ops[i]] = i          # c_k^dagger -> 0..N-1
+        row_map[cmk_ops[i]] = i + nspins # c_-k -> N..2N-1
         
-        if len(args_nc) == 2:
-            op1 = args_nc[0]
-            op2 = args_nc[1]
-        elif len(args_nc) == 1 and args_nc[0].is_Pow:
-             base, exp = args_nc[0].as_base_exp()
+        # Cols: Psi
+        col_map[ck_ops[i]] = i           # c_k -> 0..N-1
+        col_map[cmkd_ops[i]] = i + nspins# c_-k^dagger -> N..2N-1
+
+    # DEBUG: Check maps
+    # if len(row_map) > 0:
+    #     logger.info(f"DEBUG: row_map sample: {list(row_map.items())[:2]}")
+    #     logger.info(f"DEBUG: col_map sample: {list(col_map.items())[:2]}")
+    
+    dropped_count = 0
+    # Build H2 matrix with numerical indices
+    H2_matrix = sp.zeros(n_dim, n_dim)
+    
+    terms_norm = hamiltonian_normal_ordered.as_ordered_terms()
+    # logger.info(f"DEBUG: hamiltonian_normal_ordered terms count: {len(terms_norm)}")
+    
+    added_count = 0
+    
+    for term in terms_norm:
+        # Extract coefficient and operators
+        coeff, ops = term.as_coeff_Mul()
+        
+        # Ensure it's a quadratic term with two operators
+        if ops.is_Mul:
+             args_ops = ops.args
+        elif ops.is_Pow: # op^2
+             args_ops = (ops,)
+        elif ops.is_Symbol: # single op (should not occur for quadratic H)
+             args_ops = (ops,)
+        else:
+             args_ops = (ops,)
+             
+        # Filter for non-commutative operators, similar to FT fix
+        nc_ops = [o for o in args_ops if not o.is_commutative]
+        
+        if len(nc_ops) == 1 and nc_ops[0].is_Pow:
+             base, exp = nc_ops[0].as_base_exp()
              if exp == 2:
                  op1 = base
                  op2 = base
-        
-        if op1 and op2:
-            if op1.name in row_map and op2.name in col_map:
-                r = row_map[op1.name]
-                c = col_map[op2.name]
-                H2[r, c] += coeff
-            # else: ignore terms that don't fit quadratic form (shouldn't be any after filtering)
+             else:
+                 op1 = None; op2 = None
+        elif len(nc_ops) == 2:
+             op1 = nc_ops[0]
+             op2 = nc_ops[1]
+        else:
+             op1 = None; op2 = None
+             
+        if op1 is None or op2 is None:
+            # Maybe it's just a number (coeff)?
+            if len(nc_ops) == 0:
+                 continue # Ignore constant terms
+            dropped_log.append(f"Structure mismatch: {term}")
+            continue
             
-    # Calculate TwogH2 = 2 * g * H2
-    # g is diag(1, 1..., -1, -1...)
-    # But wait!
-    # If H = Psi_dag * H2 * Psi, then equation of motion is i dPsi/dt = [Psi, H] = (g * H2) * Psi ? 
-    # Usually dynamical matrix D = g * H_matrix.
-    # The return value of gen_HM is "dynamical_matrix_TwogH2".
-    # g_metric_tensor_sym = sp.diag(*([1] * nspins + [-1] * nspins))
-    # dynamical_matrix_TwogH2 = 2 * g_metric_tensor_sym * H2_matrix
+        # Capture commutative factors (e.g. sin(kx), phases)
+        # ops contains both commutative and non-commutative parts
+        # We need to extract the part that is NOT op1 or op2 (or op1*op2)
+        # Robust way: collect all commutative args
+        comm_ops = [o for o in args_ops if o.is_commutative]
+        comm_factor = sp.Mul(*comm_ops)
+        
+        # Total value to add
+        term_val = coeff * comm_factor
+
+        # Map operators to matrix indices using DISTINCT maps
+        idx1 = row_map.get(op1)
+        idx2 = col_map.get(op2)
+
+        if idx1 is not None and idx2 is not None:
+             H2_matrix[idx1, idx2] += term_val
+        else:
+             # Check if operators are flipped (e.g. ck * ckd instead of ckd * ck)
+             # Since they commute (if different indices), we can swap them.
+             # If same index, normal ordering should have handled it, but let's check.
+             idx1_rev = row_map.get(op2)
+             idx2_rev = col_map.get(op1)
+             
+             if idx1_rev is not None and idx2_rev is not None:
+                 H2_matrix[idx1_rev, idx2_rev] += term_val
+             else:
+                 dropped_log.append(f"Unparseable ({op1},{op2}): {term}")
+                 dropped_count += 1
+                 continue
+
+        # Add to matrix (Moved inside if/else)
+        # H2_matrix[idx1, idx2] += coeff
+        
+    if dropped_count > 0:
+        logger.warning(f"Construct TwogH2: Dropped {dropped_count} terms that did not match expected structure. First few: {dropped_log[:5]}")
     
-    # Do that here.
+    # Calculate TwogH2 = 2 * g * H2
     g_list = [1] * nspins + [-1] * nspins
     TwogH2 = sp.zeros(n_dim, n_dim)
     for i in range(n_dim):
         for j in range(n_dim):
-            TwogH2[i, j] = 2 * g_list[i] * H2[i, j]
-            
+            val = 2 * g_list[i] * H2_matrix[i, j]
+            TwogH2[i, j] = val
+                
     return TwogH2
 
 def _fourier_transform_terms(
@@ -3407,56 +3510,34 @@ def _fourier_transform_terms(
     
     Parses quadratic terms of form (coeff * Op1 * Op2) and replaces (Op1 * Op2)
     with the corresponding k-space expression found in `ft_lookup`.
-    
-    Args:
-        args: Tuple containing:
-            expr_terms (sp.Expr): A sum of terms to process.
-            ft_lookup (Dict): Dictionary mapping (OpName1, OpName2) -> NewExpr.
-            
-    Returns:
-        sp.Expr: The Fourier transformed expression.
     """
     expr, ft_lookup = args
+             
     terms = expr.as_ordered_terms()
     new_terms = []
     
     for term in terms:
-        coeff, ops = term.as_coeff_Mul()
+        coeff, rest = term.as_coeff_Mul()
         
-        # Similar logic to normal ordering: find non-commutative factors
-        non_commuting_factors = term.atoms(sp.Symbol)
-        non_commuting_factors = [s for s in non_commuting_factors if not s.is_commutative]
-        
-        # If no operators or single operator involving substitutions (unlikely for Hamiltonian)
-        # We assume quadratic structure for interaction terms.
-        # Single site terms e.g. S_z^2 -> might become const + linear + quadratic.
-        # For simplicity, we assume generic parsing.
-        
-        nc_part = term / coeff
-        if not non_commuting_factors:
-            new_terms.append(term)
-            continue
+        # Identify operators (non-commutative)
+        if rest.is_Mul:
+            args_list = rest.args
+        else:
+            args_list = (rest,)
             
-        args_nc = nc_part.args
-        if not args_nc: # Single symbol
-            # Check if single symbol is in lookup? Usually lookup is for pairs.
-            # But single site anisotropy might lead to single operators?
-            # c_i -> ... 
-            # If so, they should be in lookup as (name, None)? Or handle separately.
-            # Current FT logic mostly handles pairs. 
-            # Let's check if term itself (single sym) is in a "single_lookup" if we had one.
-            # For now, assume pairs.
-             new_terms.append(term)
-             continue
-             
+        nc_args = [a for a in args_list if not a.is_commutative]
+        c_args = [a for a in args_list if a.is_commutative]
+        
+        effective_coeff = coeff * sp.Mul(*c_args)
+        
         op1 = None
         op2 = None
         
-        if len(args_nc) == 2:
-            op1 = args_nc[0]
-            op2 = args_nc[1]
-        elif len(args_nc) == 1 and args_nc[0].is_Pow:
-             base, exp = args_nc[0].as_base_exp()
+        if len(nc_args) == 2:
+            op1 = nc_args[0]
+            op2 = nc_args[1]
+        elif len(nc_args) == 1 and nc_args[0].is_Pow:
+             base, exp = nc_args[0].as_base_exp()
              if exp == 2:
                  op1 = base
                  op2 = base
@@ -3464,16 +3545,14 @@ def _fourier_transform_terms(
         if op1 and op2:
             key = (op1.name, op2.name)
             if key in ft_lookup:
-                # Replace the pair with the new expression
                 new_expr = ft_lookup[key]
-                new_terms.append(coeff * new_expr)
+                new_terms.append(effective_coeff * new_expr)
             else:
                 new_terms.append(term)
         else:
-             # Higher order terms or mixed terms not in lookup
              new_terms.append(term)
              
-    return Add(*new_terms)
+    return sp.Add(*new_terms)
 
 
 def _generate_fourier_lookup(

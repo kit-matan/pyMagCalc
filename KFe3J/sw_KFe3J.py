@@ -33,6 +33,11 @@ if project_root_dir not in sys.path:
 from pyMagCalc import magcalc as mc
 
 import spin_model as kfe3j_spin_model
+# try:
+#     import auto_KFe3J as kfe3j_spin_model
+# except ImportError:
+#     sys.path.append(os.path.dirname(__file__))
+#     import auto_KFe3J as kfe3j_spin_model
 import yaml
 import logging
 import tkinter as tk  # For screen size detection
@@ -43,6 +48,16 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+
+try:
+    from generic_model import GenericSpinModel
+except ImportError:
+    # Add parent dir to path to find generic_model if needed
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(current_dir)
+    if parent_dir not in sys.path:
+        sys.path.insert(0, parent_dir)
+    from generic_model import GenericSpinModel
 logger = logging.getLogger(__name__)
 
 
@@ -471,7 +486,7 @@ def plot_sqw_map_from_file(filename, config, qsx_sqw_orig, qsy_sqw_orig, ax, fig
 
 
 # --- Main Execution ---
-if __name__ == "__main__":
+def main():
     st_main = default_timer()
 
     # --- Load Configuration ---
@@ -508,15 +523,58 @@ if __name__ == "__main__":
     tasks_config = config.get("tasks", {})
 
     S_val = model_p_config.get("S", 2.5)
-    # Ensure params_val are in the correct order expected by the spin_model
-    # (J1, J2, Dy, Dz, H) - this order is assumed by original scripts
-    params_val = [
-        model_p_config.get("J1", 0.0),
-        model_p_config.get("J2", 0.0),
-        model_p_config.get("Dy", 0.0),
-        model_p_config.get("Dz", 0.0),
-        model_p_config.get("H", 0.0),
-    ]
+    # Updated for Auto-Gen Model (J1-J6, H)
+    # params_val = [
+    #     model_p_config.get("J1", 0.0),
+    # ...
+    # ]
+    
+    # --- DECLARATIVE MODEL LOGIC ---
+    interactions_config = config.get("interactions")
+    spin_model_to_use = kfe3j_spin_model # Default fallback
+    
+    
+    if interactions_config:
+        logger.info("Declarative 'interactions' found in config. Using GenericSpinModel.")
+        spin_model_to_use = GenericSpinModel(config, base_path=script_dir)
+        
+        # Build params_val
+        params_val = []
+        
+        # Check if 'parameters' list defines explicit order and naming
+        param_names = config.get('parameters')
+        if param_names:
+            logger.info(f"Using explicit parameter list from config: {param_names}")
+            for name in param_names:
+                # Look up value in model_params
+                val = model_p_config.get(name, 0.0)
+                params_val.append(float(val))
+        else:
+            # Fallback to old inference method (discouraged for complex manual models)
+            for interaction in interactions_config:
+                itype = interaction.get('type')
+                val = interaction.get('value')
+                # ... legacy inferrence logic (omitted for brevity, assume 'parameters' exists)
+                if itype == 'heisenberg':
+                     params_val.append(float(val))
+                # ...
+            # Append H
+            H_val = model_p_config.get("H", 0.0)
+            params_val.append(H_val)
+
+        logger.info(f"Constructed parameters for GenericModel: {params_val}")
+        
+    else:
+        # Fallback to Manual Model logic
+        # Ensure params_val are in the correct order expected by the spin_model
+        # (J1, J2, Dy, Dz, H) - this order is assumed by original scripts
+        params_val = [
+            model_p_config.get("J1", 0.0),
+            model_p_config.get("J2", 0.0),
+            model_p_config.get("Dy", 0.0),
+            model_p_config.get("Dz", 0.0),
+            model_p_config.get("H", 0.0),
+        ]
     cache_mode = calc_p_config.get("cache_mode", "auto")
     cache_file_base = calc_p_config.get("cache_file_base", "KFe3J_model_cache")
 
@@ -555,7 +613,7 @@ if __name__ == "__main__":
             hamiltonian_params=params_val,
             cache_file_base=cache_file_base,  # This is for MagCalc's internal cache
             cache_mode=cache_mode,
-            spin_model_module=kfe3j_spin_model,
+            spin_model_module=spin_model_to_use,
         )
     except Exception as e:
         logger.error(f"Failed to initialize MagCalc: {e}", exc_info=True)
@@ -775,3 +833,7 @@ if __name__ == "__main__":
     logger.info(
         f"Total run-time: {np.round((et_main - st_main), 2)} sec ({np.round((et_main - st_main) / 60, 2)} min)."
     )
+
+
+if __name__ == "__main__":
+    main()

@@ -443,128 +443,170 @@ def Hamiltonian(Sxyz_ops, p_sym):
 
 
 # --- Functions for Classical Energy Minimization ---
-def classical_energy(  # H is now params_numerical[6]
-    theta_angles_rad, params_numerical, S_val_numerical, current_module
-):
-    """Calculates classical energy. Assumes spins in xz-plane. H along z-axis."""  # Modified comment
-    if len(theta_angles_rad) != len(AL_SPIN_PREFERENCE):
-        logger.error(
-            f"Expected {len(AL_SPIN_PREFERENCE)} theta angles, got {len(theta_angles_rad)}"
-        )
-        return np.inf
-
-    H_field_num = params_numerical[7]  # H is now the 8th parameter (index 7)
-
+def _precalculate_interaction_matrices(params_numerical, current_module):
+    """
+    Pre-calculates numerical J, G, and DM matrices for classical energy minimization.
+    Returns:
+        J_val: (nspin, nspin_ouc) float array
+        G_val: (nspin, nspin_ouc) float array
+        DM_val_vectors: (nspin, nspin_ouc, 3) float array
+    """
     Jex_sp, Gex_sp, DM_matrix_of_matrices_sp, _ = current_module.spin_interactions(
         params_numerical
     )
 
-    apos_uc = current_module.atom_pos()
-    nspin_uc = len(apos_uc)
-    apos_ouc = current_module.atom_pos_ouc()
-    nspin_ouc = len(apos_ouc)
+    nspin_uc = Jex_sp.shape[0]
+    nspin_ouc = Jex_sp.shape[1]
 
-    DM_numerical_vectors = np.zeros((nspin_uc, nspin_ouc, 3), dtype=float)
+    # Convert SymPy matrices to NumPy float arrays
+    try:
+        # Fast conversion for J and G if they don't contain symbols (should be numeric here)
+        J_val = np.array(Jex_sp.tolist(), dtype=float)
+        G_val = np.array(Gex_sp.tolist(), dtype=float)
+    except Exception:
+         # Fallback if somehow symbolic expressions remain (shouldn't happen with params_numerical)
+         J_val = np.array([[float(v) for v in row] for row in Jex_sp.tolist()], dtype=float)
+         G_val = np.array([[float(v) for v in row] for row in Gex_sp.tolist()], dtype=float)
+
+    DM_val_vectors = np.zeros((nspin_uc, nspin_ouc, 3), dtype=float)
     for i_dm in range(nspin_uc):
         for j_dm in range(nspin_ouc):
             dm_vec_sym_matrix = DM_matrix_of_matrices_sp[i_dm, j_dm]
-            if isinstance(dm_vec_sym_matrix, sp.MatrixBase):
-                DM_numerical_vectors[i_dm, j_dm, :] = np.array(
+            if isinstance(dm_vec_sym_matrix, sp.MatrixBase) and not dm_vec_sym_matrix.is_zero_matrix:
+                DM_val_vectors[i_dm, j_dm, :] = np.array(
                     [float(comp) for comp in dm_vec_sym_matrix]
                 ).flatten()
-            else:
-                # logger.warning(
-                #     f"DM element ({i_dm},{j_dm}) is not a SymPy Matrix. Assuming zero."
-                # )
-                DM_numerical_vectors[i_dm, j_dm, :] = np.zeros(3)
+    
+    return J_val, G_val, DM_val_vectors
 
-    classical_spins = np.zeros((nspin_uc, 3))
-    for i in range(nspin_uc):
-        theta_i = theta_angles_rad[i]
-        phi_i = 0.0 if AL_SPIN_PREFERENCE[i] == 1 else np.pi
-        classical_spins[i, 0] = S_val_numerical * np.sin(theta_i) * np.cos(phi_i)
-        classical_spins[i, 1] = S_val_numerical * np.sin(theta_i) * np.sin(phi_i)
-        classical_spins[i, 2] = S_val_numerical * np.cos(theta_i)
-
-    total_energy = 0.0
-    for i in range(nspin_uc):
-        Si = classical_spins[i, :]
-        for j_ouc in range(nspin_ouc):
-            j_uc_equiv = j_ouc % nspin_uc
-            theta_j = theta_angles_rad[j_uc_equiv]
-            phi_j = 0.0 if AL_SPIN_PREFERENCE[j_uc_equiv] == 1 else np.pi
-            Sj = np.array(
-                [
-                    S_val_numerical * np.sin(theta_j) * np.cos(phi_j),
-                    S_val_numerical * np.sin(theta_j) * np.sin(phi_j),
-                    S_val_numerical * np.cos(theta_j),
-                ]
-            )
-
-            J_ij = float(Jex_sp[i, j_ouc])
-            G_ij = float(Gex_sp[i, j_ouc])
-            DM_vec_ij = DM_numerical_vectors[i, j_ouc, :]
-
-            if J_ij != 0:
-                total_energy += 0.5 * J_ij * np.dot(Si, Sj)
-            if np.any(DM_vec_ij != 0):
-                total_energy += 0.5 * np.dot(DM_vec_ij, np.cross(Si, Sj))
-            if G_ij != 0:
-                total_energy += (
-                    0.5 * G_ij * (Si[0] * Sj[0] - Si[1] * Sj[1] - Si[2] * Sj[2])
-                )
-
+def classical_energy_fast(
+    theta_angles_rad, params_numerical, S_val_numerical, J_val, G_val, DM_val_vectors
+):
+    """
+    Vectorized calculation of classical energy.
+    J_val, G_val: (N_uc, N_ouc)
+    DM_val_vectors: (N_uc, N_ouc, 3)
+    """
+    n_spins_uc = len(AL_SPIN_PREFERENCE)
+    n_spins_ouc = J_val.shape[1]
+    
+    # 1. Compute Spin Vectors S_i (N_uc, 3)
+    # AL_SPIN_PREFERENCE determines phi: 1 -> 0, -1 -> pi
+    # phi = 0 => (sin(t), 0, cos(t))
+    # phi = pi => (-sin(t), 0, cos(t))
+    # Combined: (al * sin(t), 0, cos(t))  (since y-comp is sin(t)*sin(phi) which is 0 for 0/pi)
+    
+    # Wait, check original code for y-component:
+    # phi_i = 0.0 if AL_SPIN_PREFERENCE[i] == 1 else np.pi
+    # y = sin(t)*sin(phi). sin(0)=0, sin(pi)=~0. Correct.
+    # x = sin(t)*cos(phi). cos(0)=1, cos(pi)=-1. Correct.
+    # So x = al_pref * sin(theta)
+    
+    # Vectorized construction S_i (N_uc, 3)
+    al_pref = np.array(AL_SPIN_PREFERENCE)
+    sin_theta = np.sin(theta_angles_rad)
+    cos_theta = np.cos(theta_angles_rad)
+    
+    Sx = S_val_numerical * al_pref * sin_theta
+    Sy = np.zeros_like(Sx) # Strictly zero for this phi constraint
+    Sz = S_val_numerical * cos_theta
+    
+    S_i = np.stack([Sx, Sy, Sz], axis=1) # (N_uc, 3)
+    
+    # 2. Compute Neighbor Spin Vectors S_j (N_ouc, 3)
+    # Only need theta for the OUC spins, which map back to UC spins
+    # j_uc_equiv = j_ouc % n_spins_uc
+    
+    # Vectorized indexing
+    indices_uc_equiv = np.arange(n_spins_ouc) % n_spins_uc
+    S_j = S_i[indices_uc_equiv, :] # (N_ouc, 3)
+    
+    # 3. Compute Energy Terms
+    # We need sum over i, j of 0.5 * (Interaction)
+    
+    # J Term: 0.5 * sum_{i,j} J_{ij} * (S_i . S_j)
+    # Broadcasting: (N_uc, 1, 3) . (1, N_ouc, 3) -> (N_uc, N_ouc) dot products
+    # Actually, simpler:
+    # S_i is (N_uc, 3), S_j is (N_ouc, 3).
+    # We need S_i[i] dot S_j[j] for all i,j?
+    # No, we have J_val[i,j] which is sparse-ish.
+    # But for full vectorization we can compute all dot products that have non-zero J.
+    # Efficient:
+    # Expand S_i to (N_uc, 1, 3)
+    # Expand S_j to (1, N_ouc, 3)
+    # Broadcasting is expensive if N_ouc is large, but here ~48 neighbors max?
+    # Total matrix size 16 * 48 = 768 elements. Very small.
+    
+    S_i_exp = S_i[:, np.newaxis, :] # (16, 1, 3)
+    S_j_exp = S_j[np.newaxis, :, :] # (1, 48, 3)
+    
+    # Dot product matrix (N_uc, N_ouc)
+    Si_dot_Sj = np.sum(S_i_exp * S_j_exp, axis=2)
+    
+    E_Heisenberg = 0.5 * np.sum(J_val * Si_dot_Sj)
+    
+    # G Term (Anisotropic Exchange): G_ij * (SxSx - SySy - SzSz)
+    # S_i components: (Sx_i, 0, Sz_i) (since Sy=0)
+    # Term becomes: G_ij * (Sx_i*Sx_j - 0 - Sz_i*Sz_j)
+    Sx_i = S_i[:, 0][:, np.newaxis]
+    Sx_j = S_j[:, 0][np.newaxis, :]
+    Sz_i = S_i[:, 2][:, np.newaxis]
+    Sz_j = S_j[:, 2][np.newaxis, :]
+    
+    G_term_val = Sx_i * Sx_j - Sz_i * Sz_j
+    E_Gamma = 0.5 * np.sum(G_val * G_term_val)
+    
+    # DM Term: D . (Si x Sj)
+    # Cross product (N_uc, N_ouc, 3)
+    Si_cross_Sj = np.cross(S_i_exp, S_j_exp, axis=2)
+    E_DM = 0.5 * np.sum(DM_val_vectors * Si_cross_Sj)
+    
+    # Zeeman Term: gamma * mu_B * Sz * H
+    # H is params_numerical[7]
     gamma = 2.0
     mu_B = 5.7883818066e-2
-    zeeman_energy_contribution = 0.0
-    sum_Sz_val = 0.0  # Changed from sum_Sx_val
-    for i in range(nspin_uc):
-        # H is along +z, so energy is - mu.H = - (gamma*mu_B*Sz) * H_field
-        # The magnetic moment of an electron is mu = -g*mu_B*S. Energy = -mu.B = +g*mu_B*S.B
-        zeeman_energy_contribution += gamma * mu_B * classical_spins[i, 2] * H_field_num
-        sum_Sz_val += classical_spins[i, 2]  # Changed from classical_spins[i,0]
-
-    if abs(H_field_num) > 1e-6:
-        logger.debug(
-            f"Classical energy func: H={H_field_num:.2f}, Zeeman E: {zeeman_energy_contribution:.4f}, Sum Sz/S: {sum_Sz_val/S_val_numerical:.4f}"
-        )
-    total_energy += zeeman_energy_contribution  # zeeman_energy_contribution is now correctly negative
+    H_val = params_numerical[7]
+    
+    E_Zeeman = np.sum(gamma * mu_B * Sz * H_val)
+    
+    total_energy = E_Heisenberg + E_Gamma + E_DM + E_Zeeman
+    
     return total_energy
 
 
 def find_ground_state_orientations(params_numerical, S_val_numerical, current_module):
-    """Finds optimal theta angles by minimizing classical energy. Internal use."""
+    """Finds optimal theta angles by minimizing classical energy with acceleration."""
     n_spins = len(AL_SPIN_PREFERENCE)
-    H_field_val = params_numerical[7]  # H is the 8th parameter (index 7)
+    H_field_val = params_numerical[7]
+    
+    # Optimization: Pre-calculate interaction matrices ONCE
+    J_val, G_val, DM_val_vectors = _precalculate_interaction_matrices(
+        params_numerical, current_module
+    )
+    
     initial_theta_guess = np.full(
         n_spins, np.pi / 2.0 - (0.05 if abs(H_field_val) > 1e-9 else 0.0)
     )
     bounds = [(1e-9, np.pi - 1e-9)] * n_spins
 
-    logger.info(f"Starting classical energy minimization for H={H_field_val}...")
+    logger.info(f"Starting optimized classical energy minimization for H={H_field_val}...")
 
+    # No need for progress bar if it's fast (<1s), but keep it for checks
     options = {"maxiter": 5000, "ftol": 1e-9, "gtol": 1e-7}
 
-    with tqdm(
-        total=options.get("maxiter", 5000),
-        desc="Classical Minimization (sm_hc)",
-        unit="iter",
-        leave=False,
-    ) as pbar:
-        result = minimize(
-            classical_energy,
-            initial_theta_guess,
-            args=(params_numerical, S_val_numerical, current_module),
-            method="L-BFGS-B",
-            bounds=bounds,
-            tol=1e-6,
-            options=options,
-            callback=lambda xk: pbar.update(1),
-        )
+    result = minimize(
+        classical_energy_fast, # Use fast vectorized function
+        initial_theta_guess,
+        args=(params_numerical, S_val_numerical, J_val, G_val, DM_val_vectors), # Pass matrices
+        method="L-BFGS-B",
+        bounds=bounds,
+        tol=1e-6,
+        options=options,
+    )
 
     if result.success:
         logger.info(
-            f"Classical minimization successful. Final energy: {result.fun:.6f} meV."
+            f"Classical minimization successful. Final energy: {result.fun:.6f} meV. (Iterations: {result.nit})"
         )
         optimal_theta_angles = np.clip(result.x, 0, np.pi)
         return optimal_theta_angles, result.fun
