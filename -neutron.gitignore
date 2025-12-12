@@ -41,7 +41,3 @@ coding_plan.rtf
 KFe3J/.ipynb_checkpoints/disp_KFe3J-checkpoint.py
 calc_results_disp_initial.npz
 calc_results_disp_updated.npz
-.gitignore
-calc_results_disp.npz
-calc_results_sqw_updated.npz
-calc_results_sqw.npz

@@ -1,0 +1,15 @@
+{
+    "spin_magnitude": 0.5,
+    "hamiltonian_params": [
+        2.49,
+        2.7888000000000006,
+        5.0546999999999995,
+        0.28,
+        2.67,
+        -2.0,
+        0.1,
+        20.0
+    ],
+    "model_source_type": "module",
+    "model_identifier": "spin_model_hc"
+}

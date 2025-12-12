@@ -1,41 +1,90 @@
-# pyMagCalc
-*pyMagCalc* (**py**thon for **Mag**non **Calc**ulations) calculates spin-wave excitations based on the linear spin-wave theory.  The program is written in Python using SymPy.  It was used to calculate spin-wave excitations in the kagome lattice antiferromagnet **KFe<sub>3</sub>(OH)<sub>6</sub>(SO<sub>4</sub>)<sub>2</sub>**, the non-reciprocal magnons in **&alpha;-Cu<sub>2</sub>V<sub>2</sub>O<sub>7</sub>**, and spin-waves excitations in **Zn-doped Cu<sub>2</sub>V<sub>2</sub>O<sub>7</sub>**.
+# pyMagCalc: Linear Spin-Wave Theory Calculator
 
-### Requirement:
-  - **Python3**
-    - SymPy
-    - NumPy (1.x)
-    - SciPy
-    - Matplotlib
-    - lmfit
-    - tqdm
+[![Python 3.8+](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/)
+[![Status](https://img.shields.io/badge/status-development-orange.svg)]()
 
+## Introduction
 
-### File Description:
-  - **magcalc.py**: calculate the spin-wave dispersion and scattering intensity
-  - **disp_---.py**: calculate and plot the spin-wave dispersion
-  - **EQmap_---.py**: calculate and plot the intensity map as a function of energy and momentum
-  - **HKmap_---.py**: calculate and plot the intensity map as a function of momenta
-  - **lmfit_---.py**: fit the dispersion
-  - **spin_model.py**: contains the information about the spin model used
-to calculate spin-waves by **magcalc.py**
-  - **data** (folder): contain the neutron scattering data for KFe<sub>3</sub>(OH)<sub>6</sub>(SO<sub>4</sub>)<sub>2</sub>, &alpha;-Cu<sub>2</sub>V<sub>2</sub>O<sub>7</sub>, and Zn-doped Cu<sub>2</sub>V<sub>2</sub>O<sub>7</sub>
+`pyMagCalc` is a Python package for performing Linear Spin-Wave Theory (LSWT) calculations. It allows users to define a spin model (Hamiltonian, magnetic structure, lattice) and compute spin-wave dispersion relations and dynamic structure factors S(Q,ω).
 
+## Key Features
 
-### How to run the program:
-In a terminal, run the following commands
+*   **Object-Oriented Design:** Core calculations managed by the `MagCalc` class within the `magcalc` package.
+*   **Symbolic Hamiltonian:** Generates symbolic quadratic boson Hamiltonians using SymPy.
+*   **Numerical Calculations:** Computes dispersion relations and S(Q,ω) with polarization factors.
+*   **Performance:** Parallelized calculations using `multiprocessing`.
+*   **Caching:** Caches expensive symbolic computations to speed up subsequent runs.
+*   **Flexible Configuration:** Supports both Python-module defined models and YAML-based declarative configurations.
+
+## Directory Structure
+
+*   `magcalc/`: Core python package containing `MagCalc`, `GenericSpinModel`, and utilities.
+*   `scripts/`: Top-level executable scripts (e.g., `run_magcalc.py`, `inspect_hm.py`).
+*   `examples/`: Sample data, configurations, and scripts (e.g., `KFe3J/`, `ZnCVO/`).
+*   `tests/`: Unit and integration tests.
+*   `archive/`: Deprecated or unused files.
+
+## Dependencies
+
+*   Python (3.8+)
+*   NumPy
+*   SciPy
+*   SymPy
+*   Matplotlib
+*   tqdm
+*   PyYAML
+*   ASE (Atomistic Simulation Environment, used for CIF file reading)
+*   pytest (for testing)
+
+## Installation
+
+1.  Clone the repository.
+2.  Install dependencies:
+    ```bash
+    pip install -r requirements.txt
+    ```
+3.  Ensure the project root is in your `PYTHONPATH` or run scripts from the project root directory.
+
+## Basic Usage
+
+### Running the Example Script
+
+The easiest way to run `pyMagCalc` is using the provided `run_magcalc.py` script with a configuration file.
+
+```bash
+python scripts/run_magcalc.py examples/KFe3J/KFe3J_declarative.yaml
 ```
-$ export PYTHONPATH=<Path to magcalc.py>
-$ cd <Path to Python files>
-$ mkdir pckFiles
-```
-and then run, for example,
-```
-$ python3 disp_KFe3J.py
-```
-to calculate and plot spin-wave dispersion. You must first run **disp_---.py** to generate and store a matrix in a .pck file. The folder **pckFiles** contains auxiliary files used to store matrices and calculated intensity.
 
-One has to edit **spin_model.py** for a different system. 
+### Using as a Library
 
-### Issues:
-  - The code uses SymPy for symbolic manipulation and can be slow for a large system. We use multiprocessing for sympy.subs.  It takes about a few minutes (on *MacBook Pro M1 Pro*) to generate a matrix for **&alpha;-Cu<sub>2</sub>V<sub>2</sub>O<sub>7</sub>** with 16 spins in a magnetic unit cell.
+```python
+import numpy as np
+import magcalc as mc 
+# ... define model or load config ...
+
+# Example with configuration file:
+# calculator = mc.MagCalc(config_filepath="examples/KFe3J/KFe3J_declarative.yaml")
+# energies = calculator.calculate_dispersion(q_points)
+```
+
+## Spin Model Definition
+
+You can define a spin model in two ways:
+1.  **Declarative YAML (Recommended):** Define crystal structure, interactions, and parameters in a YAML file. See `examples/KFe3J/KFe3J_declarative.yaml` for a complete example.
+2.  **Python Module (Legacy/Advanced):** Create a module implementing `atom_pos`, `spin_interactions`, `Hamiltonian`, etc. See `examples/KFe3J/spin_model.py` for an example.
+
+## Examples
+
+The `examples/` directory contains structured examples:
+*   `examples/KFe3J/`: KFe3(OH)6(SO4)2 (Jarosite) example.
+    *   `KFe3J_declarative.yaml`: Configuration for the `GenericSpinModel`.
+    *   `spin_model.py`: Legacy Python-defined model.
+*   `examples/ZnCVO/` & `examples/aCVO/`: Additional material examples.
+
+## Testing
+
+Run the test suite using `pytest` from the project root:
+
+```bash
+pytest
+```

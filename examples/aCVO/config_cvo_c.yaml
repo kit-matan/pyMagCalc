@@ -1,0 +1,45 @@
+model_params:
+  S: 0.5
+  J1: 2.49
+  J2: 2.7888
+  J3: 5.0547
+  G1: 0.28
+  Dx: 2.67
+  H: 0.0 # Example: zero field
+
+calculation:
+  cache_mode: "r" # 'w' for first run, then 'r'
+  cache_file_base: "CVO_alpha_map"
+
+# For S(Q,w) map
+lattice_params:
+  la: 20.645
+  lb: 8.383
+  lc: 6.442
+
+energy_map: # Used for energy bins in the map
+  emin: 0
+  emax: 12
+  estep: 0.05
+
+q_scan: # Defines the Q-space scan for the map
+  direction: "0k0"  # Scan along (0,k,0)
+  q_min: -5.0      # Min Q in r.l.u.
+  q_max: 5.0       # Max Q in r.l.u.
+  q_step: 0.01     # Step in r.l.u.
+  fixed_h: 0.0     # Fixed H component in r.l.u.
+  # fixed_k: 0.0   # Not needed if direction is 0k0
+  fixed_l: 0.0     # Fixed L component in r.l.u.
+
+plot_params: # Specific to S(Q,w) map plotting
+  lorentzian_width: 0.2
+  vmax_scale: 5.0 # Scales the max intensity for color plot (e.g., max_intensity / vmax_scale)
+  colorbar_label: "Intensity (arb. units)"
+  log_scale: false # true for LogNorm, false for linear
+
+plotting: # General plotting settings
+  # energy_limits: [0, 12] # Alternative for emin, emax if energy_map section is not used
+  title: "S(Q,ω) for α-Cu₂V₂O₇" # This will be augmented with H and scan direction
+  show_plot: true
+
+logging_level: "INFO"

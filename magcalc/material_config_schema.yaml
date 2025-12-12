@@ -1,0 +1,112 @@
+# Example Schema for material_config.yaml
+# This file describes the expected structure and an example for a material configuration.
+
+crystal_structure:
+  lattice_parameters: # Can be a list [a, b, c, alpha, beta, gamma] or a dictionary
+    a: 7.20
+    b: 7.20
+    c: 7.20 # Example: For a cubic cell, or effective c for 2D systems
+    alpha: 90.0
+    beta: 90.0
+    gamma: 120.0 # Example: For a hexagonal cell containing a Kagome layer
+  # Alternatively, provide Cartesian unit cell vectors directly:
+  # unit_cell_vectors:
+  #   - [7.2, 0.0, 0.0]
+  #   - [3.6, 6.235, 0.0]
+  #   - [0.0, 0.0, 7.5]
+
+  atoms_uc: # List of magnetic atoms in the (magnetic) unit cell
+    - label: "Fe1"        # Unique string identifier for the atom
+      element: "Fe"       # Chemical symbol (optional, for clarity)
+      pos: [0.0, 0.0, 0.0] # Fractional coordinates [x, y, z] within the unit cell
+      spin_S: 2.5         # Spin quantum number (e.g., 2.5 for S=5/2 Fe3+)
+      magmom_classical: [0.0, 0.0, 1.0] # Classical magnetic moment orientation
+                           # Can be:
+                           # 1. Cartesian vector [mx, my, mz] (global, will be normalized)
+                           # 2. Spherical [theta_deg, phi_deg] (polar, azimuthal angles in degrees)
+                           # 3. Special string (e.g., "ferromagnetic_z", "120_deg_xy_plane_spin1")
+                           #    (requires parsing logic in generic_spin_model.py)
+
+    - label: "Fe2"
+      element: "Fe"
+      pos: [0.5, 0.0, 0.0] # Example for a Kagome lattice if a=sqrt(3)/2 of conventional cell
+      spin_S: 2.5
+      magmom_classical: [90.0, 0.0] # Example: spin along +x (theta=90, phi=0)
+
+    - label: "Fe3"
+      element: "Fe"
+      pos: [0.0, 0.5, 0.0] # Example
+      spin_S: 2.5
+      magmom_classical: "120_deg_xy_plane_spin3" # Example special string
+
+# magnetic_supercell: (Optional)
+#   matrix: [[2,0,0], [0,1,0], [0,0,1]] # Example: Magnetic cell is 2a x b x c of crystallographic
+
+interactions:
+  heisenberg:
+    - pair: ["Fe1", "Fe2"]    # Atom labels from atoms_uc
+      J: "J1"                 # Exchange constant: numerical value or symbolic string
+      rij_offset: [0,0,0]     # Cell offset [na,nb,nc] for atom_j relative to atom_i's cell. Default: [0,0,0]
+
+    - pair: ["Fe1", "Fe1"]    # Interaction with an equivalent atom in a neighboring cell
+      J: "J2"
+      rij_offset: [1,0,0]     # e.g., Fe1 in cell (0,0,0) with Fe1 in cell (1,0,0)
+
+  dm_interaction:
+    - pair: ["Fe1", "Fe2"]
+      D_vector: ["Dx_val", 0, "Dz_val"] # DM vector components [Dx, Dy, Dz] (numerical or symbolic)
+      rij_offset: [0,0,0]
+
+  single_ion_anisotropy: (Optional)
+    - atom_label: "Fe1"
+      # Example: Uniaxial anisotropy K * (S_local_axis . S_global)^2 or K * S_local_z^2
+      # This needs careful definition of how K and axis are used in the Hamiltonian.
+      # For K * S_local_z^2 (after rotation by mpr):
+      type: "uniaxial_K_Sz_sq" # Type of SIA
+      K: "K_Fe1"              # Anisotropy constant (numerical or symbolic)
+      # local_axis is implicitly the z-axis of the local frame defined by mpr.
+
+    # - atom_label: "Fe2"
+    #   type: "easy_axis_D_Sz_sq" # D * S_z^2 in global frame if mpr is identity
+    #   D_const: -0.1
+    #   axis_global: [0,0,1] # Global Cartesian axis for S_z
+
+  applied_field: (Optional)
+    # H_vector defines the direction of the applied field in global Cartesian coordinates.
+    # Its magnitude is given by the 'H_magnitude_symbol' parameter in the 'parameters' section.
+    # If 'H_magnitude_symbol' is not used, H_vector components are the field strengths in Tesla.
+    H_vector: [0,0,1]             # Example: Field along global z-axis
+    H_magnitude_symbol: "H_mag"   # Symbolic name for the field magnitude
+
+parameters: # Numerical values for all symbolic constants used above
+  J1: 3.23
+  J2: 0.11
+  Dx_val: 0.218
+  Dz_val: -0.195
+  K_Fe1: -0.05 # Example value for single-ion anisotropy constant
+  H_mag: 0.0   # Magnitude of the applied field in Tesla
+
+calculation_settings: (Optional, for MagCalc or helper functions)
+  # Defines the range of neighboring unit cells to consider for OUC generation.
+  # [nx,ny,nz] means from -nx to +nx along the first lattice vector, etc.
+  neighbor_shells: [1,1,0] # Example: For a 2D system, consider neighbors in the plane.
+                           # Default might be [1,1,1] if not specified.
+
+# --- Notes on magmom_classical special strings ---
+# The interpretation of special strings for `magmom_classical` needs to be implemented
+# in `generic_spin_model.py` within the `mpr_from_config` function.
+# Examples:
+# "ferromagnetic_z": implies theta=0, phi=0 (spin along +z)
+# "ferromagnetic_x": implies theta=pi/2, phi=0 (spin along +x)
+# "120_deg_xy_plane_spin1": Could imply theta=pi/2, and phi depends on an index or label (e.g., -120 deg for Fe1)
+#
+# For KFe3J example from original spin_model.py:
+# Fe1: al = -pi/3  => phi = -60 deg. If in xy plane, theta = 90 deg.
+#      magmom_classical: [90.0, -60.0]
+# Fe2: al = pi     => phi = 180 deg. If in xy plane, theta = 90 deg.
+#      magmom_classical: [90.0, 180.0]
+# Fe3: al = pi/3   => phi = 60 deg. If in xy plane, theta = 90 deg.
+#      magmom_classical: [90.0, 60.0]
+# The canting angle 'ca' logic would then be applied *after* these base orientations if
+# the classical ground state is determined by such analytical expressions.
+# More generally, `magmom_classical` would be the result of a separate classical minimization.

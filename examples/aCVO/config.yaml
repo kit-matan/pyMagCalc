@@ -1,0 +1,48 @@
+# ... (other configurations in your main config.yaml) ...
+
+cvo_model:
+  model_params:
+    S: 0.5
+    J1: 2.49
+    J2_ratio: 1.12 # J2 = J2_ratio * J1
+    J3_ratio: 2.03 # J3 = J3_ratio * J1
+    G1: 0.28
+    Dx: 2.67
+    Dy: -2.0 # DM vector component in bc-plane for J1
+    D3: 0.1   # Uniform DM vector along a-axis for J3
+    H: 20.0
+  calculation:
+    cache_mode: "w" # 'r' to read, 'w' to write MagCalc's internal cache
+    cache_file_base_prefix: "CVO_model_cache" # Base prefix for MagCalc's internal cache files.
+                                             # Script should append params like H (e.g., CVO_model_cache_H40.0)
+  output:
+    disp_data_filename: "CVO_disp_data.npz" # File to save calculated dispersion data
+    sqw_data_filename: "CVO_sqw_data.npz"   # File to save calculated S(Q,w) data
+  plotting:
+    save_plot: false
+    disp_plot_filename: "CVO_disp_plot.png" # Filename for saved dispersion plot
+    sqw_plot_filename: "CVO_sqw_plot.png"    # Filename for saved S(Q,w) map plot
+    energy_limits_disp: [0, 10] # Energy limits for dispersion plot
+    energy_limits_sqw: [0, 10]  # Energy limits for S(Q,w) map plot
+    q_limits_disp: [1, 3]       # q-limits for the plot (in r.l.u. as per original script)
+    q_limits_sqw: [1, 3]       # q-limits for S(Q,w) map plot (in r.l.u.)
+    q_ticks_disp: [1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0] # q-ticks for the plot
+    q_ticks_sqw: [1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0] # q-ticks for S(Q,w) map plot
+    disp_title: "CVO Spin Wave Dispersion (Calculated)"
+    sqw_title: "CVO S(Q,ω) Intensity Map (Calculated)"
+    show_plot: true
+    adjust_height_to_screen: true  # Set to true to enable dynamic height
+    screen_height_fraction: 0.85   # Optional: Fraction of screen height to use (default 0.85)
+  tasks:
+    run_dispersion: true             # Master switch for dispersion calculation and plotting
+    calculate_dispersion_new: true   # true: run calculation; false: load from disp_data_filename for plotting
+    plot_dispersion: true            # Switch for plotting dispersion
+
+    run_sqw_map: true                # Master switch for S(q,w) map calculation and plotting
+    calculate_sqw_map_new: true      # true: run calculation; false: load from sqw_data_filename for plotting
+    plot_sqw_map: true               # Switch for plotting S(q,w) map
+    sqw_energy_step: 0.03            # Energy step for S(Q,w) map convolution
+    sqw_q_step: 0.01                 # Q step for S(Q,w) map calculation (in r.l.u.)
+    sqw_resolution_width: 0.1        # Resolution width for S(Q,w) map convolution
+
+# ... (other configurations) ...

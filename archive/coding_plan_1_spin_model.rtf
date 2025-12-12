@@ -1,0 +1,431 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2822
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fnil\fcharset0 HelveticaNeue;\f1\fnil\fcharset0 HelveticaNeue-Bold;\f2\fnil\fcharset0 HelveticaNeue-Italic;
+}
+{\colortbl;\red255\green255\blue255;\red45\green45\blue45;}
+{\*\expandedcolortbl;;\cssrgb\c23137\c23137\c23137;}
+{\*\listtable{\list\listtemplateid1\listhybrid{\listlevel\levelnfc23\levelnfcn23\leveljc0\leveljcn0\levelfollow0\levelstartat1\levelspace360\levelindent0{\*\levelmarker \{disc\}}{\leveltext\leveltemplateid1\'01\uc0\u8226 ;}{\levelnumbers;}\fi-360\li720\lin720 }{\listlevel\levelnfc23\levelnfcn23\leveljc0\leveljcn0\levelfollow0\levelstartat1\levelspace360\levelindent0{\*\levelmarker \{circle\}}{\leveltext\leveltemplateid2\'01\uc0\u9702 ;}{\levelnumbers;}\fi-360\li1440\lin1440 }{\listlevel\levelnfc0\levelnfcn0\leveljc0\leveljcn0\levelfollow0\levelstartat1\levelspace360\levelindent0{\*\levelmarker \{decimal\}}{\leveltext\leveltemplateid3\'01\'02;}{\levelnumbers\'01;}\fi-360\li2160\lin2160 }{\listlevel\levelnfc23\levelnfcn23\leveljc0\leveljcn0\levelfollow0\levelstartat1\levelspace360\levelindent0{\*\levelmarker \{square\}}{\leveltext\leveltemplateid4\'01\uc0\u9642 ;}{\levelnumbers;}\fi-360\li2880\lin2880 }{\listlevel\levelnfc23\levelnfcn23\leveljc0\leveljcn0\levelfollow0\levelstartat1\levelspace360\levelindent0{\*\levelmarker \{square\}}{\leveltext\leveltemplateid5\'01\uc0\u9642 ;}{\levelnumbers;}\fi-360\li3600\lin3600 }{\listlevel\levelnfc23\levelnfcn23\leveljc0\leveljcn0\levelfollow0\levelstartat1\levelspace360\levelindent0{\*\levelmarker \{square\}}{\leveltext\leveltemplateid6\'01\uc0\u9642 ;}{\levelnumbers;}\fi-360\li4320\lin4320 }{\listname ;}\listid1}
+{\list\listtemplateid2\listhybrid{\listlevel\levelnfc23\levelnfcn23\leveljc0\leveljcn0\levelfollow0\levelstartat1\levelspace360\levelindent0{\*\levelmarker \{disc\}}{\leveltext\leveltemplateid101\'01\uc0\u8226 ;}{\levelnumbers;}\fi-360\li720\lin720 }{\listlevel\levelnfc23\levelnfcn23\leveljc0\leveljcn0\levelfollow0\levelstartat1\levelspace360\levelindent0{\*\levelmarker \{circle\}}{\leveltext\leveltemplateid102\'01\uc0\u9702 ;}{\levelnumbers;}\fi-360\li1440\lin1440 }{\listlevel\levelnfc0\levelnfcn0\leveljc0\leveljcn0\levelfollow0\levelstartat1\levelspace360\levelindent0{\*\levelmarker \{decimal\}}{\leveltext\leveltemplateid103\'01\'02;}{\levelnumbers\'01;}\fi-360\li2160\lin2160 }{\listlevel\levelnfc23\levelnfcn23\leveljc0\leveljcn0\levelfollow0\levelstartat1\levelspace360\levelindent0{\*\levelmarker \{square\}}{\leveltext\leveltemplateid104\'01\uc0\u9642 ;}{\levelnumbers;}\fi-360\li2880\lin2880 }{\listlevel\levelnfc23\levelnfcn23\leveljc0\leveljcn0\levelfollow0\levelstartat1\levelspace360\levelindent0{\*\levelmarker \{square\}}{\leveltext\leveltemplateid105\'01\uc0\u9642 ;}{\levelnumbers;}\fi-360\li3600\lin3600 }{\listname ;}\listid2}}
+{\*\listoverridetable{\listoverride\listid1\listoverridecount0\ls1}{\listoverride\listid2\listoverridecount0\ls2}}
+\paperw11900\paperh16840\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\deftab720
+\pard\pardeftab720\sa260\partightenfactor0
+
+\f0\fs26 \cf2 \expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Okay, I can describe a detailed step-by-step plan to implement the configuration-driven spin model. This approach will make your\'a0magcalc\'a0package significantly more flexible and applicable to a wider range of magnetic materials by abstracting material-specific details into a configuration file.\
+Here's the plan:\
+\pard\pardeftab720\sa260\partightenfactor0
+
+\f1\b \cf2 Phase 1: Design and Core Refactoring
+\f0\b0 \
+\pard\tx220\tx720\pardeftab720\li720\fi-720\sa260\partightenfactor0
+\ls1\ilvl0
+\f1\b \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u8226 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Step 1: Design the YAML Configuration File Structure (material_config.yaml)
+\f0\b0 \
+\pard\tx940\tx1440\pardeftab720\li1440\fi-1440\partightenfactor0
+\ls1\ilvl1
+\f1\b \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9702 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Objective:
+\f0\b0 \'a0Create a comprehensive and human-readable YAML format to define all aspects of a spin model.\
+\ls1\ilvl1
+\f1\b \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9702 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Details:
+\f0\b0 \
+\pard\tx1660\tx2160\pardeftab720\li2160\fi-2160\partightenfactor0
+\ls1\ilvl2
+\f1\b \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	1	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 crystal_structure\'a0section:
+\f0\b0 \
+\pard\tx2380\tx2880\pardeftab720\li2880\fi-2880\partightenfactor0
+\ls1\ilvl3\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 lattice_parameters: Define\'a0a, b, c, alpha, beta, gamma.\
+\ls1\ilvl3\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 atoms_uc: A list of magnetic atoms in the crystallographic (or magnetic, if specified) unit cell. Each atom entry should include:\
+\pard\tx3100\tx3600\pardeftab720\li3600\fi-3600\partightenfactor0
+\ls1\ilvl4\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 label: A unique string identifier (e.g., "Fe1", "CuA"). This will be used to define interactions.\
+\ls1\ilvl4\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 element: Chemical symbol (e.g., "Fe", "Cu") (optional, for clarity).\
+\ls1\ilvl4\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 pos: Fractional coordinates\'a0[x, y, z]\'a0within the unit cell.\
+\ls1\ilvl4\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 spin_S: The spin quantum number (e.g., 2.5 for S=5/2).\
+\ls1\ilvl4\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 magmom_classical: The classical magnetic moment orientation. This can be specified in multiple ways:\
+\pard\tx3820\tx4320\pardeftab720\li4320\fi-4320\partightenfactor0
+\ls1\ilvl5\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Cartesian vector:\'a0[mx, my, mz]\'a0(global coordinates, will be normalized).\
+\ls1\ilvl5\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Spherical coordinates:\'a0[theta_deg, phi_deg]\'a0(polar and azimuthal angles in degrees).\
+\ls1\ilvl5\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Special string: e.g., "ferromagnetic_z", "120_deg_xy_plane_spin1" (requires parsing logic in the Python code). This is crucial for the\'a0mpr\'a0function.\
+\pard\tx1660\tx2160\pardeftab720\li2160\fi-2160\partightenfactor0
+\ls1\ilvl2
+\f1\b \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	2	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 magnetic_supercell\'a0section (Optional):
+\f0\b0 \
+\pard\tx2380\tx2880\pardeftab720\li2880\fi-2880\partightenfactor0
+\ls1\ilvl3\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 matrix: A 3x3 transformation matrix if the magnetic unit cell is a supercell of the crystallographic one. Default to identity if not present.\
+\ls1\ilvl3\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 This helps define which atoms from\'a0atoms_uc\'a0form the basis for the Linear Spin Wave Theory (LSWT) calculation if the magnetic cell differs.\
+\pard\tx1660\tx2160\pardeftab720\li2160\fi-2160\partightenfactor0
+\ls1\ilvl2
+\f1\b \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	3	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 interactions\'a0section:
+\f0\b0 \
+\pard\tx2380\tx2880\pardeftab720\li2880\fi-2880\partightenfactor0
+\ls1\ilvl3\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 heisenberg: A list of Heisenberg exchange interactions. Each entry:\
+\pard\tx3100\tx3600\pardeftab720\li3600\fi-3600\partightenfactor0
+\ls1\ilvl4\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 pair:\'a0[atom_label_i, atom_label_j]\'a0(using labels from\'a0atoms_uc).\
+\ls1\ilvl4\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 J: The exchange constant. Can be a numerical value or a symbolic string (e.g., "J1", "J_intra").\
+\ls1\ilvl4\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 rij_offset:\'a0[na, nb, nc]\'a0representing the unit cell offset of\'a0atom_j\'a0relative to\'a0atom_i's cell (e.g.,\'a0[1,0,0]\'a0means\'a0atom_j\'a0is in the next cell along the first lattice vector). Default\'a0[0,0,0].\
+\pard\tx2380\tx2880\pardeftab720\li2880\fi-2880\partightenfactor0
+\ls1\ilvl3\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 dm_interaction: A list of Dzyaloshinskii-Moriya interactions. Each entry:\
+\pard\tx3100\tx3600\pardeftab720\li3600\fi-3600\partightenfactor0
+\ls1\ilvl4\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 pair:\'a0[atom_label_i, atom_label_j].\
+\ls1\ilvl4\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 D_vector:\'a0[Dx, Dy, Dz]\'a0(components can be numerical or symbolic strings).\
+\ls1\ilvl4\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 rij_offset:\'a0[na, nb, nc].\
+\pard\tx2380\tx2880\pardeftab720\li2880\fi-2880\partightenfactor0
+\ls1\ilvl3\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 single_ion_anisotropy\'a0(Optional): List of single-ion anisotropy terms. Each entry:\
+\pard\tx3100\tx3600\pardeftab720\li3600\fi-3600\partightenfactor0
+\ls1\ilvl4\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 atom_label: Label of the atom.\
+\ls1\ilvl4\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 K_uniaxial\'a0(example): Anisotropy constant (e.g., for\'a0K * S_z_local^2).\
+\ls1\ilvl4\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 axis_local:\'a0[x,y,z]\'a0direction of the local anisotropy axis in global Cartesian coordinates.\
+\pard\tx2380\tx2880\pardeftab720\li2880\fi-2880\partightenfactor0
+\ls1\ilvl3\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 applied_field\'a0(Optional):\
+\pard\tx3100\tx3600\pardeftab720\li3600\fi-3600\partightenfactor0
+\ls1\ilvl4\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 H_vector:\'a0[Hx, Hy, Hz]\'a0defining the direction of the applied field in global Cartesian coordinates.\
+\ls1\ilvl4\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 H_magnitude_symbol: A symbolic string (e.g., "H_mag") if the magnitude is a parameter to be specified in the\'a0parameters\'a0section. If not given,\'a0H_vector\'a0components are assumed to be the field strengths.\
+\pard\tx1660\tx2160\pardeftab720\li2160\fi-2160\partightenfactor0
+\ls1\ilvl2
+\f1\b \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	4	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 parameters\'a0section:
+\f0\b0 \
+\pard\tx2380\tx2880\pardeftab720\li2880\fi-2880\partightenfactor0
+\ls1\ilvl3\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 A dictionary mapping all symbolic strings used in the\'a0interactions\'a0section (e.g., "J1", "Dx_bondA", "H_mag") to their numerical values. This will replace the\'a0p\'a0list/array currently passed to\'a0MagCalc.\
+\pard\tx1660\tx2160\pardeftab720\li2160\fi-2160\partightenfactor0
+\ls1\ilvl2
+\f1\b \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	5	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 calculation_settings\'a0section (Optional, for\'a0MagCalc\'a0or helper functions):
+\f0\b0 \
+\pard\tx2380\tx2880\pardeftab720\li2880\fi-2880\partightenfactor0
+\ls1\ilvl3\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 neighbor_shells:\'a0[nx, ny, nz]\'a0defining the range of neighboring unit cells (e.g.,\'a0[1,1,0]\'a0means -1 to +1 along the first two lattice vectors, and 0 along the third) to consider for generating the "outside unit cell" (OUC) atom list. This is crucial for\'a0atom_pos_ouc_from_config.\
+\pard\tx220\tx720\pardeftab720\li720\fi-720\sa260\partightenfactor0
+\ls1\ilvl0
+\f1\b \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u8226 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Step 2: Implement Configuration Loading Utility
+\f0\b0 \
+\pard\tx940\tx1440\pardeftab720\li1440\fi-1440\partightenfactor0
+\ls1\ilvl1
+\f1\b \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9702 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Objective:
+\f0\b0 \'a0Create a robust function to load and perform initial validation of the YAML configuration file.\
+\ls1\ilvl1
+\f1\b \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9702 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Details:
+\f0\b0 \
+\pard\tx1660\tx2160\pardeftab720\li2160\fi-2160\partightenfactor0
+\ls1\ilvl2\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	1	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Create a new Python file (e.g.,\'a0config_loader.py) or add to an existing utilities module.\
+\ls1\ilvl2\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	2	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Write a function\'a0load_spin_model_config(filepath: str) -> dict.\
+\ls1\ilvl2\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	3	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Use the\'a0PyYAML\'a0library (yaml.safe_load) to parse the YAML file.\
+\ls1\ilvl2\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	4	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Implement basic validation:\
+\pard\tx2380\tx2880\pardeftab720\li2880\fi-2880\partightenfactor0
+\ls1\ilvl3\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Check for the presence of essential top-level keys (crystal_structure,\'a0interactions,\'a0parameters).\
+\ls1\ilvl3\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Check for required sub-keys within these sections (e.g.,\'a0lattice_parameters,\'a0atoms_uc\'a0in\'a0crystal_structure).\
+\ls1\ilvl3\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Potentially convert data types (e.g., ensure\'a0pos\'a0are lists of numbers).\
+\pard\tx1660\tx2160\pardeftab720\li2160\fi-2160\partightenfactor0
+\ls1\ilvl2\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	5	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Return the loaded configuration as a Python dictionary.\
+\pard\tx220\tx720\pardeftab720\li720\fi-720\sa260\partightenfactor0
+\ls1\ilvl0
+\f1\b \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u8226 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Step 3: Refactor\'a0spin_model.py\'a0to\'a0generic_spin_model.py\'a0(or a similar name)
+\f0\b0 \
+\pard\tx940\tx1440\pardeftab720\li1440\fi-1440\partightenfactor0
+\ls1\ilvl1
+\f1\b \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9702 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Objective:
+\f0\b0 \'a0Transform the existing material-specific\'a0spin_model.py\'a0into a general engine that interprets the loaded configuration.\
+\ls1\ilvl1
+\f1\b \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9702 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Details:
+\f0\b0 \'a0Each function will now take parts of the\'a0config\'a0dictionary and/or\'a0numerical_parameters\'a0as arguments.\
+\pard\tx1660\tx2160\pardeftab720\li2160\fi-2160\partightenfactor0
+\ls1\ilvl2
+\f1\b \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	1	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Internal Atom Label/Index Mapping:
+\f0\b0 \
+\pard\tx2380\tx2880\pardeftab720\li2880\fi-2880\partightenfactor0
+\ls1\ilvl3\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Create helper functions or a class within\'a0generic_spin_model.py\'a0to manage mapping between atom\'a0label\'a0strings (from config) and their 0-based integer\'a0index\'a0(for matrix operations). This map should be initialized when\'a0atom_pos_from_config\'a0is called.\
+\pard\tx1660\tx2160\pardeftab720\li2160\fi-2160\partightenfactor0
+\ls1\ilvl2
+\f1\b \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	2	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 unit_cell_from_config(config_crystal_structure: dict) -> np.ndarray:
+\f0\b0 \
+\pard\tx2380\tx2880\pardeftab720\li2880\fi-2880\partightenfactor0
+\ls1\ilvl3\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Input: The\'a0crystal_structure\'a0section of the config.\
+\ls1\ilvl3\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Action: Reads\'a0lattice_parameters. Calculates and returns the 3x3 Cartesian unit cell vectors (e.g., rows are\'a0va,\'a0vb,\'a0vc). Handle different input formats for lattice parameters (e.g., list\'a0[a,b,c,alpha,beta,gamma]\'a0or dict).\
+\pard\tx1660\tx2160\pardeftab720\li2160\fi-2160\partightenfactor0
+\ls1\ilvl2
+\f1\b \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	3	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 atom_pos_from_config(config_crystal_structure: dict, unit_cell_vectors_cartesian: np.ndarray) -> np.ndarray:
+\f0\b0 \
+\pard\tx2380\tx2880\pardeftab720\li2880\fi-2880\partightenfactor0
+\ls1\ilvl3\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Input:\'a0crystal_structure\'a0section and Cartesian unit cell vectors.\
+\ls1\ilvl3\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Action: Reads\'a0atoms_uc. Converts fractional coordinates (pos) to Cartesian coordinates using\'a0unit_cell_vectors_cartesian. Initializes atom label-to-index maps. Returns an\'a0(N_atoms_uc, 3)\'a0NumPy array of Cartesian positions.\
+\pard\tx1660\tx2160\pardeftab720\li2160\fi-2160\partightenfactor0
+\ls1\ilvl2
+\f1\b \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	4	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 atom_pos_ouc_from_config(atom_positions_uc_cartesian: np.ndarray, unit_cell_vectors_cartesian: np.ndarray, config_calc_settings: dict) -> np.ndarray:
+\f0\b0 \
+\pard\tx2380\tx2880\pardeftab720\li2880\fi-2880\partightenfactor0
+\ls1\ilvl3\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Input: Cartesian positions of UC atoms, Cartesian unit cell vectors, and\'a0calculation_settings\'a0from config (especially\'a0neighbor_shells).\
+\ls1\ilvl3\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Action: Generates Cartesian atomic positions for all atoms in the primary unit cell and the specified neighboring unit cells. Ensure unique positions if overlaps occur.\
+\pard\tx1660\tx2160\pardeftab720\li2160\fi-2160\partightenfactor0
+\ls1\ilvl2
+\f1\b \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	5	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 mpr_from_config(config_crystal_structure: dict, numerical_parameters: dict, atom_pos_uc_cartesian: np.ndarray) -> List[sp.Matrix]:
+\f0\b0 \
+\pard\tx2380\tx2880\pardeftab720\li2880\fi-2880\partightenfactor0
+\ls1\ilvl3\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Input:\'a0crystal_structure\'a0section (containing\'a0magmom_classical\'a0for each atom), the\'a0numerical_parameters\'a0dictionary (in case classical moments depend on them, though this is less common for\'a0mpr), and UC atom positions.\
+\ls1\ilvl3\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Action: For each atom in\'a0atoms_uc, read its\'a0magmom_classical. Convert this to a classical spin direction vector. Generate a 3x3 SymPy rotation matrix (Ud_i) that aligns the local z-axis with this classical spin direction. The list of these matrices is returned.\
+\pard\tx2380\tx2880\pardeftab720\li2880\fi-2880\partightenfactor0
+\ls1\ilvl3
+\f2\i \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Note on Field Dependence:
+\f0\i0 \'a0If the classical spin structure is significantly altered by an applied field (requiring minimization), this\'a0mpr_from_config\'a0should ideally represent the\'a0
+\f2\i zero-field
+\f0\i0 \'a0or a\'a0
+\f2\i base
+\f0\i0 \'a0configuration. The field-induced changes would then be handled by\'a0MagCalc\'a0using the\'a0Ud_numeric_override\'a0mechanism, fed by an external classical minimization routine (like in\'a0spin_model_hc.py). The config's\'a0applied_field\'a0section is primarily for the Zeeman term in the LSWT Hamiltonian.\
+\pard\tx1660\tx2160\pardeftab720\li2160\fi-2160\partightenfactor0
+\ls1\ilvl2
+\f1\b \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	6	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 spin_interactions_from_config(numerical_parameters: dict, config_interactions: dict, atom_pos_uc_cartesian: np.ndarray, atom_pos_ouc_cartesian: np.ndarray, unit_cell_vectors_cartesian: np.ndarray) -> Tuple[sp.Matrix, sp.Matrix]:
+\f0\b0 \
+\pard\tx2380\tx2880\pardeftab720\li2880\fi-2880\partightenfactor0
+\ls1\ilvl3\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Input:\'a0numerical_parameters\'a0dict,\'a0interactions\'a0section from config, Cartesian positions for UC and OUC atoms, and Cartesian unit cell vectors.\
+\ls1\ilvl3\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Action: This is a critical function.\
+\pard\tx3100\tx3600\pardeftab720\li3600\fi-3600\partightenfactor0
+\ls1\ilvl4\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Initialize symbolic\'a0Jex_sym\'a0(N_uc x N_ouc) and\'a0DM_matrix_sym\'a0(N_uc x N_ouc, where each element is a 1x3 SymPy Matrix for the DM vector).\
+\ls1\ilvl4\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Iterate through\'a0config_interactions['heisenberg']:\
+\pard\tx3820\tx4320\pardeftab720\li4320\fi-4320\partightenfactor0
+\ls1\ilvl5\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Get\'a0atom_label_i,\'a0atom_label_j,\'a0J\'a0(symbolic/numeric), and\'a0rij_offset.\
+\ls1\ilvl5\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Convert labels to\'a0idx_i_uc\'a0and\'a0idx_j_uc_config.\
+\ls1\ilvl5\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Calculate the target Cartesian position of atom\'a0j\'a0using\'a0atom_pos_uc_cartesian[idx_j_uc_config] + rij_offset @ unit_cell_vectors_cartesian.\
+\ls1\ilvl5\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Find the index\'a0idx_j_ouc\'a0in\'a0atom_pos_ouc_cartesian\'a0that matches this target position (within a small tolerance).\
+\ls1\ilvl5\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 If\'a0J\'a0is symbolic, use\'a0sp.Symbol(J_val_str)\'a0or retrieve from\'a0numerical_parameters\'a0if it's a key there. If numeric, use\'a0sp.S(J_val_num).\
+\ls1\ilvl5\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Set\'a0Jex_sym[idx_i_uc, idx_j_ouc].\
+\pard\tx3100\tx3600\pardeftab720\li3600\fi-3600\partightenfactor0
+\ls1\ilvl4\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Iterate through\'a0config_interactions['dm_interaction']\'a0similarly, constructing the 1x3 DM SymPy Matrix for\'a0DM_matrix_sym[idx_i_uc, idx_j_ouc].\
+\ls1\ilvl4\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Handle other interaction types if defined (e.g., single-ion anisotropy would modify the diagonal parts of the Hamiltonian or be added as separate terms).\
+\pard\tx2380\tx2880\pardeftab720\li2880\fi-2880\partightenfactor0
+\ls1\ilvl3\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Return\'a0Jex_sym,\'a0DM_matrix_sym.\
+\pard\tx1660\tx2160\pardeftab720\li2160\fi-2160\partightenfactor0
+\ls1\ilvl2
+\f1\b \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	7	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Hamiltonian_from_config(Sxyz_operators_ouc: List[sp.Matrix], numerical_parameters_sym: dict, config_data: dict) -> sp.Expr:
+\f0\b0 \
+\pard\tx2380\tx2880\pardeftab720\li2880\fi-2880\partightenfactor0
+\ls1\ilvl3\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Input: List of symbolic spin operators\'a0Sxyz_operators_ouc\'a0(for OUC atoms, from\'a0MagCalc), symbolic\'a0numerical_parameters_sym\'a0(this should be\'a0MagCalc's\'a0p_sym\'a0which are SymPy symbols), and the full\'a0config_data\'a0dictionary.\
+\ls1\ilvl3\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Action:\
+\pard\tx3100\tx3600\pardeftab720\li3600\fi-3600\partightenfactor0
+\ls1\ilvl4\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Call\'a0unit_cell_from_config,\'a0atom_pos_from_config,\'a0atom_pos_ouc_from_config\'a0to get necessary geometric info.\
+\ls1\ilvl4\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Call\'a0spin_interactions_from_config\'a0(passing\'a0numerical_parameters_sym\'a0to get symbolic Jex and DM matrices if parameters in config are symbolic strings).\
+\ls1\ilvl4\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Construct the total Hamiltonian expression:\
+\pard\tx3820\tx4320\pardeftab720\li4320\fi-4320\partightenfactor0
+\ls1\ilvl5\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Sum Heisenberg terms:\'a00.5 * Jex_sym[i,j] * Sxyz_operators_ouc[i].dot(Sxyz_operators_ouc[j_ouc]).\
+\ls1\ilvl5\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Sum DM terms:\'a00.5 * DM_vector_ij.dot(Sxyz_operators_ouc[i].cross(Sxyz_operators_ouc[j_ouc])).\
+\ls1\ilvl5\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Add Zeeman term using\'a0config_data['interactions']['applied_field']\'a0and\'a0numerical_parameters_sym[H_magnitude_symbol].\
+\ls1\ilvl5\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Add single-ion anisotropy terms if defined.\
+\pard\tx3100\tx3600\pardeftab720\li3600\fi-3600\partightenfactor0
+\ls1\ilvl4\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Return the expanded symbolic Hamiltonian expression.\
+\pard\pardeftab720\sa260\partightenfactor0
+
+\f1\b \cf2 Phase 2: Integration and Testing
+\f0\b0 \
+\pard\tx220\tx720\pardeftab720\li720\fi-720\sa260\partightenfactor0
+\ls2\ilvl0
+\f1\b \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u8226 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Step 4: Integrate with\'a0magcalc.py
+\f0\b0 \
+\pard\tx940\tx1440\pardeftab720\li1440\fi-1440\partightenfactor0
+\ls2\ilvl1
+\f1\b \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9702 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Objective:
+\f0\b0 \'a0Modify\'a0MagCalc\'a0to use the new configuration-driven model.\
+\ls2\ilvl1
+\f1\b \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9702 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Details:
+\f0\b0 \
+\pard\tx1660\tx2160\pardeftab720\li2160\fi-2160\partightenfactor0
+\ls2\ilvl2\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	1	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 In\'a0MagCalc.__init__:\
+\pard\tx2380\tx2880\pardeftab720\li2880\fi-2880\partightenfactor0
+\ls2\ilvl3\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Add a new parameter\'a0config_filepath: Optional[str] = None.\
+\ls2\ilvl3\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 If\'a0config_filepath\'a0is provided:\
+\pard\tx3100\tx3600\pardeftab720\li3600\fi-3600\partightenfactor0
+\ls2\ilvl4\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Call\'a0load_spin_model_config(config_filepath)\'a0to get\'a0self.config_data.\
+\ls2\ilvl4\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Extract\'a0spin_magnitude\'a0from\'a0config_data['crystal_structure']['atoms_uc'][0]['spin_S'].\
+\ls2\ilvl4\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Extract\'a0hamiltonian_params\'a0(numerical values) from\'a0config_data['parameters']. Store this as\'a0self.p_numerical.\
+\ls2\ilvl4\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Set\'a0self.sm = generic_spin_model\'a0(the new module).\
+\ls2\ilvl4\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 The symbolic parameters\'a0self.params_sym\'a0should be created based on the keys in\'a0config_data['parameters'].\
+\pard\tx2380\tx2880\pardeftab720\li2880\fi-2880\partightenfactor0
+\ls2\ilvl3\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Else (if\'a0config_filepath\'a0is None), retain the old initialization path using\'a0spin_magnitude,\'a0hamiltonian_params\'a0(as a list/array), and\'a0spin_model_module\'a0for backward compatibility or direct use.\
+\pard\tx1660\tx2160\pardeftab720\li2160\fi-2160\partightenfactor0
+\ls2\ilvl2\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	2	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 In\'a0MagCalc._load_or_generate_matrices\'a0(which calls\'a0gen_HM):\
+\pard\tx2380\tx2880\pardeftab720\li2880\fi-2880\partightenfactor0
+\ls2\ilvl3\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 If using config,\'a0gen_HM\'a0should be called with\'a0self.sm\'a0(the\'a0generic_spin_model\'a0module),\'a0self.k_sym,\'a0self.S_sym, and\'a0list(self.params_sym). The\'a0generic_spin_model.py\'a0functions will internally use\'a0self.config_data\'a0(which\'a0MagCalc\'a0would need to pass to them, or they access it via\'a0self.sm\'a0if\'a0MagCalc\'a0sets it as an attribute of the module instance, though passing explicitly is cleaner).\
+\pard\tx2380\tx2880\pardeftab720\li2880\fi-2880\partightenfactor0
+\ls2\ilvl3
+\f2\i \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Correction:
+\f0\i0 \'a0gen_HM\'a0itself is part of\'a0MagCalc\'a0now. The functions within\'a0generic_spin_model.py\'a0like\'a0mpr_from_config,\'a0spin_interactions_from_config,\'a0Hamiltonian_from_config\'a0are the ones that\'a0MagCalc's internal\'a0_gen_Jij_Dj_sym\'a0and\'a0_gen_HM_sym\'a0(or their equivalents in the new\'a0gen_HM\'a0structure) will call.\
+\pard\tx1660\tx2160\pardeftab720\li2160\fi-2160\partightenfactor0
+\ls2\ilvl2\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	3	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Modify\'a0MagCalc._calculate_numerical_ud():\
+\pard\tx2380\tx2880\pardeftab720\li2880\fi-2880\partightenfactor0
+\ls2\ilvl3\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 If using config, it should use\'a0self.p_numerical\'a0(from\'a0config_data['parameters']) for substitutions into\'a0self.Ud_sym.\
+\pard\tx1660\tx2160\pardeftab720\li2160\fi-2160\partightenfactor0
+\ls2\ilvl2\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	4	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Modify\'a0MagCalc.calculate_dispersion\'a0and\'a0MagCalc.calculate_sqw:\
+\pard\tx2380\tx2880\pardeftab720\li2880\fi-2880\partightenfactor0
+\ls2\ilvl3\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 The\'a0process_calc_disp\'a0and\'a0process_calc_Sqw\'a0worker functions will receive\'a0self.p_numerical\'a0when lambdifying\'a0self.HMat_sym.\
+\pard\tx220\tx720\pardeftab720\li720\fi-720\sa260\partightenfactor0
+\ls2\ilvl0
+\f1\b \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u8226 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Step 5: Testing and Validation
+\f0\b0 \
+\pard\tx940\tx1440\pardeftab720\li1440\fi-1440\partightenfactor0
+\ls2\ilvl1
+\f1\b \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9702 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Objective:
+\f0\b0 \'a0Ensure the new system works correctly and reproduces known results.\
+\ls2\ilvl1
+\f1\b \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9702 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Details:
+\f0\b0 \
+\pard\tx1660\tx2160\pardeftab720\li2160\fi-2160\partightenfactor0
+\ls2\ilvl2
+\f1\b \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	1	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Existing Model Test (e.g., KFe3J or CVO):
+\f0\b0 \
+\pard\tx2380\tx2880\pardeftab720\li2880\fi-2880\partightenfactor0
+\ls2\ilvl3\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Create a\'a0material_config.yaml\'a0file that accurately describes KFe3J (or CVO, using\'a0spin_model_hc.py\'a0as a reference for interactions and structure).\
+\ls2\ilvl3\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Modify an existing script (e.g.,\'a0sw_KFe3J.py\'a0or\'a0sw_CVO.py) to initialize\'a0MagCalc\'a0using the new\'a0config_filepath\'a0argument.\
+\ls2\ilvl3\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Run the script and compare the output (dispersion plots, S(Q,w) maps) with results obtained from the original, hardcoded spin model. They should match closely.\
+\pard\tx1660\tx2160\pardeftab720\li2160\fi-2160\partightenfactor0
+\ls2\ilvl2
+\f1\b \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	2	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 New Simple System Test:
+\f0\b0 \
+\pard\tx2380\tx2880\pardeftab720\li2880\fi-2880\partightenfactor0
+\ls2\ilvl3\cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Create a\'a0material_config.yaml\'a0for a very simple system (e.g., a 1D ferromagnetic chain or a 2D square lattice antiferromagnet).\
+\ls2\ilvl3\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Define its\'a0crystal_structure,\'a0interactions\'a0(e.g., just one\'a0J), and\'a0parameters.\
+\ls2\ilvl3\kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9642 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Write a small script to run\'a0MagCalc\'a0with this new config and plot its dispersion. Verify that the dispersion matches analytical expectations.\
+\pard\tx220\tx720\pardeftab720\li720\fi-720\sa260\partightenfactor0
+\ls2\ilvl0
+\f1\b \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u8226 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Step 6: Documentation
+\f0\b0 \
+\pard\tx940\tx1440\pardeftab720\li1440\fi-1440\partightenfactor0
+\ls2\ilvl1
+\f1\b \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9702 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Objective:
+\f0\b0 \'a0Provide clear documentation for users.\
+\ls2\ilvl1
+\f1\b \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	\uc0\u9702 	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Details:
+\f0\b0 \
+\pard\tx1660\tx2160\pardeftab720\li2160\fi-2160\partightenfactor0
+\ls2\ilvl2
+\f1\b \cf2 \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	1	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 YAML Configuration Format:
+\f0\b0 \'a0In the project's\'a0README.md\'a0or a dedicated documentation file, thoroughly describe the structure of\'a0material_config.yaml. Explain each section, key, expected data type, and provide examples.\
+\ls2\ilvl2
+\f1\b \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	2	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Example Files:
+\f0\b0 \'a0Include well-commented example\'a0material_config.yaml\'a0files for the systems tested in Step 5.\
+\ls2\ilvl2
+\f1\b \kerning1\expnd0\expndtw0 \outl0\strokewidth0 {\listtext	3	}\expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 Usage Instructions:
+\f0\b0 \'a0Update any user guides or examples to show how to run calculations using the new configuration-driven approach (i.e., initializing\'a0MagCalc\'a0with\'a0config_filepath).\
+\pard\pardeftab720\sa260\partightenfactor0
+\cf2 This plan provides a structured approach to implementing a configuration-driven spin model. It's a significant refactoring, so tackling it step-by-step and testing frequently will be key.\
+Please let me know if you'd like to proceed, or if you have any questions or modifications to this plan before implementation.\
+}
