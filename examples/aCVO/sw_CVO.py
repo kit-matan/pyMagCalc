@@ -31,12 +31,8 @@ import magcalc as mc
 import yaml
 
 # Import the CVO spin model that now includes minimization
-try:
-    import spin_model_hc as cvo_spin_model  # MODIFIED: Use the new model
-except ImportError:
-    print("Error: Could not import spin_model_hc.py.")
-    print("Please ensure it exists and is in your Python path or the aCVO directory.")
-    sys.exit(1)
+# spin_model_module will be imported dynamically later based on config
+cvo_spin_model = None
 
 import logging
 import tkinter as tk  # For screen size detection
@@ -421,16 +417,47 @@ if __name__ == "__main__":
     Dy = model_p_config.get("Dy", -2.0)  # DM component for J1
     D3 = model_p_config.get("D3", 0.0)  # DM component for J3
     H_field = model_p_config.get("H", 0.0)
-    params_val = [
-        J1,
-        J2_ratio * J1,
-        J3_ratio * J1,
-        G1,
-        Dx,
-        Dy,
-        D3,
-        H_field,
-    ]  # Added Dy and D3 to the list
+    spin_model_type = cvo_config.get("spin_model_type", "ha").lower()
+
+    if spin_model_type == "hc":
+        try:
+            import spin_model_hc as cvo_spin_model
+            logger.info("Using spin model: spin_model_hc (H || c)")
+        except ImportError:
+            logger.error("Could not import spin_model_hc.py. Exiting.")
+            sys.exit(1)
+        
+        # params for hc: J1, J2, J3, G1, Dx, Dy, D3, H
+        params_val = [
+            J1,
+            J2_ratio * J1,
+            J3_ratio * J1,
+            G1,
+            Dx,
+            Dy,
+            D3,
+            H_field,
+        ]
+    elif spin_model_type == "ha":
+        try:
+            import spin_model_ha as cvo_spin_model
+            logger.info("Using spin model: spin_model_ha (H || a)")
+        except ImportError:
+            logger.error("Could not import spin_model_ha.py. Exiting.")
+            sys.exit(1)
+
+        # params for ha: J1, J2, J3, G1, Dx, H
+        params_val = [
+            J1,
+            J2_ratio * J1,
+            J3_ratio * J1,
+            G1,
+            Dx,
+            H_field,
+        ]
+    else:
+        logger.error(f"Unknown spin_model_type: {spin_model_type}. Use 'ha' or 'hc'.")
+        sys.exit(1)
 
     cache_mode = calc_p_config.get("cache_mode", "r")
     cache_file_base = calc_p_config.get("cache_file_base", "CVO_model_cache")
@@ -464,31 +491,38 @@ if __name__ == "__main__":
     # 1. The magnetic field is non-zero.
     # 2. cache_mode is not 'r' (i.e., we are in a mode that might regenerate symbolic matrices).
     if abs(H_field_val_from_config) > 1e-9 and cache_mode != "r":
-        logger.info(
-            f"Non-zero H_field ({H_field_val_from_config}) detected. "
-            "Performing classical energy minimization for CVO before MagCalc initialization."
-        )  # Now calling the function from the new model
-        optimal_thetas, Ud_numeric_optimized, final_classical_energy = (
-            cvo_spin_model.get_field_optimized_state_for_lswt(params_val, S_val)
-        )
-        if Ud_numeric_optimized is not None:
+        if hasattr(cvo_spin_model, 'get_field_optimized_state_for_lswt'):
             logger.info(
-                f"Classical ground state found with energy: {final_classical_energy:.6f} meV."
+                f"Non-zero H_field ({H_field_val_from_config}) detected. "
+                "Performing classical energy minimization for CVO before MagCalc initialization."
             )
-            Ud_numeric_for_magcalc = Ud_numeric_optimized
-            # Log the canting angles
-            if optimal_thetas is not None:
-                canting_angles_degrees_sw = 90.0 - np.degrees(optimal_thetas)
+            optimal_thetas, Ud_numeric_optimized, final_classical_energy = (
+                cvo_spin_model.get_field_optimized_state_for_lswt(params_val, S_val)
+            )
+            if Ud_numeric_optimized is not None:
                 logger.info(
-                    f"Canting angles from a-b plane (degrees towards +z): {canting_angles_degrees_sw}"
+                    f"Classical ground state found with energy: {final_classical_energy:.6f} meV."
                 )
-                logger.info(
-                    f"Mean canting angle (degrees): {np.mean(canting_angles_degrees_sw):.4f}"
+                Ud_numeric_for_magcalc = Ud_numeric_optimized
+                # Log the canting angles
+                if optimal_thetas is not None:
+                    canting_angles_degrees_sw = 90.0 - np.degrees(optimal_thetas)
+                    logger.info(
+                        f"Canting angles from a-b plane (degrees towards +z): {canting_angles_degrees_sw}"
+                    )
+                    logger.info(
+                        f"Mean canting angle (degrees): {np.mean(canting_angles_degrees_sw):.4f}"
+                    )
+            else:
+                logger.error(
+                    "Failed to determine field-optimized classical ground state. "
+                    "MagCalc will proceed with Ud derived from zero-field mpr."
                 )
         else:
-            logger.error(
-                "Failed to determine field-optimized classical ground state. "
-                "MagCalc will proceed with Ud derived from zero-field mpr."
+             logger.warning(
+                f"Non-zero H_field ({H_field_val_from_config}) detected, but 'get_field_optimized_state_for_lswt' "
+                "is missing in spin_model_ha. Proceeding without explicit classical minimization in this script. "
+                "Ensure the model handles field correctly or that mpr is sufficient."
             )
     else:
         if abs(H_field_val_from_config) <= 1e-9:

@@ -631,9 +631,9 @@ def get_field_optimized_state_for_lswt(params_numerical, S_val_numerical):
     global _cached_optimal_thetas_for_mpr
 
     # --- Theta Caching Logic - Use common cache directory ---
-    # Path to .../research/magcalc/pyMagCalc_cache/
+    # Path to .../research/magcalc/cache/
     common_cache_root = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "..", "pyMagCalc_cache")
+        os.path.join(os.path.dirname(__file__), "..", "..", "cache")
     )
     theta_cache_dir = os.path.join(
         common_cache_root, "theta_angles", "cvo"

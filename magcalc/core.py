@@ -1110,7 +1110,7 @@ class MagCalc:
         # --- Define Cache Directories ---
         # Root cache directory, one level above the pyMagCalc package
         self.cache_root_dir = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "pyMagCalc_cache")
+            os.path.join(os.path.dirname(__file__), "..", "cache")
         )
         self.symbolic_cache_dir = os.path.join(self.cache_root_dir, "symbolic_matrices")
         self.numerical_cache_dir = os.path.join(

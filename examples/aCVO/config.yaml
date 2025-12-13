@@ -1,16 +1,17 @@
 # ... (other configurations in your main config.yaml) ...
 
 cvo_model:
+  spin_model_type: "ha" # Options: "ha" (H || a), "hc" (H || c)
   model_params:
     S: 0.5
     J1: 2.49
     J2_ratio: 1.12 # J2 = J2_ratio * J1
     J3_ratio: 2.03 # J3 = J3_ratio * J1
     G1: 0.28
-    Dx: 2.67
-    Dy: -2.0 # DM vector component in bc-plane for J1
-    D3: 0.1   # Uniform DM vector along a-axis for J3
-    H: 20.0
+    Dx: 2.67 # Uniform DM vector along a-axis for J3
+    Dy: 0 # DM vector component in bc-plane for J1
+    D3: 0   
+    H: 6.0
   calculation:
     cache_mode: "w" # 'r' to read, 'w' to write MagCalc's internal cache
     cache_file_base_prefix: "CVO_model_cache" # Base prefix for MagCalc's internal cache files.
