@@ -12,8 +12,17 @@ Calculate and plot the spin-wave dispersion for KFe3(OH)6(SO4)2
 import numpy as np
 from timeit import default_timer
 import matplotlib.pyplot as plt
+import os
+import sys
+
+# Adjust sys.path to correctly locate the magcalc package
+current_script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root_dir = os.path.dirname(os.path.dirname(os.path.dirname(current_script_dir)))
+if project_root_dir not in sys.path:
+    sys.path.insert(0, project_root_dir)
+
 import magcalc as mc  # Import the refactored magcalc module
-import spin_model as kfe3j_model  # Import the specific spin modelimport sys
+import spin_model as kfe3j_model  # Import the specific spin model
 
 # It's often good practice to configure logging in the main script too
 import logging
@@ -55,6 +64,13 @@ def calculate_and_save_dispersion(p, S, wr, output_filename):
     try:
         # --- NEW WAY: Instantiate MagCalc and call method ---
         logger.info(f"Initializing MagCalc for {cache_base}...")
+        
+        # Ensure cache dir exists if using default? MagCalc handles it?
+        # MagCalc handles cache setup.
+        
+        # We need to ensure we use 'cache/symbolic_matrices' correctly?
+        # MagCalc handles that.
+        
         calculator = mc.MagCalc(
             spin_magnitude=S,
             hamiltonian_params=p,
@@ -270,7 +286,10 @@ if __name__ == "__main__":
     write_read_mode = "r"  # Change to 'w' to regenerate cache
 
     # Define the output file for calculated data
-    data_filename = "KFe3J_disp_data.npz"
+    data_filename = os.path.join(project_root_dir, "cache", "data", "KFe3J_disp_data.npz")
+    
+    # Ensure cache/data exists
+    os.makedirs(os.path.dirname(data_filename), exist_ok=True)
 
     logger.info(
         f"Starting KFe3J dispersion calculation with mode='{write_read_mode}'..."

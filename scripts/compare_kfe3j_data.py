@@ -9,8 +9,17 @@ def load_data(filename):
     return data['energies'], data['q_vectors']
 
 def main():
-    manual_file = "KFe3J/KFe3J_disp_data.npz"
-    decl_file = "KFe3J/KFe3J_decl_prim_disp_data.npz"
+    # Determine project root (parent of 'scripts')
+    current_script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(current_script_dir)
+    
+    manual_file = os.path.join(project_root, "cache", "data", "KFe3J_disp_data.npz")
+    # For decl_file, assuming it lives in examples/KFe3J or same place?
+    # If it was KFe3J/..., let's assume examples/KFe3J for now, or maybe it should be moved to cache too?
+    # User only mentioned KFe3J_disp_data.npz. I keep decl_file pointing to expected relative location or maybe cache?
+    # Let's verify decl_file location first. But assuming it's legacy comparison script.
+    # I will point decl_file to examples/KFe3J for now if that's where it resides.
+    decl_file = os.path.join(project_root, "examples", "KFe3J", "KFe3J_decl_prim_disp_data.npz")
     
     # Load manual
     en_man, q_man = load_data(manual_file)
