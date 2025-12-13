@@ -184,30 +184,30 @@ def spin_interactions(p):
     Gex = sp.zeros(Nspin, Nspin_ouc)
     for i in range(Nspin):
         for j in range(Nspin_ouc):
-            if 2.85 < np.round_(la.norm(apos[i]-apos_ouc[j]), 2) < 3.1:
+            if 2.85 < np.round(la.norm(apos[i]-apos_ouc[j]), 2) < 3.1:
                 Jex[i, j] = J1
                 Gex[i, j] = G * J1
-                # print(i, j, np.round_(la.norm(apos[i]-r_pos_ouc[j]), 2))
-            elif 3.15 < np.round_(la.norm(apos[i]-apos_ouc[j]), 2) < 3.35:
+                # print(i, j, np.round(la.norm(apos[i]-r_pos_ouc[j]), 2))
+            elif 3.15 < np.round(la.norm(apos[i]-apos_ouc[j]), 2) < 3.35:
                 Jex[i, j] = J2
                 Gex[i, j] = G * J2
-            elif 4.6 < np.round_(la.norm(apos[i] - apos_ouc[j]), 2) < 4.7:
+            elif 4.6 < np.round(la.norm(apos[i] - apos_ouc[j]), 2) < 4.7:
                 Jex[i, j] = J3
                 Gex[i, j] = G * J3
-                # print(i, j, np.round_(la.norm(apos[i]-r_pos_ouc[j]), 2))
-            elif 4.8 < np.round_(la.norm(apos[i] - apos_ouc[j]), 2) < 4.9:
+                # print(i, j, np.round(la.norm(apos[i]-r_pos_ouc[j]), 2))
+            elif 4.8 < np.round(la.norm(apos[i] - apos_ouc[j]), 2) < 4.9:
                 Jex[i, j] = J4
                 Gex[i, j] = G * J4
-                # print(i, j, np.round_(la.norm(apos[i]-r_pos_ouc[j]), 2))
-            elif 5.1 < np.round_(la.norm(apos[i]-apos_ouc[j]), 2) < 5.21:
+                # print(i, j, np.round(la.norm(apos[i]-r_pos_ouc[j]), 2))
+            elif 5.1 < np.round(la.norm(apos[i]-apos_ouc[j]), 2) < 5.21:
                 Jex[i, j] = J5
                 Gex[i, j] = G * J5
-                # print(i, j, np.round_(la.norm(apos[i]-r_pos_ouc[j]), 2))
-            elif 5.23 < np.round_(la.norm(apos[i]-apos_ouc[j]), 2) < 5.33:
+                # print(i, j, np.round(la.norm(apos[i]-r_pos_ouc[j]), 2))
+            elif 5.23 < np.round(la.norm(apos[i]-apos_ouc[j]), 2) < 5.33:
                 Jex[i, j] = J6
                 Gex[i, j] = G * J6
-                # print(i, j, np.round_(la.norm(apos[i]-r_pos_ouc[j]), 2))
-            elif 7.3 < np.round_(la.norm(apos[i]-apos_ouc[j]), 2) < 7.36:
+                # print(i, j, np.round(la.norm(apos[i]-r_pos_ouc[j]), 2))
+            elif 7.3 < np.round(la.norm(apos[i]-apos_ouc[j]), 2) < 7.36:
                 Jex[i, j] = J7
                 Gex[i, j] = G * J7
             else:

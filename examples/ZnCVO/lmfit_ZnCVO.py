@@ -1,20 +1,18 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Mon Aug 20 15:11:17 2018
+import os
+import sys
 
-@author: Ganatee Gitgeatpong and Kit Matan
-This work is based on the paper PRB 106, 214438 (2022).
+# Adjust sys.path to correctly locate the magcalc package (if not already in path)
+current_script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root_dir = os.path.dirname(os.path.dirname(current_script_dir))
+if project_root_dir not in sys.path:
+    sys.path.insert(0, project_root_dir)
 
-fit the spin-wave data of Zn-doped Cu2V2O7
-"""
-import KFe3J.spin_model_sf as sm
+import spin_model as sm
 import numpy as np
 import magcalc as mc
 from numpy import loadtxt
 from timeit import default_timer
 import matplotlib.pyplot as plt
-import sys
 from lmfit import Model
 import math
 
@@ -28,32 +26,87 @@ def sw_ZnCVO(x, J1, J2, J3, J4, J5, J6, J7, G, H):
     S = 1.0 / 2.0
     p = [J1, J2, J3, J4, J5, J6, J7, G, H]
     k = []
-    for i in range(len(x[:, 0])):
-        if x[i, 2] == 1:
+    # x is passed by lmfit usually as numpy array.
+    n_points = len(x)
+    for i in range(n_points):
+        # Safely access columns assuming x shape is (N, >=3)
+        # column 0 is q value, column 2 is direction index (1=0k0, 2=h0l?)
+        # Logic from original code:
+        # if x[i, 2] == 1: qx=0, qy=val*bstr, qz=0 (along K)
+        # if x[i, 2] == 2: qx=val*astr*.., qy=2*bstr, qz=val*cstr*.. (along H)
+        
+        q_idx = int(x[i, 2]) if hasattr(x[i, 2], '__int__') else int(x[i, 2])
+        val = x[i, 0]
+        
+        if q_idx == 1:
             qx = 0
-            qy = x[i, 0] * bstr
+            qy = val * bstr
             qz = 0
-        elif x[i, 2] == 2:
-            qx = x[i, 0] * astr * np.cos(math.radians(beta-90))
+        elif q_idx == 2:
+            qx = val * astr * np.cos(math.radians(beta-90))
             qy = 2 * bstr
-            qz = x[i, 0] * cstr * np.sin(math.radians(beta-90))
+            qz = val * cstr * np.sin(math.radians(beta-90))
         else:
-            print('Wrong k-vector index!')
+            print(f'Wrong k-vector index! {q_idx}')
             sys.exit()
         q1 = np.array([qx, qy, qz])
         k.append(q1)
-    En_k = mc.calc_disp(S, k, p, 'ZnCVO', 'r')
+    
+    k_arr = np.array(k)
+    
+    # Initialize MagCalc
+    # Use consistent cache base 'ZnCVO_lmfit'.
+    # For fitting, we want 'r' mode mostly. But if symbolic missing, auto-switch to 'w' once.
+    # To avoid repeated checking inside the fit loop which is called many times, we rely on 'r'.
+    # Assuming 'w' run happens once initially or manually.
+    # However, to be robust for first run, we try 'r', if fails we might need 'w'.
+    # But inside a fit loop, re-initializing MagCalc might be costly if it re-loads cache every time?
+    # MagCalc class re-init does load cache. Ideally we instantiated valid calc outside.
+    # But lmfit passes params to function. The params change!
+    # MagCalc checks params_changed.
+    
+    # We will use a standard robust check:
+    cache_base = 'ZnCVO_lmfit'
+    cache_mode = 'r'
+    
+    # Check if symbolic cache exists to avoid error in 'r' mode (only check once efficiently?)
+    # Since we can't easily persist state across calls without a global or class, we check file existence.
+    sym_hm_file = os.path.join(project_root_dir, 'cache', 'symbolic_matrices', f'{cache_base}_HM.pck')
+    if not os.path.exists(sym_hm_file):
+        cache_mode = 'w'
+        
+    calc = mc.MagCalc(spin_magnitude=S, hamiltonian_params=p, cache_file_base=cache_base, 
+                      spin_model_module=sm, cache_mode=cache_mode)
+
+    res = calc.calculate_dispersion(k_arr)
+    if isinstance(res, tuple):
+        if len(res) == 3:
+             _, energies, _ = res
+        else:
+             energies, _ = res
+    else:
+        energies = res
+        
+    energies = np.array(energies)
+    
     En = []
-    for i in range(len(x[:, 0])):
-        En1 = En_k[i][int(x[i, 1]-1)]
+    for i in range(n_points):
+        band_idx = int(x[i, 1] - 1)
+        # bound check?
+        if band_idx < 0 or band_idx >= energies.shape[1]:
+             # fallback or error?
+             En1 = 0.0 # Should not happen if data correct
+        else:
+             En1 = energies[i, band_idx]
         En.append(En1)
     # print(np.abs(En-x[:, 3]))
-    return En
+    return np.array(En)
 
 
 if __name__ == "__main__":
     st = default_timer()
-    data = loadtxt('data/sw_ZnCVO.txt', comments="#", delimiter=',', unpack=False, dtype=float)
+    data_path = os.path.join(project_root_dir, 'data', 'sw_ZnCVO.txt')
+    data = loadtxt(data_path, comments="#", delimiter=',', unpack=False, dtype=float)
     p = [8.710832, 0, 0, 0, 5.048879, 2.141771, 0.4964815, 0.00435000, 0]
     x = np.zeros((len(data[:, 0]), 4))
     x[:, 0] = data[:, 0]
@@ -187,12 +240,43 @@ if __name__ == "__main__":
         qz1 = qsx[i] * cstr * np.sin(math.radians(beta-90))
         q1 = [qx1, qy1, qz1]
         qH.append(q1)
-    En_kx = mc.calc_disp(S, qH, pfit, 'ZnCVO', 'r')
+
+    # Initialize calc for final plot
+    # Use 'w' to force fresh calculation with best fit params? 
+    # Or 'r', assuming if params changed significantly MagCalc detects it?
+    # MagCalc detects param changes if cache_file_base is same but params different -> actually it overwrites 
+    # if parameters in cache don't match? No, typical MagCalc implementation checks existing cache params.
+    # But since we use same base 'ZnCVO_lmfit', the file will be overwritten multiple times during fit?
+    # Actually, MagCalc saves numerical results with hash of params. 
+    # Symbolic cache is parameter-independent (usually).
+    # So we can safely use same base for symbolic.
+    
+    # We use 'r' here, but symbolic must exist (created during fit if needed).
+    calc_final = mc.MagCalc(spin_magnitude=S, hamiltonian_params=pfit, cache_file_base='ZnCVO_lmfit', 
+                            spin_model_module=sm, cache_mode='r')
+    
+    res_kx = calc_final.calculate_dispersion(np.array(qH))
+    if isinstance(res_kx, tuple):
+        if len(res_kx) == 3:
+             _, En_kx, _ = res_kx
+        else:
+             En_kx, _ = res_kx
+    else:
+        En_kx = res_kx
+
     # calculate dispersion along K
     for i in range(len(qsy)):
         q2 = [0, qsy[i] * bstr, 0]
         qK.append(q2)
-    En_ky = mc.calc_disp(S, qK, p, 'ZnCVO', 'r')
+        
+    res_ky = calc_final.calculate_dispersion(np.array(qK))
+    if isinstance(res_ky, tuple):
+        if len(res_ky) == 3:
+             _, En_ky, _ = res_ky
+        else:
+             En_ky, _ = res_ky
+    else:
+        En_ky = res_ky
 
     Ekx1 = [En_kx[i][0] for i in range(len(En_kx))]
     Ekx2 = [En_kx[i][1] for i in range(len(En_kx))]

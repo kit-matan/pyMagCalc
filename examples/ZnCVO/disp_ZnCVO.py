@@ -9,7 +9,18 @@ This work is based on the paper PRB 106, 214438 (2022).
 import numpy as np
 from timeit import default_timer
 import matplotlib.pyplot as plt
+import os
+import sys
+
+# Adjust sys.path to correctly locate the magcalc package (if not already in path)
+current_script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root_dir = os.path.dirname(os.path.dirname(current_script_dir))
+# Trying slightly different logic to be safe: assumes examples/ZnCVO/disp_ZnCVO.py
+if project_root_dir not in sys.path:
+    sys.path.insert(0, project_root_dir)
+
 import magcalc as mc
+import spin_model as sm
 import math
 import pandas as pd
 
@@ -27,7 +38,6 @@ def plot_dispersion(p, wr):
     qsy = np.arange(0.5, 3.5 + 0.01, 0.01) # along the [010] direction 
     
     qH = []
-    qK = []
     # Calculate the spin-wave dispersion along the [100] direction
     # Note that qx is not along [100]
     for i in range(len(qsx)):
@@ -36,14 +46,50 @@ def plot_dispersion(p, wr):
         qz1 = qsx[i] * cstr * np.sin(math.radians(beta-90))
         q1 = [qx1, qy1, qz1]
         qH.append(q1)
-    En_kx = mc.calc_disp(S, qH, p, 'ZnCVO', wr)
+
+    # Initialize MagCalc
+    # Cache setup
+    cache_dir = os.path.join(project_root_dir, 'cache', 'data')
+    os.makedirs(cache_dir, exist_ok=True)
+    
+    # We use a base name based on parameters or just 'ZnCVO_disp' if we want to overwrite
+    # The original code used 'ZnCVO' as base.
+    # wr param controls cache mode ('w' or 'r')
+    cache_mode = wr
+    
+    calc = mc.MagCalc(spin_magnitude=S, hamiltonian_params=p, cache_file_base='ZnCVO_disp', 
+                      spin_model_module=sm, cache_mode=cache_mode)
+    
+    # Calculate along [100]
+    res_kx = calc.calculate_dispersion(np.array(qH))
+    if isinstance(res_kx, tuple):
+        # Handle (q, E, I) or (E, I) return
+        if len(res_kx) == 3:
+             _, En_kx, _ = res_kx
+        else:
+             En_kx, _ = res_kx
+    else:
+        En_kx = res_kx
+
+    qK = []
     # Calculate the spin-wave dispersion along the [010] direction
     for i in range(len(qsy)):
         q2 = [0, qsy[i] * bstr, 0]
         qK.append(q2)
-    En_ky = mc.calc_disp(S, qK, p, 'ZnCVO', 'r')
+
+    # Calculate along [010]
+    res_ky = calc.calculate_dispersion(np.array(qK))
+    if isinstance(res_ky, tuple):
+        if len(res_ky) == 3:
+             _, En_ky, _ = res_ky
+        else:
+             En_ky, _ = res_ky
+    else:
+        En_ky = res_ky
 
     # Extract the data from the list along the [100] direction
+    # En_kx is (N_k, N_bands). The code expects to loop over i and enable indexing [i][band].
+    # Numpy array supports [i, band] or [i][band].
     Ekx1 = [En_kx[i][0] for i in range(len(En_kx))]
     Ekx2 = [En_kx[i][1] for i in range(len(En_kx))]
     Ekx3 = [En_kx[i][2] for i in range(len(En_kx))]

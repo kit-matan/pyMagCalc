@@ -425,7 +425,10 @@ def plot_min_energy_vs_H_cvo():
     plt.close(fig)
 
     # --- 5. Saving Data ---
-    data_filename = os.path.join(SCRIPT_DIR, "CVO_min_energy_canting_vs_H_data.npz")
+    # Save to proj_root/cache/data/
+    cache_data_dir = os.path.join(PROJECT_ROOT_DIR, "cache", "data")
+    os.makedirs(cache_data_dir, exist_ok=True)
+    data_filename = os.path.join(cache_data_dir, "CVO_min_energy_canting_vs_H_data.npz")
     try:
         np.savez_compressed(
             data_filename,
