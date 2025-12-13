@@ -1,7 +1,7 @@
 # ... (other configurations in your main config.yaml) ...
 
 cvo_model:
-  spin_model_type: "ha" # Options: "ha" (H || a), "hc" (H || c)
+  spin_model_type: "hc" # Options: "ha" (H || a), "hc" (H || c)
   model_params:
     S: 0.5
     J1: 2.49

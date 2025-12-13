@@ -14,8 +14,17 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 import logging
 import yaml  # Added
-import os  # Added
 import sys
+import os
+
+# Adjust sys.path to correctly locate the magcalc package
+# Get the directory of the current script (examples/aCVO)
+script_dir = os.path.dirname(os.path.abspath(__file__)) if "__file__" in locals() else os.getcwd()
+# Get the project root directory
+project_root_dir = os.path.dirname(os.path.dirname(script_dir))
+
+if project_root_dir not in sys.path:
+    sys.path.insert(0, project_root_dir)
 
 # --- Custom Module Imports ---
 # Ensure the paths are correct for your project structure
@@ -24,7 +33,7 @@ try:
     # are in the same directory or accessible via PYTHONPATH.
     import magcalc as mc
     import classical_minimizer_cvo as cm_cvo
-    import spin_model_cvo_Hc as sm_cvo
+    import spin_model_hc as sm_cvo
 except ImportError as e:
     print(f"Error importing modules: {e}")
     print(
@@ -63,13 +72,37 @@ if __name__ == "__main__":
     )
 
     # --- Parameters from Config ---
-    S_val = config["spin_value"]
-    p_hamiltonian = config["hamiltonian_params"]
+    model_params = config["model_params"]
+    S_val = model_params["S"]
+    # Order: [J1, J2, J3, G1, Dx, H] - Ensure this matches the spin model expectation
+    p_hamiltonian = [
+        model_params["J1"],
+        model_params["J2"],
+        model_params["J3"],
+        model_params["G1"],
+        model_params["Dx"],
+        model_params["Dy"],
+        model_params["D3"],
+        model_params["H"]
+    ]
 
-    cache_cfg = config["cache"]
-    cache_mode = cache_cfg["mode"]
-    cache_file_prefix = cache_cfg.get("base_name_prefix", "cvo_Hc")
-    cache_file_base = f"{cache_file_prefix}_S{S_val}_H{p_hamiltonian[5]}"
+    cache_cfg = config["calculation"]
+    cache_mode = cache_cfg["cache_mode"]
+    base_cache_name = cache_cfg.get("cache_file_base", "CVO_alpha_map")
+    # Append field value to ensure unique symbolic cache (HM/Ud) for each field,
+    # as the Hamiltonian depends on the field-induced canting angles baked into symbolic matrices.
+    H_val_for_cache = model_params["H"]
+    cache_file_base = f"{base_cache_name}_H{H_val_for_cache:.2f}"
+    
+    # Check if we need to auto-switch to write mode if cache doesn't exist
+    # (Optional robustness step, similar to other fixes)
+    cache_dir = os.path.join(project_root_dir, "cache", "data") # Assuming standard location
+    # But wait, MagCalc handles the file paths internally based on base name.
+    # The script relies on MagCalc to find files? No, later it calls calculator.calculate_sqw
+    # which uses the internal cache.
+    # If cache_mode is 'r' and files don't exist, MagCalc might error or return None?
+    # Let's trust the user config or simple auto-logic.
+    # Given the previous context, let's just fix the key mapping first.
 
     lattice_cfg = config["lattice_params"]
     la = lattice_cfg["la"]
@@ -166,14 +199,29 @@ if __name__ == "__main__":
         q_vectors_list.append(q_vec)
         sys.exit(1)
 
-    logger.info("Finding classical ground state spin orientations...")
-    optimal_theta_angles = cm_cvo.find_ground_state_orientations(
-        p_hamiltonian, S_val, sm_cvo
+    logger.info("Finding classical ground state spin orientations via spin_model...")
+    
+    # Use the spin model's integrated function which returns the Ud matrix directly
+    # Note: get_field_optimized_state_for_lswt is a helper we saw in spin_model_cvo_Hc.py
+    optimal_theta_angles, Ud_numeric_optimized, final_energy = sm_cvo.get_field_optimized_state_for_lswt(
+        p_hamiltonian, S_val
     )
 
     if optimal_theta_angles is None:
         logger.error("Failed to find classical ground state. Exiting.")
         sys.exit(1)
+
+    # Auto-switch cache mode if symbolic matrices (HM) are missing
+    # MagCalc expects symbolic files in cache/symbolic_matrices/
+    # If user set 'r' but files are gone, we must regenerate ('w').
+    sym_hm_file = os.path.join(
+        project_root_dir, "cache", "symbolic_matrices", f"{cache_file_base}_HM.pck"
+    )
+    if not os.path.exists(sym_hm_file) and cache_mode == "r":
+        logger.warning(
+            f"Symbolic cache file {sym_hm_file} not found. Switching cache_mode to 'w' to regenerate."
+        )
+        cache_mode = "w"
 
     logger.info("Initializing MagCalc...")
     calculator = mc.MagCalc(
@@ -182,7 +230,7 @@ if __name__ == "__main__":
         cache_file_base=cache_file_base,
         spin_model_module=sm_cvo,
         cache_mode=cache_mode,
-        optimal_spin_angles=optimal_theta_angles,
+        Ud_numeric_override=Ud_numeric_optimized,
     )
 
     logger.info("Calculating S(Q,w)...")

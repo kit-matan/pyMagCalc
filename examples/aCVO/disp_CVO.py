@@ -26,13 +26,11 @@ if project_root_dir not in sys.path:
 
 import magcalc as mc
 
-# Assume a spin model module for CVO exists
-# You will need to create spin_model_cvo.py if it doesn't exist
-# and ensure it's in your Python path or the same directory as this script.
+# Import the specific spin model for CVO (using H || a as default base)
 try:
-    import spin_model_cvo
+    import spin_model_ha as spin_model_cvo
 except ImportError:
-    print("Error: Could not import spin_model_cvo.py.")
+    print("Error: Could not import spin_model_ha.py.")
     print("Please ensure it exists and is in your Python path or the aCVO directory.")
     sys.exit(1)
 

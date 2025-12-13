@@ -52,17 +52,20 @@ def plot_map(calculator: mc.MagCalc, newcalc: int):
 
     q_vectors_array = np.array(q)  # Convert list of arrays to a 2D NumPy array
 
+    # Define cache directory path
+    cache_dir = os.path.join(project_root_dir, "cache", "data")
+
     if newcalc == 1:  # New calculation
         # Use the calculator instance's method
         qout, En, Sqwout = calculator.calculate_sqw(q_vectors_array)
-        with open("pckFiles/KFe3J_EQmap_En.pck", "wb") as outEn:
+        with open(os.path.join(cache_dir, "KFe3J_EQmap_En.pck"), "wb") as outEn:
             outEn.write(pickle.dumps(En))  # En is now a tuple of arrays
-        with open("pckFiles/KFe3J_EQmap_Sqw.pck", "wb") as outSqwout:
+        with open(os.path.join(cache_dir, "KFe3J_EQmap_Sqw.pck"), "wb") as outSqwout:
             outSqwout.write(pickle.dumps(Sqwout))
     else:
-        with open("pckFiles/KFe3J_EQmap_En.pck", "rb") as inEn:
+        with open(os.path.join(cache_dir, "KFe3J_EQmap_En.pck"), "rb") as inEn:
             En = pickle.loads(inEn.read())  # Load energies
-        with open("pckFiles/KFe3J_EQmap_Sqw.pck", "rb") as inSqwout:
+        with open(os.path.join(cache_dir, "KFe3J_EQmap_Sqw.pck"), "rb") as inSqwout:
             Sqwout = pickle.loads(inSqwout.read())  # Load Sqw
 
     # En and Sqwout are now tuples of arrays, convert back to lists if needed for slicing

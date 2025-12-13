@@ -25,14 +25,15 @@ from contextlib import redirect_stdout
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 import pickle
+import spin_model as sm  # Import the spin model module
 
 
-def plot_hkmap(p, S, wr, newcalc, E_intv, qstep):
-    """Spinwave intensity S(Q,\omega) 2D Q-map
+def plot_hkmap(calculator, p, S, wr, newcalc, E_intv, qstep):
+    """Spinwave intensity S(Q,\\omega) 2D Q-map
         Inputs:
+            calculator: An initialized MagCalc instance.
             p: list of parameters
             S: spin value
-            nspins: number of spins in a unit cell
             wr: 'w' for write to file, 'r' for read from file
             newcalc: 1 for new calculation, 0 for read from file
             E_intv: energy interval for integration"""
@@ -45,28 +46,43 @@ def plot_hkmap(p, S, wr, newcalc, E_intv, qstep):
             q.append(q1)
 
     print("A total number of q points: ", len(q))
+    q_vectors_array = np.array(q)
+
+    # Define cache directory path
+    cache_dir = os.path.join(project_root_dir, "cache", "data")
 
     if newcalc == 1:
-        qout, En, Sqwout = mc.calc_Sqw(S, q, p, 'KFe3J', wr)
-        with open('pckFiles/KFe3J_HKmap_En.pck', 'wb') as outEn:
+        qout, En, Sqwout = calculator.calculate_sqw(q_vectors_array)
+        with open(os.path.join(cache_dir, 'KFe3J_HKmap_En.pck'), 'wb') as outEn:
             outEn.write(pickle.dumps(En))
-        with open('pckFiles/KFe3J_HKmap_Sqw.pck', 'wb') as outSqwout:
+        with open(os.path.join(cache_dir, 'KFe3J_HKmap_Sqw.pck'), 'wb') as outSqwout:
             outSqwout.write(pickle.dumps(Sqwout))
     else:
-        with open('pckFiles/KFe3J_HKmap_En.pck', 'rb') as inEn:
+        with open(os.path.join(cache_dir, 'KFe3J_HKmap_En.pck'), 'rb') as inEn:
             En = pickle.loads(inEn.read())
-        with open('pckFiles/KFe3J_HKmap_Sqw.pck', 'rb') as inSqwout:
+        with open(os.path.join(cache_dir, 'KFe3J_HKmap_Sqw.pck'), 'rb') as inSqwout:
             Sqwout = pickle.loads(inSqwout.read())
 
     # print(len(qsy), len(En), len(Sqwout))
     intMat = np.zeros((len(qsy), len(qsx)))
     for i in range(len(qsy)):
         for j in range(len(qsx)):
-            for band in range(len(En[0])):
-                if En[i*len(qsx)+j][band] < E_intv[1] and En[i*len(qsx)+j][band] > E_intv[0]:
-                    intMat[i, j] = intMat[i, j] + Sqwout[i*len(qsy)+j][band]
-                else:
-                    intMat[i, j] = intMat[i, j]
+            # Original code used i*len(qsx)+j for En and i*len(qsy)+j for Sqwout.
+            # Given qsx and qsy are of the same length in this script, these indices are identical.
+            # This indexing corresponds to y_idx * N_x + x_idx.
+            # The q list was built x-major (x_idx * N_y + y_idx).
+            # This means the plotting loop effectively transposes the data or accesses it in a y-major fashion.
+            # We preserve this original indexing logic.
+            idx = i * len(qsx) + j # This index is used for both En and Sqwout as len(qsx) == len(qsy)
+
+            bands_en = En[idx]
+            bands_sqw = Sqwout[idx]
+
+            for band in range(len(bands_en)):
+                if bands_en[band] < E_intv[1] and bands_en[band] > E_intv[0]:
+                    intMat[i, j] = intMat[i, j] + bands_sqw[band]
+                # else:
+                #     intMat[i, j] = intMat[i, j] # This line is redundant as intMat is initialized to zeros
     
     print("A number of Qy and Qx point: ", qsy.shape[0], qsx.shape[0])
     print("A matrix size: ", intMat.shape)
@@ -91,7 +107,29 @@ if __name__ == "__main__":
     
     ############# DO NOT CHANGE ######################
     q_step = 0.01
-    plot_hkmap(p, S, 'r', 0, e_inv, q_step)
+
+    # Check if cache files exist, otherwise force new calculation
+    cache_dir = os.path.join(project_root_dir, "cache", "data")
+    cache_file = os.path.join(cache_dir, 'KFe3J_HKmap_En.pck')
+    
+    calc_mode = 0  # Default to read
+    if not os.path.exists(cache_file):
+        print(f"Cache file {cache_file} not found. Switching to new calculation mode.")
+        calc_mode = 1
+
+    # Initialize MagCalc
+    cache_file_base_name = "KFe3J_HKmap" # Using a specific name for this map
+    cache_operation_mode = "w" if calc_mode == 1 else "r"
+    
+    calculator = mc.MagCalc(
+        spin_magnitude=S,
+        hamiltonian_params=p,
+        cache_file_base=cache_file_base_name,
+        cache_mode=cache_operation_mode,
+        spin_model_module=sm,
+    )
+        
+    plot_hkmap(calculator, p, S, 'r', calc_mode, e_inv, q_step)
     ##################################################
     
     et_main = default_timer()

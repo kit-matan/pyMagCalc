@@ -5,7 +5,9 @@ model_params:
   J3: 5.0547
   G1: 0.28
   Dx: 2.67
-  H: 0.0 # Example: zero field
+  Dy: 0.0
+  D3: 0.0
+  H: 20.0 # Example: zero field
 
 calculation:
   cache_mode: "r" # 'w' for first run, then 'r'

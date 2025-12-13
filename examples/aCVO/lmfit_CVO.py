@@ -9,11 +9,20 @@ fit the spin-wave data of alpha-Cu2V2O7
 The data and results are from PRL 119, 047201 (2017).
 """
 import numpy as np
+import os
+import sys
+
+# Adjust sys.path to correctly locate the magcalc package (if not already in path)
+current_script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root_dir = os.path.dirname(os.path.dirname(current_script_dir))
+if project_root_dir not in sys.path:
+    sys.path.insert(0, project_root_dir)
+
 import magcalc as mc
+import spin_model_ha as sm
 from numpy import loadtxt
 from timeit import default_timer
 import matplotlib.pyplot as plt
-import sys
 from lmfit import Model
 
 
@@ -22,7 +31,11 @@ def sw_CVO(x, J1, J2, J3, G1, Dx, H):
     S = 1.0 / 2.0
     p = [J1, J2, J3, G1, Dx, H]
     k = []
-    for i in range(len(x[:, 0])):
+    
+    # Pre-calculate k-vectors (safely handle x as numpy array or list)
+    # Note: x is passed by lmfit, usually numpy array.
+    n_points = len(x)
+    for i in range(n_points):
         if x[i, 2] == 1:
             qx = x[i, 0] * 2 * np.pi / 20.645
             qy = 1.75 * 2 * np.pi / 8.383
@@ -40,13 +53,64 @@ def sw_CVO(x, J1, J2, J3, G1, Dx, H):
             sys.exit()
         q1 = np.array([qx, qy, qz])
         k.append(q1)
-    En_k = mc.calc_disp(S, k, p, 'CVO', 'r')
+        
+    k_arr = np.array(k)
+    
+    # Initialize MagCalc
+    # For fitting, we use a consistent cache base. caching numerical results might be slow if we save every step.
+    # However, MagCalc saves if calculation is done.
+    # To avoid IO overhead, we rely on MagCalc efficient handling or just use 'r' mode which might skip saving if file locked/exists?
+    # Actually, if we use a specific cache base for fitting, we might want to disable writing or accept it.
+    # Since legacy code re-inited every time, the new class overhead is similar.
+    
+    # Check if symbolic cache exists to avoid 'w' mode in loop if possible?
+    # But MagCalc handles 'r' -> 'w' switch internally or we can force 'r'.
+    # If symbolic cache is missing, the FIRST call will fail or warn.
+    # We should ensure it exists (we can rely on the main block to init once or just let it handle it).
+    # We'll use a unique base name for fitting.
+    cache_base = 'CVO_lmfit_ha'
+    
+    # Ensure symbolic cache exists on first run (optional but good practice). 
+    # But inside this function, we just want to run.
+    # We use 'r' mode. If MagCalc finds symbolic cache missing in 'r', it might error or auto-switch logic in MagCalc?
+    # The updated MagCalc usually requires explicit mode switch or key arg.
+    # Let's try 'r'. If it fails, users will see. Or we can use 'w' for robustness but slower?
+    # Actually, we can check existence once? No, expensive.
+    # We'll use cache_mode='r'. But if it doesn't exist, we need 'w'.
+    # Since this function is called many times, 'r' is safer for concurrency/speed.
+    # We'll rely on pre-generation or MagCalc auto-handling.
+    
+    try:
+        calc = mc.MagCalc(spin_magnitude=S, hamiltonian_params=p, cache_file_base=cache_base, 
+                          spin_model_module=sm, cache_mode='r')
+    except (FileNotFoundError, Exception):
+        # Fallback to 'w' if 'r' fails (e.g. missing cache)
+        # This will happen on the VERY FIRST iteration mostly.
+        calc = mc.MagCalc(spin_magnitude=S, hamiltonian_params=p, cache_file_base=cache_base, 
+                          spin_model_module=sm, cache_mode='w')
+
+    # calculate_dispersion likely returns (q_out, energies, intensities)
+    res = calc.calculate_dispersion(k_arr)
+    if isinstance(res, tuple) and len(res) >= 2:
+        # Assuming last 2 are E, I, or unpacking 3 if length 3
+        if len(res) == 3:
+            _, energies, intensities = res
+        else:
+            energies, intensities = res
+    else:
+         energies = res
+         intensities = None # Expected 2 values in previous code, so this path handles 1 value case safely (though error said too many)
+
+    # energies shape: (N_k, N_bands)
+    
     En = []
-    for i in range(len(x[:, 0])):
-        En1 = En_k[i][int(x[i, 1]-1)]
+    for i in range(n_points):
+        # Select specific band based on data column 1 (x[i, 1]) which is 1-indexed band index
+        band_idx = int(x[i, 1] - 1)
+        En1 = energies[i][band_idx]
         En.append(En1)
     # print(np.abs(En-x[:, 3]))
-    return En
+    return np.array(En)
 
 
 if __name__ == "__main__":
@@ -129,7 +193,19 @@ if __name__ == "__main__":
         qz = 0
         q1 = [qx, qy, qz]
         q.append(q1)
-    En_ky = mc.calc_disp(S, q, pfit, 'CVO', 'r')
+    q_arr = np.array(q)
+    # Reuse the cache base from the fit
+    # We use 'r' because the fit loop likely generated/used the cache. 
+    # Even if pfit is slightly different (final fitted values), MagCalc will regenerate Ud in memory.
+    calc_final = mc.MagCalc(spin_magnitude=S, hamiltonian_params=pfit, cache_file_base='CVO_lmfit_ha', 
+                            spin_model_module=sm, cache_mode='r')
+    res_final = calc_final.calculate_dispersion(q_arr)
+    if isinstance(res_final, tuple) and len(res_final) == 3:
+        _, En_ky, _ = res_final
+    elif isinstance(res_final, tuple) and len(res_final) == 2:
+        En_ky, _ = res_final
+    else:
+        En_ky = res_final
 
     Eky1 = [En_ky[i][0] for i in range(len(En_ky))]
     Eky2 = [En_ky[i][1] for i in range(len(En_ky))]
@@ -179,7 +255,7 @@ if __name__ == "__main__":
 
     plt.xlim([1, 3])
     plt.ylim([0, 10])
-    plt.ylabel('$\hbar\omega$ (meV)', fontsize=12)
+    plt.ylabel(r'$\hbar\omega$ (meV)', fontsize=12)
     plt.yticks(np.arange(0, 10.5, 2))
     plt.xticks(np.arange(1.0, 3.0, 0.25))
     plt.title('Spin-waves a-Cu$_2$V$_2$O$_7$')

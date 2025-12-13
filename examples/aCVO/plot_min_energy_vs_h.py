@@ -26,12 +26,12 @@ if PROJECT_ROOT_DIR not in sys.path:
 
 # --- Import MagCalc and the specific CVO spin model ---
 try:
-    from pyMagCalc import magcalc as mc
+    import magcalc as mc
     import spin_model_hc as cvo_model_module
 except ImportError as e:
     print(f"Error importing modules: {e}")
     print(
-        f"Ensure the pyMagCalc package is in {PROJECT_ROOT_DIR} and spin_model_hc.py is in {SCRIPT_DIR} or accessible."
+        f"Ensure the magcalc package is in {PROJECT_ROOT_DIR} and spin_model_hc.py is in {SCRIPT_DIR} or accessible."
     )
     sys.exit(1)
 
