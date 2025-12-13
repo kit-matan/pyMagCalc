@@ -22,8 +22,8 @@ q_path:
   path: ["Gamma", "M", "K", "Gamma"] # Define the path sequence
 
 output:
-  disp_data_filename: "KFe3J_disp_data.npz" # File to save calculated dispersion data
-  sqw_data_filename: "KFe3J_sqw_data.npz" # File to save calculated S(q,w) data
+  disp_data_filename: "../../cache/data/KFe3J_disp_data.npz" # File to save calculated dispersion data
+  sqw_data_filename: "../../cache/data/KFe3J_sqw_data.npz" # File to save calculated S(q,w) data
 
 plotting: # Added section
   save_plot: false

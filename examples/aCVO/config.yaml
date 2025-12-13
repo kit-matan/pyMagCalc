@@ -17,8 +17,8 @@ cvo_model:
     cache_file_base_prefix: "CVO_model_cache" # Base prefix for MagCalc's internal cache files.
                                              # Script should append params like H (e.g., CVO_model_cache_H40.0)
   output:
-    disp_data_filename: "CVO_disp_data.npz" # File to save calculated dispersion data
-    sqw_data_filename: "CVO_sqw_data.npz"   # File to save calculated S(Q,w) data
+    disp_data_filename: "../../cache/data/CVO_disp_data.npz" # File to save calculated dispersion data
+    sqw_data_filename: "../../cache/data/CVO_sqw_data.npz"   # File to save calculated S(Q,w) data
   plotting:
     save_plot: false
     disp_plot_filename: "CVO_disp_plot.png" # Filename for saved dispersion plot
