@@ -8,7 +8,7 @@ model_params:
   J3: 5.0547 # J3 = 2.03 * J1
   G1: 0.28
   Dx: 2.67
-  H: 0.0    # Magnetic field
+  H: 5.0    # Magnetic field
 
 calculation_settings: # Global calculation settings
   cache_mode: "w" # 'w' for first run or if params change, then 'r'

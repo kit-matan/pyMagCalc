@@ -26,63 +26,108 @@ from matplotlib.colors import LogNorm
 if __name__ == '__main__':
     # spin-wave intensity S(Q,\omega)
     st = default_timer()
-    S = 1.0 / 2.0  # spin value
-    # p = [2.49, 1.12 * 2.49, 2.03 * 2.49, 0.28, 2.67, 3.0]
-    p = [2.49, 1.12 * 2.49, 2.03 * 2.49, 0.28, 2.67, 0.0]
+    import yaml
+
+    # Load configuration
+    script_dir = os.path.dirname(os.path.abspath(__file__)) if "__file__" in locals() else os.getcwd()
+    config_file = os.path.join(script_dir, "config_cvo_ha.yaml")
+    
+    if not os.path.exists(config_file):
+        print(f"Error: Config file {config_file} not found.")
+        sys.exit(1)
+        
+    with open(config_file, 'r') as f:
+        config = yaml.safe_load(f)
+        
+    # Parse Model Params
+    mp = config.get('model_params', {})
+    S = mp.get('S', 0.5)
+    J1 = mp.get('J1', 2.49)
+    J2 = mp.get('J2', 1.12 * 2.49) # Fallback to calculation if not in config, but config has it.
+    J3 = mp.get('J3', 2.03 * 2.49)
+    G1 = mp.get('G1', 0.28)
+    Dx = mp.get('Dx', 2.67)
+    H = mp.get('H', 0.0)
+    
+    # Ha model params order: [J1, J2, J3, G1, Dx, H]
+    p = [J1, J2, J3, G1, Dx, H]
+    
+    # Parse SQW Map Params
+    sqw_cfg = config.get('sqw_map_calc', {})
+    lat_p = sqw_cfg.get('lattice_params', {})
+    la = lat_p.get('la', 20.645)
+    lb = lat_p.get('lb', 8.383)
+    lc = lat_p.get('lc', 6.442)
+    
+    qmin = sqw_cfg.get('q_scan_min_rlu', -5.0)
+    qmax = sqw_cfg.get('q_scan_max_rlu', 5.0)
+    qstep = sqw_cfg.get('q_scan_step_rlu', 0.02)
+    scan_dir = sqw_cfg.get('scan_direction', '0k0')
+    
+    ebins = sqw_cfg.get('energy_bins', {})
+    emin = ebins.get('min', 0.0)
+    emax = ebins.get('max', 12.0)
+    estep = ebins.get('step', 0.05)
+    
+    wid = sqw_cfg.get('lorentzian_width', 0.2)
+    
     shift = 1e-5
-
-    la = 20.645
-    lb = 8.383
-    lc = 6.442
-
-    emin = 0
-    emax = 12
-    estep = 0.05
-    qmin = -5
-    qmax = 5
-    qstep = 0.02
-
     qsy = np.arange(qmin + shift, qmax + shift + qstep, qstep)
     q = []
-    for i in range(len(qsy)):
-        q1 = np.array([0, qsy[i] * (2 * np.pi / lb), 0])
-        q.append(q1)
 
-    """
-    qsy = np.arange(qmin + shift, qmax + shift + qstep, qstep)
-    q = []
-    for i in range(len(qsy)):
-        qx = qsy[i] * (2 * np.pi / la)
-        qy = (2.0 + 0.05) * (2 * np.pi / lb)
-        qz = 0.0 * (2 * np.pi / lc)
-        q1 = np.array([qx, qy, qz])
-        q.append(q1)
-    """
+    # Generate Q-vectors based on scan direction
+    # Assuming standard 0k0 scan logic similar to original script
+    if scan_dir == '0k0':
+        # fixed_h and fixed_l are in valid config too?
+        fixed_h = sqw_cfg.get('map_fixed_h_rlu', 0.0)
+        fixed_l = sqw_cfg.get('map_fixed_l_rlu', 0.0)
+        for i in range(len(qsy)):
+            # Conversion to inverse Angstroms? Original script used:
+            # q1 = np.array([0, qsy[i] * (2 * np.pi / lb), 0])
+            # This implies fixed_h=0, fixed_l=0.
+            # Using config values:
+            qx = fixed_h * (2 * np.pi / la)
+            qy = qsy[i] * (2 * np.pi / lb)
+            qz = fixed_l * (2 * np.pi / lc)
+            q.append(np.array([qx, qy, qz]))
+    else:
+        print(f"Warning: Scan direction {scan_dir} not fully implemented in this update. Defaulting to 0k0 logic.")
+        # Fallback to original logic if needed, but 0k0 is the target.
+        for i in range(len(qsy)):
+            q1 = np.array([0, qsy[i] * (2 * np.pi / lb), 0])
+            q.append(q1)
 
     q_vectors_array = np.array(q)
 
     # Define cache paths
+    calc_sets = config.get('calculation_settings', {})
+    base_prefix = calc_sets.get('cache_file_base_prefix', 'cvo_sw')
+    # Augment base with H
+    cache_base_name = f"{base_prefix}_H{H:.2f}"
+    
     cache_dir = os.path.join(project_root_dir, "cache", "data")
-    cache_file_base = "EQmap_CVO_cache" # Unique base for this script's result
-    # We will use manual pickle saving for the map data matching the style of previous fixes,
-    # or just rely on MagCalc's internal cache if we trusted it fully, but for plotting we need the raw data arrays.
-    # The previous KFe3J fix manually saved/loaded .pck files. Let's do that for consistency with the requested "fix this script".
+    en_file = os.path.join(cache_dir, f"{cache_base_name}_EQmap_En.pck")
+    sqw_file = os.path.join(cache_dir, f"{cache_base_name}_EQmap_Sqw.pck")
     
-    en_file = os.path.join(cache_dir, "CVO_EQmap_En.pck")
-    sqw_file = os.path.join(cache_dir, "CVO_EQmap_Sqw.pck")
+    calc_mode = calc_sets.get('cache_mode', 'w')
     
-    calc_mode = 'w'
-    if not os.path.exists(en_file):
+    # Auto-switch to 'w' if cache files don't exist
+    if not os.path.exists(en_file) and calc_mode == 'r':
         print(f"Cache file {en_file} not found. Switching to new calculation mode.")
         calc_mode = 'w'
 
     # Initialize MagCalc
-    # Note: using 'w' for cache_mode in MagCalc RE-GENERATES symbolic matrices if they depend on p (they don't usually for structure).
-    # But strictly, if we are just running this script, we want the results.
+    # Check for symbolic cache logic? MagCalc handles it if we pass correct base.
+    # We should ensure symbolic cache exists or force 'w'.
+    sym_hm_file = os.path.join(project_root_dir, 'cache', 'symbolic_matrices', f'{cache_base_name}_HM.pck')
+    if not os.path.exists(sym_hm_file) and calc_mode == 'r':
+         print("Symbolic cache missing, forcing 'w'")
+         calc_mode = 'w'
+
     calculator = mc.MagCalc(
         spin_magnitude=S,
         hamiltonian_params=p,
-        cache_file_base="CVO_model_cache", # Reuse standard CVO cache for symbolic stuff
+        cache_file_base=cache_base_name,
         cache_mode=calc_mode, 
         spin_model_module=sm
     )
@@ -104,7 +149,7 @@ if __name__ == '__main__':
             Sqwout_ky = pickle.load(f)
 
     Ex = np.arange(emin, emax, estep)
-    wid = 0.2
+    # wid read from config earlier
     intMat_ky = np.zeros((len(Ex), len(qsy)))
     fint_ky = 0
     for i in range(len(Ex)):
@@ -115,18 +160,25 @@ if __name__ == '__main__':
             intMat_ky[i, j] = fint_ky
             fint_ky = 0
 
+    plot_cfg = config.get('plotting', {}).get('sqw_map_plot', {})
+    vmax_scale = plot_cfg.get('vmax_scale', 5.0)
+    
     X, Y = np.meshgrid(qsy, Ex)
-    # plt.pcolormesh(X, Y, intMat_ky, norm=LogNorm(vmin=intMat_ky.min(), vmax=intMat_ky.max()), cmap='PuBu_r')
-    plt.pcolormesh(X, Y, intMat_ky, vmin=intMat_ky.min(), vmax=intMat_ky.max() / 5, cmap='PuBu_r', shading='auto')
+    plt.pcolormesh(X, Y, intMat_ky, vmin=intMat_ky.min(), vmax=intMat_ky.max() / vmax_scale, cmap='PuBu_r', shading='auto')
     plt.xlim([qmin, qmax])
     plt.ylim([emin, emax])
-    plt.ylabel(r'$\hbar\omega$ (meV)', fontsize=12)
+    plt.ylabel(plot_cfg.get('ylabel', r'$\hbar\omega$ (meV)'), fontsize=12)
     plt.yticks(np.arange(emin, emax + 0.5, 2.0))
     plt.xticks(np.arange(qmin, qmax, 1))
-    plt.title('Spin-waves in a-Cu$_2$V$_2$O$_7$')
-    plt.colorbar()
+    
+    title_prefix = config.get('plotting', {}).get('figure_title_prefix', 'Spin-waves')
+    plt.title(f'{title_prefix} (H={H} T)')
+    plt.colorbar(label=plot_cfg.get('colorbar_label', 'Intensity'))
+    
     et = default_timer()
     print('Total run-time: ', np.round((et - st) / 60, 2), ' min.')
-    plt.show()
+    
+    if config.get('plotting', {}).get('show_plot', True):
+        plt.show()
 
 # %%

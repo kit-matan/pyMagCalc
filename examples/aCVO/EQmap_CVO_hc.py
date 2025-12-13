@@ -51,7 +51,7 @@ if __name__ == "__main__":
 
     # --- Load Configuration from YAML ---
     script_dir = os.path.dirname(__file__) if "__file__" in locals() else os.getcwd()
-    config_file_path = os.path.join(script_dir, "config_cvo_c.yaml")
+    config_file_path = os.path.join(script_dir, "config_cvo_hc.yaml")
     try:
         with open(config_file_path, "r") as f:
             config = yaml.safe_load(f)
