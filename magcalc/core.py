@@ -28,6 +28,7 @@ import timeit
 import sys
 import pickle
 from multiprocessing import Pool
+from tqdm import tqdm # Added for progress indication
 
 import hashlib  # For numerical cache key generation
 import logging
@@ -1969,7 +1970,16 @@ class MagCalc:
                 initializer=_init_worker,
                 initargs=(self.HMat_sym, self.full_symbol_list),
             ) as pool:
-               results = pool.map(process_calc_disp, task_args)
+                # Use imap to report progress with tqdm
+                # Wrapping in list() to consume the iterator and collect results
+                results = list(
+                    tqdm(
+                        pool.imap(process_calc_disp, task_args),
+                        total=len(task_args),
+                        desc="Dispersion",
+                        unit="q-point",
+                    )
+                )
                
         except Exception as e:
             logger.exception(f"Parallel processing failed during dispersion calculation: {e}")
@@ -2119,7 +2129,15 @@ class MagCalc:
                 initializer=_init_worker,
                 initargs=(self.HMat_sym, self.full_symbol_list),
             ) as pool:
-                results = pool.map(process_calc_Sqw, task_args)
+                # Use imap to report progress with tqdm. imap preserves order.
+                results = list(
+                    tqdm(
+                        pool.imap(process_calc_Sqw, task_args),
+                        total=len(task_args),
+                        desc="S(q,w)",
+                        unit="q-point",
+                    )
+                )
                 
              q_vectors_out, energies_out, intensities_out = zip(*results)
              
