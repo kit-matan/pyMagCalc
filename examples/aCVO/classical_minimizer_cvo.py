@@ -22,7 +22,7 @@ import sympy as sp  # Added for sp.Matrix check if needed, though DM should be n
 # --- Basic Logging Setup ---
 # Configure logging early, before any custom log messages are emitted.
 logging.basicConfig(
-    level=logging.DEBUG,  # Use DEBUG to see more details during minimization
+    level=logging.INFO,  # Use INFO for general operation, DEBUG for more verbosity
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )

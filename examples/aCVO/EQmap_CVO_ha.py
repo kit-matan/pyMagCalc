@@ -135,7 +135,8 @@ if __name__ == '__main__':
     if calc_mode == 'w':
         # Ensure cache directory exists
         os.makedirs(cache_dir, exist_ok=True)
-        qout_ky, En_ky, Sqwout_ky = calculator.calculate_sqw(q_vectors_array)
+        result = calculator.calculate_sqw(q_vectors_array)
+        qout_ky, En_ky, Sqwout_ky = result.q_vectors, result.energies, result.intensities
         # Save to specific files for this plotting script
         with open(en_file, "wb") as f:
             pickle.dump(En_ky, f)

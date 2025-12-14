@@ -91,15 +91,7 @@ def sw_CVO(x, J1, J2, J3, G1, Dx, H):
 
     # calculate_dispersion likely returns (q_out, energies, intensities)
     res = calc.calculate_dispersion(k_arr)
-    if isinstance(res, tuple) and len(res) >= 2:
-        # Assuming last 2 are E, I, or unpacking 3 if length 3
-        if len(res) == 3:
-            _, energies, intensities = res
-        else:
-            energies, intensities = res
-    else:
-         energies = res
-         intensities = None # Expected 2 values in previous code, so this path handles 1 value case safely (though error said too many)
+    energies = res.energies if res else None
 
     # energies shape: (N_k, N_bands)
     
@@ -115,7 +107,9 @@ def sw_CVO(x, J1, J2, J3, G1, Dx, H):
 
 if __name__ == "__main__":
     st = default_timer()
-    data = loadtxt('data/sw_aCVO.txt', comments="#", delimiter=',', unpack=False, dtype=float)
+    # Updated path to point to examples/data
+    data_path = os.path.join(os.path.dirname(__file__), '../data/sw_aCVO.txt')
+    data = loadtxt(data_path, comments="#", delimiter=',', unpack=False, dtype=float)
     #p = [2.65522, 2.97384, 5.39009, 0.293822, 2.86330, 0]
     p = [2.49, 1.12 * 2.49, 2.03 * 2.49, 0.28, 2.67, 0.0]
     x = np.zeros((len(data[:, 0]), 4))
@@ -200,12 +194,7 @@ if __name__ == "__main__":
     calc_final = mc.MagCalc(spin_magnitude=S, hamiltonian_params=pfit, cache_file_base='CVO_lmfit_ha', 
                             spin_model_module=sm, cache_mode='r')
     res_final = calc_final.calculate_dispersion(q_arr)
-    if isinstance(res_final, tuple) and len(res_final) == 3:
-        _, En_ky, _ = res_final
-    elif isinstance(res_final, tuple) and len(res_final) == 2:
-        En_ky, _ = res_final
-    else:
-        En_ky = res_final
+    En_ky = res_final.energies if res_final else []
 
     Eky1 = [En_ky[i][0] for i in range(len(En_ky))]
     Eky2 = [En_ky[i][1] for i in range(len(En_ky))]

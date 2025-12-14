@@ -129,7 +129,8 @@ def calculate_and_save_dispersion(
     """Calculates spin-wave dispersion and saves results."""
     logger.info("Calculating dispersion...")
     try:
-        En = calculator.calculate_dispersion(q_vectors_array)
+        res = calculator.calculate_dispersion(q_vectors_array)
+        En = res.energies if res else None
         if En is not None:
             logger.info(f"Saving dispersion results to {output_filename}...")
             results_to_save = {"q_vectors": q_vectors_array, "energies": En}
@@ -327,7 +328,8 @@ def calculate_and_save_sqw(calculator: mc.MagCalc, q_vectors_array, output_filen
     """Calculates S(Q,w) and saves results."""
     logger.info("Calculating S(Q,w)...")
     try:
-        qout, En, Sqwout = calculator.calculate_sqw(q_vectors_array)
+        res = calculator.calculate_sqw(q_vectors_array)
+        qout, En, Sqwout = res.q_vectors, res.energies, res.intensities
         if En is not None and Sqwout is not None:
             logger.info(f"Saving S(Q,w) results to {output_filename}...")
             # qout should be same as q_vectors_array, save it for completeness

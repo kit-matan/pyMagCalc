@@ -176,7 +176,8 @@ if __name__ == "__main__":
     disp_enabled = disp_config.get("enabled", True)
     if disp_enabled:
         logger.info("Calculating dispersion...")
-        dispersion_energies = calculator.calculate_dispersion(q_vectors_array_calc)
+        dispersion_result = calculator.calculate_dispersion(q_vectors_array_calc)
+        dispersion_energies = dispersion_result.energies
         
         if dispersion_energies is not None:
              # Save

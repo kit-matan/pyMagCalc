@@ -52,7 +52,8 @@ def plot_hkmap(calculator, p, S, wr, newcalc, E_intv, qstep):
     cache_dir = os.path.join(project_root_dir, "cache", "data")
 
     if newcalc == 1:
-        qout, En, Sqwout = calculator.calculate_sqw(q_vectors_array)
+        res = calculator.calculate_sqw(q_vectors_array)
+        qout, En, Sqwout = res.q_vectors, res.energies, res.intensities
         with open(os.path.join(cache_dir, 'KFe3J_HKmap_En.pck'), 'wb') as outEn:
             outEn.write(pickle.dumps(En))
         with open(os.path.join(cache_dir, 'KFe3J_HKmap_Sqw.pck'), 'wb') as outSqwout:

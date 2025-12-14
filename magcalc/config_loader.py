@@ -10,7 +10,10 @@ import yaml
 import logging
 import logging
 import os
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple, Optional
+from dataclasses import dataclass
+import numpy as np
+import numpy.typing as npt
 
 # Added import for CIF handling
 try:

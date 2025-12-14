@@ -38,10 +38,12 @@ import logging
 import tkinter as tk  # For screen size detection
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+# Silence matplotlib debug logs
+logging.getLogger('matplotlib').setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
@@ -131,8 +133,9 @@ def calculate_and_save_dispersion_cvo(
 ):
     logger.info("Calculating CVO dispersion...")
     try:
-        En = calculator.calculate_dispersion(q_vectors_array)
-        if En is not None:
+        result = calculator.calculate_dispersion(q_vectors_array)
+        if result is not None:
+            En = result.energies
             logger.info(f"Saving CVO dispersion results to {output_filename}...")
             results_to_save = {
                 "q_vectors_calc": q_vectors_array,
@@ -159,8 +162,13 @@ def calculate_and_save_sqw_cvo(
 ):
     logger.info("Calculating CVO S(Q,w)...")
     try:
-        qout, En, Sqwout = calculator.calculate_sqw(q_vectors_array)
-        if En is not None and Sqwout is not None:
+        result = calculator.calculate_sqw(q_vectors_array)
+        if result is not None:
+            qout = result.q_vectors
+            En = result.energies
+            Sqwout = result.intensities
+            
+        if result is not None: # Check again for flow compatibility or merge with above
             logger.info(f"Saving CVO S(Q,w) results to {output_filename}...")
             results_to_save = {
                 "q_vectors_calc": qout,

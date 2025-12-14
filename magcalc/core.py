@@ -35,7 +35,25 @@ import json  # For metadata
 
 # Type Hinting Imports
 import types  # Added for ModuleType hint
+from dataclasses import dataclass
+import numpy.typing as npt
 from typing import List, Tuple, Dict, Any, Optional, Union, NoReturn
+
+@dataclass
+class DispersionResult:
+    """Result of a spin-wave dispersion calculation."""
+    q_vectors: npt.NDArray[np.float64]
+    energies: npt.NDArray[np.float64]
+    # Keep raw list/array structure if needed for compatibility/debugging? 
+    # Or just standardizing on arrays.
+    # energies shape: (N_q, N_modes) usually, or list of arrays if num modes varies (rare).
+
+@dataclass
+class SqwResult:
+    """Result of a dynamic structure factor calculation."""
+    q_vectors: npt.NDArray[np.float64]
+    energies: npt.NDArray[np.float64]
+    intensities: npt.NDArray[np.float64]
 
 # --- Imports for Configuration-Driven Model (with fallback for direct script execution) ---
 try:
@@ -68,6 +86,7 @@ try:
         _calculate_alpha_matrix,
         _match_and_reorder_minus_q,
         _calculate_K_Kd,
+        KKdMatrix,
         DEGENERACY_THRESHOLD,
         ZERO_MATRIX_ELEMENT_THRESHOLD,
         ALPHA_MATRIX_ZERO_NORM_WARNING_THRESHOLD,
@@ -81,6 +100,7 @@ except ImportError:
         _calculate_alpha_matrix,
         _match_and_reorder_minus_q,
         _calculate_K_Kd,
+        KKdMatrix,
         DEGENERACY_THRESHOLD,
         ZERO_MATRIX_ELEMENT_THRESHOLD,
         ALPHA_MATRIX_ZERO_NORM_WARNING_THRESHOLD,
@@ -90,12 +110,10 @@ except ImportError:
 import matplotlib.pyplot as plt  # Added for plotting
 
 # --- Basic Logging Setup ---
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+# --- Basic Logging Setup ---
+# Library should not configure basicConfig. Use NullHandler to silence by default.
 logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 # --- End Logging Setup ---
 
 # --- Numerical Constants ---
@@ -159,180 +177,7 @@ def substitute_expr(
 
 
 # --- Main KKdMatrix Function (Keep outside class) ---
-def KKdMatrix(
-    spin_magnitude: float,
-    Hmat_plus_q: npt.NDArray[np.complex128],
-    Hmat_minus_q: npt.NDArray[np.complex128],
-    Ud_numeric: npt.NDArray[np.complex128],
-    q_vector: npt.NDArray[np.float64],
-    nspins: int,
-) -> Tuple[
-    npt.NDArray[np.complex128], npt.NDArray[np.complex128], npt.NDArray[np.complex128]
-]:
-    """
-    Calculate K, Kd matrices and eigenvalues for S(q,w) calculation.
-
-    This function orchestrates the numerical steps required after obtaining the
-    Hamiltonian matrices H(+q) and H(-q):
-    1. Diagonalize H(+q) and H(-q).
-    2. Sort eigenvalues and eigenvectors.
-    3. Apply Gram-Schmidt to degenerate eigenvectors.
-    4. Calculate the alpha matrices for +q and -q.
-    5. Match and reorder the -q results based on the +q results.
-    6. Calculate the inverse transformation matrices T^{-1} = V @ alpha.
-    7. Calculate the final K and Kd matrices.
-
-    Args:
-        spin_magnitude (float): Numerical value of spin S.
-        Hmat_plus_q (npt.NDArray[np.complex128]): Numerical Hamiltonian matrix for +q.
-        Hmat_minus_q (npt.NDArray[np.complex128]): Numerical Hamiltonian matrix for -q.
-        Ud_numeric (npt.NDArray[np.complex128]): Numerical rotation matrix Ud.
-        q_vector (npt.NDArray[np.float64]): The momentum vector q.
-        nspins (int): Number of spins in the unit cell.
-
-    Returns:
-        Tuple[npt.NDArray[np.complex128], npt.NDArray[np.complex128], npt.NDArray[np.complex128]]:
-            K matrix, Kd matrix, and sorted eigenvalues from the +q calculation. Returns NaN arrays on failure.
-    """
-    q_label = f"q={q_vector}"
-    nan_matrix = np.full((3 * nspins, 2 * nspins), np.nan, dtype=np.complex128)
-    nan_eigs = np.full((2 * nspins,), np.nan, dtype=np.complex128)
-    G_metric = np.diag(np.concatenate([np.ones(nspins), -np.ones(nspins)]))
-    eigvals_p_sorted, eigvecs_p_sorted = _diagonalize_and_sort(
-        Hmat_plus_q, nspins, f"+{q_label}"
-    )
-    if eigvals_p_sorted is None or eigvecs_p_sorted is None:
-        return nan_matrix, nan_matrix, nan_eigs
-    eigvecs_p_ortho = _apply_gram_schmidt(
-        eigvals_p_sorted, eigvecs_p_sorted, DEGENERACY_THRESHOLD, f"+{q_label}"
-    )
-    alpha_p = _calculate_alpha_matrix(
-        eigvecs_p_ortho, G_metric, ZERO_MATRIX_ELEMENT_THRESHOLD, f"+{q_label}"
-    )
-    if alpha_p is None:
-        return nan_matrix, nan_matrix, nan_eigs
-    eigvals_m_sorted, eigvecs_m_sorted = _diagonalize_and_sort(
-        Hmat_minus_q, nspins, f"-{q_label}"
-    )
-    if eigvals_m_sorted is None or eigvecs_m_sorted is None:
-        return nan_matrix, nan_matrix, nan_eigs
-    # --- Custom processing for -q eigenvectors (ported from magcalc_origin.py) ---
-    # This replaces the simple call to _apply_gram_schmidt for the -q case.
-    logger.debug(f"Applying custom Gram-Schmidt / basis selection for -q at {q_label}")
-    eigvecs_m_processed = eigvecs_m_sorted.copy()  # Work on a copy
-    nspins2 = eigvecs_m_processed.shape[0]
-
-    # evecswap_p is equivalent to evecswap in magcalc_origin.py, derived from +q eigenvectors
-    evecswap_p = np.conj(
-        np.vstack((eigvecs_p_ortho[nspins:nspins2, :], eigvecs_p_ortho[0:nspins, :]))
-    )
-
-    current_block_start_idx = 0
-    for i in range(1, nspins2 + 1):  # Iterate up to nspins2 to process the last block
-        # Condition to end a block:
-        # 1. Reached the end of the array (i == nspins2)
-        # 2. Next eigenvalue is different from the start of the current block's eigenvalue
-        if (
-            i == nspins2
-            or abs(eigvals_m_sorted[i] - eigvals_m_sorted[current_block_start_idx])
-            >= DEGENERACY_THRESHOLD
-        ):
-            # Process block from current_block_start_idx to i-1
-            if (
-                i - 1 > current_block_start_idx
-            ):  # Degeneracy of at least 2 (block size > 1)
-                block_size = i - current_block_start_idx
-                degenerate_block_m = eigvecs_m_sorted[:, current_block_start_idx:i]
-
-                # Determine which part of evecswap_p to compare against
-                if current_block_start_idx < nspins:
-                    # Positive energy block of -q, compare with conj(positive energy part of +q from evecswap_p)
-                    candidate_basis_p_block = evecswap_p[:, nspins:]
-                else:
-                    # Negative energy block of -q, compare with conj(negative energy part of +q from evecswap_p)
-                    candidate_basis_p_block = evecswap_p[:, :nspins]
-
-                # Custom basis selection logic from magcalc_origin.py
-                # Calculate sum of projections of each vector in degenerate_block_m onto each vector in candidate_basis_p_block
-                # projection_matrix[k, l] = vdot(degenerate_block_m[:,k], candidate_basis_p_block[:,l])
-                # sum_of_projections[l] = sum_k vdot(degenerate_block_m[:,k], candidate_basis_p_block[:,l])
-                # This is equivalent to sum(conj(degenerate_block_m.T) @ candidate_basis_p_block, axis=0)
-
-                # Original logic: tmpsum = tmpsum + (np.conj(vtmpm1[:, j_deg]).T @ tmpevecswap)
-                # This means for each column in tmpevecswap, sum its dot product with all columns in vtmpm1.
-                sum_of_projections = np.zeros(
-                    candidate_basis_p_block.shape[1], dtype=complex
-                )
-                for k_deg_block in range(block_size):
-                    sum_of_projections += (
-                        np.conj(degenerate_block_m[:, k_deg_block])
-                        @ candidate_basis_p_block
-                    ).flatten()
-
-                # Robust matching: Pick top 'block_size' matches if available
-                projection_magnitudes = np.abs(sum_of_projections)
-                sorted_indices_desc = np.argsort(projection_magnitudes)[::-1]
-                
-                # Check if the weakest of the top 'block_size' is strong enough
-                match_quality_ok = False
-                if len(sorted_indices_desc) >= block_size:
-                    if projection_magnitudes[sorted_indices_desc[block_size-1]] > EIGENVECTOR_MATCHING_THRESHOLD:
-                         match_quality_ok = True
-                
-                if match_quality_ok:
-                    selected_indices = sorted_indices_desc[:block_size]
-                    # Log if we are filtering out extra matches (e.g. got 4, took 2)
-                    if np.sum(projection_magnitudes > EIGENVECTOR_MATCHING_THRESHOLD) > block_size:
-                         logger.debug(
-                             f"Custom GS: Found more matches than block size at {q_label}. "
-                             f"Selecting top {block_size} strongest projections."
-                         )
-
-                    new_basis_for_m_block = candidate_basis_p_block[:, selected_indices]
-                    eigvecs_m_processed[:, current_block_start_idx:i] = gram_schmidt(
-                        new_basis_for_m_block
-                    )
-                else:
-                    logger.warning(
-                        f"Custom GS for -q: Insufficient matching basis size for block {current_block_start_idx}-{i-1} at {q_label}. "
-                        f"Expected {block_size}, but only found {np.sum(projection_magnitudes > EIGENVECTOR_MATCHING_THRESHOLD)} distinct matches > threshold. "
-                        f"Applying standard GS to original block."
-                    )
-                    eigvecs_m_processed[:, current_block_start_idx:i] = gram_schmidt(
-                        degenerate_block_m
-                    )
-            current_block_start_idx = i  # Move to the next block
-    # --- End custom processing for -q eigenvectors ---
-    eigvecs_m_ortho = eigvecs_m_processed  # Use the result of custom processing
-
-    alpha_m_sorted = _calculate_alpha_matrix(
-        eigvecs_m_ortho, G_metric, ZERO_MATRIX_ELEMENT_THRESHOLD, f"-{q_label}"
-    )
-    if alpha_m_sorted is None:
-        return nan_matrix, nan_matrix, nan_eigs
-    (eigvecs_m_final, eigvals_m_reordered, alpha_m_final) = _match_and_reorder_minus_q(
-        eigvecs_p_ortho,
-        alpha_p,
-        eigvecs_m_ortho,
-        eigvals_m_sorted,
-        alpha_m_sorted,
-        nspins,
-        EIGENVECTOR_MATCHING_THRESHOLD,
-        EIGENVECTOR_MATCHING_THRESHOLD,  # zero_tol_comp_phase (use 1e-5 like in origin for selecting components for phase)
-        ZERO_MATRIX_ELEMENT_THRESHOLD,  # zero_tol_alpha_final (use 1e-6 like in origin for truncating final alpha)
-        q_label,
-    )
-    inv_T_p = eigvecs_p_ortho @ alpha_p
-    inv_T_m_reordered = eigvecs_m_final @ alpha_m_final
-    K_matrix, Kd_matrix = _calculate_K_Kd(
-        Ud_numeric,
-        spin_magnitude,
-        nspins,
-        inv_T_p,
-        inv_T_m_reordered,
-        ZERO_MATRIX_ELEMENT_THRESHOLD,
-    )
-    return K_matrix, Kd_matrix, eigvals_p_sorted
+# KKdMatrix is now imported from magcalc.linalg
 
 
 # --- Worker Functions (Keep outside class) ---
@@ -2060,7 +1905,7 @@ class MagCalc:
         if os.path.exists(cache_filepath):
             try:
                 with open(cache_filepath, "rb") as f:
-                    cached_energies = pickle.load(f)
+                    cached_result = pickle.load(f)
                 logger.info(
                     f"Loaded dispersion results from numerical cache: {cache_filepath}"
                 )
@@ -2068,7 +1913,18 @@ class MagCalc:
                 self._intermediate_numerical_H_matrices_disp = [None] * len(
                     q_vectors_list
                 )
-                return cached_energies
+                if isinstance(cached_result, DispersionResult):
+                    return cached_result
+                elif isinstance(cached_result, list):
+                    # Legacy cache support
+                    logger.warning("Loaded legacy cache format (list). Converting to DispersionResult.")
+                    return DispersionResult(
+                        q_vectors=np.array(q_vectors_list),
+                        energies=np.array(cached_result)
+                    )
+                else:
+                    logger.warning("Unknown cache format. Recalculating.")
+                    # Fall through to recalculation
             except Exception as e:
                 logger.warning(
                     f"Failed to load from numerical cache {cache_filepath}: {e}. Recalculating."
@@ -2076,47 +1932,54 @@ class MagCalc:
         # Clear previous intermediate matrices if any
         self._intermediate_numerical_H_matrices_disp = []
 
-        start_time: float = timeit.default_timer()
-
-        pool_args: List[Tuple] = [
+        # Prepare arguments for parallel processing
+        # Use simple map or imap. For dispersion, memory is less critical than S(q,w),
+        # but consistency is good.
+        task_args = [
             (
-                q_vec,
+                q,
                 self.nspins,
                 self.spin_magnitude,
                 self.hamiltonian_params,
             )
-            for q_vec in q_vectors_list  # Use validated list
+            for q in q_vectors_list
         ]
 
-        results_from_pool: List[
-            Tuple[npt.NDArray[np.float64], Optional[npt.NDArray[np.complex128]]]
-        ] = []
+        # Use multiprocessing
+        # Re-using the worker init logic is important for lambdification
         try:
-            # Use context manager for Pool
+            # We must pickle the symbolic matrix only once.
+            # Using global or initializer.
+            # Here we pass HMat_sym to initializer.
+            # Note: HMat_sym is SymPy Matrix.
+            
+            # Need strict extraction of symbols for consistency with worker
+            # The worker needs full_symbol_list to reconstruct the lambdified function order
+            
             with Pool(
                 initializer=_init_worker,
-                initargs=(self.HMat_sym, self.full_symbol_list)
+                initargs=(self.HMat_sym, self.full_symbol_list),
             ) as pool:
-                results_from_pool = list(pool.imap(process_calc_disp, pool_args))
-        except Exception:
-            logger.exception(
-                "Error during multiprocessing pool execution for dispersion."
-            )
+               results = pool.map(process_calc_disp, task_args)
+               
+        except Exception as e:
+            logger.exception(f"Parallel processing failed during dispersion calculation: {e}")
             return None
-
-        # Unpack results and store intermediate matrices
-        energies_list: List[Optional[npt.NDArray[np.float64]]] = []
-        for res_energies, res_H_matrix in results_from_pool:
-            if res_energies is not None and np.all(
-                np.isnan(res_energies)
-            ):  # if all are nan, treat as None for consistency
-                energies_list.append(None)
+            
+        # Unpack results
+        # results is list of (energies, HMat_numeric)
+        energies_list = []
+        self._intermediate_numerical_H_matrices_disp = [] # Clear or store
+        
+        for res_energies, res_H_matrix in results:
+            if res_energies is None: # Should be handled by worker returning NaNs usually
+                 energies_list.append(np.full(self.nspins, np.nan))
             else:
                 energies_list.append(res_energies)
             self._intermediate_numerical_H_matrices_disp.append(res_H_matrix)
 
         num_failures = sum(
-            1 for en in energies_list if en is None or np.isnan(en).any()
+            1 for en in energies_list if np.isnan(en).any()
         )
         if num_failures > 0:
             logger.warning(
@@ -2128,26 +1991,80 @@ class MagCalc:
             f"Run-time for dispersion calculation: {np.round((end_time - start_time) / 60, 2)} min."
         )
 
+        dispersion_result = DispersionResult(
+            q_vectors=np.array(q_vectors_list),
+            energies=np.array(energies_list) 
+        )
         # --- Save to Numerical Cache ---
         try:
             with open(cache_filepath, "wb") as f:
-                pickle.dump(energies_list, f)
+                pickle.dump(dispersion_result, f)
             logger.info(
                 f"Saved dispersion results to numerical cache: {cache_filepath}"
             )
         except Exception as e:
             logger.warning(f"Failed to save to numerical cache {cache_filepath}: {e}")
 
-        return energies_list
+        return dispersion_result
+    def calculate_sqw_generator(
+        self,
+        q_vectors: Union[List[npt.NDArray[np.float64]], npt.NDArray[np.float64]],
+        chunk_size: int = 100
+    ):
+        """
+        Generator yielding S(q,w) results incrementally.
+        
+        Useful for processing large datasets without loading everything into memory.
+        
+        Args:
+           q_vectors: List or array of q-vectors.
+           chunk_size: Chunk size for multiprocessing.
+
+        Yields:
+           Tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+                (q_vector, energies, intensities) for each point.
+        """
+        # Input Validation (duplicate logic, could refactor)
+        if self.HMat_sym is None or self.Ud_numeric is None:
+            logger.error("Symbolic matrices not initialized.")
+            return
+
+        if isinstance(q_vectors, np.ndarray) and q_vectors.ndim == 2:
+            q_vectors_list = [q_vectors[i, :] for i in range(q_vectors.shape[0])]
+        elif isinstance(q_vectors, list):
+            q_vectors_list = [np.array(q) for q in q_vectors]
+        else:
+             logger.error("Invalid input for q_vectors.")
+             return
+
+        task_args = [
+            (
+                self.Ud_numeric,
+                q,
+                self.nspins,
+                self.spin_magnitude,
+                self.hamiltonian_params,
+            )
+            for q in q_vectors_list
+        ]
+        
+        try:
+             with Pool(
+                processes=os.cpu_count(),
+                initializer=_init_worker,
+                initargs=(self.HMat_sym, self.full_symbol_list),
+            ) as pool:
+                # yielding from imap
+                for result in pool.imap(process_calc_Sqw, task_args, chunksize=chunk_size):
+                    yield result
+        except Exception as e:
+            logger.exception(f"Error in S(q,w) generator: {e}")
+            raise
 
     def calculate_sqw(
         self,
         q_vectors: Union[List[npt.NDArray[np.float64]], npt.NDArray[np.float64]],
-    ) -> Tuple[
-        Optional[Tuple[npt.NDArray[np.float64], ...]],
-        Optional[Tuple[npt.NDArray[np.float64], ...]],
-        Optional[Tuple[npt.NDArray[np.float64], ...]],
-    ]:
+    ) -> Optional[SqwResult]:
         """
         Calculate the dynamical structure factor S(q,w) over a list of q-points.
 
@@ -2157,103 +2074,49 @@ class MagCalc:
                 Each vector should be a 1D array/list of 3 numbers.
 
         Returns:
-            Tuple[Optional[Tuple], Optional[Tuple], Optional[Tuple]]: A tuple
-            containing three elements:
-            1. Tuple of output q-vectors (as NumPy arrays).
-            2. Tuple of corresponding magnon energies (as NumPy arrays).
-            3. Tuple of corresponding S(q,w) intensities (as NumPy arrays).
-            Returns (None, None, None) if the calculation fails to start.
-            Individual q-points that fail during calculation will have NaN arrays
-            for energies and intensities in the returned tuples.
+            Optional[SqwResult]: Object containing q_vectors, energies, and intensities.
         """
-        if (
-            self.HMat_sym is None or self.Ud_numeric is None
-        ):  # Should be caught by __init__
-            logger.error("Symbolic HMat_sym or numerical Ud_numeric not available.")
-            return None, None, None
+        logger.info("Starting S(q,w) calculation...")
+        start_t: float = timeit.default_timer()
 
-        # --- Input Validation for q_vectors ---
-        if isinstance(q_vectors, np.ndarray):
-            if q_vectors.ndim == 1 and q_vectors.shape == (3,):  # Single vector case
-                q_vectors = [q_vectors]  # Wrap in a list
-            elif q_vectors.ndim != 2 or q_vectors.shape[1] != 3:
-                raise ValueError("q_vectors NumPy array must be 2D with shape (N, 3).")
-            q_vectors_list = [q_vec for q_vec in q_vectors]
+        # Input Validation
+        if self.HMat_sym is None or self.Ud_numeric is None:
+            logger.error("Symbolic matrices not initialized. Cannot calculate S(q,w).")
+            return None
+
+        # Convert q_vectors to list of arrays if it's a 2D array
+        if isinstance(q_vectors, np.ndarray) and q_vectors.ndim == 2:
+            q_vectors_list = [q_vectors[i, :] for i in range(q_vectors.shape[0])]
         elif isinstance(q_vectors, list):
-            if not q_vectors:
-                raise ValueError("q_vectors list cannot be empty.")
-            if not all(
-                isinstance(q, (list, np.ndarray)) and len(q) == 3 for q in q_vectors
-            ):
-                raise ValueError(
-                    "Each element in q_vectors list must be a list/array of length 3."
-                )
-            q_vectors_list = [np.array(q, dtype=float) for q in q_vectors]
+            q_vectors_list = [np.array(q) for q in q_vectors]
         else:
-            raise TypeError("q_vectors must be a list or NumPy array.")
-        # --- End q_vector validation ---
+             logger.error("Invalid input for q_vectors. Must be list of arrays or 2D array.")
+             return None
 
-        logger.info("Running S(q,w) calculation via multiprocessing...")
-
-        # --- Numerical Cache Check ---
-        cache_key = self._generate_numerical_cache_key(q_vectors_list, "sqw")
-        cache_filepath = os.path.join(self.numerical_cache_dir, cache_key + ".pkl")
-
-        if os.path.exists(cache_filepath):
-            try:
-                with open(cache_filepath, "rb") as f:
-                    cached_q_out, cached_energies, cached_intensities = pickle.load(f)
-                logger.info(
-                    f"Loaded S(q,w) results from numerical cache: {cache_filepath}"
-                )
-                return cached_q_out, cached_energies, cached_intensities
-            except Exception as e:
-                logger.warning(
-                    f"Failed to load S(q,w) from numerical cache {cache_filepath}: {e}. Recalculating."
-                )
-        # --- End Numerical Cache Check ---
-
-        start_time: float = timeit.default_timer()
-
-        pool_args: List[Tuple] = [
+        task_args = [
             (
                 self.Ud_numeric,
-                q_vec,
+                q,
                 self.nspins,
                 self.spin_magnitude,
                 self.hamiltonian_params,
             )
-            for q_vec in q_vectors_list  # Use validated list
+            for q in q_vectors_list
         ]
-        results: List[
-            Tuple[
-                npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]
-            ]
-        ] = []
-        try:
-            with Pool(
-                initializer=_init_worker, 
-                initargs=(self.HMat_sym, self.full_symbol_list)
-            ) as pool:
-                results = list(pool.imap(process_calc_Sqw, pool_args))
-        except Exception:
-            logger.exception("Error during multiprocessing pool execution for S(q,w).")
-            return None, None, None
 
-        q_vectors_out: Tuple[npt.NDArray[np.float64], ...]
-        energies_out: Tuple[npt.NDArray[np.float64], ...]
-        intensities_out: Tuple[npt.NDArray[np.float64], ...]
         try:
-            if not results:
-                raise ValueError("Multiprocessing returned empty results list.")
-            if len(results[0]) != 3:
-                raise ValueError(
-                    f"Multiprocessing returned malformed results: {results[0]}"
-                )
-            q_vectors_out, energies_out, intensities_out = zip(*results)
-        except (ValueError, TypeError):
+             with Pool(
+                processes=os.cpu_count(),
+                initializer=_init_worker,
+                initargs=(self.HMat_sym, self.full_symbol_list),
+            ) as pool:
+                results = pool.map(process_calc_Sqw, task_args)
+                
+             q_vectors_out, energies_out, intensities_out = zip(*results)
+             
+        except Exception:
             logger.exception("Error unpacking results from parallel processing.")
-            return None, None, None
+            return None
 
         num_failures = sum(np.isnan(en).any() for en in energies_out)
         if num_failures > 0:
@@ -2263,22 +2126,15 @@ class MagCalc:
 
         end_time: float = timeit.default_timer()
         logger.info(
-            f"Run-time for S(q,w) calculation: {np.round((end_time - start_time) / 60, 2)} min."
+            f"Run-time for S(q,w) calculation: {np.round((end_time - start_t) / 60, 2)} min."
         )
 
-        # --- Save to Numerical Cache ---
-        results_to_cache = (q_vectors_out, energies_out, intensities_out)
-        try:
-            with open(cache_filepath, "wb") as f:
-                pickle.dump(results_to_cache, f)
-            logger.info(f"Saved S(q,w) results to numerical cache: {cache_filepath}")
-        except Exception as e:
-            logger.warning(
-                f"Failed to save S(q,w) to numerical cache {cache_filepath}: {e}"
-            )
-        # --- End Save to Numerical Cache ---
+        return SqwResult(
+            q_vectors=np.array(q_vectors_out),
+            energies=np.array(energies_out),
+            intensities=np.array(intensities_out)
+        )
 
-        return q_vectors_out, energies_out, intensities_out
 
     def save_results(self, filename: str, results_dict: Dict[str, Any]):
         """

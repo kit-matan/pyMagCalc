@@ -117,7 +117,8 @@ def objective_function(
 
     # Calculate dispersion using the updated calculator
     try:
-        energies_calc_list = calculator_instance.calculate_dispersion(q_exp)
+        res = calculator_instance.calculate_dispersion(q_exp)
+        energies_calc_list = res.energies if res else None
     except Exception as e:
         logger.error(f"Error during dispersion calculation in objective function: {e}")
         return np.full_like(e_exp, 1e6)  # Return large residuals on failure
@@ -208,7 +209,8 @@ def plot_fit_results(
         q_plot_list.append(np.array([0, qy_val, 0]))  # Path along axes
 
     try:
-        En_fit_list = calculator.calculate_dispersion(q_plot_list)
+        res_fit = calculator.calculate_dispersion(q_plot_list)
+        En_fit_list = res_fit.energies if res_fit else None
     except Exception as e:
         logger.error(f"Error calculating dispersion for plotting: {e}")
         return
@@ -374,7 +376,7 @@ if __name__ == "__main__":
     initial_S = model_p.get("S", 2.5)
     initial_params = [model_p.get(k, 0.0) for k in ["J1", "J2", "Dy", "Dz", "H"]]
     cache_base_name = calc_p.get("cache_file_base", "KFe3J_cache")
-    exp_data_file = fit_p.get("exp_data_file", "sw_KFe3J.txt")  # Updated default path
+    exp_data_file = fit_p.get("exp_data_file", "../data/sw_KFe3J.txt")  # Updated default path to examples/data
     # --- End Configuration Loading ---
 
     # --- Load Experimental Data ---

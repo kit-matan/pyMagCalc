@@ -79,13 +79,7 @@ def sw_ZnCVO(x, J1, J2, J3, J4, J5, J6, J7, G, H):
                       spin_model_module=sm, cache_mode=cache_mode)
 
     res = calc.calculate_dispersion(k_arr)
-    if isinstance(res, tuple):
-        if len(res) == 3:
-             _, energies, _ = res
-        else:
-             energies, _ = res
-    else:
-        energies = res
+    energies = res.energies if res else None
         
     energies = np.array(energies)
     
@@ -105,7 +99,8 @@ def sw_ZnCVO(x, J1, J2, J3, J4, J5, J6, J7, G, H):
 
 if __name__ == "__main__":
     st = default_timer()
-    data_path = os.path.join(project_root_dir, 'data', 'sw_ZnCVO.txt')
+    # Data is now in examples/data
+    data_path = os.path.join(project_root_dir, 'examples', 'data', 'sw_ZnCVO.txt')
     data = loadtxt(data_path, comments="#", delimiter=',', unpack=False, dtype=float)
     p = [8.710832, 0, 0, 0, 5.048879, 2.141771, 0.4964815, 0.00435000, 0]
     x = np.zeros((len(data[:, 0]), 4))
@@ -256,13 +251,7 @@ if __name__ == "__main__":
                             spin_model_module=sm, cache_mode='r')
     
     res_kx = calc_final.calculate_dispersion(np.array(qH))
-    if isinstance(res_kx, tuple):
-        if len(res_kx) == 3:
-             _, En_kx, _ = res_kx
-        else:
-             En_kx, _ = res_kx
-    else:
-        En_kx = res_kx
+    En_kx = res_kx.energies if res_kx else []
 
     # calculate dispersion along K
     for i in range(len(qsy)):
@@ -270,13 +259,7 @@ if __name__ == "__main__":
         qK.append(q2)
         
     res_ky = calc_final.calculate_dispersion(np.array(qK))
-    if isinstance(res_ky, tuple):
-        if len(res_ky) == 3:
-             _, En_ky, _ = res_ky
-        else:
-             En_ky, _ = res_ky
-    else:
-        En_ky = res_ky
+    En_ky = res_ky.energies if res_ky else []
 
     Ekx1 = [En_kx[i][0] for i in range(len(En_kx))]
     Ekx2 = [En_kx[i][1] for i in range(len(En_kx))]

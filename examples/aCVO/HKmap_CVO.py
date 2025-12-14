@@ -85,7 +85,8 @@ def plot_HKmap(p, newcalc, E_intv):
     )
 
     if cache_mode == 'w':
-        qout, En, Sqwout = calculator.calculate_sqw(q_arr)
+        res = calculator.calculate_sqw(q_arr)
+        qout, En, Sqwout = res.q_vectors, res.energies, res.intensities
         with open(en_file, 'wb') as outEn:
             pickle.dump(En, outEn)
         with open(sqw_file, 'wb') as outSqwout:

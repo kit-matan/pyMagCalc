@@ -512,3 +512,178 @@ def _calculate_K_Kd(
     K_matrix[np.abs(K_matrix) < zero_threshold] = 0
     Kd_matrix[np.abs(Kd_matrix) < zero_threshold] = 0
     return K_matrix, Kd_matrix
+
+
+def KKdMatrix(
+    spin_magnitude: float,
+    Hmat_plus_q: npt.NDArray[np.complex128],
+    Hmat_minus_q: npt.NDArray[np.complex128],
+    Ud_numeric: npt.NDArray[np.complex128],
+    q_vector: npt.NDArray[np.float64],
+    nspins: int,
+) -> Tuple[
+    npt.NDArray[np.complex128], npt.NDArray[np.complex128], npt.NDArray[np.complex128]
+]:
+    """
+    Calculate K, Kd matrices and eigenvalues for S(q,w) calculation.
+    
+    Orchestrates diagonalization, sorting, basis matching (-q to +q), and final matrix construction.
+    Includes custom Gram-Schmidt logic for -q eigenvectors to ensure continuity with +q basis.
+    """
+    q_label = f"q={q_vector}"
+    nan_matrix = np.full((3 * nspins, 2 * nspins), np.nan, dtype=np.complex128)
+    nan_eigs = np.full((2 * nspins,), np.nan, dtype=np.complex128)
+    G_metric = np.diag(np.concatenate([np.ones(nspins), -np.ones(nspins)]))
+    
+    # --- 1. Diagonalize +q ---
+    eigvals_p_sorted, eigvecs_p_sorted = _diagonalize_and_sort(
+        Hmat_plus_q, nspins, f"+{q_label}"
+    )
+    if eigvals_p_sorted is None or eigvecs_p_sorted is None:
+        return nan_matrix, nan_matrix, nan_eigs
+        
+    # --- 2. GS Orthogonalize +q ---
+    eigvecs_p_ortho = _apply_gram_schmidt(
+        eigvals_p_sorted, eigvecs_p_sorted, DEGENERACY_THRESHOLD, f"+{q_label}"
+    )
+    
+    # --- 3. Alpha +q ---
+    alpha_p = _calculate_alpha_matrix(
+        eigvecs_p_ortho, G_metric, ZERO_MATRIX_ELEMENT_THRESHOLD, f"+{q_label}"
+    )
+    if alpha_p is None:
+        return nan_matrix, nan_matrix, nan_eigs
+        
+    # --- 4. Diagonalize -q ---
+    eigvals_m_sorted, eigvecs_m_sorted = _diagonalize_and_sort(
+        Hmat_minus_q, nspins, f"-{q_label}"
+    )
+    if eigvals_m_sorted is None or eigvecs_m_sorted is None:
+        return nan_matrix, nan_matrix, nan_eigs
+
+    # --- 5. Custom GS / Basis Selection for -q ---
+    # Logic: Uses +q basis (via evecswap_p) to guide -q basis choice in degenerate subspaces
+    eigvecs_m_processed = eigvecs_m_sorted.copy()
+    nspins2 = eigvecs_m_processed.shape[0]
+
+    # evecswap_p: conj(swap(Vp)) - conceptual basis for -q
+    evecswap_p = np.conj(
+        np.vstack((eigvecs_p_ortho[nspins:nspins2, :], eigvecs_p_ortho[0:nspins, :]))
+    )
+
+    current_block_start_idx = 0
+    for i in range(1, nspins2 + 1):
+        if (
+            i == nspins2
+            or abs(eigvals_m_sorted[i] - eigvals_m_sorted[current_block_start_idx])
+            >= DEGENERACY_THRESHOLD
+        ):
+            block_size = i - current_block_start_idx
+            # If block_size > 1, we have degeneracy. Try to match +q basis.
+            if block_size > 1:
+                degenerate_block_m = eigvecs_m_sorted[:, current_block_start_idx:i]
+                
+                # Determine candidate basis part
+                if current_block_start_idx < nspins:
+                    candidate_basis_p_block = evecswap_p[:, nspins:]
+                else:
+                    candidate_basis_p_block = evecswap_p[:, :nspins]
+
+                # Project degenerate_block_m onto candidate_basis_p_block
+                # Optimize: vectorization? 
+                # degenerate_block_m: (2N, K)
+                # candidate_basis_p_block: (2N, N) usually
+                # Projections: Sum of |<v_m, v_p>| for all k in K
+                
+                # m_conj_T = degenerate_block_m.conj().T  # (K, 2N)
+                # dots = m_conj_T @ candidate_basis_p_block # (K, N)
+                # sum_dots = np.sum(dots, axis=0) # (N,) - Sum over K vectors in block
+                
+                m_conj_T = np.conj(degenerate_block_m.T)
+                dots = m_conj_T @ candidate_basis_p_block
+                sum_of_projections = np.sum(dots, axis=0) # flattening happens implicitly
+                
+                projection_magnitudes = np.abs(sum_of_projections)
+                sorted_indices_desc = np.argsort(projection_magnitudes)[::-1]
+
+                if len(sorted_indices_desc) >= block_size and projection_magnitudes[sorted_indices_desc[block_size-1]] > EIGENVECTOR_MATCHING_THRESHOLD:
+                    selected_indices = sorted_indices_desc[:block_size]
+                    if np.sum(projection_magnitudes > EIGENVECTOR_MATCHING_THRESHOLD) > block_size:
+                         logger.debug(f"Custom GS: Selecting top {block_size} matches at {q_label}.")
+                    
+                    new_basis_for_m_block = candidate_basis_p_block[:, selected_indices]
+                    eigvecs_m_processed[:, current_block_start_idx:i] = gram_schmidt(new_basis_for_m_block)
+                else:
+                    logger.warning(f"Custom GS fallback to standard for block {current_block_start_idx}-{i-1} at {q_label}.")
+                    eigvecs_m_processed[:, current_block_start_idx:i] = gram_schmidt(degenerate_block_m)
+            
+            else:
+                # No degeneracy, no action needed unless we want to normalize/phase fix? 
+                # Standard GS would just normalize.
+                # Let's run standard GS on single vector blocks just to be safe/consistent?
+                # Actually _diagonalize returns normalized vectors usually.
+                pass 
+
+            current_block_start_idx = i
+
+    eigvecs_m_ortho = eigvecs_m_processed
+
+    # --- 6. Alpha -q ---
+    alpha_m_sorted = _calculate_alpha_matrix(
+        eigvecs_m_ortho, G_metric, ZERO_MATRIX_ELEMENT_THRESHOLD, f"-{q_label}"
+    )
+    if alpha_m_sorted is None:
+        return nan_matrix, nan_matrix, nan_eigs
+
+    # --- 7. Match and Reorder ---
+    (eigvecs_m_final, eigvals_m_reordered, alpha_m_final) = _match_and_reorder_minus_q(
+        eigvecs_p_ortho,
+        alpha_p,
+        eigvecs_m_ortho,
+        eigvals_m_sorted,
+        alpha_m_sorted,
+        nspins,
+        EIGENVECTOR_MATCHING_THRESHOLD,
+        EIGENVECTOR_MATCHING_THRESHOLD,
+        ZERO_MATRIX_ELEMENT_THRESHOLD,
+        q_label,
+    )
+
+    # --- 8. T Inverse ---
+    inv_T_p = eigvecs_p_ortho @ alpha_p
+    inv_T_m_reordered = eigvecs_m_final @ alpha_m_final
+
+    # --- 9. K and Kd ---
+    # Optimized _calculate_K_Kd with vectorized Udd is needed?
+    # Actually _calculate_K_Kd in this file uses loop. We can optimize it here.
+    
+    # Optimized Udd construction (Vectorized)
+    # Udd_local_boson_map: (3*nspins, 2*nspins)
+    # Blocks:
+    # 3*i, i -> 1
+    # 3*i, i+N -> 1
+    # 3*i+1, i -> 1/j
+    # 3*i+1, i+N -> -1/j
+    
+    Udd_local_boson_map = np.zeros((3 * nspins, 2 * nspins), dtype=complex)
+    indices = np.arange(nspins)
+    
+    # 3*i rows
+    Udd_local_boson_map[3 * indices, indices] = 1.0
+    Udd_local_boson_map[3 * indices, indices + nspins] = 1.0
+    
+    # 3*i+1 rows
+    Udd_local_boson_map[3 * indices + 1, indices] = -1j # 1/j = -j
+    Udd_local_boson_map[3 * indices + 1, indices + nspins] = 1j # -1/j = j
+
+    prefactor = np.sqrt(spin_magnitude / 2.0)
+    
+    # Matrix multiplications
+    K_matrix = prefactor * Ud_numeric @ Udd_local_boson_map @ inv_T_p
+    Kd_matrix = prefactor * Ud_numeric @ Udd_local_boson_map @ inv_T_m_reordered
+
+    # Thresholding
+    K_matrix[np.abs(K_matrix) < ZERO_MATRIX_ELEMENT_THRESHOLD] = 0
+    Kd_matrix[np.abs(Kd_matrix) < ZERO_MATRIX_ELEMENT_THRESHOLD] = 0
+
+    return K_matrix, Kd_matrix, eigvals_p_sorted

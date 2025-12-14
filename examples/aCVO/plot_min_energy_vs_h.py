@@ -213,9 +213,10 @@ def plot_min_energy_vs_H_cvo():
             continue
 
         logger.debug(f"  Calculating dispersion for H={current_H_field:.2f} T...")
-        dispersion_energies_list = calculator.calculate_dispersion(
+        res_scan = calculator.calculate_dispersion(
             q_vectors_cartesian_for_scan
         )
+        dispersion_energies_list = res_scan.energies if res_scan else None
 
         current_min_E = np.inf
         q_at_min_E_rlu = np.nan
@@ -248,7 +249,8 @@ def plot_min_energy_vs_H_cvo():
         logger.debug(
             f"  Calculating dispersion at q=(0,2,0) for H={current_H_field:.2f} T..."
         )
-        disp_at_020_list = calculator.calculate_dispersion([q_020_cartesian])
+        res_020 = calculator.calculate_dispersion([q_020_cartesian])
+        disp_at_020_list = res_020.energies if res_020 else None
 
         if disp_at_020_list and disp_at_020_list[0] is not None:
             energies_at_020_raw = disp_at_020_list[0]

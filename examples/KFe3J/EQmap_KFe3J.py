@@ -57,7 +57,8 @@ def plot_map(calculator: mc.MagCalc, newcalc: int):
 
     if newcalc == 1:  # New calculation
         # Use the calculator instance's method
-        qout, En, Sqwout = calculator.calculate_sqw(q_vectors_array)
+        res = calculator.calculate_sqw(q_vectors_array)
+        qout, En, Sqwout = res.q_vectors, res.energies, res.intensities
         with open(os.path.join(cache_dir, "KFe3J_EQmap_En.pck"), "wb") as outEn:
             outEn.write(pickle.dumps(En))  # En is now a tuple of arrays
         with open(os.path.join(cache_dir, "KFe3J_EQmap_Sqw.pck"), "wb") as outSqwout:

@@ -15,21 +15,19 @@ try:
     import os
 
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-    from magcalc import (
+    from magcalc.linalg import (
         gram_schmidt,
         _diagonalize_and_sort,
         _calculate_alpha_matrix,
         _apply_gram_schmidt,
-        _match_and_reorder_minus_q,  # Needed for KKdMatrix
-        _calculate_K_Kd,  # Needed for KKdMatrix
-        KKdMatrix,  # Function to test now
-        MagCalc,  # Class to test now
-    )
-    from magcalc import (
+        _match_and_reorder_minus_q,
+        _calculate_K_Kd,
+        KKdMatrix,
         ZERO_MATRIX_ELEMENT_THRESHOLD,
         DEGENERACY_THRESHOLD,
         EIGENVECTOR_MATCHING_THRESHOLD,
-    )  # Constants
+    )
+    from magcalc.core import MagCalc
 except ImportError as e:
     pytest.skip(
         f"Could not import functions from magcalc.py: {e}", allow_module_level=True
@@ -907,12 +905,12 @@ def test_magcalc_init_valid_read(mock_spin_model):  # Use the fixture directly
     # --- End diagnostic patch setup ---
 
     # Patch os.path.exists, open, pickle.load, sp.symbols, and np.array
-    with patch("magcalc.os.path.exists", return_value=True), patch(
+    with patch("magcalc.core.os.path.exists", return_value=True), patch(
         "builtins.open", mock_open()
     ), patch("pickle.load", side_effect=pickle_load_side_effect), patch(
-        "magcalc.sp.symbols", side_effect=symbols_side_effect
+        "magcalc.core.sp.symbols", side_effect=symbols_side_effect
     ), patch(
-        "magcalc.np.array", side_effect=capture_np_array_input  # Apply diagnostic patch
+        "magcalc.core.np.array", side_effect=capture_np_array_input  # Apply diagnostic patch
     ):
 
         calculator = MagCalc(
@@ -945,9 +943,9 @@ def test_magcalc_init_valid_read(mock_spin_model):  # Use the fixture directly
     assert_allclose(calculator.Ud_numeric, expected_Ud_numeric, atol=1e-14)
 
 
-@patch("magcalc.gen_HM")
+@patch("magcalc.core.gen_HM")
 @patch("pickle.dump")
-@patch("magcalc.MagCalc._calculate_numerical_ud", autospec=True)  # Use autospec to pass self
+@patch("magcalc.core.MagCalc._calculate_numerical_ud", autospec=True)  # Use autospec to pass self
 def test_magcalc_init_valid_write(
     mock_calc_ud,
     mock_pickle_dump,
@@ -999,12 +997,12 @@ def test_magcalc_init_valid_write(
     mock_calc_ud.side_effect = set_ud_numeric
 
     # Patch os methods and open for writing
-    with patch("magcalc.os.path.exists"), patch(
-        "magcalc.os.makedirs"
+    with patch("magcalc.core.os.path.exists"), patch(
+        "magcalc.core.os.makedirs"
     ) as mock_makedirs, patch(
         "builtins.open", mock_open()  # Mock open for writing
     ) as mocked_file, patch(
-        "magcalc.sp.symbols", side_effect=symbols_side_effect  # Add missing patch
+        "magcalc.core.sp.symbols", side_effect=symbols_side_effect  # Add missing patch
     ):
         calculator = MagCalc(
             spin_magnitude=S_val,
@@ -1036,7 +1034,7 @@ def test_magcalc_init_invalid_inputs(mock_spin_model):  # Use the fixture
     mock_spin_model.mpr.return_value = [sp.eye(3)]
 
     # Patch os.makedirs to avoid side effects and ensure clean environment
-    with patch("magcalc.os.makedirs"):
+    with patch("magcalc.core.os.makedirs"):
         with pytest.raises(ValueError, match="spin_magnitude must be positive"):
             MagCalc(
                 spin_magnitude=0.0,
@@ -1078,7 +1076,7 @@ def test_magcalc_init_invalid_inputs(mock_spin_model):  # Use the fixture
             )
 
 
-@patch("magcalc.MagCalc._calculate_numerical_ud", autospec=True)  # Mock the recalculation method
+@patch("magcalc.core.MagCalc._calculate_numerical_ud", autospec=True)  # Mock the recalculation method
 def test_magcalc_update_methods(
     mock_calc_ud, mock_spin_model, dummy_cache_files
 ):  # Use fixture
@@ -1131,10 +1129,10 @@ def test_magcalc_update_methods(
     params_val = [0.5]
 
     # Initialize in 'r' mode using patches
-    with patch("magcalc.os.path.exists", return_value=True), patch(
+    with patch("magcalc.core.os.path.exists", return_value=True), patch(
         "builtins.open", mock_open()
     ), patch("pickle.load", side_effect=pickle_load_side_effect), patch(
-        "magcalc.sp.symbols", side_effect=symbols_side_effect
+        "magcalc.core.sp.symbols", side_effect=symbols_side_effect
     ):
         calculator = MagCalc(
             spin_magnitude=S_val,

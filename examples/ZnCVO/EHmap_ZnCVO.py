@@ -64,7 +64,8 @@ def plot_Sqw_EHmap(S, p, newcalc, wr):
         calc = mc.MagCalc(spin_magnitude=S, hamiltonian_params=p, cache_file_base='ZnCVO_EHmap', 
                           spin_model_module=sm, cache_mode=cache_mode)
         
-        qout, En, Sqwout = calc.calculate_sqw(q)
+        res = calc.calculate_sqw(q)
+        qout, En, Sqwout = res.q_vectors, res.energies, res.intensities
         
         with open(en_file, 'wb') as outEn:
             pickle.dump(En, outEn)

@@ -234,9 +234,8 @@ if __name__ == "__main__":
     )
 
     logger.info("Calculating S(Q,w)...")
-    q_vectors_out, energies_out, intensities_out = calculator.calculate_sqw(
-        q_vectors_list
-    )
+    result = calculator.calculate_sqw(q_vectors_list)
+    q_vectors_out, energies_out, intensities_out = result.q_vectors, result.energies, result.intensities
     logger.info("Calculated S(Q,w). Performing checks on raw data...")
     logger.debug(f"Shape of q_vectors_out: {np.shape(q_vectors_out)}")
     logger.debug(f"Shape of energies_out: {np.shape(energies_out)}")

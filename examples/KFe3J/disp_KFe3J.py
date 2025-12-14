@@ -81,7 +81,8 @@ def calculate_and_save_dispersion(
 
         logger.info("Calculating dispersion...")
         # Call the method on the instance, passing only the q-vectors
-        En = calculator.calculate_dispersion(q_vectors_array)
+        res = calculator.calculate_dispersion(q_vectors_array)
+        En = res.energies if res else None
         # --- End NEW WAY ---
 
         # --- Save Results ---

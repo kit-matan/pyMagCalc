@@ -61,15 +61,8 @@ def plot_dispersion(p, wr):
                       spin_model_module=sm, cache_mode=cache_mode)
     
     # Calculate along [100]
-    res_kx = calc.calculate_dispersion(np.array(qH))
-    if isinstance(res_kx, tuple):
-        # Handle (q, E, I) or (E, I) return
-        if len(res_kx) == 3:
-             _, En_kx, _ = res_kx
-        else:
-             En_kx, _ = res_kx
-    else:
-        En_kx = res_kx
+    res_kx_obj = calc.calculate_dispersion(np.array(qH))
+    En_kx = res_kx_obj.energies if res_kx_obj else []
 
     qK = []
     # Calculate the spin-wave dispersion along the [010] direction
@@ -78,14 +71,8 @@ def plot_dispersion(p, wr):
         qK.append(q2)
 
     # Calculate along [010]
-    res_ky = calc.calculate_dispersion(np.array(qK))
-    if isinstance(res_ky, tuple):
-        if len(res_ky) == 3:
-             _, En_ky, _ = res_ky
-        else:
-             En_ky, _ = res_ky
-    else:
-        En_ky = res_ky
+    res_ky_obj = calc.calculate_dispersion(np.array(qK))
+    En_ky = res_ky_obj.energies if res_ky_obj else []
 
     # Extract the data from the list along the [100] direction
     # En_kx is (N_k, N_bands). The code expects to loop over i and enable indexing [i][band].
