@@ -136,7 +136,7 @@ def mpr(p_symbolic):
     global _cached_optimal_thetas_for_mpr
 
     if _cached_optimal_thetas_for_mpr is None:
-        logger.warning(
+        logger.info(
             "mpr: _cached_optimal_thetas_for_mpr not set. "
             "Using default zero-field symbolic rotations (spins along +/-a axis)."
         )
@@ -442,305 +442,40 @@ def Hamiltonian(Sxyz_ops, p_sym):
     return HM_expr
 
 
+
 # --- Functions for Classical Energy Minimization ---
-def _precalculate_interaction_matrices(params_numerical, current_module):
+# NOTE: The legacy specialized minimization functions (classical_energy_fast, 
+# find_ground_state_orientations, get_field_optimized_state_for_lswt) have been 
+# REMOVED in favor of the generalized MagCalc.minimize_energy method.
+
+def set_magnetic_structure(theta_angles, phi_angles=None):
     """
-    Pre-calculates numerical J, G, and DM matrices for classical energy minimization.
-    Returns:
-        J_val: (nspin, nspin_ouc) float array
-        G_val: (nspin, nspin_ouc) float array
-        DM_val_vectors: (nspin, nspin_ouc, 3) float array
+    Sets the magnetic structure (theta and phi angles) to be used by mpr.
+    
+    Args:
+        theta_angles (list or np.ndarray): Theta angles for each spin (in radians).
+        phi_angles (list or np.ndarray, optional): Phi angles for each spin (in radians).
+                                     If None, uses AL_SPIN_PREFERENCE to determine phi.
     """
-    Jex_sp, Gex_sp, DM_matrix_of_matrices_sp, _ = current_module.spin_interactions(
-        params_numerical
-    )
-
-    nspin_uc = Jex_sp.shape[0]
-    nspin_ouc = Jex_sp.shape[1]
-
-    # Convert SymPy matrices to NumPy float arrays
-    try:
-        # Fast conversion for J and G if they don't contain symbols (should be numeric here)
-        J_val = np.array(Jex_sp.tolist(), dtype=float)
-        G_val = np.array(Gex_sp.tolist(), dtype=float)
-    except Exception:
-         # Fallback if somehow symbolic expressions remain (shouldn't happen with params_numerical)
-         J_val = np.array([[float(v) for v in row] for row in Jex_sp.tolist()], dtype=float)
-         G_val = np.array([[float(v) for v in row] for row in Gex_sp.tolist()], dtype=float)
-
-    DM_val_vectors = np.zeros((nspin_uc, nspin_ouc, 3), dtype=float)
-    for i_dm in range(nspin_uc):
-        for j_dm in range(nspin_ouc):
-            dm_vec_sym_matrix = DM_matrix_of_matrices_sp[i_dm, j_dm]
-            if isinstance(dm_vec_sym_matrix, sp.MatrixBase) and not dm_vec_sym_matrix.is_zero_matrix:
-                DM_val_vectors[i_dm, j_dm, :] = np.array(
-                    [float(comp) for comp in dm_vec_sym_matrix]
-                ).flatten()
-    
-    return J_val, G_val, DM_val_vectors
-
-def classical_energy_fast(
-    theta_angles_rad, params_numerical, S_val_numerical, J_val, G_val, DM_val_vectors
-):
-    """
-    Vectorized calculation of classical energy.
-    J_val, G_val: (N_uc, N_ouc)
-    DM_val_vectors: (N_uc, N_ouc, 3)
-    """
-    n_spins_uc = len(AL_SPIN_PREFERENCE)
-    n_spins_ouc = J_val.shape[1]
-    
-    # 1. Compute Spin Vectors S_i (N_uc, 3)
-    # AL_SPIN_PREFERENCE determines phi: 1 -> 0, -1 -> pi
-    # phi = 0 => (sin(t), 0, cos(t))
-    # phi = pi => (-sin(t), 0, cos(t))
-    # Combined: (al * sin(t), 0, cos(t))  (since y-comp is sin(t)*sin(phi) which is 0 for 0/pi)
-    
-    # Wait, check original code for y-component:
-    # phi_i = 0.0 if AL_SPIN_PREFERENCE[i] == 1 else np.pi
-    # y = sin(t)*sin(phi). sin(0)=0, sin(pi)=~0. Correct.
-    # x = sin(t)*cos(phi). cos(0)=1, cos(pi)=-1. Correct.
-    # So x = al_pref * sin(theta)
-    
-    # Vectorized construction S_i (N_uc, 3)
-    al_pref = np.array(AL_SPIN_PREFERENCE)
-    sin_theta = np.sin(theta_angles_rad)
-    cos_theta = np.cos(theta_angles_rad)
-    
-    Sx = S_val_numerical * al_pref * sin_theta
-    Sy = np.zeros_like(Sx) # Strictly zero for this phi constraint
-    Sz = S_val_numerical * cos_theta
-    
-    S_i = np.stack([Sx, Sy, Sz], axis=1) # (N_uc, 3)
-    
-    # 2. Compute Neighbor Spin Vectors S_j (N_ouc, 3)
-    # Only need theta for the OUC spins, which map back to UC spins
-    # j_uc_equiv = j_ouc % n_spins_uc
-    
-    # Vectorized indexing
-    indices_uc_equiv = np.arange(n_spins_ouc) % n_spins_uc
-    S_j = S_i[indices_uc_equiv, :] # (N_ouc, 3)
-    
-    # 3. Compute Energy Terms
-    # We need sum over i, j of 0.5 * (Interaction)
-    
-    # J Term: 0.5 * sum_{i,j} J_{ij} * (S_i . S_j)
-    # Broadcasting: (N_uc, 1, 3) . (1, N_ouc, 3) -> (N_uc, N_ouc) dot products
-    # Actually, simpler:
-    # S_i is (N_uc, 3), S_j is (N_ouc, 3).
-    # We need S_i[i] dot S_j[j] for all i,j?
-    # No, we have J_val[i,j] which is sparse-ish.
-    # But for full vectorization we can compute all dot products that have non-zero J.
-    # Efficient:
-    # Expand S_i to (N_uc, 1, 3)
-    # Expand S_j to (1, N_ouc, 3)
-    # Broadcasting is expensive if N_ouc is large, but here ~48 neighbors max?
-    # Total matrix size 16 * 48 = 768 elements. Very small.
-    
-    S_i_exp = S_i[:, np.newaxis, :] # (16, 1, 3)
-    S_j_exp = S_j[np.newaxis, :, :] # (1, 48, 3)
-    
-    # Dot product matrix (N_uc, N_ouc)
-    Si_dot_Sj = np.sum(S_i_exp * S_j_exp, axis=2)
-    
-    E_Heisenberg = 0.5 * np.sum(J_val * Si_dot_Sj)
-    
-    # G Term (Anisotropic Exchange): G_ij * (SxSx - SySy - SzSz)
-    # S_i components: (Sx_i, 0, Sz_i) (since Sy=0)
-    # Term becomes: G_ij * (Sx_i*Sx_j - 0 - Sz_i*Sz_j)
-    Sx_i = S_i[:, 0][:, np.newaxis]
-    Sx_j = S_j[:, 0][np.newaxis, :]
-    Sz_i = S_i[:, 2][:, np.newaxis]
-    Sz_j = S_j[:, 2][np.newaxis, :]
-    
-    G_term_val = Sx_i * Sx_j - Sz_i * Sz_j
-    E_Gamma = 0.5 * np.sum(G_val * G_term_val)
-    
-    # DM Term: D . (Si x Sj)
-    # Cross product (N_uc, N_ouc, 3)
-    Si_cross_Sj = np.cross(S_i_exp, S_j_exp, axis=2)
-    E_DM = 0.5 * np.sum(DM_val_vectors * Si_cross_Sj)
-    
-    # Zeeman Term: gamma * mu_B * Sz * H
-    # H is params_numerical[7]
-    gamma = 2.0
-    mu_B = 5.7883818066e-2
-    H_val = params_numerical[7]
-    
-    E_Zeeman = np.sum(gamma * mu_B * Sz * H_val)
-    
-    total_energy = E_Heisenberg + E_Gamma + E_DM + E_Zeeman
-    
-    return total_energy
-
-
-def find_ground_state_orientations(params_numerical, S_val_numerical, current_module):
-    """Finds optimal theta angles by minimizing classical energy with acceleration."""
-    n_spins = len(AL_SPIN_PREFERENCE)
-    H_field_val = params_numerical[7]
-    
-    # Optimization: Pre-calculate interaction matrices ONCE
-    J_val, G_val, DM_val_vectors = _precalculate_interaction_matrices(
-        params_numerical, current_module
-    )
-    
-    initial_theta_guess = np.full(
-        n_spins, np.pi / 2.0 - (0.05 if abs(H_field_val) > 1e-9 else 0.0)
-    )
-    bounds = [(1e-9, np.pi - 1e-9)] * n_spins
-
-    logger.info(f"Starting optimized classical energy minimization for H={H_field_val}...")
-
-    # No need for progress bar if it's fast (<1s), but keep it for checks
-    options = {"maxiter": 5000, "ftol": 1e-9, "gtol": 1e-7}
-
-    result = minimize(
-        classical_energy_fast, # Use fast vectorized function
-        initial_theta_guess,
-        args=(params_numerical, S_val_numerical, J_val, G_val, DM_val_vectors), # Pass matrices
-        method="L-BFGS-B",
-        bounds=bounds,
-        tol=1e-6,
-        options=options,
-    )
-
-    if result.success:
-        logger.info(
-            f"Classical minimization successful. Final energy: {result.fun:.6f} meV. (Iterations: {result.nit})"
-        )
-        optimal_theta_angles = np.clip(result.x, 0, np.pi)
-        return optimal_theta_angles, result.fun
-    else:
-        logger.error(f"Classical minimization failed: {result.message}")
-        return None, result.fun
-
-
-def get_field_optimized_state_for_lswt(params_numerical, S_val_numerical):
-    """
-    Determines spin orientations and corresponding Ud_numeric matrix.
-    If H=0, uses default orientations. If H!=0, minimizes classical energy.
-    Returns: (optimal_thetas, Ud_numeric, final_energy)
-    Also updates the module-level _cached_optimal_thetas_for_mpr.
-    """
-    current_module = sys.modules[__name__]
-    H_field = params_numerical[-1]
-    nspins = len(current_module.atom_pos())
-    optimal_theta_angles = None
-    Ud_numeric_optimized = np.zeros((3 * nspins, 3 * nspins), dtype=complex)
-    final_classical_energy = None
     global _cached_optimal_thetas_for_mpr
-
-    # --- Theta Caching Logic - Use common cache directory ---
-    # Path to .../research/magcalc/cache/
-    common_cache_root = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "..", "cache")
-    )
-    theta_cache_dir = os.path.join(
-        common_cache_root, "theta_angles", "cvo"
-    )  # Subdirectory for CVO
-
-    os.makedirs(theta_cache_dir, exist_ok=True)
-
-    # Create a hash key from all relevant parameters
-    # Ensure parameters are treated as floats for consistent hashing
-    params_tuple_for_hash = tuple(float(p) for p in params_numerical)
-    hasher = hashlib.md5()
-    hasher.update(str(params_tuple_for_hash).encode("utf-8"))
-    hasher.update(str(S_val_numerical).encode("utf-8"))
-    # Include AL_SPIN_PREFERENCE in hash if it could vary, though it's global here
-    hasher.update(str(tuple(AL_SPIN_PREFERENCE)).encode("utf-8"))
-    cache_key_thetas = hasher.hexdigest()
-    theta_cache_filename = os.path.join(
-        theta_cache_dir, f"optimal_thetas_cvo_{cache_key_thetas}.pkl"
-    )
-
-    # Attempt to load from theta cache
-    loaded_from_theta_cache = False
-    if os.path.exists(theta_cache_filename):
-        try:
-            with open(theta_cache_filename, "rb") as f:
-                optimal_theta_angles, final_classical_energy = pickle.load(f)
-            logger.info(
-                f"Loaded optimal thetas and energy from CVO theta cache: {theta_cache_filename} for H={H_field:.2f}"
-            )
-            loaded_from_theta_cache = True
-        except Exception as e:
-            logger.warning(
-                f"Failed to load from CVO theta cache {theta_cache_filename} for H={H_field:.2f}: {e}. Recalculating."
-            )
-    # --- End Theta Caching Logic ---
-
-    if loaded_from_theta_cache:
-        # If loaded from cache, optimal_theta_angles and final_classical_energy are already set.
-        # We still need to form Ud_numeric_optimized and set _cached_optimal_thetas_for_mpr.
-        pass
-    else:  # Not loaded from cache, so perform minimization
-        logger.info(
-            f"H_field={H_field:.2f}. Finding classical ground state orientations (theta cache miss)..."
-        )
-        # Pass current_module to find_ground_state_orientations
-        optimal_theta_angles, final_classical_energy = find_ground_state_orientations(
-            params_numerical, S_val_numerical, current_module
-        )
-
-        if optimal_theta_angles is None:  # Minimization failed
-            logger.error(
-                "Classical minimization failed. Cannot determine Ud_numeric for LSWT."
-            )
-            _cached_optimal_thetas_for_mpr = None  # Clear cache on failure
-            return None, None, None  # Propagate failure
-        else:  # Minimization succeeded, save to theta cache
-            try:
-                with open(theta_cache_filename, "wb") as f:
-                    pickle.dump((optimal_theta_angles, final_classical_energy), f)
-                logger.info(
-                    f"Saved optimal thetas and energy to CVO theta cache: {theta_cache_filename}"
-                )
-            except Exception as e:
-                logger.error(
-                    f"Failed to save to CVO theta cache {theta_cache_filename}: {e}"
-                )
-
-    # This block executes if optimal_theta_angles were obtained (either from cache or new minimization)
-    if abs(H_field) < 1e-9:  # Effectively zero field
-        logger.info(
-            "H_field is zero. Using AL_SPIN_PREFERENCE for Ud_numeric consistent with mpr."
-        )
-        optimal_theta_angles = np.full(nspins, np.pi / 2.0)
-        ud_blocks_h0 = []
-        for i in range(nspins):
-            al_val = AL_SPIN_PREFERENCE[i]
-            theta_h0 = np.pi / 2.0
-            phi_h0 = 0.0 if al_val == 1 else np.pi
-            ud_blocks_h0.append(_get_rotation_matrix_from_theta_phi(theta_h0, phi_h0))
-
-        for i in range(nspins):
-            Ud_numeric_optimized[3 * i : 3 * (i + 1), 3 * i : 3 * (i + 1)] = (
-                ud_blocks_h0[i]
-            )
-    elif optimal_theta_angles is not None:  # Non-zero field and thetas are available
-        ud_blocks_field = []
-        for i in range(nspins):
-            theta_i = optimal_theta_angles[i]
-            phi_i = 0.0 if AL_SPIN_PREFERENCE[i] == 1 else np.pi
-            ud_blocks_field.append(_get_rotation_matrix_from_theta_phi(theta_i, phi_i))
-
-        for i in range(nspins):
-            Ud_numeric_optimized[3 * i : 3 * (i + 1), 3 * i : 3 * (i + 1)] = (
-                ud_blocks_field[i]
-            )
-    else:  # Should not be reached if logic above is correct (optimal_theta_angles is None only if minimization failed)
-        logger.error(
-            "Inconsistent state in get_field_optimized_state_for_lswt: optimal_theta_angles is None after checks."
-        )
-        return None, None, None
-
-    if optimal_theta_angles is not None:
-        _cached_optimal_thetas_for_mpr = (
-            optimal_theta_angles.copy()
-        )  # Cache in-field angles
-
-    return optimal_theta_angles, Ud_numeric_optimized, final_classical_energy
+    global _cached_optimal_phis_for_mpr
+    
+    if len(theta_angles) != len(AL_SPIN_PREFERENCE):
+         logger.error(f"Length of theta_angles ({len(theta_angles)}) does not match spins ({len(AL_SPIN_PREFERENCE)}).")
+         return
+         
+    _cached_optimal_thetas_for_mpr = np.array(theta_angles, dtype=float)
+    
+    if phi_angles is not None:
+         if len(phi_angles) != len(AL_SPIN_PREFERENCE):
+              logger.warning("Length of phi_angles mismatch. Ignoring provided phis.")
+              _cached_optimal_phis_for_mpr = None
+         else:
+              _cached_optimal_phis_for_mpr = np.array(phi_angles, dtype=float)
+    else:
+         _cached_optimal_phis_for_mpr = None
+    
+    logger.info("Magnetic structure updated in spin_model_hc module.")
 
 
 if __name__ == "__main__":
@@ -749,55 +484,6 @@ if __name__ == "__main__":
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-    # Re-initialize logger for the main block if basicConfig was called by module import
-    logger = logging.getLogger(__name__)  # Ensure __main__ logger uses the new config
-    logger.info(
-        "Running standalone test for spin_model_hc.py: get_field_optimized_state_for_lswt"
-    )
-    example_S_val = 0.5
-    # base_params now includes Dy (set to -2.0) and D3 (set to 0.1)
-    base_params = [2.49, 1.12 * 2.49, 2.03 * 2.49, 0.28, 2.67, -2.0, 0.1]
-
-    logger.info("\n--- Test Case: H = 0 T (Field along Z) ---")  # Modified comment
-    params_h0 = base_params + [0.0]
-    (
-        optimal_thetas_h0,
-        Ud_numeric_h0,
-        final_energy_h0,
-    ) = get_field_optimized_state_for_lswt(params_h0, example_S_val)
-
-    if optimal_thetas_h0 is not None:
-        logger.info(f"Final classical energy at H=0 T: {final_energy_h0:.6f} meV")
-        optimal_theta_degrees_h0 = np.degrees(optimal_thetas_h0)
-        canting_angles_degrees_h0 = 90.0 - optimal_theta_degrees_h0
-        logger.info(
-            f"Optimal theta angles at H=0 T (degrees): {optimal_theta_degrees_h0}"
-        )
-        logger.info(
-            f"Canting angles from a-b plane (degrees towards +z): {canting_angles_degrees_h0}"
-        )
-        logger.info(
-            f"Mean canting angle at H=0 T (degrees): {np.mean(canting_angles_degrees_h0):.6f}"
-        )
-
-    logger.info("\n--- Test Case: H = 14 T (Field along Z) ---")  # Modified comment
-    params_h14 = base_params + [14.0]
-    (
-        optimal_thetas_h14,
-        Ud_numeric_h14,
-        final_energy_h14,
-    ) = get_field_optimized_state_for_lswt(params_h14, example_S_val)
-
-    if optimal_thetas_h14 is not None:
-        logger.info(f"Final classical energy at H=14 T: {final_energy_h14:.6f} meV")
-        optimal_theta_degrees_h14 = np.degrees(optimal_thetas_h14)
-        canting_angles_degrees_h14 = 90.0 - optimal_theta_degrees_h14
-        logger.info(
-            f"Optimal theta angles at H=14 T (degrees): {optimal_theta_degrees_h14}"
-        )
-        logger.info(
-            f"Canting angles from a-b plane (degrees towards +z): {canting_angles_degrees_h14}"
-        )
-        logger.info(
-            f"Mean canting angle at H=14 T (degrees): {np.mean(canting_angles_degrees_h14):.6f}"
-        )
+    logger = logging.getLogger(__name__)
+    logger.info("This module defines the spin model for aCVO (H//c).")
+    logger.info("Use MagCalc.minimize_energy() to find the ground state, then call set_magnetic_structure().")

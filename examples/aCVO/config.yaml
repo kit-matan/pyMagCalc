@@ -11,7 +11,7 @@ cvo_model:
     Dx: 2.67 # Uniform DM vector along a-axis for J3
     Dy: 0 # DM vector component in bc-plane for J1
     D3: 0   
-    H: 6.0
+    H: 20.0
   calculation:
     cache_mode: "w" # 'r' to read, 'w' to write MagCalc's internal cache
     cache_file_base_prefix: "CVO_model_cache" # Base prefix for MagCalc's internal cache files.

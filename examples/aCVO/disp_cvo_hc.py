@@ -106,6 +106,45 @@ if __name__ == "__main__":
          logger.warning("Symbolic cache missing, forcing 'w'")
          cache_mode = 'w'
 
+    # --- Classical Minimization (Generalized) ---
+    if abs(H_field) > 1e-9:
+        if hasattr(spin_model_cvo, 'set_magnetic_structure'):
+            logger.info(f"H={H_field} T. Performing classical energy minimization via MagCalc...")
+            try:
+                # Init temp MagCalc
+                calc_gs = mc.MagCalc(
+                    spin_magnitude=S_val,
+                    hamiltonian_params=params_val,
+                    cache_file_base=cache_file_base,
+                    cache_mode=cache_mode if cache_mode != 'w' else 'auto', 
+                    spin_model_module=spin_model_cvo
+                )
+                # Minimize
+                nspins = calc_gs.nspins
+                x0 = np.zeros(2 * nspins)
+                # Use module's preference if available for guess
+                AL_SPIN_PREFERENCE = getattr(spin_model_cvo, 'AL_SPIN_PREFERENCE', [1]*nspins)
+                for i in range(nspins):
+                    x0[2*i] = np.pi/2.0 - 0.05 
+                    phi_pref = 0.0 if AL_SPIN_PREFERENCE[i] == 1 else np.pi
+                    x0[2*i+1] = phi_pref
+
+                min_res = calc_gs.minimize_energy(x0=x0)
+                if min_res.success:
+                    logger.info(f"Minimization successful. Energy: {min_res.fun:.6f} meV")
+                    spin_model_cvo.set_magnetic_structure(min_res.x[0::2], min_res.x[1::2])
+                    if cache_mode == 'r':
+                        logger.warning("Switching cache_mode to 'w' to update Ud with new structure.")
+                        cache_mode = 'w'
+                else:
+                    logger.error(f"Minimization failed: {min_res.message}")
+            except Exception as e:
+                logger.error(f"Minimization error: {e}")
+        else:
+             logger.info("Minimization skipped: Model missing 'set_magnetic_structure'.")
+    else:
+        logger.info("H=0. Skipping minimization.")
+
     try:
         calculator = mc.MagCalc(
             spin_magnitude=S_val,

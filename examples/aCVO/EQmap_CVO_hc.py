@@ -199,17 +199,52 @@ if __name__ == "__main__":
         q_vectors_list.append(q_vec)
         sys.exit(1)
 
-    logger.info("Finding classical ground state spin orientations via spin_model...")
-    
-    # Use the spin model's integrated function which returns the Ud matrix directly
-    # Note: get_field_optimized_state_for_lswt is a helper we saw in spin_model_cvo_Hc.py
-    optimal_theta_angles, Ud_numeric_optimized, final_energy = sm_cvo.get_field_optimized_state_for_lswt(
-        p_hamiltonian, S_val
-    )
+    # --- Classical Minimization (Generalized) ---
+    # Only perform if field is non-zero and model supports structure updates
+    H_for_min = model_params["H"] 
+    if abs(H_for_min) > 1e-9:
+        if hasattr(sm_cvo, 'set_magnetic_structure'):
+            logger.info("Finding classical ground state via MagCalc.minimize_energy...")
+            
+            # Init temp MagCalc
+            try:
+                calc_gs = mc.MagCalc(
+                    spin_magnitude=S_val,
+                    hamiltonian_params=p_hamiltonian,
+                    cache_file_base=cache_file_base,
+                    cache_mode=cache_mode if cache_mode != 'w' else 'auto', 
+                    spin_model_module=sm_cvo
+                )
+                # Minimize
+                nspins = calc_gs.nspins
+                x0 = np.zeros(2 * nspins)
+                AL_SPIN_PREFERENCE = getattr(sm_cvo, 'AL_SPIN_PREFERENCE', [1]*nspins)
+                for i in range(nspins):
+                    x0[2*i] = np.pi/2.0 - 0.05 
+                    phi_pref = 0.0 if AL_SPIN_PREFERENCE[i] == 1 else np.pi
+                    x0[2*i+1] = phi_pref
 
-    if optimal_theta_angles is None:
-        logger.error("Failed to find classical ground state. Exiting.")
-        sys.exit(1)
+                min_res = calc_gs.minimize_energy(x0=x0)
+                
+                if min_res.success:
+                    logger.info(f"Minimization successful. Energy: {min_res.fun:.6f} meV")
+                    sm_cvo.set_magnetic_structure(min_res.x[0::2], min_res.x[1::2])
+                    # If we updated structure, we MUST ensure symbolic matrices are refreshed if they depend on it
+                    # (usually Ud depends on mpr which depends on structure).
+                    if cache_mode == 'r':
+                        logger.warning("Switching cache_mode to 'w' to regenerate Ud with new structure.")
+                        cache_mode = 'w'
+                else:
+                    logger.error(f"Minimization failed: {min_res.message}")
+                    sys.exit(1)
+                    
+            except Exception as e:
+                logger.error(f"Error during minimization: {e}")
+                sys.exit(1)
+        else:
+             logger.info("Minimization skipped: Model missing 'set_magnetic_structure'.")
+    else:
+        logger.info("H=0. Skipping minimization.")
 
     # Auto-switch cache mode if symbolic matrices (HM) are missing
     # MagCalc expects symbolic files in cache/symbolic_matrices/
@@ -230,7 +265,7 @@ if __name__ == "__main__":
         cache_file_base=cache_file_base,
         spin_model_module=sm_cvo,
         cache_mode=cache_mode,
-        Ud_numeric_override=Ud_numeric_optimized,
+        Ud_numeric_override=None,
     )
 
     logger.info("Calculating S(Q,w)...")

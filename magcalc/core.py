@@ -23,6 +23,7 @@ import sympy as sp
 from sympy import I, lambdify, Add
 import numpy as np
 from scipy import linalg as la
+from scipy.optimize import minimize # Added for classical energy minimization
 import timeit
 import sys
 import pickle
@@ -1276,11 +1277,18 @@ class MagCalc:
         current_model_identifier = self.config_filepath if self.config_data else self.sm.__name__  # type: ignore
 
         s_match = np.isclose(cached_meta.get("spin_magnitude"), self.spin_magnitude)
-        p_match = np.allclose(
-            cached_meta.get("hamiltonian_params", []),
-            self.hamiltonian_params,
-            equal_nan=True,
-        )
+    
+        try:
+            p_match = np.allclose(
+                cached_meta.get("hamiltonian_params", []),
+                self.hamiltonian_params,
+                equal_nan=True,
+            )
+        except (ValueError, TypeError):
+            # ValueError can happen if shapes don't match (e.g. different number of params)
+            # TypeError can happen if types are incompatible
+            p_match = False
+
         id_match = cached_meta.get("model_identifier") == current_model_identifier
 
         if not s_match:
@@ -1869,6 +1877,7 @@ class MagCalc:
             Individual q-points that fail during calculation will have NaN arrays
             in the returned list.
         """
+        start_time = timeit.default_timer()
         if self.HMat_sym is None:  # Should be caught by __init__
             logger.error("Symbolic matrix HMat_sym not available.")
             return None
@@ -2173,6 +2182,106 @@ class MagCalc:
                 f"An unexpected error occurred while saving results to '{filename}'."
             )
             raise
+
+    def minimize_energy(
+        self,
+        params: Optional[List[float]] = None,
+        x0: Optional[npt.NDArray[np.float64]] = None,
+        method: str = "L-BFGS-B",
+        bounds: Optional[List[Tuple[float, float]]] = None,
+        constraints: Optional[Dict] = None,
+        **kwargs,
+    ) -> Any:
+        """
+        Find the classical ground state magnetic structure by minimizing the energy.
+
+        This method constructs the classical energy function from the symbolic
+        Hamiltonian (defined by the spin_model_module) and minimizes it with
+        respect to the spin orientation angles (theta, phi) for each spin in the unit cell.
+
+        Args:
+            params (Optional[List[float]]): Numerical Hamiltonian parameters. If None, uses self.hamiltonian_params.
+            x0 (Optional[np.ndarray]): Initial guess for angles [theta_0, phi_0, theta_1, phi_1, ...].
+                                       Length should be 2 * nspins.
+            method (str): Minimization method (default: 'L-BFGS-B').
+            bounds (Optional[List[Tuple]]): Bounds for variables.
+            constraints (Optional[Dict]): Constraints for optimization.
+
+        Returns:
+            OptimizeResult: The result of the optimization.
+        """
+        if params is None:
+            if self.hamiltonian_params is None:
+                raise ValueError("Hamiltonian parameters must be provided either to __init__ or minimize_energy.")
+            params = self.hamiltonian_params
+
+        # 1. Setup Symbols
+        nspins = len(self.sm.atom_pos())
+        theta_sym = sp.symbols(f"theta0:{nspins}")
+        phi_sym = sp.symbols(f"phi0:{nspins}")
+        
+        # 2. Construct Classical Spin Vectors for OUC
+        nspins_ouc = len(self.sm.atom_pos_ouc())
+        S_vectors_ouc = []
+        S_val = self.spin_magnitude
+        
+        for i_ouc in range(nspins_ouc):
+            i_uc = i_ouc % nspins # Assume periodic boundary / q=0 order
+            th = theta_sym[i_uc]
+            ph = phi_sym[i_uc]
+            
+            # Classical vector components
+            Sx = self.S_sym * sp.sin(th) * sp.cos(ph)
+            Sy = self.S_sym * sp.sin(th) * sp.sin(ph)
+            Sz = self.S_sym * sp.cos(th)
+            
+            # The Hamiltonian function expects a list of 3-component objects (Matrix or list)
+            # We use sympy Matrix to be consistent with what 'gen_HM' usually passes
+            S_vectors_ouc.append(sp.Matrix([Sx, Sy, Sz]))
+            
+        # 3. Get Symbolic Energy
+        H_sym_classical = self.sm.Hamiltonian(S_vectors_ouc, self.params_sym)
+        # H_sym_classical usually contains S_sym terms and params_sym terms.
+        
+        # Substitute S value
+        E_sym = H_sym_classical.subs(self.S_sym, S_val)
+        
+        # 4. Create Numerical Function
+        opt_vars = []
+        for i in range(nspins):
+            opt_vars.append(theta_sym[i])
+            opt_vars.append(phi_sym[i])
+            
+        params_sub_list = list(zip(self.params_sym, params))
+        E_sym_num = E_sym.subs(params_sub_list)
+        
+        # Ensure result is real
+        E_sym_num = sp.re(E_sym_num)
+        
+        logger.info("Lambdifying classical energy function...")
+        # lambdify args: flattened list of theta, phi
+        E_func_args = lambdify(opt_vars, E_sym_num, modules="numpy")
+        
+        def energy_wrapper(x):
+            # x is [th0, ph0, th1, ph1, ...]
+            return E_func_args(*x)
+            
+        # 5. Minimize
+        if x0 is None:
+            # Default guess: Random to break symmetry
+            x0 = np.random.rand(2 * nspins) * 2 * np.pi
+            
+        if bounds is None:
+            # Bounds: theta [0, pi], phi [0, 2pi]
+            bounds = []
+            for _ in range(nspins):
+                bounds.append((0, np.pi))     # Theta
+                bounds.append((0, 2 * np.pi)) # Phi
+                
+        logger.info(f"Starting minimization with method {method}...")
+        res = minimize(energy_wrapper, x0, method=method, bounds=bounds, constraints=constraints, **kwargs)
+        
+        return res
 
 
 # --- Plotting Helper Functions ---

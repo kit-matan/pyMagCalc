@@ -498,51 +498,79 @@ if __name__ == "__main__":
     # Perform classical minimization only if:
     # 1. The magnetic field is non-zero.
     # 2. cache_mode is not 'r' (i.e., we are in a mode that might regenerate symbolic matrices).
-    if abs(H_field_val_from_config) > 1e-9 and cache_mode != "r":
-        if hasattr(cvo_spin_model, 'get_field_optimized_state_for_lswt'):
+    # NOTE: Even if 'r', if we don't know the structure, we might be in trouble unless mpr 
+    # magically knows it (which it won't if `get_field_optimized_state_for_lswt` is gone).
+    # So we should probably ALWAYS minimize if H!=0 to ensure mpr has the right angles,
+    # UNLESS we trust `MagCalc` to load a `Ud` that matches the *implied* structure.
+    # But `MagCalc` loading `Ud` doesn't inform `mpr` of the angles for *future* use?
+    # Actually, `MagCalc` only needs `Ud` to run. If it loads `Ud`, fine. 
+    # But if we want to confirm the energy or canting, we should minimize.
+    
+    # --- Perform Classical Minimization if H_field is non-zero and model supports it ---
+    Ud_numeric_for_magcalc = None
+    H_field_val_from_config = params_val[-1]
+
+    if abs(H_field_val_from_config) > 1e-9:
+        if hasattr(cvo_spin_model, 'set_magnetic_structure'):
             logger.info(
                 f"Non-zero H_field ({H_field_val_from_config}) detected. "
-                "Performing classical energy minimization for CVO before MagCalc initialization."
+                "Using MagCalc.minimize_energy() to find ground state."
             )
-            optimal_thetas, Ud_numeric_optimized, final_classical_energy = (
-                cvo_spin_model.get_field_optimized_state_for_lswt(params_val, S_val)
-            )
-            if Ud_numeric_optimized is not None:
-                logger.info(
-                    f"Classical ground state found with energy: {final_classical_energy:.6f} meV."
+            
+            try:
+                # 1. Initialize temporary MagCalc for minimization
+                calc_gs = mc.MagCalc(
+                    spin_magnitude=S_val,
+                    hamiltonian_params=params_val,
+                    cache_file_base=cache_file_base, 
+                    cache_mode=cache_mode if cache_mode != 'w' else 'auto', 
+                    spin_model_module=cvo_spin_model
                 )
-                Ud_numeric_for_magcalc = Ud_numeric_optimized
-                # Log the canting angles
-                if optimal_thetas is not None:
+                
+                # 2. Run Minimization
+                nspins = calc_gs.nspins
+                x0 = np.zeros(2 * nspins)
+                AL_SPIN_PREFERENCE = getattr(cvo_spin_model, 'AL_SPIN_PREFERENCE', [1]*nspins)
+                
+                for i in range(nspins):
+                    x0[2*i] = np.pi/2.0 - 0.05 
+                    phi_pref = 0.0 if AL_SPIN_PREFERENCE[i] == 1 else np.pi
+                    x0[2*i+1] = phi_pref
+
+                min_res = calc_gs.minimize_energy(x0=x0)
+                
+                if min_res.success:
+                    optimal_thetas = min_res.x[0::2]
+                    optimal_phis = min_res.x[1::2]
+                    final_energy = min_res.fun
+                    
+                    logger.info(f"Classical ground state found. Energy: {final_energy:.6f} meV")
+                    
                     canting_angles_degrees_sw = 90.0 - np.degrees(optimal_thetas)
-                    logger.info(
-                        f"Canting angles from a-b plane (degrees towards +z): {canting_angles_degrees_sw}"
-                    )
                     logger.info(
                         f"Mean canting angle (degrees): {np.mean(canting_angles_degrees_sw):.4f}"
                     )
-            else:
-                logger.error(
-                    "Failed to determine field-optimized classical ground state. "
-                    "MagCalc will proceed with Ud derived from zero-field mpr."
-                )
+                    
+                    # 3. Update Spin Model Module
+                    cvo_spin_model.set_magnetic_structure(optimal_thetas, optimal_phis)
+                    logger.info("Updated spin_model with new magnetic structure.")
+                    
+                    if cache_mode == 'r':
+                         logger.warning("Switching cache_mode to 'w' to ensure Ud is updated with new structure.")
+                         cache_mode = 'w'
+                else:
+                    logger.error(f"Energy minimization failed: {min_res.message}")
+            
+            except Exception as e:
+                logger.error(f"Error during ground state minimization: {e}")
+                
         else:
-             logger.warning(
-                f"Non-zero H_field ({H_field_val_from_config}) detected, but 'get_field_optimized_state_for_lswt' "
-                "is missing in spin_model_ha. Proceeding without explicit classical minimization in this script. "
-                "Ensure the model handles field correctly or that mpr is sufficient."
+             logger.info(
+                f"Non-zero H_field ({H_field_val_from_config}) detected, but spin model does not support structure updates "
+                "(missing 'set_magnetic_structure'). Skipping minimization."
             )
     else:
-        if abs(H_field_val_from_config) <= 1e-9:
-            logger.info(
-                "H_field is zero. Classical energy minimization skipped. "
-                "MagCalc will use spin structure from mpr (likely zero-field or based on any existing angle cache in spin_model_hc)."
-            )
-        elif cache_mode == "r":
-            logger.info(
-                f"cache_mode is 'r'. Classical energy minimization skipped for H_field={H_field_val_from_config}. "
-                "MagCalc will use spin structure from mpr (likely based on cached symbolic matrices or any existing angle cache in spin_model_hc)."
-            )
+        logger.info("H_field is zero. Skipping minimization.")
 
     try:
         calculator = mc.MagCalc(
