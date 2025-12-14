@@ -796,9 +796,12 @@ def gen_HM(
     )
 
     logger.info("Constructing symbolic Hamiltonian from spin model...")
+    start_time_ham = timeit.default_timer()
     hamiltonian_sym = _prepare_hamiltonian(
         spin_model_module, spin_ops_global_ouc, params_sym, S_sym
     )
+    end_time_ham = timeit.default_timer()
+    logger.info(f"Symbolic Hamiltonian construction took: {end_time_ham - start_time_ham:.2f} s")
     logger.debug(
         f"Hardcoded-path: Initial symbolic Hamiltonian has {len(hamiltonian_sym.as_ordered_terms())} terms."
     )
