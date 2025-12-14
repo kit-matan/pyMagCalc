@@ -720,8 +720,13 @@ if __name__ == "__main__":
                 plot_filepath = plotting_p_config.get("sqw_plot_filename")
 
             if plot_filepath:
-                plt.savefig(plot_filepath)
-                logger.info(f"CVO plot saved to {plot_filepath}")
+                # Ensure path is relative to script directory
+                full_plot_path = os.path.join(script_dir, plot_filepath)
+                # Resolve ../ path
+                full_plot_path = os.path.abspath(full_plot_path)
+                
+                plt.savefig(full_plot_path)
+                logger.info(f"CVO plot saved to {full_plot_path}")
             else:
                 logger.warning("CVO plot filename not determined for saving.")
 

@@ -868,9 +868,14 @@ def main():
             elif sqw_plotting_requested and sqw_data_available:
                 plot_filepath = plotting_p_config.get("sqw_plot_filename")
 
-            if plot_filepath:  # Path should be absolute from config loading
-                plt.savefig(plot_filepath)
-                logger.info(f"Plot saved to {plot_filepath}")
+            if plot_filepath:
+                # Ensure path is relative to script directory
+                full_plot_path = os.path.join(script_dir, plot_filepath)
+                # Resolve ../ path
+                full_plot_path = os.path.abspath(full_plot_path)
+
+                plt.savefig(full_plot_path)
+                logger.info(f"Plot saved to {full_plot_path}")
             else:
                 logger.warning("Plot filename not determined for saving.")
 
