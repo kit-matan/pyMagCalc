@@ -1,4 +1,7 @@
 # Configuration for KFe3J LSWT calculation
+python_model_file: "spin_model.py"
+parameter_order: ["J1", "J2", "Dy", "Dz", "H"]
+
 
 model_params:
   S: 2.5      # Spin magnitude (5/2)

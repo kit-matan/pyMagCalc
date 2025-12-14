@@ -56,19 +56,51 @@ def run_calculation(config_file: str):
 
     # Initialize Generic Model
     # GenericSpinModel will validate schema internally now!
-    try:
-        spin_model = GenericSpinModel(config, base_path=config_dir)
-    except Exception as e:
-        logger.error(f"Failed to initialize Spin Model: {e}")
-        raise e
     
-    # Validation happened in GenericSpinModel, so config structure is guaranteed (mostly).
-    # But self.config inside spin_model might be different from local 'config' if defaults applied.
-    # Ideally use spin_model.config but GenericSpinModel doesn't expose it cleanly yet or we didn't check.
-    # But we can assume 'config' is acceptable or use spin_model.config if accessible.
-    # spin_model.config is accessible.
+    # Check for legacy python model file
+    python_model_rel = config.get('python_model_file')
+    spin_model = None
     
-    final_config = spin_model.config 
+    if python_model_rel:
+        import importlib.util
+        # Resolve path
+        if not os.path.isabs(python_model_rel):
+            python_model_path = os.path.join(config_dir, python_model_rel)
+        else:
+            python_model_path = python_model_rel
+            
+        if not os.path.exists(python_model_path):
+             logger.error(f"Python model file not found: {python_model_path}")
+             raise FileNotFoundError(f"Python model file not found: {python_model_path}")
+             
+        logger.info(f"Loading legacy python model from: {python_model_path}")
+        
+        try:
+            # Load module dynamically
+            module_name = os.path.splitext(os.path.basename(python_model_path))[0]
+            spec = importlib.util.spec_from_file_location(module_name, python_model_path)
+            if spec and spec.loader:
+                spin_model = importlib.util.module_from_spec(spec)
+                sys.modules[module_name] = spin_model 
+                spec.loader.exec_module(spin_model)
+            else:
+                raise ImportError(f"Could not load spec for {python_model_path}")
+                
+            # Assign config to model if it expects it (GenericSpinModel does, legacy might not but harmless)
+            spin_model.config = config
+            
+        except Exception as e:
+            logger.error(f"Failed to load python model: {e}")
+            raise e
+    else:
+        # Default: Use GenericSpinModel with config
+        try:
+            spin_model = GenericSpinModel(config, base_path=config_dir)
+        except Exception as e:
+            logger.error(f"Failed to initialize Spin Model: {e}")
+            raise e
+    
+    final_config = config
     # Use final_config for parameters to ensure defaults
     
     # Initialize MagCalc
@@ -76,43 +108,35 @@ def run_calculation(config_file: str):
     cache_mode = calc_config.get('cache_mode', 'r')
     cache_base = calc_config.get('cache_file_base', 'magcalc_cache')
     
-    # Parameters
-    params_val = []
-    # If parameters dict exists (New Schema Style)
-    parameters_dict = final_config.get('parameters', {})
-    param_names = list(parameters_dict.keys()) # Order might matter for internal consistency, dependent on dictionary order
+    # Parameters Logic
+    parameters_dict = final_config.get('parameters', {}) or final_config.get('model_params', {})
     
-    # Wait, GenericSpinModel uses 'parameters' list to map positional args?
-    # Schema defines 'parameters' as Dict[str, float].
-    # But GenericSpinModel uses self.config.get('parameters') as a LIST of names if it's the old style,
-    # or expects 'parameters' to be a dict in new style?
-    # Let's check Schema again.
-    # Schema: parameters: Dict[str, float].
-    # GenericSpinModel logic (Step 58): 
-    # if self.config.get('parameters'): ... param_names = self.config.get('parameters') ...
-    # Wait, if 'parameters' is a Dict, iterating it yields keys (names). So it works!
-    
-    if isinstance(parameters_dict, dict):
-         params_val = list(parameters_dict.values())
-         # We need to ensure the ORDER passed to MagCalc matches the ORDER 'GenericSpinModel' expects 
-         # when it unwraps them.
-         # GenericSpinModel uses `_resolve_param_map(p)`:
-         # param_names = self.config.get('parameters') [KEYS]
-         # maps name -> p[i].
-         # So providing we pass values() in same order as keys(), it works.
-         # Python 3.7+ preserves dict order.
-    else:
-        # Fallback if somehow it's a list (Legacy logic but Schema enforces dict?)
-        # Schema enforces Dict.
-        params_val = [] 
-    
-    # Spin Magnitude 'S'
-    # In strict schema 'parameters' should contain 'S' if referenced?
-    # Or is 'S' special?
-    # In KFe3J, S is in model_params.
-    # Schema aliased model_params to parameters.
-    # So 'S' should be in parameters_dict.
+    # Spin Magnitude 'S' - Extract specially
     S_val = float(parameters_dict.get('S', 1.0))
+    
+    # Construct Hamiltonian Parameters List
+    params_val = []
+    
+    # 1. Use explicit order if provided
+    param_order = final_config.get('parameter_order')
+    
+    # 2. If python model is used, we usually need specific order.
+    #    If no order provided, try to infer or fallback to dict values (risky).
+    if param_order:
+        try:
+             params_val = [float(parameters_dict[k]) for k in param_order]
+        except KeyError as e:
+             logger.error(f"Parameter in order list not found in parameters dict: {e}")
+             raise e
+    else:
+        # Fallback: Exclude 'S' and use remaining values in insertion order?
+        # A common pattern in legacy scripts.
+        # But for KFe3J, dict has 'S' at start. simple values() includes it.
+        # We should filter 'S' out if we are guessing.
+        temp_params = {k: v for k, v in parameters_dict.items() if k != 'S'}
+        params_val = list(temp_params.values())
+        if python_model_rel:
+            logger.warning("No 'parameter_order' specified for legacy python model. Using dictionary order (excluding 'S'). This may be incorrect.")
 
     logger.info(f"Model Parameters: {params_val}, S={S_val}")
     
@@ -155,9 +179,11 @@ def run_calculation(config_file: str):
                  q_vectors_cart = q_cart
 
                  logger.info("Calculating dispersion...")
-                 energies = calculator.calculate_dispersion(q_vectors_cart)
+                 disp_res = calculator.calculate_dispersion(q_vectors_cart)
+                 energies = disp_res.energies
                  
-                 if energies:
+                 if energies is not None:
+                     # Convert to array for saving consistency
                      # Convert to array for saving consistency
                      # Some internal logic might return list of arrays
                      # Try to stack if regular
@@ -217,7 +243,11 @@ def run_calculation(config_file: str):
                  q_vectors_cart = np.dot(q_vectors, B_matrix) # Assuming B_matrix valid
 
              logger.info("Calculating S(Q,w)...")
-             q_out, en_out, int_out = calculator.calculate_sqw(q_vectors_cart)
+             sqw_res = calculator.calculate_sqw(q_vectors_cart)
+             q_out = sqw_res.q_vectors
+             en_out = sqw_res.energies
+             int_out = sqw_res.intensities
+             
              np.savez(sqw_file, q_vectors=q_out, energies=en_out, intensities=int_out)
              logger.info(f"S(Q,w) saved to {sqw_file}")
 

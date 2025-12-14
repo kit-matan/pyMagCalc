@@ -1,5 +1,7 @@
 # ... (other configurations in your main config.yaml) ...
 
+# Configuration for alpha-CVO
+
 cvo_model:
   spin_model_type: "hc" # Options: "ha" (H || a), "hc" (H || c)
   model_params:

@@ -138,7 +138,12 @@ class TasksConfig(BaseModel):
 
 # --- Main Configuration ---
 class MagCalcConfig(BaseModel):
-    crystal_structure: CrystalStructureConfig
+    # Legacy Support: Loading a python file as the model definition
+    python_model_file: Optional[str] = None
+    parameter_order: Optional[List[str]] = None # Explicit order for positional parameters
+    
+    # If python_model_file is present, these are optional
+    crystal_structure: Optional[CrystalStructureConfig] = None
     interactions: List[InteractionType] = Field(default_factory=list)
     parameters: Dict[str, float] = Field(default_factory=dict) # Name -> Value
     model_params: Optional[Dict[str, float]] = None # Alias/Legacy support
@@ -160,3 +165,11 @@ class MagCalcConfig(BaseModel):
         if 'model_params' in values and 'parameters' not in values:
              values['parameters'] = values['model_params']
         return values
+
+    @model_validator(mode='after')
+    def check_required_fields_if_no_python_model(self):
+        if not self.python_model_file:
+            if not self.crystal_structure:
+                raise ValueError("Field 'crystal_structure' is required unless 'python_model_file' is specified.")
+            # We could enforce interactions too, but maybe someone wants a model with no interactions? (Unlikely but valid physically)
+        return self
