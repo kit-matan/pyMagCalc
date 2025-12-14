@@ -94,11 +94,38 @@ class GenericSpinModel:
         # Pre-load structure data
         self._load_structure()
         
+        
         # Pre-calc neighbors
         self._atoms_ouc = self._generate_atom_pos_ouc()
         
         # Mimic module attribute for logging
         self.__name__ = "GenericSpinModel"
+
+        # --- VALIDATION ---
+        try:
+            from .schema import MagCalcConfig
+            try:
+                # model_validate allows extra fields if ConfigDict(extra='allow') was not set?
+                # Actually our schema uses extra='allow' in sub-configs but strict in others?
+                # Using model_validate(config)
+                validated = MagCalcConfig.model_validate(self.config)
+                # Dump back to dict to preserve existing logic (which expects dicts)
+                # mode='json' or 'python'? 'python' keeps objects like datetime, but we want primitives if possible.
+                # However, original config was dict of primitives.
+                self.config = validated.model_dump()
+                logger.info("Configuration validation passed.")
+            except Exception as e:
+                logger.warning(f"Configuration validation failed: {e}")
+                # We can choose to raise or just warn. 
+                # For backward compatibility with partial configs (like sw_KFe3J.py might produce?), maybe warn?
+                # But creating a robust system implies failing on invalid data.
+                # Let's WARN for now to avoid breaking existing hybrid scripts, 
+                # but eventually we want to Enforce.
+                # Actually, if we are in 'legacy' mode (hybrid), the config might be partial.
+                pass
+        except ImportError:
+            logger.warning("Could not import MagCalcConfig schema. Validation skipped.")
+
         
     def _load_structure(self):
         """

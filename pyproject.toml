@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "magcalc"
+version = "0.1.0"
+description = "Linear Spin-Wave Theory Calculator"
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [
+    {name = "Kit Matan", email = "kmatan@example.com"},
+]
+dependencies = [
+    "numpy>=1.20.0",
+    "scipy>=1.7.0",
+    "sympy>=1.9",
+    "tqdm>=4.60.0",
+    "matplotlib>=3.4.0",
+    "pyyaml>=5.4",
+    "ase>=3.22.0",
+    "typer[all]>=0.9.0",
+    "pydantic>=2.0.0",
+]
+
+[project.scripts]
+magcalc = "magcalc.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["magcalc*"]

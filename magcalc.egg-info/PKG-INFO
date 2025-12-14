@@ -1,3 +1,22 @@
+Metadata-Version: 2.4
+Name: magcalc
+Version: 0.1.0
+Summary: Linear Spin-Wave Theory Calculator
+Author-email: Kit Matan <kmatan@example.com>
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Requires-Dist: numpy>=1.20.0
+Requires-Dist: scipy>=1.7.0
+Requires-Dist: sympy>=1.9
+Requires-Dist: tqdm>=4.60.0
+Requires-Dist: matplotlib>=3.4.0
+Requires-Dist: pyyaml>=5.4
+Requires-Dist: ase>=3.22.0
+Requires-Dist: typer[all]>=0.9.0
+Requires-Dist: pydantic>=2.0.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0.0; extra == "dev"
+
 # pyMagCalc: Linear Spin-Wave Theory Calculator
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/)
@@ -48,33 +67,11 @@
 ## Installation
 
 1.  Clone the repository.
-2.  Install the package in editable mode (recommended for development):
+2.  Install dependencies:
     ```bash
-    pip install -e .
+    pip install -r requirements.txt
     ```
-    This installs the `magcalc` command-line tool and all dependencies.
-
-## CLI Usage (New)
-
-The new command-line interface makes it easy to manage calculations.
-
-### 1. Initialize a Project
-Create a template configuration file:
-```bash
-magcalc init my_config.yaml
-```
-
-### 2. Validate Configuration
-Check if your configuration file is valid:
-```bash
-magcalc validate my_config.yaml
-```
-
-### 3. Run Calculations
-Run dispersion, S(Q,w), and plotting as defined in the config:
-```bash
-magcalc run my_config.yaml
-```
+3.  Add the project root to your `PYTHONPATH` or run scripts from the root directory to ensure `import magcalc` works.
 
 ## Basic Usage
 
