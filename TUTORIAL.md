@@ -1,150 +1,190 @@
 # pyMagCalc Tutorial
 
-Welcome to the `pyMagCalc` tutorial! This guide will walk you through setting up a simple spin model, calculating its dispersion relation, and exploring more complex examples.
+Welcome to the `pyMagCalc` tutorial! this guide will walk you through the complete workflow:
+1.  **Defining a Spin Model** (declarative YAML).
+2.  **Finding the Ground State** (Energy Minimization).
+3.  **Calculating Spin Dynamics** (Dispersion and S(Q,ω)).
+4.  **Visualizing Results** (3D Structure and Plots).
+
+---
 
 ## Prerequisites
 
-Before starting, ensure you have installed the package dependencies:
+Ensure `pyMagCalc` is installed and the project root is in your `PYTHONPATH`:
+
 ```bash
+# From project root
 pip install -r requirements.txt
-```
-And add the package to your python path:
-```bash
 export PYTHONPATH=$PYTHONPATH:$(pwd)
 ```
 
 ---
 
-## Step 1: Defining a Spin Model (YAML)
+## Part 1: Workflow Overview
 
-`pyMagCalc` uses a declarative YAML format to define materials. Let's create a simple **1D Ferromagnetic Chain** as a "Hello World" example.
+The modern `magcalc` workflow involves three main steps:
 
-Create a file named `simple_chain.yaml`:
+1.  **Configure**: Define your crystal and magnetic interactions in a `.yaml` file.
+2.  **Minimize**: Use the `minimize_energy()` method to find the classical angle configuration ($\theta, \phi$) for the ground state.
+3.  **Calculate**: Use this optimized structure to compute Magnon Dispersion and Neutron Scattering Intensity.
+
+### Example: Finding the Ground State
+
+Before calculating spin waves, we often need to know the magnetic ground state. `pyMagCalc` can find this for you numerically.
+
+```python
+import magcalc as mc
+import numpy as np
+
+# 1. Initialize
+calc = mc.MagCalc(config_filepath="examples/KFe3J/config.yaml")
+
+# 2. Minimize Energy
+# You can provide a guess (x0) to guide the solver, especially for complex chiral structures.
+# x0 is an array of [theta0, phi0, theta1, phi1, ...]
+res = calc.minimize_energy()
+print(f"Minimized Energy: {res.fun:.4f} meV")
+
+# 3. Visualize Structure
+# Save a 3D plot of the spins to verify your ground state
+mc.plot_magnetic_structure(
+    calc.sm.atom_pos(), 
+    res.x, 
+    save_filename="examples/plots/structure_check.png"
+)
+```
+
+---
+
+## Part 2: Configuring a Model (YAML)
+
+Declarative YAML is the recommended way to define models.
+
+**`material_config.yaml` example:**
 
 ```yaml
 crystal_structure:
   lattice_parameters:
-    a: 3.0
-    b: 10.0 # Large spacing to isolate chains
-    c: 10.0
+    a: 7.3  # Angstroms
+    b: 7.3
+    c: 17.2
     alpha: 90
     beta: 90
-    gamma: 90
-
+    gamma: 120
   atoms_uc:
-    - label: "spin1"
-      element: "Cu"
-      pos: [0.0, 0.0, 0.0]
-      spin_S: 0.5
-      magmom_classical: [0.0, 0.0, 1.0] # Ferromagnetic alignment along c-axis (z)
+    - label: "Fe1"
+      element: "Fe"
+      pos: [0.5, 0.5, 0.0]
+      spin_S: 2.5
+      magmom_classical: [0, 0, 1] # Initial guess for minimization
 
 interactions:
   heisenberg:
-    # Nearest neighbor exchange along the chain (a-axis)
-    # J < 0 for Ferromagnetic in this convention H = 0.5 * sum J * S.S
-    # (Note: Check convention in your specific version, frequent convention is H = sum J S.S)
-    - pair: ["spin1", "spin1"]
+    - pair: ["Fe1", "Fe1"] # Self-interaction handled by connectivity or distinct sites
       J: "J1"
-      rij_offset: [1, 0, 0] # Interaction with neighbor in next cell along a
+      rij_offset: [0.5, 0.0, 0.0] # Relative vector or neighbor definition
 
 parameters:
-  J1: -1.0  # Ferromagnetic exchange (meV)
-
-calculation_settings:
-  neighbor_shells: [1, 0, 0] # Only look for neighbors along a-axis
+  J1: 3.14 # meV
 ```
 
 ---
 
-## Step 2: Running the Calculation
+## Part 3: Running Calculations
 
-You can use the `scripts/run_magcalc.py` script to run this model.
+Once you have your model and ground state, calculating dispersion is straightforward.
 
-```bash
-python scripts/run_magcalc.py simple_chain.yaml
-```
+### Dispersion Relation
 
-*Note: The script might expect specific output configuration sections in the YAML. If `run_magcalc.py` requires more setup, we can use the Python API directly.*
-
----
-
-## Step 3: Using the Python API
-
-For more control, use Python scripts. Create `run_chain.py`:
+Calculates eigenenergies for a path of Q-vectors.
 
 ```python
-import numpy as np
-import matplotlib.pyplot as plt
-import magcalc as mc
+# Define typical high-symmetry path
+q_path = np.array([
+    [0, 0, 0],   # Gamma
+    [0.5, 0, 0], # M
+    [0.33, 0.33, 0] # K
+])
 
-# 1. Initialize the Calculator
-# You can load from the YAML file we just created
-calc = mc.MagCalc(config_filepath="simple_chain.yaml")
-
-# 2. Define the path in Reciprocal Space
-# For a 1D chain along 'a', we want to scan q = (h, 0, 0)
-h_vals = np.linspace(0, 2, 100)
-q_vectors = []
-for h in h_vals:
-    # Convert hkl to absolute q-vector if needed, or pass hkl if supported by your version.
-    # Typically generically Reciprocal Lattice Units (r.l.u) are used.
-    q_vectors.append([h, 0, 0])
-q_vectors = np.array(q_vectors)
-
-# 3. Calculate Dispersion
-# Returns energies for each band at each q-point
-energies = calc.calculate_dispersion(q_vectors) 
-
-# 4. Plot
-plt.figure(figsize=(8, 5))
-plt.plot(h_vals, energies, 'b-')
-plt.xlabel("q (r.l.u) [h, 0, 0]")
-plt.ylabel("Energy (meV)")
-plt.title("1D Ferromagnetic Chain Dispersion")
-plt.grid(True)
-plt.savefig("chain_dispersion.png")
-plt.show()
+# Calculate
+energies_list = calc.calculate_dispersion(q_path)
 ```
 
-Run it:
-```bash
-python run_chain.py
+### Dynamic Structure Factor S(Q,ω)
+
+Calculates the neutron scattering intensity, properly applying the magnetic form factor and polarization factor.
+
+```python
+# Calculate for the same path
+sqw_result = calc.calculate_sqw(q_path)
+
+# Access results
+print("Energies:", sqw_result.energies)
+print("Intensities:", sqw_result.intensities)
 ```
 
-You should see a quadratic-like dispersion near q=0 for a ferromagnet.
+---
+
+## Part 4: Visualization & Plots
+
+`pyMagCalc` now centralizes plot outputs for neatness.
+-   **Structure Plots**: Use `mc.plot_magnetic_structure` to see the real-space configuration.
+-   **Data Plots**: Use `matplotlib` or built-in helpers to plot dispersion/S(Q,ω).
+
+By default, example scripts save plots to `examples/plots/`.
 
 ---
 
-## Step 4: Advanced Example (Jarosite)
+## API Reference: MagCalc Class
 
-For a full-scale example, check `examples/KFe3J/`.
+### `mc.MagCalc`
 
-1.  **Navigate to the folder**:
-    ```bash
-    cd examples/KFe3J
-    ```
-2.  **Inspect the parameters**:
-    Open `KFe3J_declarative.yaml`. You will see:
-    *   3 Fe atoms in a Kagome geometry.
-    *   Next-Nearest Neighbor interactions ($J_1$, $J_2$).
-    *   Dzyaloshinskii-Moriya (DM) interactions ($D_z$, $D_p$).
-3.  **Run the plotting script**:
-    ```bash
-    python disp_KFe3J.py
-    ```
-    *(Note: Ensure you are in the project root or have set PYTHONPATH)*
+The main controller class.
+
+#### `__init__(self, config_filepath=None, ...)`
+Initializes the calculator.
+*   `config_filepath`: Path to the YAML model definition.
+
+#### `minimize_energy(self, x0=None, method='L-BFGS-B', ...)`
+Numerically minimizes the classical Hamiltonian energy.
+*   **Returns**: `scipy.optimize.OptimizeResult`.
+*   **`x0`**: Optional initial guess for angles `[th0, ph0, th1, ph1...]`. Crucial for finding the correct ground state in complex energy landscapes (e.g., chirality).
+*   **`method`**: Optimization algorithm.
+
+#### `calculate_dispersion(self, q_vectors)`
+Computes spin-wave accumulation energies.
+*   **`q_vectors`**: List or Array of Q-points `[[h,k,l], ...]`.
+*   **Returns**: `DispersionResult` object containing `.energies` (array).
+
+#### `calculate_sqw(self, q_vectors)`
+Computes neutron scattering intensities.
+*   **Returns**: `SqwResult` object containing `.energies` and `.intensities`.
+
+### `mc.plot_magnetic_structure`
+
+Standalone function to visualize spin configurations.
+
+```python
+magcalc.plot_magnetic_structure(
+    atom_positions,
+    spin_angles,
+    save_filename=None,
+    title="Magnetic Structure"
+)
+```
+*   **`atom_positions`**: Nx3 array of Cartesian coordinates.
+*   **`spin_angles`**: 1D array of angles `[th, ph, th, ph...]` (usually from `minimize_energy().x`).
+*   **Features**:
+    *   3D scatter plot of atoms.
+    *   Arrows representing spin direction.
+    *   **Equal aspect ratio** enforced for accurate geometry.
+    *   **Dynamic scaling**: Arrow size scales with nearest-neighbor distance.
 
 ---
 
-## Step 5: Troubleshooting
+## Advanced: Caching
+`pyMagCalc` uses a dual caching system:
+1.  **Symbolic Cache**: Stores diagonalization of the symbolic Hamiltonian. (Slow generation, fast reuse).
+2.  **Numerical Cache**: Stores results of `calculate_dispersion` for specific parameter sets.
 
-*   **`ModuleNotFoundError: No module named 'magcalc'`**:
-    Make sure you are running python from the parent folder of `magcalc` or have added it to `sys.path`.
-*   **SymPy Slowness**:
-    The first time you run a model, `pyMagCalc` uses SymPy to derive the Hamiltonian symbolically. This can take time. It caches the result, so the second run will be essentially instantaneous.
-
----
-
-## Support
-
-If you encounter issues, please open an issue on the GitHub repository.
+This ensures that re-running scripts is extremely fast once the heavy lifting is done.

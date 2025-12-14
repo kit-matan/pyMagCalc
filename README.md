@@ -10,10 +10,13 @@
 ## Key Features
 
 *   **Diffraction Physics:** Calculates spin-wave dispersion and neutron scattering intensity (S(Q,ω)) with magnetic form factor and polarization factor corrections.
+*   **Energy Minimization:** Numerically finds the classical magnetic ground state by minimizing the Hamiltonian energy, supporting both simple and complex (e.g., canted) structures.
+*   **3D Visualization:** Visualizes the magnetic structure in 3D with scaled spins and correct aspect ratios.
 *   **Modular Architecture:** Separation of concerns with `MagCalc` core logic, linear algebra utilities, and model definitions.
 *   **Symbolic Hamiltonian:** Generates symbolic quadratic boson Hamiltonians using `SymPy` for arbitrary spin interactions.
 *   **Numerical Engine:** Efficient numerical evaluation using `NumPy` and `multiprocessing` for parallel q-point calculations.
 *   **Caching System:** Caches computationally expensive symbolic Hamiltonian diagonalization to disk for faster re-runs.
+*   **Centralized Outputs:** Automatically saves all generated plots and data to structured directories (`examples/plots/` and `cache/data/`).
 *   **Flexible Inputs:** Supports declarative YAML configurations (validated against schema) or Python-based model definitions.
 
 ## Directory Structure
@@ -27,7 +30,7 @@
 *   `examples/`: Sample data and scripts for various materials.
     *   `KFe3J/`: KFe3(OH)6(SO4)2 (Jarosite) - Kagome antiferromagnet.
     *   `aCVO/`: alpha-Cu2V2O7 - Honeycomb-like antiferromagnet with Dzyaloshinskii-Moriya interactions.
-    *   `ZnCVO/`: Zn-doped CVO examples.
+    *   `plots/`: Centralized directory where all example scripts save their output plots.
 *   `tests/`: Unit and integration tests ensuring package reliability.
 
 ## Dependencies
@@ -53,29 +56,47 @@
 
 ## Basic Usage
 
-### Running from Command Line
+### Running Example Scripts
 
-Use the `run_magcalc.py` script with a configuration file:
+The recommended way to see `pyMagCalc` in action is to run the verified example scripts. These scripts perform energy minimization, calculate dispersion/S(Q,ω), and generate plots.
 
 ```bash
-python scripts/run_magcalc.py examples/KFe3J/KFe3J_declarative.yaml
+# Run the Jarosite (KFe3J) example
+python examples/KFe3J/sw_KFe3J.py
+
+# Run the CVO example
+python examples/aCVO/sw_cvo.py
 ```
+
+Results (plots) will be saved to `examples/plots/`.
 
 ### Scripting with Python
 
 ```python
-import numpy as np
 import magcalc as mc
 from magcalc.generic_model import GenericSpinModel
 
-# Example: Using the Calculator programmatically
-# calculator = mc.MagCalc(config_filepath="examples/KFe3J/KFe3J_declarative.yaml")
-# dispersion = calculator.calculate_dispersion(q_points)
+# 1. Initialize Calculator with a config file
+calc = mc.MagCalc(config_filepath="examples/KFe3J/config.yaml")
+
+# 2. Minimize Energy (Find Ground State)
+min_res = calc.minimize_energy()
+print(f"Ground State Energy: {min_res.fun} meV")
+
+# 3. Visualize Magnetic Structure
+mc.plot_magnetic_structure(
+    calc.sm.atom_pos(), 
+    min_res.x, 
+    save_filename="structure.png"
+)
+
+# 4. Calculate Dispersion
+# calc.calculate_dispersion(q_vectors) ...
 ```
 
 ## Spin Model Definition
 
-Define your physics in a `material_config.yaml` file (recommended) or a Python module. The YAML format allows specifying:
+Define your physics in a `config.yaml` file (recommended) or a Python module. The YAML format allows specifying:
 *   **Crystal Structure**: Lattice parameters and magnetic atoms.
 *   **Interactions**: Heisenberg exchange ($J$), Dzyaloshinskii-Moriya ($D$), and Single-Ion Anisotropy.
 *   **Parameters**: Numerical values for symbolic constants.
@@ -86,13 +107,12 @@ See `magcalc/material_config_schema.yaml` for layout details.
 
 The `examples/` directory contains fully functional examples:
 *   **`examples/KFe3J/`**: Extensive example for Jarosite, showcasing:
+    *   Energy minimization to find the canted ground state.
     *   Declarative YAML configuration.
-    *   Comparison with legacy Python-defined models.
     *   Scripts for plotting dispersion and S(Q,ω) cuts.
 *   **`examples/aCVO/`**: Alpha-Cu2V2O7 example.
-    *   Includes `sw_CVO.py` for comprehensive spin-wave calculations.
-    *   demonstrates handling of complex magnetic structures and magnetic fields.
-    *   **Note**: Scripts in this directory may require setting `sys.path` if run directly.t
+    *   Comprehensive spin-wave calculations with magnetic fields.
+    *   Demonstrates handling of complex magnetic structures.
 
 ## Testing
 
