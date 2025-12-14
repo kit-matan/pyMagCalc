@@ -309,7 +309,14 @@ if __name__ == "__main__":
     params_val = [model_p.get(k, 0.0) for k in ["J1", "J2", "Dy", "Dz", "H"]]
     write_read_mode = calc_p.get("cache_mode", "r")
     cache_base_name = calc_p.get("cache_file_base", "KFe3J_cache")
-    data_filename = output_p.get("data_filename", "KFe3J_disp_data.npz")
+    # Updated filename extraction logic
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    raw_filename = output_p.get("disp_data_filename") or output_p.get("data_filename", "KFe3J_disp_data.npz")
+    
+    if not os.path.isabs(raw_filename):
+        data_filename = os.path.join(script_dir, raw_filename)
+    else:
+        data_filename = raw_filename
     # --- End Configuration Loading ---
 
     calculation_successful = calculate_and_save_dispersion(
