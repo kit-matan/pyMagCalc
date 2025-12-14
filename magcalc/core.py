@@ -795,7 +795,7 @@ def gen_HM(
         spin_ops_local, rotation_matrices, nspins, nspins_ouc
     )
 
-    # --- Prepare Hamiltonian ---
+    logger.info("Constructing symbolic Hamiltonian from spin model...")
     hamiltonian_sym = _prepare_hamiltonian(
         spin_model_module, spin_ops_global_ouc, params_sym, S_sym
     )
