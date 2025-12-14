@@ -1,6 +1,8 @@
 # General
 /.DS_Store
 __pycache__/
+**/__pycache__/
+*.py[cod]
 /.pytest_cache
 /.vscode
 .idea
@@ -8,13 +10,9 @@ __pycache__/
 # Cache and Data
 cache/
 archive/
-
-# Project specifics
-KFe3J/.DS_Store
-KFe3J/__pycache__
-aCVO/.DS_Store
-aCVO/__pycache__
-magcalc/__pycache__
 tests/pckFiles/
+# Project specifics - DS_Store can be covered by global, but keeping specific ignores if desired, 
+KFe3J/.DS_Store
+aCVO/.DS_Store
 
 
