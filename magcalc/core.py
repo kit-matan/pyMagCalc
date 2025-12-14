@@ -2423,6 +2423,121 @@ def plot_sqw_from_data(
     plt.close()
 
 
+def plot_magnetic_structure(
+    atom_positions: np.ndarray,
+    spin_angles: np.ndarray,
+    title: str = "Magnetic Structure",
+    save_filename: Optional[str] = None,
+    show_plot: bool = True,
+):
+    """
+    Plots the magnetic structure in 3D.
+
+    Args:
+        atom_positions (np.ndarray): Nx3 array of atom coordinates.
+        spin_angles (np.ndarray): 1D array of angles [theta_0, phi_0, theta_1, phi_1, ...].
+        title (str): Plot title.
+        save_filename (Optional[str]): Filename to save the plot.
+        show_plot (bool): Whether to show the plot.
+    """
+    logger.info(f"Plotting magnetic structure: {title}")
+    
+    # Check dimensions
+    nspins = len(atom_positions)
+    if len(spin_angles) != 2 * nspins:
+        logger.error(f"Mismatch: {nspins} atoms but {len(spin_angles)} angles (expected {2*nspins}).")
+        return
+
+    fig = plt.figure(figsize=(6, 6))
+    # Ensure 3D projection is available
+    ax = fig.add_subplot(111, projection='3d')
+    
+    # Extract positions
+    xs = atom_positions[:, 0]
+    ys = atom_positions[:, 1]
+    zs = atom_positions[:, 2]
+    
+    # Calculate vector components
+    us = []
+    vs = []
+    ws = []
+    
+    for i in range(nspins):
+        th = spin_angles[2*i]
+        ph = spin_angles[2*i+1]
+        
+        sx = np.sin(th) * np.cos(ph)
+        sy = np.sin(th) * np.sin(ph)
+        sz = np.cos(th)
+        
+        us.append(sx)
+        vs.append(sy)
+        ws.append(sz)
+        
+    # Calculate distances to determine scale
+    if nspins > 1:
+        # Simple N^2 distance check
+        min_dist = np.inf
+        for i in range(nspins):
+            for j in range(i + 1, nspins):
+                d = np.linalg.norm(atom_positions[i] - atom_positions[j])
+                if d < min_dist and d > 1e-6:
+                    min_dist = d
+        if np.isinf(min_dist):
+            min_dist = 1.0 # Fallback
+    else:
+        min_dist = 1.0
+        
+    arrow_length = 0.4 * min_dist
+    
+    # Plot atoms
+    ax.scatter(xs, ys, zs, c='k', s=50, label='Atoms')
+    
+    # Plot spins as quivers
+    # length kwarg in quiver uses the data coordinates if correct normalization isn't applied, 
+    # but matplotlib 3d quiver length is tricky.
+    # Usually length is a multiplier of the vector magnitude.
+    # Since we normalized inputs (us, vs, ws are unit vectors), 
+    # the arrows will have length 'length'.
+    ax.quiver(xs, ys, zs, us, vs, ws, length=arrow_length, normalize=True, color='r', linewidth=2, label='Spins')
+    
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    ax.set_title(title)
+    
+    # Enforce Equal Aspect Ratio via cubic bounding box
+    # Find the max range to normalize the view
+    max_range = np.ptp(xs).max() # Placeholder, wait below
+    
+    ranges = np.array([np.ptp(xs), np.ptp(ys), np.ptp(zs)])
+    max_range = ranges.max()
+    if max_range < 1e-6:
+        max_range = 1.0
+        
+    mid_x = (xs.max() + xs.min()) * 0.5
+    mid_y = (ys.max() + ys.min()) * 0.5
+    mid_z = (zs.max() + zs.min()) * 0.5
+    
+    ax.set_xlim(mid_x - max_range * 0.6, mid_x + max_range * 0.6)
+    ax.set_ylim(mid_y - max_range * 0.6, mid_y + max_range * 0.6)
+    ax.set_zlim(mid_z - max_range * 0.6, mid_z + max_range * 0.6)
+    
+    # Optional: set box aspect to 1,1,1 so the axis box appears cubic
+    try:
+        ax.set_box_aspect([1,1,1])
+    except:
+        pass # Older matplotlib versions
+        
+    if save_filename:
+        plt.savefig(save_filename)
+        logger.info(f"Magnetic structure plot saved to {save_filename}")
+        
+    if show_plot:
+        plt.show()
+    plt.close()
+
+
 if __name__ == "__main__":
     """
     Example script demonstrating the usage of the MagCalc class.

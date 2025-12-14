@@ -57,38 +57,12 @@ logger = logging.getLogger(__name__)
 
 
 def get_screen_size_inches():
-    """Gets screen size in inches and screen DPI."""
-    try:
-        root = tk.Tk()
-        root.withdraw()  # Hide the main Tkinter window
-        screen_width_pixels = root.winfo_screenwidth()
-        screen_height_pixels = root.winfo_screenheight()
-
-        # Get DPI. winfo_fpixels('1i') returns pixels per inch.
-        # This might vary by axis, take x-axis DPI or average if necessary.
-        # For simplicity, assuming square pixels and using x-axis DPI.
-        dpi = root.winfo_fpixels("1i")
-        root.destroy()
-
-        if dpi <= 0:  # Fallback DPI if detection fails
-            logger.warning(
-                "Could not determine screen DPI accurately, using default 100."
-            )
-            dpi = 100.0
-        else:
-            logger.info(f"Detected screen DPI: {dpi:.2f}")
-
-        screen_width_inches = screen_width_pixels / dpi
-        screen_height_inches = screen_height_pixels / dpi
-        logger.info(
-            f"Detected screen size: {screen_width_pixels}x{screen_height_pixels} pixels; {screen_width_inches:.2f}x{screen_height_inches:.2f} inches."
-        )
-        return screen_width_inches, screen_height_inches, dpi
-    except Exception as e:
-        logger.warning(
-            f"Could not get screen size using tkinter: {e}. Plot will use default figsize."
-        )
-        return None, None, None
+    """
+    Attempts to get screen size in inches using tkinter.
+    DISABLED to prevent crashes on macOS (NSInvalidArgumentException).
+    """
+    # Return None to trigger fallback to default figure sizes
+    return None, None, None
 
 
 # --- Q-point generation (consistent with original scripts) ---
@@ -600,9 +574,97 @@ def main():
     config["output"]["sqw_data_filename"] = sqw_data_file
     config["plotting"] = plotting_p_config  # Store updated plotting paths
 
-    # --- Initialize MagCalc ---
+    # --- Initialize MagCalc (First Pass for Minimization) ---
     logger.info(
-        f"Initializing MagCalc with cache base: {cache_file_base}, mode: {cache_mode}"
+        f"Initializing MagCalc for Energy Minimization with cache base: {cache_file_base}, mode: {cache_mode}"
+    )
+    # We use a temporary calculator for minimization to ensure we get the ground state
+    try:
+        calculator_min = mc.MagCalc(
+            spin_magnitude=S_val,
+            hamiltonian_params=params_val,
+            cache_file_base=cache_file_base + "_min", # Separate cache for minimization setup if needed
+            cache_mode=cache_mode,
+            spin_model_module=spin_model_to_use,
+        )
+        
+        logger.info("Minimizing energy to determine canting angle...")
+        # Provide meaningful initial guess (120-degree structure in ab-plane)
+        # to avoid local minima (e.g. -63 meV state vs correct -69 meV state)
+        # Correct Chirality: 300 (-60), 180, 60
+        # Order: [th0, ph0, th1, ph1, th2, ph2]
+        x0 = np.array([
+            np.pi/2, np.deg2rad(300),   # Spin 0
+            np.pi/2, np.deg2rad(180),   # Spin 1
+            np.pi/2, np.deg2rad(60)     # Spin 2
+        ])
+        min_res = calculator_min.minimize_energy(x0=x0, method="L-BFGS-B")
+        
+        if min_res.success:
+            logger.info(f"Energy minimization successful. Energy: {min_res.fun:.4f} meV")
+            # Extract canting angle from optimized theta values
+            # Assumes KFe3J structure: spins in ab-plane (theta=90) with small canting
+            # Theta is angle from +Z axis. "Canting" in spin_model.py usually refers to deviation from plane.
+            # spin_model: ca = abs(asin(...)/2). 
+            # If theta ~ 92 deg, deviation is 2 deg.
+            # We average the deviation from pi/2 across all spins.
+            
+            angles = min_res.x
+            nspins = calculator_min.nspins
+            thetas = [angles[2*i] for i in range(nspins)]
+            
+            # Calculate average absolute deviation from pi/2
+            # Use signed deviation if uniform?
+            # Model says ca is 'asin(...)', implying a positive magnitude usually used with alternating signs in construction?
+            # Actually spin_model.py uses `ca` in rotation matrix:
+            # [[cos(ca), 0, -sin(ca)], ...] which rotates about Y.
+            # Let's assume uniform canting magnitude.
+            avg_theta = np.mean(thetas)
+            ca_minimized = avg_theta - np.pi/2.0 
+            # Note: spin_model.py used abs(). But if minimization gives 92 deg, ca is positive.
+            # If 88 deg, ca is negative.
+            # We pass the signed value. If spin_model expects abs, we checks 'rot_mat' implementation.
+            # rot_mat uses cos(ca) and sin(ca).
+            # If ca is inverted, sin(ca) flips sign.
+            # We should probably pass the value that matches the minimization result.
+            
+            logger.info(f"Minimized Average Theta: {avg_theta:.4f} rad ({np.degrees(avg_theta):.2f} deg)")
+            logger.info(f"Calculated Canting Angle (ca): {ca_minimized:.4f} rad ({np.degrees(ca_minimized):.2f} deg)")
+            
+            # Update params_val with the minimized canting angle
+            # Appending it as the 6th parameter
+            params_val.append(ca_minimized)
+            logger.info(f"Updated parameters with minimized 'ca': {params_val}")
+            
+            # --- Plot Structure if requested ---
+            if plotting_p_config.get("plot_structure", False):
+                struct_plot_filename = "../plots/KFe3J_structure.png"
+                # Save in same dir as other plots
+                struct_plot_path = os.path.join(script_dir, struct_plot_filename)
+                
+                try:
+                    logger.info(f"Plotting minimized magnetic structure to {struct_plot_path}...")
+                    mc.plot_magnetic_structure(
+                        calculator_min.sm.atom_pos(),
+                        min_res.x,
+                        title=f"Minimized Magnetic Structure (E={min_res.fun:.3f} meV)",
+                        save_filename=struct_plot_path,
+                        show_plot=plotting_p_config.get("show_plot", True)
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to plot magnetic structure: {e}")
+            
+        else:
+            logger.warning("Energy minimization failed or did not converge. Using default analytical canting.")
+
+    except Exception as e:
+        logger.error(f"Failed to run energy minimization: {e}", exc_info=True)
+        # Proceed with original params if minimization fails?
+        pass
+
+    # --- Re-Initialize MagCalc for LSWT with Updated Parameters ---
+    logger.info(
+        f"Initializing MagCalc for LSWT with cache base: {cache_file_base}, mode: {cache_mode}"
     )
     try:
         calculator = mc.MagCalc(
@@ -678,7 +740,7 @@ def main():
 
     # --- Determine Figsizes ---
     # Default figsizes from the script's original hardcoded values
-    default_figsize_combined = (10, 13)  # width, height
+    default_figsize_combined = (10, 10)  # width, height
     default_figsize_disp_only = (8, 6)
     default_figsize_sqw_only = (10, 6)
 

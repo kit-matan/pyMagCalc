@@ -122,6 +122,34 @@ if __name__ == "__main__":
     cache_file_base_name = "KFe3J_HKmap" # Using a specific name for this map
     cache_operation_mode = "w" if calc_mode == 1 else "r"
     
+    # 1. Minimize Energy first
+    print("Testing minimization to determine correct canting angle...")
+    min_calculator = mc.MagCalc(
+        spin_magnitude=S,
+        hamiltonian_params=p,
+        cache_file_base=cache_file_base_name + "_min",
+        cache_mode=cache_operation_mode,
+        spin_model_module=sm,
+    )
+    # Initial guess: 120-degree structure (Correct Chirality)
+    x0 = np.array([
+        np.pi/2, np.deg2rad(300),
+        np.pi/2, np.deg2rad(180),
+        np.pi/2, np.deg2rad(60)
+    ])
+    min_res = min_calculator.minimize_energy(x0=x0, method="L-BFGS-B")
+    if min_res.success:
+         angles = min_res.x
+         nspins = min_calculator.nspins
+         thetas = [angles[2*i] for i in range(nspins)]
+         avg_theta = np.mean(thetas)
+         ca_min = avg_theta - np.pi/2.0
+         print(f"Minimization success. Theta: {np.degrees(avg_theta):.2f}, ca: {np.degrees(ca_min):.2f}")
+         p.append(ca_min)
+    else:
+         print("Minimization failed, using default analytical canting.")
+
+    # 2. Main Calculator with updated params
     calculator = mc.MagCalc(
         spin_magnitude=S,
         hamiltonian_params=p,

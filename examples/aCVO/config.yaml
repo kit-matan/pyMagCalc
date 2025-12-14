@@ -20,9 +20,11 @@ cvo_model:
     disp_data_filename: "../../cache/data/CVO_disp_data.npz" # File to save calculated dispersion data
     sqw_data_filename: "../../cache/data/CVO_sqw_data.npz"   # File to save calculated S(Q,w) data
   plotting:
-    save_plot: false
-    disp_plot_filename: "CVO_disp_plot.png" # Filename for saved dispersion plot
-    sqw_plot_filename: "CVO_sqw_plot.png"    # Filename for saved S(Q,w) map plot
+    save_plot: true
+    plot_structure: false # Enable plotting of minimized magnetic structure
+    disp_plot_filename: "../plots/CVO_disp_plot.png" # Filename for saved dispersion plot
+    combined_plot_filename: "../plots/CVO_combined_plot.png" # Filename for combined plot
+    sqw_plot_filename: "../plots/CVO_sqw_plot.png"    # Filename for saved S(Q,w) map plot
     energy_limits_disp: [0, 10] # Energy limits for dispersion plot
     energy_limits_sqw: [0, 10]  # Energy limits for S(Q,w) map plot
     q_limits_disp: [1, 3]       # q-limits for the plot (in r.l.u. as per original script)

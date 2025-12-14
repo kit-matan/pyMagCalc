@@ -48,37 +48,11 @@ logger = logging.getLogger(__name__)
 
 
 def get_screen_size_inches():
-    """Gets screen size in inches and screen DPI."""
-    try:
-        root = tk.Tk()
-        root.withdraw()  # Hide the main Tkinter window
-        screen_width_pixels = root.winfo_screenwidth()
-        screen_height_pixels = root.winfo_screenheight()
-
-        # Get DPI. winfo_fpixels('1i') returns pixels per inch.
-        dpi = root.winfo_fpixels("1i")
-        root.destroy()
-
-        if dpi <= 0:  # Fallback DPI if detection fails
-            logger.warning(
-                "Could not determine screen DPI accurately, using default 100."
-            )
-            dpi = 100.0
-        else:
-            logger.debug(f"Detected screen DPI: {dpi:.2f}")
-
-        screen_width_inches = screen_width_pixels / dpi
-        screen_height_inches = screen_height_pixels / dpi
-        logger.debug(
-            f"Detected screen size: {screen_width_pixels}x{screen_height_pixels} pixels; "
-            f"{screen_width_inches:.2f}x{screen_height_inches:.2f} inches."
-        )
-        return screen_width_inches, screen_height_inches, dpi
-    except Exception as e:
-        logger.warning(
-            f"Could not get screen size using tkinter: {e}. Plot will use default figsize."
-        )
-        return None, None, None
+    """
+    Attempts to get screen size in inches using tkinter.
+    DISABLED to prevent crashes on macOS (NSInvalidArgumentException).
+    """
+    return None, None, None
 
 
 # --- Q-point Generation ---
@@ -555,6 +529,23 @@ if __name__ == "__main__":
                     cvo_spin_model.set_magnetic_structure(optimal_thetas, optimal_phis)
                     logger.info("Updated spin_model with new magnetic structure.")
                     
+                    # --- Plot Structure if requested ---
+                    if plotting_p_config.get("plot_structure", False):
+                        struct_plot_filename = "../plots/CVO_structure.png"
+                        struct_plot_path = os.path.join(script_dir, struct_plot_filename)
+                        try:
+                            logger.info(f"Plotting minimized magnetic structure to {struct_plot_path}...")
+                            # Assuming cvo_spin_model (or calc_gs.sm) has atom_pos()
+                            mc.plot_magnetic_structure(
+                                calc_gs.sm.atom_pos(),
+                                min_res.x,
+                                title=f"CVO Minimized Structure (E={final_energy:.3f} meV)",
+                                save_filename=struct_plot_path,
+                                show_plot=plotting_p_config.get("show_plot", True)
+                            )
+                        except Exception as e:
+                            logger.error(f"Failed to plot CVO magnetic structure: {e}")
+
                     if cache_mode == 'r':
                          logger.warning("Switching cache_mode to 'w' to ensure Ud is updated with new structure.")
                          cache_mode = 'w'
@@ -643,7 +634,7 @@ if __name__ == "__main__":
     plot_sqw = sqw_plotting_requested and sqw_data_exists
 
     # --- Determine Figsizes ---
-    default_figsize_combined = (10, 13)
+    default_figsize_combined = (10, 10)
     default_figsize_disp_only = (8, 6)
     default_figsize_sqw_only = (10, 6)
 

@@ -159,6 +159,33 @@ if __name__ == "__main__":
     cache_file_base_name = "my_model_cache"
     cache_operation_mode = "w"
 
+    cache_operation_mode = "w"
+    
+    # Minimize first
+    print("Minimizing energy...")
+    min_calc = mc.MagCalc(
+        spin_magnitude=S,
+        hamiltonian_params=p,
+        cache_file_base=cache_file_base_name + "_min",
+        cache_mode=cache_operation_mode,
+        spin_model_module=sm
+    )
+    # Initial guess: 120-degree structure (Correct Chirality)
+    x0 = np.array([
+        np.pi/2, np.deg2rad(300),
+        np.pi/2, np.deg2rad(180),
+        np.pi/2, np.deg2rad(60)
+    ])
+    mres = min_calc.minimize_energy(x0=x0, method="L-BFGS-B")
+    if mres.success:
+        angles = mres.x
+        nspins = min_calc.nspins
+        thetas = [angles[2*i] for i in range(nspins)]
+        avg_theta = np.mean(thetas)
+        ca_min = avg_theta - np.pi/2.0
+        print(f"Minimization success. ca: {np.degrees(ca_min):.2f} deg")
+        p.append(ca_min)
+
     calculator = mc.MagCalc(
         spin_magnitude=S,
         hamiltonian_params=p,

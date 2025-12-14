@@ -54,11 +54,14 @@ def rot_mat(atom_list, p):
     """rotation matrix to transform spins to global coordinates
     Inputs:
         atom_list: list of angles with respect to the x-axis
-        p: list of parameters [J1, J2, Dy, Dz, H]"""
-    J1, J2, Dy, Dz, H = p
+        p: list of parameters [J1, J2, Dy, Dz, H, (optional) ca]"""
+    if len(p) == 6:
+        J1, J2, Dy, Dz, H, ca = p
+    else:
+        J1, J2, Dy, Dz, H = p
 
-    Z = J2 - sp.sqrt(3) / 3 * Dz
-    ca = np.abs(sp.asin(2 / (3 * J1) * (-sp.sqrt(3) * Dy) / (1 + Z / J1)) / 2)
+        Z = J2 - sp.sqrt(3) / 3 * Dz
+        ca = np.abs(sp.asin(2 / (3 * J1) * (-sp.sqrt(3) * Dy) / (1 + Z / J1)) / 2)
 
     # rotation matrix for the canting
     mp_rot = sp.Matrix(
@@ -89,9 +92,13 @@ def mpr(p):
 def spin_interactions(p):
     """Generate spin interactions
     Input:
-        p: list of parameters [J1, J2, Dy, Dz, H]"""
+        p: list of parameters [J1, J2, Dy, Dz, H, (optional) ca]"""
     # Exchange interactions J's
-    J1, J2, Dy, Dz, H = p
+    if len(p) == 6:
+        J1, J2, Dy, Dz, H, _ = p
+    else:
+        J1, J2, Dy, Dz, H = p
+        
     apos = atom_pos()
     N_atom = len(apos)
     apos_ouc = atom_pos_ouc()
@@ -149,12 +156,12 @@ def Hamiltonian(Sxyz, pr):
     """Define the spin Hamiltonian for your system
     Inputs:
         Sxyz: list of spin operators
-        pr: list of parameters [J1, J2, Dy, Dz, H]"""
+        pr: list of parameters [J1, J2, Dy, Dz, H, (optional) ca]"""
     Jex, DM = spin_interactions(pr)
     HM = 0
     gamma = 2.0
     mu = 5.7883818066e-2
-    H = pr[-1]
+    H = pr[4] # Use fixed index for H to avoid picking up 'ca' if present
     apos = atom_pos()
     nspins = len(apos)
     apos_ouc = atom_pos_ouc()

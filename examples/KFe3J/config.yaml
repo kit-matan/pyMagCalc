@@ -26,10 +26,11 @@ output:
   sqw_data_filename: "../../cache/data/KFe3J_sqw_data.npz" # File to save calculated S(q,w) data
 
 plotting: # Added section
-  save_plot: false
-  disp_plot_filename: "KFe3J_disp_plot.png" # Filename for saved dispersion plot
-  combined_plot_filename: "KFe3J_combined_plot.png" # Filename for combined plot
-  sqw_plot_filename: "KFe3J_sqw_plot.png"   # Filename for saved S(q,w) map plot
+  save_plot: true
+  plot_structure: true # Enable plotting of minimized magnetic structure
+  disp_plot_filename: "../plots/KFe3J_disp_plot.png" # Filename for saved dispersion plot
+  combined_plot_filename: "../plots/KFe3J_combined_plot.png" # Filename for combined plot
+  sqw_plot_filename: "../plots/KFe3J_sqw_plot.png"   # Filename for saved S(q,w) map plot
   energy_limits_disp: [0, 20] # Energy limits for dispersion plot
   energy_limits_sqw: [0, 20]  # Energy limits for S(q,w) map
   disp_title: "KFe3J Spin Wave Dispersion"

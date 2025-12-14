@@ -70,7 +70,39 @@ def calculate_and_save_dispersion(
 
     try:
         # --- NEW WAY: Instantiate MagCalc and call method ---
-        logger.info(f"Initializing MagCalc for {cache_base}...")
+        # First pass: Energy Minimization
+        logger.info(f"Initializing MagCalc for Energy Minimization (cache base: {cache_base}_min)...")
+        calculator_min = mc.MagCalc(
+            spin_magnitude=S,
+            hamiltonian_params=p,
+            cache_file_base=cache_base + "_min",
+            cache_mode=wr,
+            spin_model_module=kfe3j_model,
+        )
+        
+        logger.info("Minimizing energy to determine canting angle...")
+        # Initial guess: 120-degree structure (Correct Chirality)
+        x0 = np.array([
+            np.pi/2, np.deg2rad(300),
+            np.pi/2, np.deg2rad(180),
+            np.pi/2, np.deg2rad(60)
+        ])
+        min_res = calculator_min.minimize_energy(x0=x0, method="L-BFGS-B")
+        
+        if min_res.success:
+            logger.info(f"Energy minimization successful. Energy: {min_res.fun:.4f} meV")
+            angles = min_res.x
+            nspins = calculator_min.nspins
+            thetas = [angles[2*i] for i in range(nspins)]
+            avg_theta = np.mean(thetas)
+            ca_minimized = avg_theta - np.pi/2.0
+            logger.info(f"Minimized Average Theta: {avg_theta:.4f} rad, Calculated ca: {ca_minimized:.4f} rad")
+            p.append(ca_minimized)
+        else:
+             logger.warning("Energy minimization failed. Using default analytical canting.")
+
+        # Second pass: LSWT with updated parameters
+        logger.info(f"Initializing MagCalc for LSWT ({cache_base})...")
         calculator = mc.MagCalc(
             spin_magnitude=S,
             hamiltonian_params=p,
