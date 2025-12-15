@@ -19,3 +19,4 @@ aCVO/.DS_Store
 examples/plots/
 **/.pytest_cache/
 **/.ipynb_checkpoints/
+*.egg-info/
