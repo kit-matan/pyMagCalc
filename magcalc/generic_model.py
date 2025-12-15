@@ -7,6 +7,8 @@ from typing import List, Dict, Any, Optional, Tuple, Union
 import numpy as np
 from numpy import linalg as la
 import sympy as sp
+from scipy.optimize import minimize
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +92,7 @@ class GenericSpinModel:
         
         self.crystal_config = config.get('crystal_structure', {})
         self.interactions_config = config.get('interactions', [])
+        self.optimized_matrices = None
         
         # Pre-load structure data
         self._load_structure()
@@ -135,11 +138,19 @@ class GenericSpinModel:
         crystal_struct = self.config.get('crystal_structure', {})
         
         # 1. Explicit Definition
-        if 'lattice_vectors' in crystal_struct and 'atom_positions' in crystal_struct:
+        if 'lattice_vectors' in crystal_struct:
             self._uc_vectors = np.array(crystal_struct['lattice_vectors'], dtype=float)
-            self._r_pos = np.array(crystal_struct['atom_positions'], dtype=float)
-            # Create a dummy atoms object for ASE compatibility if needed? 
-            # Not strictly needed if we don't access self.atoms elsewhere.
+            
+            if 'atom_positions' in crystal_struct:
+                 self._r_pos = np.array(crystal_struct['atom_positions'], dtype=float)
+            elif 'atoms_uc' in crystal_struct:
+                 # Extract from AtomConfig objects (dict structure after validation dump)
+                 atoms = crystal_struct['atoms_uc']
+                 # atoms is list of dicts: {'label': '...', 'pos': [x,y,z], ...}
+                 self._r_pos = np.array([a['pos'] for a in atoms], dtype=float)
+            else:
+                 raise ValueError("Must provide 'atom_positions' or 'atoms_uc' with 'lattice_vectors'.")
+            
             self.atoms = None 
             return
 
@@ -274,6 +285,11 @@ class GenericSpinModel:
         return rot_matrices
 
     def mpr(self, p):
+        # Check for optimized matrices
+        if self.optimized_matrices is not None:
+             logger.debug("mpr returning runtime optimized matrices.")
+             return self.optimized_matrices
+             
         # Check for declarative transformations
         logger.debug("Calling mpr()")
         matrices = self._parse_transformations(p)
@@ -296,7 +312,11 @@ class GenericSpinModel:
         
         # Ensure p is long enough
         param_map = {}
-        for i, name in enumerate(param_names):
+        
+        # Filter out 'S' from keys since runner.py excludes it from p
+        keys = [k for k in param_names if k != 'S']
+        
+        for i, name in enumerate(keys):
             if i < len(p):
                 param_map[name] = p[i]
         return param_map
@@ -313,6 +333,8 @@ class GenericSpinModel:
         Jex = sp.zeros(N_atom, N_atom_ouc)
         # DM cannot be sp.zeros (matrix of scalars) if we store vectors. Use list of lists.
         DM = [[None for _ in range(N_atom_ouc)] for _ in range(N_atom)]
+        # Anisotropic Exchange (Diagonal tensors for now)
+        Kex = [[None for _ in range(N_atom_ouc)] for _ in range(N_atom)]
         
         dist_tol = 0.05
         
@@ -346,8 +368,21 @@ class GenericSpinModel:
                      else:
                          raise ValueError(f"Not enough parameters in p for interaction {interaction}")
                 
+                atom_labels = [a.get('label') for a in self.config.get('crystal_structure').get('atoms_uc')]
+                target_pair = interaction.get('pair') # Optional [Label1, Label2]
+
                 for i in range(N_atom):
+                    # Check first label
+                    if target_pair and atom_labels[i] != target_pair[0]:
+                        continue
+                        
                     for j in range(N_atom_ouc):
+                        # Check second label (mapped to UC)
+                        if target_pair:
+                            j_uc = j % N_atom
+                            if atom_labels[j_uc] != target_pair[1]:
+                                continue
+                                
                         d = la.norm(apos[i] - apos_ouc[j])
                         if abs(d - target_dist) < dist_tol:
                             Jex[i, j] += J_val # Additive to support multiple terms
@@ -396,9 +431,14 @@ class GenericSpinModel:
                 val_exprs = interaction.get('value') # [dx_str, dy_str, dz_str]
                 
                 # Evaluate expressions
-                dx = safe_eval(val_exprs[0], param_map)
-                dy = safe_eval(val_exprs[1], param_map)
-                dz = safe_eval(val_exprs[2], param_map)
+                d_vals = []
+                for v in val_exprs:
+                    if isinstance(v, str):
+                        d_vals.append(safe_eval(v, param_map))
+                    else:
+                        d_vals.append(v)
+                
+                dx, dy, dz = d_vals
                 D_vec = sp.Matrix([dx, dy, dz])
                 
                 # Find the j index in apos_ouc that matches target_j_uc + offset
@@ -424,7 +464,46 @@ class GenericSpinModel:
                      min_dist = min([la.norm(pos - target_pos) for pos in apos_ouc])
                      print(f"WARNING: DM Interaction i={i}->j_uc={target_j_uc} offset={offset} NOT FOUND.")
                      print(f"  Target Pos: {target_pos}")
+                     print(f"  Target Pos: {target_pos}")
                      print(f"  Min Dist to OUC: {min_dist}")
+            
+            elif itype == 'anisotropic_exchange':
+                target_dist = interaction.get('distance')
+                val = interaction.get('value') # [Jxx, Jyy, Jzz] strings/floats
+                
+                k_vals = []
+                # If explicit list
+                if isinstance(val, list):
+                     for v in val:
+                         if isinstance(v, str) and param_map:
+                             k_vals.append(safe_eval(v, param_map))
+                         else:
+                             k_vals.append(v)
+                else:
+                     # Fallback positional? Not implemented for array
+                     raise ValueError("Anisotropic Exchange value must be a list [Jxx, Jyy, Jzz]")
+                
+                atom_labels = [a.get('label') for a in self.config.get('crystal_structure').get('atoms_uc')]
+                target_pair = interaction.get('pair') 
+                
+                K_vec = sp.Matrix(k_vals)
+                
+                for i in range(N_atom):
+                    if target_pair and atom_labels[i] != target_pair[0]:
+                        continue
+                        
+                    for j in range(N_atom_ouc):
+                        if target_pair:
+                            j_uc = j % N_atom
+                            if atom_labels[j_uc] != target_pair[1]:
+                                continue
+                                
+                        d = la.norm(apos[i] - apos_ouc[j])
+                        if abs(d - target_dist) < dist_tol:
+                             if Kex[i][j] is None:
+                                 Kex[i][j] = K_vec
+                             else:
+                                 Kex[i][j] += K_vec
                      
         # Fill None with zeros
         dnull = sp.Matrix([0, 0, 0])
@@ -432,22 +511,24 @@ class GenericSpinModel:
             for j in range(N_atom_ouc):
                 if DM[i][j] is None:
                     DM[i][j] = dnull
+                if Kex[i][j] is None:
+                    Kex[i][j] = dnull
                     
-        return Jex, DM
+        return Jex, DM, Kex
 
     def Hamiltonian(self, Sxyz: List[Any], pr: List[Any]) -> sp.Expr:
         """
         Define Hamiltonian using config logic.
         """
         # Parse params
-        Jex, DM, p_rest, param_map = self._parse_hamiltonian_params(pr)
+        Jex, DM, Kex, p_rest, param_map = self._parse_hamiltonian_params(pr)
         
         HM = 0
         gamma = 2.0
         mu_B = 5.788e-2
         
-        # 1. Exchange Terms (Heisenberg + DM)
-        HM += self._compute_heisenberg_dm_terms(Sxyz, Jex, DM)
+        # 1. Exchange Terms (Heisenberg + DM + Anisotropic)
+        HM += self._compute_heisenberg_dm_terms(Sxyz, Jex, DM, Kex)
         
         # 2. Extra Terms (SIA)
         HM += self._compute_sia_terms(Sxyz, p_rest)
@@ -464,7 +545,8 @@ class GenericSpinModel:
         """Helper to parse parameters into Jex, DM, and remaining params."""
         if self.config.get('parameters'):
             # New Named Mode
-            Jex, DM = self.spin_interactions(pr)
+            Jex, DM, Kex = self.spin_interactions(pr)
+            # Param map...
             param_map = self._resolve_param_map(pr)
             p_rest = [] 
         else:
@@ -479,12 +561,12 @@ class GenericSpinModel:
             
             p_ex = pr[0:param_counter]
             p_rest = pr[param_counter:]
-            Jex, DM = self.spin_interactions(p_ex)   
+            Jex, DM, Kex = self.spin_interactions(p_ex)   
             param_map = {}
-            
-        return Jex, DM, p_rest, param_map
+        
+        return Jex, DM, Kex, p_rest, param_map
 
-    def _compute_heisenberg_dm_terms(self, Sxyz: List[Any], Jex: Any, DM: Any) -> sp.Expr:
+    def _compute_heisenberg_dm_terms(self, Sxyz: List[Any], Jex: Any, DM: Any, Kex: Any) -> sp.Expr:
         """Compute Heisenberg and Dzyaloshinskii-Moriya terms."""
         HM = 0
         apos = self.atom_pos()
@@ -531,6 +613,24 @@ class GenericSpinModel:
                             D_vec[2] * Sc_z
                         )
                         terms_added += 1
+
+                # Anisotropic Exchange (Diagonal K . S . S)
+                K_vec = Kex[i][j]
+                if K_vec is not None:
+                     is_zero = False
+                     if hasattr(K_vec, 'is_zero_matrix'):
+                         is_zero = K_vec.is_zero_matrix
+                     elif K_vec == sp.Matrix([0,0,0]):
+                         is_zero = True
+                         
+                     if not is_zero:
+                         # K_vec = [Kxx, Kyy, Kzz]
+                         HM += 0.5 * (
+                             K_vec[0] * Sxyz[i][0] * Sxyz[j][0] +
+                             K_vec[1] * Sxyz[i][1] * Sxyz[j][1] +
+                             K_vec[2] * Sxyz[i][2] * Sxyz[j][2]
+                         )
+                         terms_added += 1
         return HM
 
     def _compute_sia_terms(self, Sxyz: List[Any], p_rest: List[Any]) -> sp.Expr:
@@ -574,9 +674,44 @@ class GenericSpinModel:
              if len(p_rest) > sia_count:
                  H_mag = p_rest[-1]
 
-        if H_mag is not None:
+        # Try to find vector components Hx, Hy, Hz
+        Hx = param_map.get('Hx')
+        Hy = param_map.get('Hy')
+        Hz = param_map.get('Hz')
+        
+        # Check for H_dir / H_mag
+        H_dir = param_map.get('H_dir')
+        H_mag_val = param_map.get('H_mag')
+        
+        if H_dir is not None and H_mag_val is not None:
+             if isinstance(H_dir, (list, tuple, np.ndarray)) and len(H_dir) == 3:
+                  Hx = H_mag_val * H_dir[0]
+                  Hy = H_mag_val * H_dir[1]
+                  Hz = H_mag_val * H_dir[2]
+        
+        if Hx is not None or Hy is not None or Hz is not None:
+             # Vector Zeeman
+             # Handle missing components as 0
+             if Hx is None: Hx = 0
+             if Hy is None: Hy = 0
+             if Hz is None: Hz = 0
+             
              for i in range(N_uc):
-                  HM += gamma * mu_B * Sxyz[i][2] * H_mag
+                 term = Hx*Sxyz[i][0] + Hy*Sxyz[i][1] + Hz*Sxyz[i][2]
+                 HM += gamma * mu_B * term
+                 
+        elif H_mag is not None:
+             # Check if vector (legacy check for runtime list passing, though discourage)
+             is_vector = isinstance(H_mag, (list, tuple, np.ndarray))
+             
+             for i in range(N_uc):
+                  if is_vector and len(H_mag) == 3:
+                      # Dot product
+                      term = H_mag[0]*Sxyz[i][0] + H_mag[1]*Sxyz[i][1] + H_mag[2]*Sxyz[i][2]
+                      HM += gamma * mu_B * term
+                  else:
+                      # Scalar - assume Z
+                      HM += gamma * mu_B * Sxyz[i][2] * H_mag
         
         return HM
 
@@ -626,3 +761,253 @@ class GenericSpinModel:
              HM = sp.Add(*kept)
              
         return HM
+
+    def minimize_energy(self, p_num):
+        """
+        Perform classical energy minimization to find the magnetic ground state.
+        Updates self.optimized_matrices with the Rotation Matrices for the ground state.
+        """
+        min_config = self.config.get('minimization', {})
+        if not min_config or not min_config.get('enabled', False):
+            logger.debug("Minimization not enabled in config. Skipping.")
+            return
+
+        logger.info("Minimization Enabled. Finding classical ground state...")
+        
+        # Get numerical interaction matrices
+        Jex_sym, DM_sym, Kex_sym = self.spin_interactions(p_num)
+        
+        # Convert Jex to numpy float array
+        if hasattr(Jex_sym, 'tolist'):
+            Jex = np.array(Jex_sym.tolist(), dtype=float)
+        else:
+            # Fallback list of lists
+            Jex = np.array(Jex_sym, dtype=float)
+            
+        N = Jex.shape[0]
+        N_ouc = Jex.shape[1]
+        
+        # Convert DM to numpy (N, N_ouc, 3)
+        DM = np.zeros((N, N_ouc, 3))
+        for i in range(N):
+            for j in range(N_ouc):
+                val = DM_sym[i][j]
+                if val is not None:
+                    if hasattr(val, 'tolist'): val = np.array(val.tolist(), dtype=float).flatten()
+                    elif hasattr(val, 'evalf'): val = np.array(val.evalf()).flatten().astype(float)
+                    DM[i, j] = val
+                    
+        # Convert Kex to numpy (N, N_ouc, 3)
+        Kex = np.zeros((N, N_ouc, 3))
+        for i in range(N):
+            for j in range(N_ouc):
+                val = Kex_sym[i][j]
+                if val is not None:
+                     if hasattr(val, 'tolist'): val = np.array(val.tolist(), dtype=float).flatten()
+                     Kex[i, j] = val
+
+        # Prepare params
+        params_dict = self._resolve_param_map(p_num)
+        
+        # Determine H vector if present (Zeeman)
+        H_vec = None
+        
+        if 'Hx' in params_dict or 'Hy' in params_dict or 'Hz' in params_dict:
+             hx = float(params_dict.get('Hx', 0.0))
+             hy = float(params_dict.get('Hy', 0.0))
+             hz = float(params_dict.get('Hz', 0.0))
+             H_vec = np.array([hx, hy, hz])
+             
+        elif 'H' in params_dict:
+            h_val = params_dict['H']
+            # Assume H along z if scalar, or check if vector
+            if isinstance(h_val, (list, tuple, np.ndarray)):
+                 H_vec = np.array(h_val, dtype=float)
+            else:
+                 # Scalar H. Assume Z-axis by default
+                 H_vec = np.array([0.0, 0.0, float(h_val)])
+        else:
+             # Heuristic: last param? Or from p_rest?
+             # GenericSpinModel logic for H is complex. 
+             # Let's rely on 'H' being in params dict.
+             pass
+
+        S_val = float(params_dict.get('S', 0.5))
+        logger.info(f"Minimize Energy using S_val={S_val}")
+             
+        # Initial guess 
+        # Random or aligned?
+        # Use initial guess from config if provided?
+        # Or start with Ferromagnetic along Z (or some direction)
+        N_atom = len(self.atom_pos())
+        
+        # x0: [theta_0, phi_0, theta_1, phi_1, ...]
+        # Default start: theta=pi/2, phi=0 (in plane)
+        # Add random perturbation to avoid getting stuck in high-symmetry stationary points (like FM for AFM model)
+        x0 = np.zeros(2 * N_atom)
+        rng = np.random.default_rng(seed=42) # Fixed seed for reproducibility
+        
+        # Smart Initial Guess: align against field (for electrons)
+        # If H_vec is present and non-zero, set initial theta/phi to point opposite to H.
+        if H_vec is not None and np.linalg.norm(H_vec) > 1e-4:
+             # Direction of H
+             h_dir = H_vec / np.linalg.norm(H_vec)
+             # Target spin direction S = -h_dir
+             s_target = -h_dir
+             # Convert to theta, phi
+             # z = cos(theta) -> theta = acos(z)
+             # x = sin(theta)cos(phi), y = sin(theta)sin(phi) -> phi = atan2(y, x)
+             t_target = np.arccos(s_target[2])
+             p_target = np.arctan2(s_target[1], s_target[0])
+             
+             for i in range(N_atom):
+                 # Add small noise
+                 x0[2*i] = t_target + rng.normal(0, 0.1)
+                 x0[2*i+1] = p_target + rng.normal(0, 0.1)
+        else:
+             # Random around XY plane
+             for i in range(N_atom):
+                 x0[2*i] = np.pi/2.0 + rng.normal(0, 0.2) 
+                 x0[2*i+1] = rng.uniform(0, 2*np.pi)
+            
+        # Optimization
+        method = min_config.get('method', 'L-BFGS-B')
+        ftol = min_config.get('ftol', 1e-9)
+        maxiter = min_config.get('maxiter', 5000)
+        
+        # Bounds: theta [0, pi], phi [-inf, inf] (or [0, 2pi])
+        bounds = []
+        for i in range(N_atom):
+            bounds.append((0, np.pi))
+            bounds.append((None, None))
+            
+        args = (Jex, DM, Kex, H_vec, S_val)
+        
+        with tqdm(total=maxiter, desc="Minimizing Energy", leave=False) as pbar:
+             def callback(xk):
+                 pbar.update(1)
+                 
+             res = minimize(
+                self._classical_energy_func, 
+                x0, 
+                args=args, 
+                method=method, 
+                bounds=bounds,
+                tol=ftol,
+                options={'maxiter': maxiter},
+                callback=callback
+             )
+        
+        if res.success:
+            logger.info(f"Minimization converged. Energy: {res.fun:.6f}")
+        else:
+            logger.warning(f"Minimization did not converge: {res.message}")
+            
+        # Construct Rotation Matrices
+        opt_angles = res.x
+        self.optimized_matrices = []
+        for i in range(N_atom):
+            th = opt_angles[2*i]
+            ph = opt_angles[2*i+1]
+            
+            # Construct Rotation Matrix R such that R * z_local = S_global
+            # S_global = [sin(th)cos(ph), sin(th)sin(ph), cos(th)]
+            
+            # Standard construction: Y-Z-Y convention or similar
+            # GenericSpinModel expects a matrix R.
+            # R should rotate [0,0,1] to [Sx, Sy, Sz].
+            # Common choice:
+            # R = Rz(phi) * Ry(theta)
+            # R * [0,0,1] 
+            # Ry(theta) * z = [sin(th), 0, cos(th)]
+            # Rz(phi) * [sin, 0, cos] = [cos(ph)sin(th), sin(ph)sin(th), cos(th)] -> Correct.
+            
+            # Ry(theta) = [[cos(th), 0, sin(th)], [0, 1, 0], [-sin(th), 0, cos(th)]]
+            # Rz(phi) = [[cos(ph), -sin(ph), 0], [sin(ph), cos(ph), 0], [0, 0, 1]]
+            
+            # Using sp.Matrix for internal consistency with symbolic parts (though these are numeric)
+            ct, st = np.cos(th), np.sin(th)
+            cp, sp_ = np.cos(ph), np.sin(ph)
+            
+            Ry = sp.Matrix([[ct, 0, st], [0, 1, 0], [-st, 0, ct]])
+            Rz = sp.Matrix([[cp, -sp_, 0], [sp_, cp, 0], [0, 0, 1]])
+            
+            R = Rz * Ry
+            self.optimized_matrices.append(R)
+            
+        logger.info("Optimized rotation matrices updated.")
+
+    def _classical_energy_func(self, x, Jex, DM, Kex, H_vec, S_val=0.5):
+        """
+        Calculate total classical energy for angles x.
+        x = [th0, ph0, th1, ph1, ...]
+        Assumes Jex, DM, Kex are numpy arrays.
+        """
+        N = Jex.shape[0]
+        N_ouc = Jex.shape[1]
+        
+        # Vectorized S construction
+        theta = x[0::2]
+        phi = x[1::2]
+        
+        # S_vecs_uc: (N, 3)
+        st, ct = np.sin(theta), np.cos(theta)
+        sp_, cp = np.sin(phi), np.cos(phi)
+        
+        S_vecs_uc = np.stack([st*cp, st*sp_, ct], axis=1)
+        
+        # Expand to OUC
+        # Assuming OUC maps j -> j%N
+        # (N_ouc, 3)
+        if N_ouc > N:
+            # Create full array
+             indices = np.arange(N_ouc) % N
+             S_vecs = S_vecs_uc[indices]
+        else:
+             S_vecs = S_vecs_uc
+            
+        E = 0.0
+        
+        # Optimized Energy summation
+        # We can just iterate.
+        
+        # Zeeman
+        if H_vec is not None:
+            # E += gamma * mu * sum(S . H)
+            gamma = 2.0
+            mu_B = 5.788e-2
+            # Sum S . H for all i in UC
+            # Using vectorized dot
+            # E += gamma * mu * sum(S . H)
+            gamma = 2.0
+            mu_B = 5.788e-2
+            # Sum S . H for all i in UC
+            # Using vectorized dot. Scale by S_val
+            E += gamma * mu_B * np.sum(S_vecs_uc @ H_vec) * S_val
+
+        # Interactions
+        for i in range(N):
+             Si = S_vecs[i]
+             
+             for j in range(N_ouc):
+                  Sj = S_vecs[j]
+                  
+                  # Heisenberg
+                  J_val = Jex[i, j]
+                  if J_val != 0:
+                       E += 0.5 * J_val * np.dot(Si, Sj) * (S_val * S_val)
+                       
+                  # DM
+                  D_vec = DM[i, j]
+                  # Check norm > epsilon
+                  if abs(D_vec[0]) > 1e-9 or abs(D_vec[1]) > 1e-9 or abs(D_vec[2]) > 1e-9:
+                       # D . (Si x Sj)
+                       E += 0.5 * np.dot(D_vec, np.cross(Si, Sj)) * (S_val * S_val)
+                       
+                  # Anisotropic (Kex)
+                  K_vec = Kex[i, j]
+                  if abs(K_vec[0]) > 1e-9 or abs(K_vec[1]) > 1e-9 or abs(K_vec[2]) > 1e-9:
+                       term = K_vec[0]*Si[0]*Sj[0] + K_vec[1]*Si[1]*Sj[1] + K_vec[2]*Si[2]*Sj[2]
+                       E += 0.5 * term * (S_val * S_val)
+                       
+        return E

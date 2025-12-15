@@ -27,7 +27,7 @@ if PROJECT_ROOT_DIR not in sys.path:
 # --- Import MagCalc and the specific CVO spin model ---
 try:
     import magcalc as mc
-    import spin_model_hc as cvo_model_module
+    import spin_model as cvo_spin_model
 except ImportError as e:
     print(f"Error importing modules: {e}")
     print(
@@ -148,69 +148,106 @@ def plot_min_energy_vs_H_cvo():
     # Define q=(0,2,0) r.l.u. for splitting calculation
     q_020_rlu = np.array([0, 2.0, 0])
     q_020_cartesian = np.array([0, q_020_rlu[1] * qy_conversion_factor, 0])
+    
+    # Get H_dir from config or default to [0,0,1] (Legacy behavior for this script was H along c likely)
+    # Force H direction to H//c [0,0,1] as per user request, ignoring config.
+    fixed_H_dir = [0.0, 0.0, 1.0]
+    logger.info(f"Enforcing field direction: {fixed_H_dir} (Overriding config)")
 
     for current_H_field in H_values:
         loop_start_time = timeit.default_timer()
         logger.info(f"Processing H = {current_H_field:.2f} T...")
 
-        current_model_params_for_minimization = list(base_model_params)
-        current_model_params_for_minimization[H_param_index] = current_H_field
-
-        logger.debug(
-            f"  Calling get_field_optimized_state_for_lswt with params: {current_model_params_for_minimization}"
-        )
-        opt_thetas, Ud_numeric_optimized, classical_E = (
-            cvo_model_module.get_field_optimized_state_for_lswt(
-                current_model_params_for_minimization, S_val
-            )
-        )
-
-        if Ud_numeric_optimized is None:
-            logger.error(
-                f"  Classical minimization failed for H = {current_H_field:.2f} T. Skipping."
-            )
-            results_list.append(
-                (current_H_field, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan)
-            )  # Added NaNs for splitting
-            continue
-
+        # Construct 9-element parameter list for new spin_model
+        # [J1, J2, J3, G1, Dx, Dy, D3, H_dir, H_mag]
+        current_params_val = [
+            J1,
+            J1 * J2_ratio,
+            J1 * J3_ratio,
+            G1,
+            Dx,
+            Dy,
+            D3,
+            fixed_H_dir,
+            current_H_field  # H magnitude being swept
+        ]
+        
+        # --- Minimization using MagCalc ---
+        # Initialize temporary calculator for minimization
+        current_magcalc_cache_base = f"{magcalc_cache_file_base_prefix}_S{S_val}_H{current_H_field:.2f}"
+        
         mean_canting_angle = np.nan
-        if opt_thetas is not None:
-            mean_canting_angle = np.mean(90.0 - np.degrees(opt_thetas))
-            logger.info(
-                f"  Classical state for H={current_H_field:.2f} T: E={classical_E:.4f} meV, Mean Canting={mean_canting_angle:.2f} deg"
-            )
-            # Also log individual canting angles and theta angles
-            canting_angles_degrees = 90.0 - np.degrees(opt_thetas)
-            logger.info(
-                f"  Optimal Theta Angles (degrees from +c): {np.degrees(opt_thetas)}"
-            )
-            logger.info(
-                f"  Canting angles from a-b plane (degrees towards +z): {canting_angles_degrees}"
-            )
-
-        current_magcalc_cache_base = (
-            f"{magcalc_cache_file_base_prefix}_S{S_val}_H{current_H_field:.2f}"
-        )
-        logger.debug(
-            f"  Initializing MagCalc with cache base: {current_magcalc_cache_base}"
-        )
+        classical_E = np.nan
+        
         try:
-            calculator = mc.MagCalc(
-                spin_model_module=cvo_model_module,
+             # Initialize for minimization (auto mode to generate symbols if needed)
+             calc_min = mc.MagCalc(
                 spin_magnitude=S_val,
-                hamiltonian_params=current_model_params_for_minimization,
-                cache_file_base=current_magcalc_cache_base,
+                hamiltonian_params=current_params_val,
+                cache_file_base=current_magcalc_cache_base, 
                 cache_mode=magcalc_cache_mode,
-                Ud_numeric_override=None,
-            )
-        except Exception as e_mc_init:
-            logger.error(
-                f"  Error initializing MagCalc for H={current_H_field:.2f} T: {e_mc_init}. Skipping.",
-                exc_info=True,
-            )
-            results_list.append((current_H_field, np.nan, mean_canting_angle))
-            continue
+                spin_model_module=cvo_spin_model
+             )
+             
+             # Perform minimization
+             # Use smart initialization based on AL_SPIN_PREFERENCE to ensure AFM basin
+             al_prefs = getattr(cvo_spin_model, 'AL_SPIN_PREFERENCE', [1] * 16)
+             nspins = calc_min.nspins
+             
+             x0 = np.zeros(2 * nspins)
+             for i in range(nspins):
+                # Theta: slightly canted from pi/2
+                x0[2*i] = np.pi/2.0 - 0.05 
+                # Phi: 0 or pi based on site preference (AFM nature)
+                # pref=1 -> 0, pref=-1 -> pi
+                if i < len(al_prefs):
+                     pref = al_prefs[i]
+                else:
+                     pref = 1
+                x0[2*i+1] = 0.0 if pref == 1 else np.pi
+                
+             min_res = calc_min.minimize_energy(x0=x0)
+             
+             if min_res.success:
+                  classical_E = min_res.fun
+                  opt_thetas = min_res.x[0::2]
+                  opt_phis = min_res.x[1::2]
+                  
+                  # Update structure in module for subsequent LSWT
+                  cvo_spin_model.set_magnetic_structure(opt_thetas, opt_phis)
+                  
+                  mean_canting_angle = np.mean(90.0 - np.degrees(opt_thetas))
+                  logger.info(
+                    f"  Classical state for H={current_H_field:.2f} T: E={classical_E:.4f} meV, Mean Canting={mean_canting_angle:.2f} deg"
+                  )
+                  
+                  # Re-initialize calculator with 'w' mode if structure changed significantly? 
+                  # Or just rely on set_magnetic_structure being read by mpr.
+                  # Ideally, we should ensure the calculator uses the NEW structure for LSWT.
+                  # Re-initializing calculator is safest to trigger symbol generation with new structure if needed,
+                  # OR if mpr reads from module global, the existing calc instance might not match if it cached symbols already?
+                  # Actually, MagCalc caches HMat. If magnetic structure changes, HMat changes?
+                  # Yes, because rotation matrices are embedded in HMat generation via mpr.
+                  # SO WE MUST RE-GENERATE HMAT for LSWT.
+                  
+                  # Re-init for LSWT
+                  calculator = mc.MagCalc(
+                        spin_magnitude=S_val,
+                        hamiltonian_params=current_params_val,
+                        cache_file_base=current_magcalc_cache_base, 
+                        cache_mode='w', # Force write to update HMat with new angles
+                        spin_model_module=cvo_spin_model
+                  )
+                  
+             else:
+                  logger.error(f"Minimization failed for H={current_H_field:.2f} T")
+                  results_list.append((current_H_field, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan))
+                  continue
+
+        except Exception as e:
+             logger.error(f"Error during minimization/init for H={current_H_field:.2f} T: {e}")
+             results_list.append((current_H_field, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan))
+             continue
 
         logger.debug(f"  Calculating dispersion for H={current_H_field:.2f} T...")
         res_scan = calculator.calculate_dispersion(
@@ -220,7 +257,7 @@ def plot_min_energy_vs_H_cvo():
 
         current_min_E = np.inf
         q_at_min_E_rlu = np.nan
-        if dispersion_energies_list:
+        if dispersion_energies_list is not None and len(dispersion_energies_list) > 0:
             min_E_so_far = np.inf
             min_E_q_idx = -1
             for i, energies_at_q in enumerate(dispersion_energies_list):
@@ -252,7 +289,7 @@ def plot_min_energy_vs_H_cvo():
         res_020 = calculator.calculate_dispersion([q_020_cartesian])
         disp_at_020_list = res_020.energies if res_020 else None
 
-        if disp_at_020_list and disp_at_020_list[0] is not None:
+        if disp_at_020_list is not None and len(disp_at_020_list) > 0 and disp_at_020_list[0] is not None:
             energies_at_020_raw = disp_at_020_list[0]
             # Filter out very small or negative energies if they are non-physical, then sort
             valid_energies_at_020 = np.sort(
@@ -415,7 +452,7 @@ def plot_min_energy_vs_H_cvo():
         rect=[0, 0.03, 0.88, 0.97]
     )  # Adjust for overall suptitle if added, or just general spacing
 
-    plot_filename = os.path.join(SCRIPT_DIR, "CVO_min_energy_canting_vs_H_plot.png")
+    plot_filename = os.path.join(SCRIPT_DIR, "../plots/CVO_min_energy_canting_vs_H_plot.png")
     try:
         plt.savefig(plot_filename)
         logger.info(f"Plot saved to {plot_filename}")

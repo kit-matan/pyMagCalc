@@ -143,7 +143,7 @@ def _init_worker(HMat_sym, full_symbol_list):
     try:
         # We need to import numpy inside the worker if used in lambdify modules
         import numpy as np 
-        _worker_HMat_func = lambdify(full_symbol_list, HMat_sym, modules=["numpy"])
+        _worker_HMat_func = lambdify(full_symbol_list, HMat_sym, modules=["numpy"], cse=True)
     except Exception as e:
         # We can't log easily here to the main process, but we can print to stderr
         sys.stderr.write(f"Error in worker initialization: {e}\n")
@@ -196,6 +196,7 @@ def process_calc_disp(
     Uses pre-initialized _worker_HMat_func.
     """
     (
+        _,  # Ud_numeric (unused by HMat_func as it's baked into params/sym)
         q_vector,
         nspins,
         spin_magnitude_num,
@@ -1132,22 +1133,33 @@ class MagCalc:
                 raise TypeError("hamiltonian_params must be a list or NumPy array.")
             if not hamiltonian_params_list:  # Allow empty if model needs no params
                 logger.warning("hamiltonian_params is empty.")
-            if not all(isinstance(p, (int, float)) for p in hamiltonian_params_list):
-                raise TypeError("All elements in hamiltonian_params must be numbers.")
-            self.hamiltonian_params = [float(p) for p in hamiltonian_params_list]
+            if not all(isinstance(x, (int, float, list, tuple, np.ndarray)) for x in hamiltonian_params_list):
+                 raise TypeError("All elements in hamiltonian_params must be numbers or sequences (vectors).")
+            
+            self.hamiltonian_params = []
+            for p in hamiltonian_params_list:
+                if isinstance(p, (list, tuple, np.ndarray)):
+                    self.hamiltonian_params.append([float(v) for v in p])
+                else:
+                    self.hamiltonian_params.append(float(p))
 
             self.cache_file_base = cache_file_base
-            # Create symbolic parameters (p0, p1, ...)
-            num_params = len(self.hamiltonian_params)
-            _params_sym_tuple = sp.symbols(f"p0:{num_params}", real=True)
-            # _params_sym_tuple is always a sequence when using slice notation "p0:N"
-            self.params_sym = list(_params_sym_tuple)
+            # Create symbolic parameters, handling vector constants
+            self.params_sym = []
+            _sym_counter = 0
+            for p in self.hamiltonian_params:
+                if isinstance(p, list):
+                    # Use value directly for vectors/lists
+                    self.params_sym.append(p)
+                else:
+                    self.params_sym.append(sp.Symbol(f"p{_sym_counter}", real=True))
+                    _sym_counter += 1
 
-            # For consistency, create p_numerical for the old path too
-            self.p_numerical = {
-                sym.name: val
-                for sym, val in zip(self.params_sym, self.hamiltonian_params)
-            }
+            # For consistency, create p_numerical map only for symbolic params
+            self.p_numerical = {}
+            for sym, val in zip(self.params_sym, self.hamiltonian_params):
+                if isinstance(sym, sp.Symbol):
+                    self.p_numerical[sym.name] = val
 
             # Check spin_model_module validity and get nspins
             self._validate_spin_model_module()
@@ -1480,9 +1492,13 @@ class MagCalc:
                 f"Mismatch between number of symbolic params ({len(self.params_sym)}) and numerical params ({len(self.hamiltonian_params)})."
             )
 
+        # Filter out vector constant keys from substitution map
+        raw_subs = zip(self.params_sym, self.hamiltonian_params)
+        valid_subs = [(k, v) for k, v in raw_subs if isinstance(k, sp.Symbol)]
+            
         param_substitutions_ud: List[Tuple[sp.Symbol, float]] = [
             (self.S_sym, self.spin_magnitude)
-        ] + list(zip(self.params_sym, self.hamiltonian_params))
+        ] + valid_subs
 
         try:
             # Use evalf(subs=...) for potentially better performance/stability
@@ -1522,18 +1538,19 @@ class MagCalc:
         logger.info("Spin magnitude updated and Ud_numeric recalculated.")
 
     def update_hamiltonian_params(
-        self, new_hamiltonian_params: Union[List[float], npt.NDArray[np.float64]]
+        self, new_hamiltonian_params: Union[List[Any], npt.NDArray[np.float64]]
     ):
         """
         Update the Hamiltonian parameters and recalculate dependent numerical matrices.
 
         Args:
-            new_hamiltonian_params (Union[List[float], npt.NDArray[np.float64]]):
+            new_hamiltonian_params (Union[List[Any], npt.NDArray[np.float64]]):
                 The new list or array of numerical Hamiltonian parameters. Must
-                have the same length as the original parameters.
+                have the same length as the original parameters. Elements can be
+                numbers or sequences (vectors).
 
         Raises:
-            TypeError: If new_hamiltonian_params is not a list/array of numbers.
+            TypeError: If new_hamiltonian_params structure is invalid.
             ValueError: If the number of new parameters does not match the expected number.
             RuntimeError: If recalculation of Ud_numeric fails.
         """
@@ -1550,10 +1567,18 @@ class MagCalc:
             raise ValueError(
                 f"Incorrect number of parameters provided. Expected {expected_len}, got {len(new_hamiltonian_params)}."
             )
-        if not all(isinstance(p, (int, float)) for p in new_hamiltonian_params):
-            raise TypeError("All elements in new_hamiltonian_params must be numbers.")
+        
+        # Validate elements similarly to __init__
+        if not all(isinstance(x, (int, float, list, tuple, np.ndarray)) for x in new_hamiltonian_params):
+             raise TypeError("All elements in new_hamiltonian_params must be numbers or sequences (vectors).")
 
-        self.hamiltonian_params = [float(p) for p in new_hamiltonian_params]
+        self.hamiltonian_params = []
+        for p in new_hamiltonian_params:
+            if isinstance(p, (list, tuple, np.ndarray)):
+                self.hamiltonian_params.append([float(v) for v in p])
+            else:
+                self.hamiltonian_params.append(float(p))
+
         # Recalculate Ud_numeric as it depends on parameters
         self._calculate_numerical_ud()
         logger.info("Hamiltonian parameters updated and Ud_numeric recalculated.")
@@ -1863,59 +1888,84 @@ class MagCalc:
 
     def calculate_dispersion(
         self,
-        q_vectors: Union[List[npt.NDArray[np.float64]], npt.NDArray[np.float64]],
-    ) -> Optional[List[Optional[npt.NDArray[np.float64]]]]:
+        q_vectors_list: Union[List[npt.NDArray[np.float64]], npt.NDArray[np.float64]],
+        processes: Optional[int] = None,
+        serial: bool = False,
+    ) -> Optional[DispersionResult]:
         """
         Calculate the spin-wave dispersion relation over a list of q-points.
 
         Args:
-            q_vectors (Union[List[npt.NDArray[np.float64]], npt.NDArray[np.float64]]):
+            q_vectors_list (Union[List[npt.NDArray[np.float64]], npt.NDArray[np.float64]]):
                 A list or NumPy array of momentum vectors q = [qx, qy, qz].
                 Each vector should be a 1D array/list of 3 numbers.
+            processes (Optional[int]): Number of worker processes (default: cpu_count).
+            serial (bool): If True, run in the main process without multiprocessing (avoid spawn/fork overhead).
 
         Returns:
-            Optional[List[Optional[npt.NDArray[np.float64]]]]: A list containing the
-            calculated magnon energies (as a NumPy array) for each corresponding
-            input q-vector. Returns None if the calculation fails to start
-            (e.g., due to setup errors or pool initialization failure).
-            Individual q-points that fail during calculation will have NaN arrays
-            in the returned list.
+            Optional[DispersionResult]: A result object containing energies and q-vectors. 
+            Returns None if the calculation fails to start.
         """
         start_time = timeit.default_timer()
         if self.HMat_sym is None:  # Should be caught by __init__
             logger.error("Symbolic matrix HMat_sym not available.")
             return None
 
-        # --- Input Validation for q_vectors ---
-        if isinstance(q_vectors, np.ndarray):
-            if q_vectors.ndim == 1 and q_vectors.shape == (3,):  # Single vector case
-                q_vectors = [q_vectors]  # Wrap in a list
-            elif q_vectors.ndim != 2 or q_vectors.shape[1] != 3:
-                raise ValueError("q_vectors NumPy array must be 2D with shape (N, 3).")
+        logger.info("Running dispersion calculation...")
+
+        if self.HMat_sym is None or self.Ud_numeric is None:
+            logger.error("HMat or Ud_numeric is missing. Cannot calculate dispersion.")
+            return None
+
+        # Convert to list of lists/arrays
+        if isinstance(q_vectors_list, np.ndarray):
+            if q_vectors_list.ndim == 1 and q_vectors_list.shape == (3,):  # Single vector case
+                q_vectors_list = [q_vectors_list]  # Wrap in a list
+            elif q_vectors_list.ndim != 2 or q_vectors_list.shape[1] != 3:
+                raise ValueError("q_vectors_list NumPy array must be 2D with shape (N, 3).")
             # Convert rows to separate arrays for pool.imap if needed, or keep as list of arrays
-            q_vectors_list = [q_vec for q_vec in q_vectors]
-        elif isinstance(q_vectors, list):
-            if not q_vectors:
-                raise ValueError("q_vectors list cannot be empty.")
+            q_vectors_list = [q_vec for q_vec in q_vectors_list]
+        elif isinstance(q_vectors_list, list):
+            if not q_vectors_list:
+                raise ValueError("q_vectors_list list cannot be empty.")
             if not all(
-                isinstance(q, (list, np.ndarray)) and len(q) == 3 for q in q_vectors
+                isinstance(q, (list, np.ndarray)) and len(q) == 3 for q in q_vectors_list
             ):
                 raise ValueError(
-                    "Each element in q_vectors list must be a list/array of length 3."
+                    "Each element in q_vectors_list list must be a list/array of length 3."
                 )
             # Ensure elements are numpy arrays
-            q_vectors_list = [np.array(q, dtype=float) for q in q_vectors]
+            q_vectors_list = [np.array(q, dtype=float) for q in q_vectors_list]
         else:
-            raise TypeError("q_vectors must be a list or NumPy array.")
+            raise TypeError("q_vectors_list must be a list or NumPy array.")
         # --- End q_vector validation ---
 
-        logger.info("Running dispersion calculation via multiprocessing...")
+        num_processes = processes if processes is not None else os.cpu_count()
+
+        # Prepare numeric params list corresponding to self.params_sym symbols
+        filtered_h_params = [
+            val for sym, val in zip(self.params_sym, self.hamiltonian_params)
+            if isinstance(sym, sp.Symbol)
+        ]
+
+        task_args = [
+            (
+                self.Ud_numeric,  # Pass numerical Ud
+                np.array(q, dtype=np.float64),
+                self.nspins,
+                self.spin_magnitude,
+                filtered_h_params,
+            )
+            for q in q_vectors_list
+        ]
+
+        results = []
 
         # --- Numerical Cache Check ---
         cache_key = self._generate_numerical_cache_key(q_vectors_list, "dispersion")
         cache_filepath = os.path.join(self.numerical_cache_dir, cache_key + ".pkl")
 
-        if os.path.exists(cache_filepath):
+        if os.path.exists(cache_filepath) and self.cache_mode != 'w':
             try:
                 with open(cache_filepath, "rb") as f:
                     cached_result = pickle.load(f)
@@ -1945,49 +1995,49 @@ class MagCalc:
         # Clear previous intermediate matrices if any
         self._intermediate_numerical_H_matrices_disp = []
 
-        # Prepare arguments for parallel processing
-        # Use simple map or imap. For dispersion, memory is less critical than S(q,w),
-        # but consistency is good.
-        task_args = [
-            (
-                q,
-                self.nspins,
-                self.spin_magnitude,
-                self.hamiltonian_params,
-            )
-            for q in q_vectors_list
-        ]
+        # --- Serial Execution Path ---
+        if serial or (num_processes == 1):
+             logger.info("Running dispersion calculation in SERIAL mode.")
+             # Use global worker func? No, simpler to just re-use the worker logic but we need the lambda.
+             # We can't easily use 'process_calc_disp' without _worker_HMat_func being set in THIS process.
+             # So we must initialize it here.
 
-        # Use multiprocessing
-        # Re-using the worker init logic is important for lambdification
-        try:
-            # We must pickle the symbolic matrix only once.
-            # Using global or initializer.
-            # Here we pass HMat_sym to initializer.
-            # Note: HMat_sym is SymPy Matrix.
-            
-            # Need strict extraction of symbols for consistency with worker
-            # The worker needs full_symbol_list to reconstruct the lambdified function order
-            
-            with Pool(
-                initializer=_init_worker,
-                initargs=(self.HMat_sym, self.full_symbol_list),
-            ) as pool:
-                # Use imap to report progress with tqdm
-                # Wrapping in list() to consume the iterator and collect results
-                results = list(
-                    tqdm(
-                        pool.imap(process_calc_disp, task_args),
-                        total=len(task_args),
-                        desc="Dispersion",
-                        unit="q-point",
+             # Filter symbols for lambdify
+             lambdify_symbols = [s for s in self.full_symbol_list if isinstance(s, sp.Symbol)]
+
+             # Init global in main process (safe if we are serial)
+             global _worker_HMat_func
+             # import numpy as np # Removed to avoid UnboundLocalError (np is global)
+             _worker_HMat_func = lambdify(lambdify_symbols, self.HMat_sym, modules=["numpy"], cse=True)
+
+             # Run loop
+             for args in tqdm(task_args, total=len(task_args), desc="Dispersion (Serial)", unit="q-point"):
+                 results.append(process_calc_disp(args))
+
+        else:
+            # --- Parallel Execution Path ---
+            try:
+                # We must pickle the symbolic matrix only once.
+                lambdify_symbols = [s for s in self.full_symbol_list if isinstance(s, sp.Symbol)]
+
+                with Pool(
+                    initializer=_init_worker,
+                    initargs=(self.HMat_sym, lambdify_symbols),
+                    processes=num_processes
+                ) as pool:
+                    # Use imap to report progress with tqdm
+                    results = list(
+                        tqdm(
+                            pool.imap(process_calc_disp, task_args),
+                            total=len(task_args),
+                            desc="Dispersion",
+                            unit="q-point",
+                        )
                     )
-                )
-               
-        except Exception as e:
-            logger.exception(f"Parallel processing failed during dispersion calculation: {e}")
-            return None
-            
+            except Exception as e:
+                logger.exception(f"Parallel processing failed during dispersion calculation: {e}")
+                return None
+
         # Unpack results
         # results is list of (energies, HMat_numeric)
         energies_list = []
@@ -2065,7 +2115,7 @@ class MagCalc:
                 q,
                 self.nspins,
                 self.spin_magnitude,
-                self.hamiltonian_params,
+                [p for p in self.hamiltonian_params if not isinstance(p, (list, tuple, np.ndarray))],
             )
             for q in q_vectors_list
         ]
@@ -2074,7 +2124,7 @@ class MagCalc:
              with Pool(
                 processes=os.cpu_count(),
                 initializer=_init_worker,
-                initargs=(self.HMat_sym, self.full_symbol_list),
+                initargs=(self.HMat_sym, [s for s in self.full_symbol_list if isinstance(s, sp.Symbol)]),
             ) as pool:
                 # yielding from imap
                 for result in pool.imap(process_calc_Sqw, task_args, chunksize=chunk_size):
@@ -2121,7 +2171,7 @@ class MagCalc:
                 q,
                 self.nspins,
                 self.spin_magnitude,
-                self.hamiltonian_params,
+                [p for p in self.hamiltonian_params if not isinstance(p, (list, tuple, np.ndarray))],
             )
             for q in q_vectors_list
         ]
@@ -2130,7 +2180,7 @@ class MagCalc:
              with Pool(
                 processes=os.cpu_count(),
                 initializer=_init_worker,
-                initargs=(self.HMat_sym, self.full_symbol_list),
+                initargs=(self.HMat_sym, [s for s in self.full_symbol_list if isinstance(s, sp.Symbol)]),
             ) as pool:
                 # Use imap to report progress with tqdm. imap preserves order.
                 results = list(
@@ -2273,7 +2323,12 @@ class MagCalc:
             opt_vars.append(theta_sym[i])
             opt_vars.append(phi_sym[i])
             
-        params_sub_list = list(zip(self.params_sym, params))
+        # Filter out non-symbolic keys (e.g. vector lists) from substitution
+        params_sub_list = []
+        for sym, val in zip(self.params_sym, params):
+             if isinstance(sym, sp.Symbol):
+                  params_sub_list.append((sym, val))
+        
         E_sym_num = E_sym.subs(params_sub_list)
         
         # Ensure result is real

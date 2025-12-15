@@ -19,7 +19,7 @@ if project_root_dir not in sys.path:
     sys.path.insert(0, project_root_dir)
 
 import magcalc as mc
-import spin_model_ha as sm
+import spin_model as sm
 from numpy import loadtxt
 from timeit import default_timer
 import matplotlib.pyplot as plt
@@ -29,7 +29,12 @@ from lmfit import Model
 def sw_CVO(x, J1, J2, J3, G1, Dx, H):
     
     S = 1.0 / 2.0
-    p = [J1, J2, J3, G1, Dx, H]
+    # [J1, J2, J3, G1, Dx, Dy, D3, H_dir, H_mag]
+    # Assuming fitting data is for H//a (based on filename sw_aCVO.txt implies H//a or similar?)
+    # Actually, sw_aCVO often refers to alpha-CVO. But spin_model_ha was H//a.
+    # We will assume H//a.
+    # Force H_mag to 0.0 per user request
+    p = [J1, J2, J3, G1, Dx, 0.0, 0.0, [1,0,0], 0.0]
     k = []
     
     # Pre-calculate k-vectors (safely handle x as numpy array or list)

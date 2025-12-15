@@ -17,7 +17,7 @@ if project_root_dir not in sys.path:
     sys.path.insert(0, project_root_dir)
 
 import magcalc as mc
-import spin_model_ha as sm
+import spin_model as sm
 from contextlib import redirect_stdout
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
@@ -116,12 +116,13 @@ def plot_HKmap(p, newcalc, E_intv):
     plt.colorbar()
     et=default_timer()
     print('Total run-time: ', np.round((et-st)/60, 2), ' mins.')
-    # plt.savefig('figures/CVO_HKmap.eps', format='eps', dpi=1000)
+    plt.savefig(os.path.join(current_script_dir, '../plots/CVO_HKmap.png'), dpi=300)
     plt.show()
 
 
 if __name__ == '__main__':
     print("Start: ", time.asctime(time.localtime()))
-    p = [2.49, 1.12 * 2.49, 2.03 * 2.49, 0.28, 2.67, 0.0]
+    # [J1, J2, J3, G1, Dx, Dy, D3, H_dir, H_mag]
+    p = [2.49, 1.12 * 2.49, 2.03 * 2.49, 0.28, 2.67, -2.0, 0.0, [1,0,0], 0.0]
     plot_HKmap(p, 1, [6, 7])
     print("End: ", time.asctime(time.localtime()))

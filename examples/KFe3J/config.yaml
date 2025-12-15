@@ -1,15 +1,11 @@
 # Configuration for KFe3J LSWT calculation
 python_model_file: "spin_model.py"
-parameter_order: ["J1", "J2", "Dy", "Dz", "H"]
+# New format: [J1, J2, Dy, Dz, H_dir, H_mag]
+# H_dir must be a list representing a unit vector, e.g., [0, 0, 1] for Z-axis
+hamiltonian_params: [3.23, 0.11, 0.218, -0.195, [0, 0, 1], 0.0]
 
-
-model_params:
+parameters:
   S: 2.5      # Spin magnitude (5/2)
-  J1: 3.23    # J1 exchange parameter (meV)
-  J2: 0.11    # J2 exchange parameter (meV)
-  Dy: 0.218   # DM vector y-component parameter (meV)
-  Dz: -0.195  # DM vector z-component parameter (meV)
-  H: 0.0      # External magnetic field H (Tesla or appropriate units)
 
 calculation:
   cache_mode: "w"  # 'r' to read cache, 'w' to write/regenerate cache
@@ -21,7 +17,7 @@ q_path:
   Gamma: [0, 0, 0]
   M: [0.5, 0, 0] # Example M point, adjust based on convention
   K: [0.33333333, 0.33333333, 0] # Example K point, adjust based on convention
-  points_per_segment: 50 # Number of q-points between high-symmetry points
+  points_per_segment: 100 # Number of q-points between high-symmetry points
   path: ["Gamma", "M", "K", "Gamma"] # Define the path sequence
 
 output:
@@ -30,7 +26,7 @@ output:
 
 plotting: # Added section
   save_plot: true
-  plot_structure: true # Enable plotting of minimized magnetic structure
+  plot_structure: false # Enable plotting of minimized magnetic structure
   disp_plot_filename: "../plots/KFe3J_disp_plot.png" # Filename for saved dispersion plot
   combined_plot_filename: "../plots/KFe3J_combined_plot.png" # Filename for combined plot
   sqw_plot_filename: "../plots/KFe3J_sqw_plot.png"   # Filename for saved S(q,w) map plot
@@ -44,9 +40,9 @@ plotting: # Added section
 
 tasks:
   run_dispersion: true             # Master switch for dispersion calculation and plotting
-  calculate_dispersion_new: true   # true: run calculation; false: load from disp_data_filename for plotting
+  calculate_dispersion_new: true   # If true, forces recalculation even if file exists
+  run_minimization: true
   plot_dispersion: true            # Switch for plotting dispersion
-
   run_sqw_map: true                # Master switch for S(q,w) map calculation and plotting
   calculate_sqw_map_new: true      # true: run calculation; false: load from sqw_data_filename for plotting
   plot_sqw_map: true               # Switch for plotting S(q,w) map

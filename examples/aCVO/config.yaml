@@ -1,9 +1,9 @@
 # ... (other configurations in your main config.yaml) ...
 
-# Configuration for alpha-CVO
-
+# Configuration for aCVO LSWT calculation
 cvo_model:
-  spin_model_type: "hc" # Options: "ha" (H || a), "hc" (H || c)
+  python_model_file: "spin_model.py"
+  # Options: "ha" (H || a), "hc" (H || c)
   model_params:
     S: 0.5
     J1: 2.49
@@ -12,8 +12,10 @@ cvo_model:
     G1: 0.28
     Dx: 2.67 # Uniform DM vector along a-axis for J3
     Dy: 0 # DM vector component in bc-plane for J1
-    D3: 0   
-    H: 20.0
+    D3: 0
+    H_dir: [0.0, 0.0, 1.0] # Field Direction (H//c)
+    H_mag: 20.0
+    # H: 20.0 # Legacy scalar field
   calculation:
     cache_mode: "w" # 'r' to read, 'w' to write MagCalc's internal cache
     cache_file_base_prefix: "CVO_model_cache" # Base prefix for MagCalc's internal cache files.
@@ -40,7 +42,8 @@ cvo_model:
     screen_height_fraction: 0.85   # Optional: Fraction of screen height to use (default 0.85)
   tasks:
     run_dispersion: true             # Master switch for dispersion calculation and plotting
-    calculate_dispersion_new: true   # true: run calculation; false: load from disp_data_filename for plotting
+    calculate_dispersion_new: false   # true: run calculation; false: load from disp_data_filename for plotting
+    run_minimization: true # Toggle energy minimization
     plot_dispersion: true            # Switch for plotting dispersion
 
     run_sqw_map: true                # Master switch for S(q,w) map calculation and plotting

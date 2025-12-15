@@ -116,13 +116,13 @@ def run_calculation(config_file: str):
     
     # Construct Hamiltonian Parameters List
     params_val = []
-    
-    # 1. Use explicit order if provided
     param_order = final_config.get('parameter_order')
     
-    # 2. If python model is used, we usually need specific order.
-    #    If no order provided, try to infer or fallback to dict values (risky).
-    if param_order:
+    # 1. Use explicit hamiltonian_params list if provided (Preferred for lists/vectors)
+    if 'hamiltonian_params' in final_config:
+        params_val = final_config['hamiltonian_params']
+    # 2. Use explicit order if provided
+    elif param_order:
         try:
              params_val = [float(parameters_dict[k]) for k in param_order]
         except KeyError as e:
@@ -139,6 +139,17 @@ def run_calculation(config_file: str):
             logger.warning("No 'parameter_order' specified for legacy python model. Using dictionary order (excluding 'S'). This may be incorrect.")
 
     logger.info(f"Model Parameters: {params_val}, S={S_val}")
+
+    # Optimization Step
+    # Legacy default checks tasks config or config root (for simple scripts)
+    tasks = final_config.get('tasks', {})
+    should_minimize = tasks.get('run_minimization', True)
+    
+    if should_minimize and hasattr(spin_model, 'minimize_energy'):
+        try:
+             spin_model.minimize_energy(params_val)
+        except Exception as e:
+             logger.warning(f"Optimization attempt failed: {e}")
     
     calculator = mc.MagCalc(
         spin_model_module=spin_model, 

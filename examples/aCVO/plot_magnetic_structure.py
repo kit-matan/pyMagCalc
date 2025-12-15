@@ -29,7 +29,7 @@ if PROJECT_ROOT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_ROOT_DIR)
 
 try:
-    from aCVO.spin_model_hc import (
+    from aCVO.spin_model import (
         atom_pos,
         atom_pos_ouc,
         unit_cell,
@@ -39,9 +39,9 @@ try:
         AL_SPIN_PREFERENCE,
     )
 except ImportError as e:
-    print(f"Error importing from spin_model_hc.py: {e}")
+    print(f"Error importing from spin_model.py: {e}")
     print(
-        "Please ensure 'spin_model_hc.py' is in the 'aCVO' directory and the project structure is correct."
+        "Please ensure 'spin_model.py' is in the 'aCVO' directory and the project structure is correct."
     )
     sys.exit(1)
 
@@ -332,7 +332,7 @@ def visualize_magnetic_structure():
     plt.tight_layout()
 
     # Save the figure
-    output_filename = os.path.join(SCRIPT_DIR, "aCVO_magnetic_structure.png")
+    output_filename = os.path.join(SCRIPT_DIR, "../plots/aCVO_magnetic_structure.png")
     plt.savefig(output_filename, dpi=300)
     print(f"Plot saved to {output_filename}")
 

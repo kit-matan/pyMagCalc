@@ -337,8 +337,27 @@ if __name__ == "__main__":
     calc_p = config.get("calculation", {})
     output_p = config.get("output", {})
 
+    # Prioritize hamiltonian_params if present (new format support)
+    if "hamiltonian_params" in config:
+        params_val = config["hamiltonian_params"]
+        logger.info(f"Using 'hamiltonian_params' from config: {params_val}")
+    else:
+        # Fallback for legacy config (assumes H//c default)
+        model_p = config.get("model_params", {})
+        S_val = model_p.get("S", 2.5)
+        # Construct [J1, J2, Dy, Dz, H_dir, H_mag]
+        H_scalar = model_p.get("H", 0.0)
+        params_val = [
+            model_p.get("J1", 0.0),
+            model_p.get("J2", 0.0),
+            model_p.get("Dy", 0.0),
+            model_p.get("Dz", 0.0),
+            [0.0, 0.0, 1.0], # Default H_dir
+            H_scalar
+        ]
+
+    model_p = config.get("model_params", {}) # Still needed for S
     S_val = model_p.get("S", 2.5)
-    params_val = [model_p.get(k, 0.0) for k in ["J1", "J2", "Dy", "Dz", "H"]]
     write_read_mode = calc_p.get("cache_mode", "r")
     cache_base_name = calc_p.get("cache_file_base", "KFe3J_cache")
     # Updated filename extraction logic

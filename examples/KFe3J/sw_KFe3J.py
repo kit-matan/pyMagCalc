@@ -487,7 +487,8 @@ def main():
         sys.exit(1)
 
     # Extract parameters
-    model_p_config = config.get("model_params", {})
+    # Prioritize 'parameters' over 'model_params' for standard compliance
+    model_p_config = config.get("parameters", config.get("model_params", {}))
     calc_p_config = config.get("calculation", {})
     output_p_config = config.get("output", {})
     plotting_p_config = config.get("plotting", {})
@@ -505,7 +506,10 @@ def main():
     spin_model_to_use = kfe3j_spin_model # Default fallback
     
     
-    if interactions_config:
+    if "hamiltonian_params" in config:
+        params_val = config["hamiltonian_params"]
+        logger.info(f"Using explicit 'hamiltonian_params' from config: {params_val}")
+    elif interactions_config:
         logger.info("Declarative 'interactions' found in config. Using GenericSpinModel.")
         spin_model_to_use = GenericSpinModel(config, base_path=script_dir)
         
@@ -539,13 +543,31 @@ def main():
         # Fallback to Manual Model logic
         # Ensure params_val are in the correct order expected by the spin_model
         # (J1, J2, Dy, Dz, H) - this order is assumed by original scripts
-        params_val = [
-            model_p_config.get("J1", 0.0),
-            model_p_config.get("J2", 0.0),
-            model_p_config.get("Dy", 0.0),
-            model_p_config.get("Dz", 0.0),
-            model_p_config.get("H", 0.0),
-        ]
+        # NOTE: Updated to match NEW spin_model expectations [..., H_dir, H_mag] if possible,
+        # otherwise assumes legacy.
+        
+        # Attempt to construct new format if keys exist
+        H_dir = model_p_config.get("H_dir")
+        H_mag = model_p_config.get("H_mag")
+        
+        if H_dir is not None:
+             params_val = [
+                model_p_config.get("J1", 0.0),
+                model_p_config.get("J2", 0.0),
+                model_p_config.get("Dy", 0.0),
+                model_p_config.get("Dz", 0.0),
+                H_dir,
+                H_mag if H_mag is not None else model_p_config.get("H", 0.0)
+             ]
+        else:
+             # Legacy fallback
+             params_val = [
+                model_p_config.get("J1", 0.0),
+                model_p_config.get("J2", 0.0),
+                model_p_config.get("Dy", 0.0),
+                model_p_config.get("Dz", 0.0),
+                model_p_config.get("H", 0.0),
+            ]
     cache_mode = calc_p_config.get("cache_mode", "auto")
     cache_file_base = calc_p_config.get("cache_file_base", "KFe3J_model_cache")
 

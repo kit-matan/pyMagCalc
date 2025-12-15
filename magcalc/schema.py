@@ -84,10 +84,18 @@ class SIAInteraction(InteractionBase):
     type: Literal['sia']
     atom_label: Optional[str] = None
     K: Optional[ParamValue] = None
+    K: Optional[ParamValue] = None
     axis: Optional[Vector3] = None
 
+class AnisotropicExchangeInteraction(InteractionBase):
+    type: Literal['anisotropic_exchange']
+    pair: Optional[List[str]] = None
+    distance: Optional[float] = None
+    value: List[ParamValue] = Field(..., description="[Jxx, Jyy, Jzz]")
+    
+
 # Union for validation
-InteractionType = Union[HeisenbergInteraction, DMInteraction, DMManualInteraction, SIAInteraction, InteractionBase]
+InteractionType = Union[HeisenbergInteraction, DMInteraction, DMManualInteraction, SIAInteraction, AnisotropicExchangeInteraction, InteractionBase]
 
 # --- Transformations ---
 class TransformationFrame(BaseModel):
@@ -129,12 +137,20 @@ class PlottingConfig(BaseModel):
     model_config = ConfigDict(extra='allow')
 
 class TasksConfig(BaseModel):
+    run_minimization: bool = False
     run_dispersion: bool = False
     calculate_dispersion_new: bool = True
     plot_dispersion: bool = False
     run_sqw_map: bool = False
     calculate_sqw_map_new: bool = True
     plot_sqw_map: bool = False
+    
+class MinimizationConfig(BaseModel):
+    enabled: bool = False
+    method: str = "L-BFGS-B"
+    ftol: float = 1e-9
+    gtol: float = 1e-7
+    maxiter: int = 5000
 
 # --- Main Configuration ---
 class MagCalcConfig(BaseModel):
@@ -145,10 +161,11 @@ class MagCalcConfig(BaseModel):
     # If python_model_file is present, these are optional
     crystal_structure: Optional[CrystalStructureConfig] = None
     interactions: List[InteractionType] = Field(default_factory=list)
-    parameters: Dict[str, float] = Field(default_factory=dict) # Name -> Value
-    model_params: Optional[Dict[str, float]] = None # Alias/Legacy support
+    parameters: Dict[str, Union[float, List[float]]] = Field(default_factory=dict) # Name -> Value
+    model_params: Optional[Dict[str, Union[float, List[float]]]] = None # Alias/Legacy support
     
     transformations: Optional[TransformationsConfig] = None
+    minimization: Optional[MinimizationConfig] = None
     
     calculation: CalculationConfig = Field(default_factory=CalculationConfig)
     q_path: Optional[QPathConfig] = None

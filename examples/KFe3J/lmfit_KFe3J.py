@@ -101,30 +101,43 @@ def objective_function(
     global calculator_instance  # Use the global calculator instance
 
     # Extract numerical values from lmfit Parameters object
-    # Ensure order matches the calculator's expectation [J1, J2, Dy, Dz, H]
-    p_values = [params[pname].value for pname in ["J1", "J2", "Dy", "Dz", "H"]]
-    S_val = params["S"].value  # Assuming S is also a parameter
+    # Expect: [J1, J2, Dy, Dz, H]
+    J1_val = params["J1"].value
+    J2_val = params["J2"].value
+    Dy_val = params["Dy"].value
+    Dz_val = params["Dz"].value
+    H_mag_val = params["H"].value
+    
+    S_val = params["S"].value 
+
+    # Construct correct parameter list for spin_model [J1, J2, Dy, Dz, H_dir, H_mag]
+    # We enforce H || c for this analysis as per script context
+    H_dir_val = [0.0, 0.0, 1.0]
+
+    p_values_for_model = [J1_val, J2_val, Dy_val, Dz_val, H_dir_val, H_mag_val]
 
     # Update parameters in the existing calculator instance
-    # This avoids regenerating symbolic matrices repeatedly
     try:
         calculator_instance.update_spin_magnitude(S_val)
-        calculator_instance.update_hamiltonian_params(p_values)  # Pass all 5 params
+        calculator_instance.update_hamiltonian_params(p_values_for_model) 
+        # Minimize energy to find new ground state for these parameters
+        calculator_instance.minimize_energy(method="L-BFGS-B") 
     except Exception as e:
         logger.error(f"Error updating calculator parameters: {e}")
         # Return large residuals if update fails
         return np.full_like(e_exp, 1e6)
 
     # Calculate dispersion using the updated calculator
+    # Use serial=True to avoid multiprocessing overhead in fitting loop
     try:
-        res = calculator_instance.calculate_dispersion(q_exp)
+        res = calculator_instance.calculate_dispersion(q_exp, serial=True)
         energies_calc_list = res.energies if res else None
     except Exception as e:
-        logger.error(f"Error during dispersion calculation in objective function: {e}")
+        logger.warning(f"Error during dispersion calculation (likely invalid parameters): {e}")
         return np.full_like(e_exp, 1e6)  # Return large residuals on failure
 
     if energies_calc_list is None:
-        logger.error("Dispersion calculation returned None.")
+        logger.warning("Dispersion calculation returned None.")
         return np.full_like(e_exp, 1e6)
 
     # --- Process calculated energies ---
@@ -187,13 +200,20 @@ def plot_fit_results(
 
     # --- Calculate dispersion curves using best-fit parameters ---
     best_fit_params = [
-        result.params[pname].value for pname in ["J1", "J2", "Dy", "Dz", "H"]
+        result.params["J1"].value,
+        result.params["J2"].value,
+        result.params["Dy"].value,
+        result.params["Dz"].value,
+        [0.0, 0.0, 1.0],  # H_dir
+        result.params["H"].value,  # H_mag
     ]
     best_fit_S = result.params["S"].value
 
     try:
         calculator.update_spin_magnitude(best_fit_S)
         calculator.update_hamiltonian_params(best_fit_params)
+        # Minimize energy for the best fit parameters before plotting
+        calculator.minimize_energy(method="L-BFGS-B")
     except Exception as e:
         logger.error(f"Error updating calculator with best-fit parameters: {e}")
         return
@@ -367,14 +387,30 @@ if __name__ == "__main__":
             f"Unexpected error loading configuration: {e}. Using default parameters."
         )
 
-    # Extract parameters from config or use defaults
-    model_p = config.get("model_params", {})
-    calc_p = config.get("calculation", {})
-    fit_p = config.get("fitting", {})  # Section for fitting settings
+    # Extract parameters from config
+    # prioritize 'hamiltonian_params' list as per new config format
+    ham_params_list = config.get("hamiltonian_params", None)
+    
+    if ham_params_list and len(ham_params_list) >= 6:
+        logger.info(f"Using initial parameters from config: {ham_params_list}")
+        initial_params = ham_params_list
+    else:
+        logger.warning("hamiltonian_params not found or invalid in config. Using defaults.")
+        # Fallback defaults
+        initial_params = [
+            0.0, # J1
+            0.0, # J2
+            0.0, # Dy
+            0.0, # Dz
+            [0.0, 0.0, 1.0], # H_dir
+            0.0, # H_mag
+        ]
 
-    # Initial parameter guesses and settings
-    initial_S = model_p.get("S", 2.5)
-    initial_params = [model_p.get(k, 0.0) for k in ["J1", "J2", "Dy", "Dz", "H"]]
+    # Model params section (S)
+    model_p_dict = config.get("parameters", {}) # Look in 'parameters' dict for S
+    initial_S = model_p_dict.get("S", config.get("model_params", {}).get("S", 2.5))
+    calc_p = config.get("calculation", {})
+    fit_p = config.get("fitting", {})
     cache_base_name = calc_p.get("cache_file_base", "KFe3J_cache")
     exp_data_file = fit_p.get("exp_data_file", "../data/sw_KFe3J.txt")  # Updated default path to examples/data
     # --- End Configuration Loading ---
@@ -395,7 +431,7 @@ if __name__ == "__main__":
             spin_magnitude=initial_S,
             hamiltonian_params=initial_params,
             cache_file_base=cache_base_name,
-            cache_mode="r",  # MUST use 'r' for fitting speed
+            cache_mode="w",  # Force regenerate to ensure consistency, init happens once
             spin_model_module=kfe3j_model,
         )
     except Exception as e:
@@ -412,7 +448,7 @@ if __name__ == "__main__":
     params.add("J2", value=initial_params[1], vary=True)
     params.add("Dy", value=initial_params[2], vary=True)
     params.add("Dz", value=initial_params[3], vary=True)
-    params.add("H", value=initial_params[4], vary=False)  # Keep H fixed for example
+    params.add("H", value=initial_params[5], vary=False)  # H_mag is at index 5
     params.add("S", value=initial_S, min=0.1, vary=False)  # Keep S fixed for example
 
     # --- Perform the Fit ---

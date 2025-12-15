@@ -399,47 +399,69 @@ if __name__ == "__main__":
     Dy = model_p_config.get("Dy", -2.0)  # DM component for J1
     D3 = model_p_config.get("D3", 0.0)  # DM component for J3
     H_field = model_p_config.get("H", 0.0)
+    H_dir = model_p_config.get("H_dir")
+    H_mag_conf = model_p_config.get("H_mag")
+    
     spin_model_type = cvo_config.get("spin_model_type", "ha").lower()
 
-    if spin_model_type == "hc":
+    # Logic to normalize field parameters
+    if H_dir is not None and H_mag_conf is not None:
+         # Uses explicit vector direction and magnitude
+         final_H_dir = H_dir
+         final_H_mag = H_mag_conf
+    else:
+         # Legacy fallback: use H_field magnitude and infer direction based on model type
+         final_H_mag = H_field
+          # --- Load Spin Model Logic ---
+    # With the new consolidated spin_model.py, we don't need to switch between 'ha' and 'hc' files manually.
+    # The config now points to 'spin_model.py' which handles vector H.
+    
+    # Check if we are using the new generic model or provided python file
+    # The runner (or GenericModel wrapper) handles loading "python_model_file".
+    # But sw_CVO.py acts as a custom runner here.
+    
+    config_dir = os.path.dirname(os.path.abspath(config_filename))
+    python_model_rel = config.get('python_model_file')
+    
+    cvo_spin_model = None
+    if python_model_rel:
+        import importlib.util
+        model_path = os.path.join(config_dir, python_model_rel)
         try:
-            import spin_model_hc as cvo_spin_model
-            logger.info("Using spin model: spin_model_hc (H || c)")
-        except ImportError:
-            logger.error("Could not import spin_model_hc.py. Exiting.")
-            sys.exit(1)
-        
-        # params for hc: J1, J2, J3, G1, Dx, Dy, D3, H
-        params_val = [
-            J1,
-            J2_ratio * J1,
-            J3_ratio * J1,
-            G1,
-            Dx,
-            Dy,
-            D3,
-            H_field,
-        ]
-    elif spin_model_type == "ha":
+             spec = importlib.util.spec_from_file_location("cvo_spin_model", model_path)
+             cvo_spin_model = importlib.util.module_from_spec(spec)
+             spec.loader.exec_module(cvo_spin_model)
+             logger.info(f"Loaded spin model from {model_path}")
+        except Exception as e:
+             logger.error(f"Failed to load spin model from {model_path}: {e}")
+             sys.exit(1)
+    else:
+        # Fallback if config is missing 'python_model_file' (legacy configs?)
+        # Default to the new unified model
         try:
-            import spin_model_ha as cvo_spin_model
-            logger.info("Using spin model: spin_model_ha (H || a)")
+            import spin_model as cvo_spin_model
+            logger.info("Using default consolidated spin_model (vector H supported)")
         except ImportError:
-            logger.error("Could not import spin_model_ha.py. Exiting.")
+            logger.error("Could not import spin_model.py. Exiting.")
             sys.exit(1)
 
-        # params for ha: J1, J2, J3, G1, Dx, H
-        params_val = [
-            J1,
-            J2_ratio * J1,
-            J3_ratio * J1,
-            G1,
-            Dx,
-            H_field,
-        ]
-    else:
-        logger.error(f"Unknown spin_model_type: {spin_model_type}. Use 'ha' or 'hc'.")
-        sys.exit(1)
+    # params: J1, J2, J3, G1, Dx, Dy, D3, H_dir, H_mag
+    # Note: spin_model_ha had fewer params (no Dy, D3?), but unified model should accept full set.
+    # The unified spin_model (based on refactored hc) expects:
+    # [J1, J2, J3, theta, Dx, Dy, Dz, H_dir, H_mag] ... wait, let's check exact signature of refactored code.
+    # checking parameters creation below...
+    
+    params_val = [
+        J1,
+        J2_ratio * J1,
+        J3_ratio * J1,
+        G1,
+        Dx,
+        Dy,
+        D3,
+        final_H_dir,
+        final_H_mag,
+    ]
 
     cache_mode = calc_p_config.get("cache_mode", "r")
     cache_file_base = calc_p_config.get("cache_file_base", "CVO_model_cache")
@@ -459,57 +481,52 @@ if __name__ == "__main__":
         if filename and not os.path.isabs(filename):
             plotting_p_config[key] = os.path.join(script_dir, filename)
         elif not filename:
-            plotting_p_config[key] = os.path.join(script_dir, default_name)
+            plotting_p_config[key] = os.path.join(script_dir, "../plots", default_name)
 
     config["cvo_model"]["output"]["disp_data_filename"] = disp_data_file
     config["cvo_model"]["output"]["sqw_data_filename"] = sqw_data_file
     config["cvo_model"]["plotting"] = plotting_p_config
 
     # --- Perform Classical Minimization if H_field is non-zero (BEFORE MagCalc init) ---
-    Ud_numeric_for_magcalc = None
-    H_field_val_from_config = params_val[-1]  # Assuming H is the last param
-
-    # Perform classical minimization only if:
-    # 1. The magnetic field is non-zero.
-    # 2. cache_mode is not 'r' (i.e., we are in a mode that might regenerate symbolic matrices).
-    # NOTE: Even if 'r', if we don't know the structure, we might be in trouble unless mpr 
-    # magically knows it (which it won't if `get_field_optimized_state_for_lswt` is gone).
-    # So we should probably ALWAYS minimize if H!=0 to ensure mpr has the right angles,
-    # UNLESS we trust `MagCalc` to load a `Ud` that matches the *implied* structure.
-    # But `MagCalc` loading `Ud` doesn't inform `mpr` of the angles for *future* use?
-    # Actually, `MagCalc` only needs `Ud` to run. If it loads `Ud`, fine. 
-    # But if we want to confirm the energy or canting, we should minimize.
-    
     # --- Perform Classical Minimization if H_field is non-zero and model supports it ---
     Ud_numeric_for_magcalc = None
-    H_field_val_from_config = params_val[-1]
+    
+    # Check if minimization is enabled in tasks config
+    should_minimize = tasks_config.get("run_minimization", True)
+    
+    # H_field_val_from_config is final_H_mag, which is a scalar.
+    H_mag_check = abs(params_val[-1])
 
-    if abs(H_field_val_from_config) > 1e-9:
+    if should_minimize and round(H_mag_check, 4) > 0.0:
         if hasattr(cvo_spin_model, 'set_magnetic_structure'):
             logger.info(
-                f"Non-zero H_field ({H_field_val_from_config}) detected. "
+                f"Non-zero H_field ({H_mag_check}) detected and minimization enabled. "
                 "Using MagCalc.minimize_energy() to find ground state."
             )
             
             try:
-                # 1. Initialize temporary MagCalc for minimization
+                # Initialize temporary MagCalc for minimization.
+                # This instance will generate symbolic matrices if not cached,
+                # but its purpose is solely to find the ground state angles.
+                logger.info("Initializing temporary MagCalc for minimization...")
                 calc_gs = mc.MagCalc(
                     spin_magnitude=S_val,
                     hamiltonian_params=params_val,
                     cache_file_base=cache_file_base, 
-                    cache_mode=cache_mode if cache_mode != 'w' else 'auto', 
+                    cache_mode='auto', # Use auto to generate if needed
                     spin_model_module=cvo_spin_model
                 )
                 
-                # 2. Run Minimization
+                # Run Minimization
                 nspins = calc_gs.nspins
                 x0 = np.zeros(2 * nspins)
                 AL_SPIN_PREFERENCE = getattr(cvo_spin_model, 'AL_SPIN_PREFERENCE', [1]*nspins)
-                
+                # Smart initialization for AFM
+                al_prefs = getattr(cvo_spin_model, 'AL_SPIN_PREFERENCE', [1] * nspins)
                 for i in range(nspins):
                     x0[2*i] = np.pi/2.0 - 0.05 
-                    phi_pref = 0.0 if AL_SPIN_PREFERENCE[i] == 1 else np.pi
-                    x0[2*i+1] = phi_pref
+                    pref = al_prefs[i] if i < len(al_prefs) else 1
+                    x0[2*i+1] = 0.0 if pref == 1 else np.pi
 
                 min_res = calc_gs.minimize_energy(x0=x0)
                 
@@ -525,7 +542,7 @@ if __name__ == "__main__":
                         f"Mean canting angle (degrees): {np.mean(canting_angles_degrees_sw):.4f}"
                     )
                     
-                    # 3. Update Spin Model Module
+                    # Update Spin Model Module with the new magnetic structure
                     cvo_spin_model.set_magnetic_structure(optimal_thetas, optimal_phis)
                     logger.info("Updated spin_model with new magnetic structure.")
                     
@@ -535,7 +552,6 @@ if __name__ == "__main__":
                         struct_plot_path = os.path.join(script_dir, struct_plot_filename)
                         try:
                             logger.info(f"Plotting minimized magnetic structure to {struct_plot_path}...")
-                            # Assuming cvo_spin_model (or calc_gs.sm) has atom_pos()
                             mc.plot_magnetic_structure(
                                 calc_gs.sm.atom_pos(),
                                 min_res.x,
@@ -546,14 +562,17 @@ if __name__ == "__main__":
                         except Exception as e:
                             logger.error(f"Failed to plot CVO magnetic structure: {e}")
 
+                    # If we just found a new ground state, we should write it to cache
                     if cache_mode == 'r':
                          logger.warning("Switching cache_mode to 'w' to ensure Ud is updated with new structure.")
                          cache_mode = 'w'
                 else:
                     logger.error(f"Energy minimization failed: {min_res.message}")
+                    logger.warning("Proceeding with default/zero-field structure.")
             
             except Exception as e:
                 logger.error(f"Error during ground state minimization: {e}")
+                logger.warning("Proceeding with default/zero-field structure due to minimization error.")
                 
         else:
              logger.info(

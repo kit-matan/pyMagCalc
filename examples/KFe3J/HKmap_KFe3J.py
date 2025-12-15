@@ -99,7 +99,8 @@ if __name__ == "__main__":
     st_main = default_timer()
     # KFe3 Jarosite
     S = 5.0 / 2.0  # spin value
-    p = [3.23, 0.11, 0.218, -0.195, 0]
+    # Parameters [J1, J2, Dy, Dz, H_dir, H_mag]
+    p = [3.23, 0.11, 0.218, -0.195, [0,0,1], 0]
     # CCSF
     # S = 1.0 / 2.0
     # p = [12.8, -1.23, 0.063 * 12.8, -0.25 * 12.8, 0]

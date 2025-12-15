@@ -137,8 +137,8 @@ def mpr(p_symbolic):
 
     if _cached_optimal_thetas_for_mpr is None:
         logger.info(
-            "mpr: _cached_optimal_thetas_for_mpr not set. "
-            "Using default zero-field symbolic rotations (spins along +/-a axis)."
+            "mpr: _cached_optimal_thetas_for_mpr not set (or cleared). "
+            "Assuming zero-field/collinear structure for now (e.g. for initialization/minimization)."
         )
         for al_val in AL_SPIN_PREFERENCE:
             symbolic_angle_for_Ry = -al_val * sp.pi / 2
@@ -286,7 +286,27 @@ def get_nearest_neighbor_distances(
 
 def spin_interactions(p):
     # generate J exchange interactions
-    J1, J2, J3, G1, Dx, Dy, D3, H = p
+    # Detect if new parameter format (includes H_dir vector and H_mag scalar)
+    # New format: J1, J2, J3, G1, Dx, Dy, D3, H_dir, H_mag (9 items, but H_dir is a list/vector)
+    # Old format: J1, J2, J3, G1, Dx, Dy, D3, H (8 items)
+    
+    H_vec = None
+    if len(p) == 9:
+         J1, J2, J3, G1, Dx, Dy, D3, H_dir, H_mag = p
+         # Assume H_dir is a list/tuple/array. H_mag is scalar (possibly symbolic).
+         # We need to construct H_vec as a symbolic/numerical vector.
+         if isinstance(H_dir, (list, tuple, np.ndarray)):
+              # H_dir components might be numbers constant. H_mag might be symbolic.
+              H_vec = sp.Matrix([H_mag * H_dir[0], H_mag * H_dir[1], H_mag * H_dir[2]])
+         else:
+              # Fallback if H_dir is not a list (unexpected)
+              logger.error("H_dir is not a list/vector.")
+              H_vec = sp.Matrix([0, 0, H_mag])
+    else:
+         J1, J2, J3, G1, Dx, Dy, D3, H = p
+         # Legacy: H along Z
+         H_vec = sp.Matrix([0, 0, H])
+
     apos = atom_pos()
     nspin = len(apos)
     apos_ouc = atom_pos_ouc()
@@ -366,7 +386,7 @@ def spin_interactions(p):
             else:
                 DMmat[i, j] = DMnull
 
-    return Jex, Gex, DMmat, H
+    return Jex, Gex, DMmat, H_vec
 
 
 def Hamiltonian(Sxyz_ops, p_sym):
@@ -374,8 +394,8 @@ def Hamiltonian(Sxyz_ops, p_sym):
     gamma = 2.0
     mu_B = 5.7883818066e-2
 
-    Jex_sym, Gex_sym, DM_sym_mat, H_sym = spin_interactions(p_sym)
-    # H_sym is p_sym[-1]
+    Jex_sym, Gex_sym, DM_sym_mat, H_vec_sym = spin_interactions(p_sym)
+    # p_sym extraction handled in spin_interactions now
 
     HM_expr = sp.sympify(0)
     apos_uc = atom_pos()
@@ -436,7 +456,12 @@ def Hamiltonian(Sxyz_ops, p_sym):
 
         # Zeeman term: H is applied along the global z-axis
         # Energy is -mu.B = -(-g*mu_B*S).B = +g*mu_B*S.B
-        HM_expr += gamma * mu_B * Sxyz_ops[i][2] * H_sym
+        # Vector form: H_vec_sym . S_i
+        HM_expr += gamma * mu_B * (
+             H_vec_sym[0] * Sxyz_ops[i][0] +
+             H_vec_sym[1] * Sxyz_ops[i][1] +
+             H_vec_sym[2] * Sxyz_ops[i][2]
+        )
 
     HM_expr = HM_expr.expand()
     return HM_expr
@@ -485,5 +510,10 @@ if __name__ == "__main__":
         datefmt="%Y-%m-%d %H:%M:%S",
     )
     logger = logging.getLogger(__name__)
-    logger.info("This module defines the spin model for aCVO (H//c).")
+    logger.info("""Combined spin model for a-CVO (alpha-Cu2V2O7)
+Supports arbitrary magnetic field direction (vector H).
+
+Based on original spin_model_hc.py (H//c) and spin_model_ha.py (H//a).
+Now consolidated into a single model accepting H_dir + H_mag.
+""")
     logger.info("Use MagCalc.minimize_energy() to find the ground state, then call set_magnetic_structure().")

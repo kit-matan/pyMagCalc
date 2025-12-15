@@ -149,13 +149,7 @@ if __name__ == "__main__":
     st_main = default_timer()
     # KFe3Jarosite
     S = 5.0 / 2.0  # Spin value
-    p = [
-        3.23,
-        0.11,
-        0.218,
-        -0.195,
-        0,
-    ]  # Parameters (J1, J2, Dy, Dz, H) as in EQmap_KFe3J.py
+    p = [3.23, 0.11, 0.218, -0.195, [0, 0, 1], 0.0] # [J1, J2, Dy, Dz, H_dir, H_mag]
     cache_file_base_name = "my_model_cache"
     cache_operation_mode = "w"
 

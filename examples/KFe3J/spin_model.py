@@ -54,12 +54,35 @@ def rot_mat(atom_list, p):
     """rotation matrix to transform spins to global coordinates
     Inputs:
         atom_list: list of angles with respect to the x-axis
-        p: list of parameters [J1, J2, Dy, Dz, H, (optional) ca]"""
-    if len(p) == 6:
-        J1, J2, Dy, Dz, H, ca = p
+        p: list of parameters [J1, J2, Dy, Dz, H_dir, H_mag]"""
+    # Unpack parameters
+    if len(p) == 7:
+        # Legacy/Extra param case if needed, but standard is 6 now
+         J1, J2, Dy, Dz, H_dir, H_mag, ca = p
+    elif len(p) == 6:
+        J1, J2, Dy, Dz, H_dir, H_mag = p
     else:
-        J1, J2, Dy, Dz, H = p
+        # Fallback for old style if only 5 params provided? 
+        # Or error? Let's try to be robust. 
+        # If 5 params, assume old scalar H (Z-dir)
+        if len(p) == 5:
+             J1, J2, Dy, Dz, H = p
+             # Map to new structure for internal logic if needed, 
+             # but rot_mat uses J1, J2, Dy, Dz.
+        else:
+            raise ValueError(f"Unexpected number of parameters: {len(p)}")
 
+    # Recalculate 'ca' if not provided (same logic as before)
+    # ca logic depends on J1, J2, Dy, Dz
+    # If ca was not unpacked above:
+    if len(p) != 7:
+        if len(p) == 5:
+             # Legacy unpacking
+             J1, J2, Dy, Dz, H = p
+        else:
+             # New unpacking
+             J1, J2, Dy, Dz, H_dir, H_mag = p
+             
         Z = J2 - sp.sqrt(3) / 3 * Dz
         ca = np.abs(sp.asin(2 / (3 * J1) * (-sp.sqrt(3) * Dy) / (1 + Z / J1)) / 2)
 
@@ -80,7 +103,7 @@ def rot_mat(atom_list, p):
 def mpr(p):
     """rotation matrix for the positive chirality
     Input:
-        p: list of parameters [J1, J2, Dy, Dz, H]"""
+        p: list of parameters [J1, J2, Dy, Dz, H_dir, H_mag]"""
     # positive chirality
     al = [-1 / 3 * np.pi, np.pi, 1 / 3 * np.pi]  # angle with respect to the x-axis
     # negative chirality
@@ -92,12 +115,13 @@ def mpr(p):
 def spin_interactions(p):
     """Generate spin interactions
     Input:
-        p: list of parameters [J1, J2, Dy, Dz, H, (optional) ca]"""
+        p: list of parameters [J1, J2, Dy, Dz, H_dir, H_mag]"""
     # Exchange interactions J's
-    if len(p) == 6:
-        J1, J2, Dy, Dz, H, _ = p
-    else:
-        J1, J2, Dy, Dz, H = p
+    # Only depends on J1, J2
+    J1 = p[0]
+    J2 = p[1]
+    Dy = p[2]
+    Dz = p[3]
         
     apos = atom_pos()
     N_atom = len(apos)
@@ -156,12 +180,33 @@ def Hamiltonian(Sxyz, pr):
     """Define the spin Hamiltonian for your system
     Inputs:
         Sxyz: list of spin operators
-        pr: list of parameters [J1, J2, Dy, Dz, H, (optional) ca]"""
+        pr: list of parameters [J1, J2, Dy, Dz, H_dir, H_mag]"""
     Jex, DM = spin_interactions(pr)
     HM = 0
     gamma = 2.0
     mu = 5.7883818066e-2
-    H = pr[4] # Use fixed index for H to avoid picking up 'ca' if present
+    
+    # Handle H vector construction
+    if len(pr) >= 6:
+        H_dir = pr[4] # Should be a list/array of 3 components
+        H_mag = pr[5]
+        
+        # Ensure H_dir is usable symbolically or numerically
+        # pMagCalc passes parameters as floats usually, but H_dir is list
+        # If symbolic, H_dir might be symbols.
+        # pr comes from config via MagCalc.
+        
+        # Construct H vector components
+        Hx = H_mag * H_dir[0]
+        Hy = H_mag * H_dir[1]
+        Hz = H_mag * H_dir[2]
+    else:
+        # Fallback to scalar H along Z (index 4)
+        H_scalar = pr[4]
+        Hx = 0
+        Hy = 0
+        Hz = H_scalar
+
     apos = atom_pos()
     nspins = len(apos)
     apos_ouc = atom_pos_ouc()
@@ -190,6 +235,8 @@ def Hamiltonian(Sxyz, pr):
                         * (Sxyz[i][0] * Sxyz[j][1] - Sxyz[i][1] * Sxyz[j][0])
                     )
                 )
-        HM = HM + gamma * mu * Sxyz[i][2] * H
+        # Zeeman Term (Vector)
+        # S . H = SxHx + SyHy + SzHz
+        HM = HM + gamma * mu * (Sxyz[i][0] * Hx + Sxyz[i][1] * Hy + Sxyz[i][2] * Hz)
 
     return HM
