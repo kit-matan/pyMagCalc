@@ -80,61 +80,65 @@ magcalc run my_config.yaml
 
 ### Running Example Scripts
 
-The recommended way to see `pyMagCalc` in action is to run the verified example scripts. These scripts perform energy minimization, calculate dispersion/S(Q,ω), and generate plots.
+The recommended way to run examples is via the CLI using the modern configuration files:
 
 ```bash
 # Run the Jarosite (KFe3J) example
-python examples/KFe3J/sw_KFe3J.py
+magcalc run examples/KFe3J/config_modern.yaml
 
 # Run the CVO example
-python examples/aCVO/sw_cvo.py
+magcalc run examples/aCVO/config_modern.yaml
 ```
 
-Results (plots) will be saved to `examples/plots/`.
+Plots are automatically saved to `examples/plots/`. You can toggle on-screen display using the `show_plot` option in the config.
 
-### Scripting with Python
+### Scripting with Python (Advanced)
+
+For custom workflows or parameter scans, you can use the library directly:
 
 ```python
 import magcalc as mc
 from magcalc.generic_model import GenericSpinModel
+import yaml
 
-# 1. Initialize Calculator with a config file
-calc = mc.MagCalc(config_filepath="examples/KFe3J/config.yaml")
+# 1. Load Model from YAML
+with open("examples/KFe3J/config_modern.yaml") as f:
+    config = yaml.safe_load(f)
+model = GenericSpinModel(config)
 
-# 2. Minimize Energy (Find Ground State)
-min_res = calc.minimize_energy()
-print(f"Ground State Energy: {min_res.fun} meV")
+# 2. Initialize Calculator
+calc = mc.MagCalc(spin_model_module=model, spin_magnitude=2.5, cache_mode='auto')
 
-# 3. Visualize Magnetic Structure
-mc.plot_magnetic_structure(
-    calc.sm.atom_pos(), 
-    min_res.x, 
-    save_filename="structure.png"
-)
+# 3. Minimize Energy
+# Use a smart initial guess to avoid local minima
+x0 = ... 
+min_res = calc.minimize_energy(x0=x0)
+calc.sm.set_magnetic_structure(min_res.x)
 
-# 4. Calculate Dispersion
-# calc.calculate_dispersion(q_vectors) ...
+# 4. Visualize
+mc.plot_magnetic_structure(calc.sm.atom_pos(), min_res.x, show_plot=True)
+
+# 5. Calculate Dispersion
+# ...
 ```
 
-## Spin Model Definition
+## Configuration
 
-Define your physics in a `config.yaml` file (recommended) or a Python module. The YAML format allows specifying:
-*   **Crystal Structure**: Lattice parameters and magnetic atoms.
-*   **Interactions**: Heisenberg exchange ($J$), Dzyaloshinskii-Moriya ($D$), and Single-Ion Anisotropy.
-*   **Parameters**: Numerical values for symbolic constants.
+The core of `pyMagCalc` is the declarative YAML configuration (e.g., `config_modern.yaml`). It defines:
 
-See `magcalc/material_config_schema.yaml` for layout details.
+*   **Structure**: Lattice vectors and atoms.
+*   **Interactions**: Heisenberg ($J$), DM ($D$), Single-Ion Anisotropy, etc.
+*   **Minimization**: Initial guess (`initial_configuration`) and method.
+*   **Plotting**: Options like `show_plot`, `plot_structure`, and axis limits.
 
 ## Examples
 
-The `examples/` directory contains fully functional examples:
-*   **`examples/KFe3J/`**: Extensive example for Jarosite, showcasing:
-    *   Energy minimization to find the canted ground state.
-    *   Declarative YAML configuration.
-    *   Scripts for plotting dispersion and S(Q,ω) cuts.
-*   **`examples/aCVO/`**: Alpha-Cu2V2O7 example.
-    *   Comprehensive spin-wave calculations with magnetic fields.
-    *   Demonstrates handling of complex magnetic structures.
+*   **`examples/KFe3J/`**: Kagome Antiferromagnet (Jarosite).
+    *   Uses `config_modern.yaml` for a fully declarative workflow.
+    *   Demonstrates `initial_configuration` for handling complex ground states (120-degree structure).
+*   **`examples/aCVO/`**: 1D Chain / Honeycomb (Cu2V2O7).
+    *   Demonstrates handling of imaginary eigenvalues via correct ground state finding.
+    *   Features complex Dzyaloshinskii-Moriya interactions.
 
 ## Testing
 

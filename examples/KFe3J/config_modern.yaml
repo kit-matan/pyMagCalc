@@ -171,7 +171,6 @@ output:
   sqw_data_filename: "../../cache/data/KFe3J_modern_sqw_data.npz"
 
 # 8. Plotting
-plot_dispersion: true 
 plotting:
   save_plot: true
   disp_plot_filename: "../plots/KFe3J_modern_disp.png"
@@ -180,6 +179,7 @@ plotting:
   energy_limits_sqw: [0, 20]
   sqw_title: "S(Q,w) - Modern Config"
   disp_title: "Dispersion - Modern Config"
+  show_plot: true
 
 # 7. Tasks
 tasks:
@@ -191,3 +191,21 @@ tasks:
   run_sqw_map: true
   calculate_dispersion_new: true
   calculate_sqw_map_new: true
+  plot_dispersion: true 
+  plot_sqw_map: true
+
+# 9. Minimization Settings
+minimization:
+  method: "L-BFGS-B"
+  # Smart initialization to avoid local minima (120-degree structure)
+  # Fe1: 300 deg, Fe2: 180 deg, Fe3: 60 deg (in ab-plane)
+  initial_configuration:
+    - atom_index: 0
+      theta: 1.570796327 # pi/2
+      phi: 5.235987756   # 300 deg
+    - atom_index: 1
+      theta: 1.570796327
+      phi: 3.141592654   # 180 deg
+    - atom_index: 2
+      theta: 1.570796327
+      phi: 1.047197551   # 60 deg

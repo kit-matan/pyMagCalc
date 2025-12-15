@@ -39,6 +39,11 @@ Open `config.yaml` and define your physics.
 **Key Sections:**
 -   `crystal_structure`: Lattice parameters and atom positions.
 -   `interactions`: Heisenberg ($J$), Dzyaloshinskii-Moriya ($D$), and Single-Ion Anisotropy ($K$).
+-   `minimization`: Settings for finding the ground state.
+    -   `initial_configuration`: **Crucial** for complex systems to avoid local minima. define `theta` and `phi` for each atom.
+-   `plotting`: Control output behavior.
+    -   `show_plot`: Set to `true` to see plots on screen, `false` to save only.
+    -   `plot_structure`: Visualize the minimized magnetic state.
 -   `parameters`: Values for variables used in interactions (e.g., `J1: 3.23`).
 -   `tasks`: Toggle `run_dispersion`, `run_sqw_map`, and `plot_*` flags.
 
@@ -94,7 +99,38 @@ interactions:
 
 ---
 
-## 4. Default Python Library Usage (Advanced)
+---
+
+## 4. Best Practices & Troubleshooting
+
+### Avoiding Imaginary Energies
+If you see **imaginary energy eigenvalues** (warnings in the log), your system is likely in a saddle point or local minimum, not the true ground state.
+
+**Solution**: Use `initial_configuration` in the `minimization` section to guide the solver.
+*   For a 120-degree structure (e.g., Kagome), initialize spins at 0, 120, and 240 degrees.
+*   Example (from `KFe3J/config_modern.yaml`):
+
+```yaml
+minimization:
+  initial_configuration:
+    - atom_index: 0
+      theta: 1.57 # 90 deg
+      phi: 0.0
+    - atom_index: 1
+      theta: 1.57
+      phi: 2.09 # 120 deg
+    - atom_index: 2
+      theta: 1.57
+      phi: 4.18 # 240 deg
+```
+
+### Performance
+*   Use `cache_mode: 'auto'` (default) to reuse symbolic Hamiltonian calculations.
+*   Set `calculate_dispersion_new: false` if you only want to change plot aesthetics (titles, limits) without re-running the physics.
+
+---
+
+## 5. Default Python Library Usage (Advanced)
 
 For complex workflows (e.g., scanning over parameters), you can use `pyMagCalc` as a Python library.
 
