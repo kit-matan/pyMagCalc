@@ -154,7 +154,7 @@ transformations:
 
 # 5. Calculation Settings
 calculation:
-  cache_mode: 'w' # Force overwrite to ensure we test new config
+  cache_mode: 'auto' # Use 'auto' to read from cache if available, or generate if missing
   cache_file_base: "KFe3J_modern_cache"
 
 # 6. Q-Path

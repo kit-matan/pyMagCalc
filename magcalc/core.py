@@ -907,6 +907,7 @@ class MagCalc:
         cache_mode: str = "r",
         Ud_numeric_override: Optional[npt.NDArray[np.complex128]] = None,
         config_filepath: Optional[str] = None,  # For configuration-driven model
+        initialize: bool = True,
     ):
         """
         Initializes the MagCalc LSWT calculator.
@@ -918,37 +919,20 @@ class MagCalc:
         Args:
             spin_magnitude (Optional[float]): The numerical value of the spin magnitude S.
                 Must be positive. Required if config_filepath is None.
-            hamiltonian_params (Optional[Union[List[float], npt.NDArray[np.float64]]]):
-                A list or NumPy array containing the numerical values for the
-                Hamiltonian parameters. Required if config_filepath is None.
-            cache_file_base (str): The base filename (without path or extension)
-                used for storing/retrieving cached symbolic matrices (HMat, Ud)
-                in the 'pckFiles' subdirectory.
-            spin_model_module (Optional[module]): The imported Python module
-                containing the spin model definitions (e.g., Hamiltonian, mpr, atom_pos).
-                Required if `config_filepath` is None.
-            cache_mode (str, optional): Specifies the cache behavior.
-                'r': Read symbolic matrices from cache files. Fails if files
-                     don't exist or are invalid. (Default)
-                'w': Generate symbolic matrices (potentially slow) and write
-                     them to cache files.
-                "auto": Reads cache if parameters match current settings; otherwise, (re)generates and writes cache.
-            Ud_numeric_override (Optional[npt.NDArray[np.complex128]], optional):
-                     them to cache files.
-            config_filepath (Optional[str], optional): Path to the YAML configuration
-                file. If provided, the spin model is loaded from this file, and
-                `spin_model_module`, `spin_magnitude`, and `hamiltonian_params` might
-                be overridden or ignored (partially, `spin_magnitude` and `hamiltonian_params` are used as fallback if not in config or for specific cases).
-        Raises:
-            TypeError: If spin_magnitude is not a number or hamiltonian_params
-                       is not a list/array of numbers.
-            ValueError: If spin_magnitude is not positive, hamiltonian_params is empty,
-                        cache_mode is invalid, or cache files are missing in 'r' mode.
-            AttributeError: If the spin_model_module is missing required functions.
-            RuntimeError: If symbolic matrix generation/loading or Ud_numeric
-                          calculation fails for unexpected reasons.
-            FileNotFoundError: If cache files are not found in 'r' mode.
-            pickle.PickleError: If cache files are corrupted or incompatible.
+            hamiltonian_params (Optional[List[float]]): Numerical parameters for the Hamiltonian.
+                Required if config_filepath is None.
+            cache_file_base (Optional[str]): Base name for cache files.
+                If None, defaults to "magcalc_cache" or derived from config.
+            spin_model_module (Optional[types.ModuleType]): Python module defining the spin model.
+                Must contain `atom_pos`, `atom_pos_ouc`, `Hamiltonian`, `unit_cell`.
+            cache_mode (str): Cache mode: 'r' (read-only), 'w' (force write/regenerate).
+                Defaults to "r".
+            Ud_numeric_override (Optional[npt.NDArray]): Manually provided numerical rotation matrix Ud.
+                Advanced usage.
+            config_filepath (Optional[str]): Path to a YAML configuration file.
+                If provided, parameters will be loaded from this file.
+            initialize (bool): If True (default), proceeds to generate/load symbolic Hamiltonian.
+                If False, initialization is skipped (useful for minimization-only instances).
         """
         logger.info(f"Initializing MagCalc (cache_mode='{cache_mode}')...")
 
@@ -1105,7 +1089,7 @@ class MagCalc:
                     "cache_file_base must be provided if config_filepath is not set."
                 )
             # Relaxed check: Allow class instances (like GenericSpinModel) that have necessary methods
-            if not hasattr(spin_model_module, "Hamiltonian"): 
+            if not hasattr(spin_model_module, "Hamiltonian"):
                 raise TypeError(
                     "spin_model_module validation failed: missing 'Hamiltonian' method/attribute."
                 )
@@ -1189,27 +1173,31 @@ class MagCalc:
         # --- Load or Generate Symbolic Matrices ---
         self.HMat_sym: Optional[sp.Matrix] = None
         self.Ud_sym: Optional[sp.Matrix] = None
-        # _load_or_generate_matrices raises exceptions on failure
-        self._load_or_generate_matrices()
-
-        # --- Pre-calculate numerical Ud ---
         self.Ud_numeric: Optional[npt.NDArray[np.complex128]] = None
-        if Ud_numeric_override is not None:
-            logger.info("Using externally provided Ud_numeric_override.")
-            self.set_external_Ud_numeric(Ud_numeric_override)  # Use the existing setter
-        else:
-            if self.Ud_sym is not None:
-                # _calculate_numerical_ud raises exceptions on failure
-                self._calculate_numerical_ud()
-            else:
-                # This case should ideally be caught by _load_or_generate_matrices
-                raise RuntimeError(
-                    "Ud_sym is None after matrix loading/generation and no Ud_numeric_override was provided."
-                )
 
-        if self.Ud_numeric is None:  # Final check
-            raise RuntimeError("Ud_numeric was not set during initialization.")
-        logger.info("MagCalc initialization complete.")
+        if initialize:
+            # _load_or_generate_matrices raises exceptions on failure
+            self._load_or_generate_matrices()
+    
+            # --- Pre-calculate numerical Ud ---
+            if Ud_numeric_override is not None:
+                logger.info("Using externally provided Ud_numeric_override.")
+                self.set_external_Ud_numeric(Ud_numeric_override)  # Use the existing setter
+            else:
+                if self.Ud_sym is not None:
+                    # _calculate_numerical_ud raises exceptions on failure
+                    self._calculate_numerical_ud()
+                else:
+                    # This case should ideally be caught by _load_or_generate_matrices
+                    raise RuntimeError(
+                        "Ud_sym is None after matrix loading/generation and no Ud_numeric_override was provided."
+                    )
+    
+            if self.Ud_numeric is None:  # Final check
+                raise RuntimeError("Ud_numeric was not set during initialization.")
+            logger.info("MagCalc initialization complete.")
+        else:
+            logger.info("MagCalc initialized in lightweight mode (Hamiltonian generation skipped).")
 
         # Initialize attribute for storing intermediate Hamiltonian matrices from dispersion calculation
         self._intermediate_numerical_H_matrices_disp: List[

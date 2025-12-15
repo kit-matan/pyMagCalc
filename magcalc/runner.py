@@ -145,24 +145,148 @@ def run_calculation(config_file: str):
     tasks = final_config.get('tasks', {})
     should_minimize = tasks.get('run_minimization', True)
     
-    if should_minimize and hasattr(spin_model, 'minimize_energy'):
+    if should_minimize:
+        logger.info("Minimization enabled using MagCalc.minimize_energy...")
+        
+        # Check for user-provided initial configuration in config
+        min_config_section = final_config.get('minimization', {})
+        initial_conf = min_config_section.get('initial_configuration')
+        
+        x0 = None
+        if initial_conf:
+             # Expecting list of dicts: [{atom: index/label, theta: val, phi: val}, ...]
+             # Or simplified list of angles?
+             # Let's support list of dicts for explicit mapping by index.
+             try:
+                 # Determine nspins. GenericSpinModel has atom_pos.
+                 # If spin_model is a module or object with atom_pos method.
+                 if hasattr(spin_model, 'atom_pos'):
+                     atoms = spin_model.atom_pos()
+                     nspins = len(atoms)
+                     x0 = np.zeros(2 * nspins)
+                     # Initialize with some default (e.g. random or zero?) 
+                     # Better to random if partial info? Or zero? 
+                     # MagCalc default is random if x0 is None. 
+                     # If we provide x0 partially filled, we should probably fill the rest randomly or with 0.
+                     # Let's fill with 0 + small noise to break symmetry if needed, or just 0.
+                     x0 = np.random.uniform(0, 0.1, 2*nspins) 
+                     
+                     for item in initial_conf:
+                         idx = item.get('atom_index')
+                         if idx is None:
+                             # Try label?
+                             lbl = item.get('atom_label')
+                             # Mapping label to index would require atom list with labels.
+                             # GenericSpinModel might have access to config['crystal_structure']['atoms_uc']
+                             # This is getting complicated. Let's require atom_index for now.
+                             logger.warning("initial_configuration item missing 'atom_index'. Skipping.")
+                             continue
+                         
+                         if idx >= nspins:
+                             logger.warning(f"atom_index {idx} out of range for {nspins} spins.")
+                             continue
+                             
+                         th = item.get('theta')
+                         ph = item.get('phi')
+                         
+                         if th is not None: x0[2*idx] = float(th)
+                         if ph is not None: x0[2*idx+1] = float(ph)
+                         
+                     logger.info("Using provided initial_configuration for minimization.")
+                 else:
+                     logger.warning("Cannot determine nspins from spin_model to apply initial_configuration.")
+             except Exception as ex:
+                 logger.error(f"Failed to parse initial_configuration: {ex}")
+                 x0 = None
+
+        # Use MagCalc for efficient minimization (skipping LSWT setup)
+        # Assuming params_val for initialization is [..., H_val] which might differ from implementation_plan
+        # But we pass the same params_val we built earlier.
         try:
-             spin_model.minimize_energy(params_val)
+             # Create lightweight calculator
+             # Note: spin_model is the INSTANCE of GenericSpinModel (or module). 
+             # If it's a module, it works. If it's an instance, checks `core.py` support.
+             # core.py usually takes a module. GeneticSpinModel instance behaves like a module (has attributes).
+             
+             calc_min = mc.MagCalc(
+                 spin_model_module=spin_model,
+                 spin_magnitude=S_val,
+                 hamiltonian_params=params_val,
+                 cache_file_base=f"{cache_base}_min",
+                 cache_mode="auto", # Cache for minimization if needed? usually not used
+                 initialize=False
+             )
+             
+             # Call minimize with optional x0
+             min_res = calc_min.minimize_energy(method="L-BFGS-B", x0=x0)
+             
+             
+             if min_res.success:
+                 logger.info(f"Minimization converged. Energy: {min_res.fun:.6f}")
+                 # Update the structure in spin_model
+                 if hasattr(spin_model, 'set_magnetic_structure'):
+                     spin_model.set_magnetic_structure(min_res.x[0::2], min_res.x[1::2])
+                 else:
+                     logger.warning("spin_model does not support 'set_magnetic_structure'. Minimization result ignored.")
+                     
+                 # Plot Optimized Structure if requested
+                 plot_config = final_config.get('plotting', {})
+                 if plot_config.get('plot_structure', False):
+                     logger.info("Plotting minimized magnetic structure...")
+                     try:
+                         if hasattr(spin_model, 'atom_pos'):
+                             atoms = spin_model.atom_pos()
+                             # Determine filename
+                             plot_dir = os.path.join(os.path.dirname(config_file), plot_config.get('plot_dir', '../plots')) 
+                             # Config might have specific filename or we generate one
+                             struct_plot_filename = plot_config.get('structure_plot_filename')
+                             if not struct_plot_filename:
+                                  # Fallback or default
+                                  base_name = os.path.splitext(os.path.basename(config_file))[0]
+                                  struct_plot_filename = os.path.join(plot_dir, f"{base_name}_structure.png")
+                             else:
+                                  # Ensure it is absolute or relative to config
+                                  if not os.path.isabs(struct_plot_filename):
+                                       struct_plot_filename = os.path.join(os.path.dirname(config_file), struct_plot_filename)
+                             
+                             os.makedirs(os.path.dirname(struct_plot_filename), exist_ok=True)
+                             
+                             mc.plot_magnetic_structure(
+                                 atom_positions=atoms,
+                                 spin_angles=min_res.x,
+                                 title=f"Minimized Structure ({os.path.basename(config_file)})",
+                                 save_filename=struct_plot_filename,
+                                 show_plot=plot_config.get('show_plot', False)
+                             )
+                         else:
+                             logger.warning("Cannot plot structure: spin_model.atom_pos() not found.")
+                     except Exception as e_plot:
+                         logger.error(f"Failed to plot magnetic structure: {e_plot}")
+
+             else:
+                 logger.warning(f"Minimization failed: {min_res.message}")
+                 
         except Exception as e:
-             logger.warning(f"Optimization attempt failed: {e}")
-    
-    calculator = mc.MagCalc(
-        spin_model_module=spin_model, 
-        spin_magnitude=S_val,
-        hamiltonian_params=params_val,
-        cache_file_base=cache_base,
-        cache_mode=cache_mode
-    )
-    
-    tasks = final_config.get('tasks', {})
-    q_vectors = None
+             logger.warning(f"Optimization attempt using MagCalc failed: {e}")
+             # Fallback to internal method if it exists and failed above? 
+             # Or just log error.
+             
+    # Initialize Main MagCalc (Heavyweight)
+    logger.info("Initializing MagCalc for LSWT Calculation...")
+    try:
+        calculator = mc.MagCalc(
+            spin_model_module=spin_model,
+            spin_magnitude=S_val,
+            hamiltonian_params=params_val,
+            cache_file_base=cache_base,
+            cache_mode=cache_mode,
+        )
+    except Exception as e:
+        logger.error(f"Failed to initialize MagCalc: {e}")
+        calculator = None
     
     # 1. Dispersion
+    q_vectors = None
     if tasks.get('run_dispersion', False):
         disp_file = final_config.get('output', {}).get('disp_data_filename', 'disp_data.npz')
         if not os.path.isabs(disp_file): disp_file = os.path.join(config_dir, disp_file)

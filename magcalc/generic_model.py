@@ -680,9 +680,19 @@ class GenericSpinModel:
         Hz = param_map.get('Hz')
         
         # Check for H_dir / H_mag
+        # Check for H_dir / H_mag
         H_dir = param_map.get('H_dir')
         H_mag_val = param_map.get('H_mag')
         
+        # If H_dir is a Symbol (passed from MagCalc params), we can't use it as a vector directly.
+        # Fallback to config value if available and valid.
+        if isinstance(H_dir, sp.Symbol):
+             config_params = self.config.get('parameters', self.config.get('model_params', {}))
+             orig_H_dir = config_params.get('H_dir')
+             if isinstance(orig_H_dir, (list, tuple, np.ndarray)) and len(orig_H_dir) == 3:
+                 logger.debug(f"H_dir is symbolic ({H_dir}), using static value from config: {orig_H_dir}")
+                 H_dir = orig_H_dir
+
         if H_dir is not None and H_mag_val is not None:
              if isinstance(H_dir, (list, tuple, np.ndarray)) and len(H_dir) == 3:
                   Hx = H_mag_val * H_dir[0]
@@ -741,24 +751,39 @@ class GenericSpinModel:
         logger.debug("Using HM.expand()")
         HM = HM.expand()
         
-        if hasattr(HM, 'as_ordered_terms'):
-             terms = HM.as_ordered_terms()
-             kept = []
-             for term in terms:
-                 syms = term.atoms(sp.Symbol)
-                 pow_dict = term.as_powers_dict()
-                 degree = 0
-                 for s in syms:
-                     if s.name.startswith('c'):
-                         degree += pow_dict.get(s, 0)
-                 
-                 if degree == 2:
-                     kept.append(term)
-             
-             if len(kept) == 0:
-                 logger.warning("All terms filtered out! HM will be zero.")
-                 
-             HM = sp.Add(*kept)
+        # Check if we are doing LSWT (presence of 'c' operators) or Classical (no 'c')
+        # If any symbol starts with 'c', we assume LSWT and filter for quadratic terms.
+        # Otherwise, return full Hamiltonian (classical energy).
+        # Note: 'c' prefix is standard for bosonic operators in this codebase.
+        
+        has_c_ops = False
+        all_syms = HM.free_symbols
+        for s in all_syms:
+            if s.name.startswith('c'):
+                has_c_ops = True
+                break
+        
+        if has_c_ops:
+             if hasattr(HM, 'as_ordered_terms'):
+                  terms = HM.as_ordered_terms()
+                  kept = []
+                  for term in terms:
+                      syms = term.atoms(sp.Symbol)
+                      pow_dict = term.as_powers_dict()
+                      degree = 0
+                      for s in syms:
+                          if s.name.startswith('c'):
+                              degree += pow_dict.get(s, 0)
+                      
+                      if degree == 2:
+                          kept.append(term)
+                  
+                  if len(kept) == 0:
+                      logger.warning("All terms filtered out! HM will be zero.")
+                      
+                  HM = sp.Add(*kept)
+        else:
+             logger.debug("No bosonic 'c' operators found. Skipping LSWT filtering (Classical Mode).")
              
         return HM
 
@@ -932,10 +957,44 @@ class GenericSpinModel:
             Ry = sp.Matrix([[ct, 0, st], [0, 1, 0], [-st, 0, ct]])
             Rz = sp.Matrix([[cp, -sp_, 0], [sp_, cp, 0], [0, 0, 1]])
             
+            
             R = Rz * Ry
             self.optimized_matrices.append(R)
             
         logger.info("Optimized rotation matrices updated.")
+
+    def set_magnetic_structure(self, thetas, phis):
+        """
+        Update the magnetic structure (rotation matrices) from given angles.
+        Args:
+            thetas (array-like): Theta angles (radians), length N_atom
+            phis (array-like): Phi angles (radians), length N_atom
+        """
+        N_atom = len(self.atom_pos())
+        if len(thetas) != N_atom or len(phis) != N_atom:
+            raise ValueError(f"Length of angles ({len(thetas)}, {len(phis)}) must match N_atom ({N_atom})")
+
+        self.optimized_matrices = []
+        for i in range(N_atom):
+            th = float(thetas[i])
+            ph = float(phis[i])
+            
+            # Construct Rotation Matrix R such that R * z_local = S_global
+            # Using same convention as minimize_energy: R = Rz(phi) * Ry(theta)
+            
+            ct, st = np.cos(th), np.sin(th)
+            cp, sp_ = np.cos(ph), np.sin(ph)
+            
+            # Use sympy matrices if downstream expects them, or numpy if supported.
+            # Using sympy for consistency.
+            Ry = sp.Matrix([[ct, 0, st], [0, 1, 0], [-st, 0, ct]])
+            Rz = sp.Matrix([[cp, -sp_, 0], [sp_, cp, 0], [0, 0, 1]])
+            
+            R = Rz * Ry
+            self.optimized_matrices.append(R)
+            
+        logger.info("GenericSpinModel: Magnetic structure updated via set_magnetic_structure.")
+
 
     def _classical_energy_func(self, x, Jex, DM, Kex, H_vec, S_val=0.5):
         """

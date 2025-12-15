@@ -66,8 +66,8 @@ parameters:
   J3: 5.0546999999999995
   G1: 0.28
   Dx: 2.67
-  H_dir: [0.0, 0.0, 1.0] # Field Direction (H//c)
-  H_mag: 20.0 # Field Magnitude
+  H_dir: [1.0, 0.0, 0.0] # Field Direction (H//c)
+  H_mag: 6.0 # Field Magnitude
   S: 0.5
 
 # 3. Minimization
@@ -75,7 +75,56 @@ minimization:
   enabled: true
   method: "L-BFGS-B"
   maxiter: 5000
-
+  initial_configuration:
+    - atom_index: 0
+      theta: 1.52 # approx pi/2 - 0.05
+      phi: 0.0
+    - atom_index: 1
+      theta: 1.52
+      phi: 3.14159
+    - atom_index: 2
+      theta: 1.52
+      phi: 0.0
+    - atom_index: 3
+      theta: 1.52
+      phi: 3.14159
+    - atom_index: 4
+      theta: 1.52
+      phi: 0.0
+    - atom_index: 5
+      theta: 1.52
+      phi: 3.14159
+    - atom_index: 6
+      theta: 1.52
+      phi: 0.0
+    - atom_index: 7
+      theta: 1.52
+      phi: 3.14159
+    - atom_index: 8
+      theta: 1.52
+      phi: 0.0
+    - atom_index: 9
+      theta: 1.52
+      phi: 3.14159
+    - atom_index: 10
+      theta: 1.52
+      phi: 0.0
+    - atom_index: 11
+      theta: 1.52
+      phi: 3.14159
+    - atom_index: 12
+      theta: 1.52
+      phi: 0.0
+    - atom_index: 13
+      theta: 1.52
+      phi: 3.14159
+    - atom_index: 14
+      theta: 1.52
+      phi: 0.0
+    - atom_index: 15
+      theta: 1.52
+      phi: 3.14159
+      
 # 3. Interactions
 interactions:
   - type: heisenberg
@@ -688,6 +737,8 @@ plotting:
   energy_limits_sqw: [0, 10]
   disp_title: "aCVO Dispersion (Modern Config)"
   sqw_title: "aCVO S(Q,w) (Modern Config)"
+  plot_structure: true # Enable plotting of minimized magnetic structure
+  show_plot: false # Set to true to display plots on screen, false to save only
 
 # 9. Tasks
 tasks:
