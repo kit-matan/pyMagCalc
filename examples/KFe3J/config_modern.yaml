@@ -180,6 +180,7 @@ plotting:
   sqw_title: "S(Q,w) - Modern Config"
   disp_title: "Dispersion - Modern Config"
   show_plot: true
+  plot_structure: true
 
 # 7. Tasks
 tasks:

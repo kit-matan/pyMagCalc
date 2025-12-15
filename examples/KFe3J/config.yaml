@@ -26,7 +26,7 @@ output:
 
 plotting: # Added section
   save_plot: true
-  plot_structure: false # Enable plotting of minimized magnetic structure
+  plot_structure: true # Enable plotting of minimized magnetic structure
   disp_plot_filename: "../plots/KFe3J_disp_plot.png" # Filename for saved dispersion plot
   combined_plot_filename: "../plots/KFe3J_combined_plot.png" # Filename for combined plot
   sqw_plot_filename: "../plots/KFe3J_sqw_plot.png"   # Filename for saved S(q,w) map plot
