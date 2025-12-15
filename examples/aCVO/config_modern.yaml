@@ -721,7 +721,7 @@ q_path:
   Start: [0, 1, 0]
   End: [0, 3, 0]
   path: ["Start", "End"]
-  points_per_segment: 100
+  points_per_segment: 200
 
 # 7. Output
 output:
@@ -738,7 +738,7 @@ plotting:
   disp_title: "aCVO Dispersion (Modern Config)"
   sqw_title: "aCVO S(Q,w) (Modern Config)"
   plot_structure: true # Enable plotting of minimized magnetic structure
-  show_plot: false # Set to true to display plots on screen, false to save only
+  show_plot: true # Set to true to display plots on screen, false to save only
 
 # 9. Tasks
 tasks:

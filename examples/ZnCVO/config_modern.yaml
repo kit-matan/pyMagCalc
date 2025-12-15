@@ -1,0 +1,862 @@
+crystal_structure:
+  dimensionality: 3
+  lattice_vectors:
+  - - 7.689
+    - 0.0
+    - 0.0
+  - - 0.0
+    - 8.0289
+    - 0.0
+  - - -3.498362848066395
+    - 0.0
+    - 9.481708687429116
+  atoms_uc:
+  - label: Cu1
+    pos:
+    - 0.5833412506945084
+    - 0.591248196
+    - 4.874261984946686
+    spin_S: 0.5
+  - label: Cu2
+    pos:
+    - 3.607295901239097
+    - 7.437651804
+    - 4.607446702482431
+    spin_S: 0.5
+  - label: Cu3
+    pos:
+    - 1.8581144772058997
+    - 0.591248196
+    - 9.348301046196989
+    spin_S: 0.5
+  - label: Cu4
+    pos:
+    - 2.3325226747277057
+    - 7.437651804
+    - 0.13340764123212792
+    spin_S: 0.5
+  - label: Cu5
+    pos:
+    - 4.427841250694509
+    - 4.6056981960000005
+    - 4.874261984946686
+    spin_S: 0.5
+  - label: Cu6
+    pos:
+    - -0.2372040987609032
+    - 3.423201804
+    - 4.607446702482431
+    spin_S: 0.5
+  - label: Cu7
+    pos:
+    - -1.9863855227941003
+    - 4.6056981960000005
+    - 9.348301046196989
+    spin_S: 0.5
+  - label: Cu8
+    pos:
+    - 6.177022674727706
+    - 3.423201804
+    - 0.13340764123212792
+    spin_S: 0.5
+  magnetic_elements:
+  - Cu
+parameters:
+  J1: 8.497751
+  J2: 0.0
+  J3: 0.0
+  J4: 0.0
+  J5: 5.261605
+  J6: 1.873546
+  J7: 0.5095509
+  G: 0.00447892
+  H_dir: [1.0, 0.0, 0.0] # Field Direction (Along a/x as per spin_model.py) - 1.0
+  H: 0.0
+  S: 0.5
+minimization:
+  enabled: true
+  method: L-BFGS-B
+  initial_configuration:
+  - atom_index: 0
+    theta: 0.3534
+    phi: 3.1416
+  - atom_index: 1
+    theta: 2.7882
+    phi: 0.0
+  - atom_index: 2
+    theta: 0.3534
+    phi: 3.1416
+  - atom_index: 3
+    theta: 2.7882
+    phi: 0.0
+  - atom_index: 4
+    theta: 0.3534
+    phi: 3.1416
+  - atom_index: 5
+    theta: 2.7882
+    phi: 0.0
+  - atom_index: 6
+    theta: 0.3534
+    phi: 3.1416
+  - atom_index: 7
+    theta: 2.7882
+    phi: 0.0
+interactions:
+- type: heisenberg
+  pair: &id001
+  - Cu1
+  - Cu2
+  distance: 3.2579
+  value: J2
+- type: anisotropic_exchange
+  pair: *id001
+  distance: 3.2579
+  value:
+  - 0.5 * G * J2 * -1.284329
+  - 0.5 * G * J2 * -0.592029
+  - 0.5 * G * J2 * 1.284329
+- type: heisenberg
+  pair: &id002
+  - Cu1
+  - Cu2
+  distance: 4.82
+  value: J4
+- type: anisotropic_exchange
+  pair: *id002
+  distance: 4.82
+  value:
+  - 0.5 * G * J4 * -1.284329
+  - 0.5 * G * J4 * -0.592029
+  - 0.5 * G * J4 * 1.284329
+- type: heisenberg
+  pair: &id003
+  - Cu1
+  - Cu3
+  distance: 4.6521
+  value: J3
+- type: anisotropic_exchange
+  pair: *id003
+  distance: 4.6521
+  value:
+  - 0.5 * G * J3 * -1.284329
+  - 0.5 * G * J3 * -0.592029
+  - 0.5 * G * J3 * 1.284329
+- type: heisenberg
+  pair: &id004
+  - Cu1
+  - Cu4
+  distance: 5.1898
+  value: J5
+- type: anisotropic_exchange
+  pair: *id004
+  distance: 5.1898
+  value:
+  - 0.5 * G * J5 * -1.284329
+  - 0.5 * G * J5 * -0.592029
+  - 0.5 * G * J5 * 1.284329
+- type: heisenberg
+  pair: &id005
+  - Cu1
+  - Cu6
+  distance: 2.9605
+  value: J1
+- type: anisotropic_exchange
+  pair: *id005
+  distance: 2.9605
+  value:
+  - 0.5 * G * J1 * -1.284329
+  - 0.5 * G * J1 * -0.592029
+  - 0.5 * G * J1 * 1.284329
+- type: heisenberg
+  pair: &id006
+  - Cu1
+  - Cu6
+  distance: 5.2681
+  value: J6
+- type: anisotropic_exchange
+  pair: *id006
+  distance: 5.2681
+  value:
+  - 0.5 * G * J6 * -1.284329
+  - 0.5 * G * J6 * -0.592029
+  - 0.5 * G * J6 * 1.284329
+- type: heisenberg
+  pair: &id007
+  - Cu1
+  - Cu8
+  distance: 7.3399
+  value: J7
+- type: anisotropic_exchange
+  pair: *id007
+  distance: 7.3399
+  value:
+  - 0.5 * G * J7 * -1.284329
+  - 0.5 * G * J7 * -0.592029
+  - 0.5 * G * J7 * 1.284329
+- type: heisenberg
+  pair: &id008
+  - Cu2
+  - Cu1
+  distance: 3.2579
+  value: J2
+- type: anisotropic_exchange
+  pair: *id008
+  distance: 3.2579
+  value:
+  - 0.5 * G * J2 * -1.284329
+  - 0.5 * G * J2 * -0.592029
+  - 0.5 * G * J2 * 1.284329
+- type: heisenberg
+  pair: &id009
+  - Cu2
+  - Cu1
+  distance: 4.82
+  value: J4
+- type: anisotropic_exchange
+  pair: *id009
+  distance: 4.82
+  value:
+  - 0.5 * G * J4 * -1.284329
+  - 0.5 * G * J4 * -0.592029
+  - 0.5 * G * J4 * 1.284329
+- type: heisenberg
+  pair: &id010
+  - Cu2
+  - Cu3
+  distance: 5.1898
+  value: J5
+- type: anisotropic_exchange
+  pair: *id010
+  distance: 5.1898
+  value:
+  - 0.5 * G * J5 * -1.284329
+  - 0.5 * G * J5 * -0.592029
+  - 0.5 * G * J5 * 1.284329
+- type: heisenberg
+  pair: &id011
+  - Cu2
+  - Cu4
+  distance: 4.6521
+  value: J3
+- type: anisotropic_exchange
+  pair: *id011
+  distance: 4.6521
+  value:
+  - 0.5 * G * J3 * -1.284329
+  - 0.5 * G * J3 * -0.592029
+  - 0.5 * G * J3 * 1.284329
+- type: heisenberg
+  pair: &id012
+  - Cu2
+  - Cu5
+  distance: 2.9605
+  value: J1
+- type: anisotropic_exchange
+  pair: *id012
+  distance: 2.9605
+  value:
+  - 0.5 * G * J1 * -1.284329
+  - 0.5 * G * J1 * -0.592029
+  - 0.5 * G * J1 * 1.284329
+- type: heisenberg
+  pair: &id013
+  - Cu2
+  - Cu5
+  distance: 5.2681
+  value: J6
+- type: anisotropic_exchange
+  pair: *id013
+  distance: 5.2681
+  value:
+  - 0.5 * G * J6 * -1.284329
+  - 0.5 * G * J6 * -0.592029
+  - 0.5 * G * J6 * 1.284329
+- type: heisenberg
+  pair: &id014
+  - Cu2
+  - Cu7
+  distance: 7.3399
+  value: J7
+- type: anisotropic_exchange
+  pair: *id014
+  distance: 7.3399
+  value:
+  - 0.5 * G * J7 * -1.284329
+  - 0.5 * G * J7 * -0.592029
+  - 0.5 * G * J7 * 1.284329
+- type: heisenberg
+  pair: &id015
+  - Cu3
+  - Cu1
+  distance: 4.6521
+  value: J3
+- type: anisotropic_exchange
+  pair: *id015
+  distance: 4.6521
+  value:
+  - 0.5 * G * J3 * -1.284329
+  - 0.5 * G * J3 * -0.592029
+  - 0.5 * G * J3 * 1.284329
+- type: heisenberg
+  pair: &id016
+  - Cu3
+  - Cu2
+  distance: 5.1898
+  value: J5
+- type: anisotropic_exchange
+  pair: *id016
+  distance: 5.1898
+  value:
+  - 0.5 * G * J5 * -1.284329
+  - 0.5 * G * J5 * -0.592029
+  - 0.5 * G * J5 * 1.284329
+- type: heisenberg
+  pair: &id017
+  - Cu3
+  - Cu4
+  distance: 3.2579
+  value: J2
+- type: anisotropic_exchange
+  pair: *id017
+  distance: 3.2579
+  value:
+  - 0.5 * G * J2 * -1.284329
+  - 0.5 * G * J2 * -0.592029
+  - 0.5 * G * J2 * 1.284329
+- type: heisenberg
+  pair: &id018
+  - Cu3
+  - Cu4
+  distance: 4.82
+  value: J4
+- type: anisotropic_exchange
+  pair: *id018
+  distance: 4.82
+  value:
+  - 0.5 * G * J4 * -1.284329
+  - 0.5 * G * J4 * -0.592029
+  - 0.5 * G * J4 * 1.284329
+- type: heisenberg
+  pair: &id019
+  - Cu3
+  - Cu6
+  distance: 7.3399
+  value: J7
+- type: anisotropic_exchange
+  pair: *id019
+  distance: 7.3399
+  value:
+  - 0.5 * G * J7 * -1.284329
+  - 0.5 * G * J7 * -0.592029
+  - 0.5 * G * J7 * 1.284329
+- type: heisenberg
+  pair: &id020
+  - Cu3
+  - Cu8
+  distance: 2.9605
+  value: J1
+- type: anisotropic_exchange
+  pair: *id020
+  distance: 2.9605
+  value:
+  - 0.5 * G * J1 * -1.284329
+  - 0.5 * G * J1 * -0.592029
+  - 0.5 * G * J1 * 1.284329
+- type: heisenberg
+  pair: &id021
+  - Cu3
+  - Cu8
+  distance: 5.2681
+  value: J6
+- type: anisotropic_exchange
+  pair: *id021
+  distance: 5.2681
+  value:
+  - 0.5 * G * J6 * -1.284329
+  - 0.5 * G * J6 * -0.592029
+  - 0.5 * G * J6 * 1.284329
+- type: heisenberg
+  pair: &id022
+  - Cu4
+  - Cu1
+  distance: 5.1898
+  value: J5
+- type: anisotropic_exchange
+  pair: *id022
+  distance: 5.1898
+  value:
+  - 0.5 * G * J5 * -1.284329
+  - 0.5 * G * J5 * -0.592029
+  - 0.5 * G * J5 * 1.284329
+- type: heisenberg
+  pair: &id023
+  - Cu4
+  - Cu2
+  distance: 4.6521
+  value: J3
+- type: anisotropic_exchange
+  pair: *id023
+  distance: 4.6521
+  value:
+  - 0.5 * G * J3 * -1.284329
+  - 0.5 * G * J3 * -0.592029
+  - 0.5 * G * J3 * 1.284329
+- type: heisenberg
+  pair: &id024
+  - Cu4
+  - Cu3
+  distance: 3.2579
+  value: J2
+- type: anisotropic_exchange
+  pair: *id024
+  distance: 3.2579
+  value:
+  - 0.5 * G * J2 * -1.284329
+  - 0.5 * G * J2 * -0.592029
+  - 0.5 * G * J2 * 1.284329
+- type: heisenberg
+  pair: &id025
+  - Cu4
+  - Cu3
+  distance: 4.82
+  value: J4
+- type: anisotropic_exchange
+  pair: *id025
+  distance: 4.82
+  value:
+  - 0.5 * G * J4 * -1.284329
+  - 0.5 * G * J4 * -0.592029
+  - 0.5 * G * J4 * 1.284329
+- type: heisenberg
+  pair: &id026
+  - Cu4
+  - Cu5
+  distance: 7.3399
+  value: J7
+- type: anisotropic_exchange
+  pair: *id026
+  distance: 7.3399
+  value:
+  - 0.5 * G * J7 * -1.284329
+  - 0.5 * G * J7 * -0.592029
+  - 0.5 * G * J7 * 1.284329
+- type: heisenberg
+  pair: &id027
+  - Cu4
+  - Cu7
+  distance: 2.9605
+  value: J1
+- type: anisotropic_exchange
+  pair: *id027
+  distance: 2.9605
+  value:
+  - 0.5 * G * J1 * -1.284329
+  - 0.5 * G * J1 * -0.592029
+  - 0.5 * G * J1 * 1.284329
+- type: heisenberg
+  pair: &id028
+  - Cu4
+  - Cu7
+  distance: 5.2681
+  value: J6
+- type: anisotropic_exchange
+  pair: *id028
+  distance: 5.2681
+  value:
+  - 0.5 * G * J6 * -1.284329
+  - 0.5 * G * J6 * -0.592029
+  - 0.5 * G * J6 * 1.284329
+- type: heisenberg
+  pair: &id029
+  - Cu5
+  - Cu2
+  distance: 2.9605
+  value: J1
+- type: anisotropic_exchange
+  pair: *id029
+  distance: 2.9605
+  value:
+  - 0.5 * G * J1 * -1.284329
+  - 0.5 * G * J1 * -0.592029
+  - 0.5 * G * J1 * 1.284329
+- type: heisenberg
+  pair: &id030
+  - Cu5
+  - Cu2
+  distance: 5.2681
+  value: J6
+- type: anisotropic_exchange
+  pair: *id030
+  distance: 5.2681
+  value:
+  - 0.5 * G * J6 * -1.284329
+  - 0.5 * G * J6 * -0.592029
+  - 0.5 * G * J6 * 1.284329
+- type: heisenberg
+  pair: &id031
+  - Cu5
+  - Cu4
+  distance: 7.3399
+  value: J7
+- type: anisotropic_exchange
+  pair: *id031
+  distance: 7.3399
+  value:
+  - 0.5 * G * J7 * -1.284329
+  - 0.5 * G * J7 * -0.592029
+  - 0.5 * G * J7 * 1.284329
+- type: heisenberg
+  pair: &id032
+  - Cu5
+  - Cu6
+  distance: 3.2579
+  value: J2
+- type: anisotropic_exchange
+  pair: *id032
+  distance: 3.2579
+  value:
+  - 0.5 * G * J2 * -1.284329
+  - 0.5 * G * J2 * -0.592029
+  - 0.5 * G * J2 * 1.284329
+- type: heisenberg
+  pair: &id033
+  - Cu5
+  - Cu6
+  distance: 4.82
+  value: J4
+- type: anisotropic_exchange
+  pair: *id033
+  distance: 4.82
+  value:
+  - 0.5 * G * J4 * -1.284329
+  - 0.5 * G * J4 * -0.592029
+  - 0.5 * G * J4 * 1.284329
+- type: heisenberg
+  pair: &id034
+  - Cu5
+  - Cu7
+  distance: 4.6521
+  value: J3
+- type: anisotropic_exchange
+  pair: *id034
+  distance: 4.6521
+  value:
+  - 0.5 * G * J3 * -1.284329
+  - 0.5 * G * J3 * -0.592029
+  - 0.5 * G * J3 * 1.284329
+- type: heisenberg
+  pair: &id035
+  - Cu5
+  - Cu8
+  distance: 5.1898
+  value: J5
+- type: anisotropic_exchange
+  pair: *id035
+  distance: 5.1898
+  value:
+  - 0.5 * G * J5 * -1.284329
+  - 0.5 * G * J5 * -0.592029
+  - 0.5 * G * J5 * 1.284329
+- type: heisenberg
+  pair: &id036
+  - Cu6
+  - Cu1
+  distance: 2.9605
+  value: J1
+- type: anisotropic_exchange
+  pair: *id036
+  distance: 2.9605
+  value:
+  - 0.5 * G * J1 * -1.284329
+  - 0.5 * G * J1 * -0.592029
+  - 0.5 * G * J1 * 1.284329
+- type: heisenberg
+  pair: &id037
+  - Cu6
+  - Cu1
+  distance: 5.2681
+  value: J6
+- type: anisotropic_exchange
+  pair: *id037
+  distance: 5.2681
+  value:
+  - 0.5 * G * J6 * -1.284329
+  - 0.5 * G * J6 * -0.592029
+  - 0.5 * G * J6 * 1.284329
+- type: heisenberg
+  pair: &id038
+  - Cu6
+  - Cu3
+  distance: 7.3399
+  value: J7
+- type: anisotropic_exchange
+  pair: *id038
+  distance: 7.3399
+  value:
+  - 0.5 * G * J7 * -1.284329
+  - 0.5 * G * J7 * -0.592029
+  - 0.5 * G * J7 * 1.284329
+- type: heisenberg
+  pair: &id039
+  - Cu6
+  - Cu5
+  distance: 3.2579
+  value: J2
+- type: anisotropic_exchange
+  pair: *id039
+  distance: 3.2579
+  value:
+  - 0.5 * G * J2 * -1.284329
+  - 0.5 * G * J2 * -0.592029
+  - 0.5 * G * J2 * 1.284329
+- type: heisenberg
+  pair: &id040
+  - Cu6
+  - Cu5
+  distance: 4.82
+  value: J4
+- type: anisotropic_exchange
+  pair: *id040
+  distance: 4.82
+  value:
+  - 0.5 * G * J4 * -1.284329
+  - 0.5 * G * J4 * -0.592029
+  - 0.5 * G * J4 * 1.284329
+- type: heisenberg
+  pair: &id041
+  - Cu6
+  - Cu7
+  distance: 5.1898
+  value: J5
+- type: anisotropic_exchange
+  pair: *id041
+  distance: 5.1898
+  value:
+  - 0.5 * G * J5 * -1.284329
+  - 0.5 * G * J5 * -0.592029
+  - 0.5 * G * J5 * 1.284329
+- type: heisenberg
+  pair: &id042
+  - Cu6
+  - Cu8
+  distance: 4.6521
+  value: J3
+- type: anisotropic_exchange
+  pair: *id042
+  distance: 4.6521
+  value:
+  - 0.5 * G * J3 * -1.284329
+  - 0.5 * G * J3 * -0.592029
+  - 0.5 * G * J3 * 1.284329
+- type: heisenberg
+  pair: &id043
+  - Cu7
+  - Cu2
+  distance: 7.3399
+  value: J7
+- type: anisotropic_exchange
+  pair: *id043
+  distance: 7.3399
+  value:
+  - 0.5 * G * J7 * -1.284329
+  - 0.5 * G * J7 * -0.592029
+  - 0.5 * G * J7 * 1.284329
+- type: heisenberg
+  pair: &id044
+  - Cu7
+  - Cu4
+  distance: 2.9605
+  value: J1
+- type: anisotropic_exchange
+  pair: *id044
+  distance: 2.9605
+  value:
+  - 0.5 * G * J1 * -1.284329
+  - 0.5 * G * J1 * -0.592029
+  - 0.5 * G * J1 * 1.284329
+- type: heisenberg
+  pair: &id045
+  - Cu7
+  - Cu4
+  distance: 5.2681
+  value: J6
+- type: anisotropic_exchange
+  pair: *id045
+  distance: 5.2681
+  value:
+  - 0.5 * G * J6 * -1.284329
+  - 0.5 * G * J6 * -0.592029
+  - 0.5 * G * J6 * 1.284329
+- type: heisenberg
+  pair: &id046
+  - Cu7
+  - Cu5
+  distance: 4.6521
+  value: J3
+- type: anisotropic_exchange
+  pair: *id046
+  distance: 4.6521
+  value:
+  - 0.5 * G * J3 * -1.284329
+  - 0.5 * G * J3 * -0.592029
+  - 0.5 * G * J3 * 1.284329
+- type: heisenberg
+  pair: &id047
+  - Cu7
+  - Cu6
+  distance: 5.1898
+  value: J5
+- type: anisotropic_exchange
+  pair: *id047
+  distance: 5.1898
+  value:
+  - 0.5 * G * J5 * -1.284329
+  - 0.5 * G * J5 * -0.592029
+  - 0.5 * G * J5 * 1.284329
+- type: heisenberg
+  pair: &id048
+  - Cu7
+  - Cu8
+  distance: 3.2579
+  value: J2
+- type: anisotropic_exchange
+  pair: *id048
+  distance: 3.2579
+  value:
+  - 0.5 * G * J2 * -1.284329
+  - 0.5 * G * J2 * -0.592029
+  - 0.5 * G * J2 * 1.284329
+- type: heisenberg
+  pair: &id049
+  - Cu7
+  - Cu8
+  distance: 4.82
+  value: J4
+- type: anisotropic_exchange
+  pair: *id049
+  distance: 4.82
+  value:
+  - 0.5 * G * J4 * -1.284329
+  - 0.5 * G * J4 * -0.592029
+  - 0.5 * G * J4 * 1.284329
+- type: heisenberg
+  pair: &id050
+  - Cu8
+  - Cu1
+  distance: 7.3399
+  value: J7
+- type: anisotropic_exchange
+  pair: *id050
+  distance: 7.3399
+  value:
+  - 0.5 * G * J7 * -1.284329
+  - 0.5 * G * J7 * -0.592029
+  - 0.5 * G * J7 * 1.284329
+- type: heisenberg
+  pair: &id051
+  - Cu8
+  - Cu3
+  distance: 2.9605
+  value: J1
+- type: anisotropic_exchange
+  pair: *id051
+  distance: 2.9605
+  value:
+  - 0.5 * G * J1 * -1.284329
+  - 0.5 * G * J1 * -0.592029
+  - 0.5 * G * J1 * 1.284329
+- type: heisenberg
+  pair: &id052
+  - Cu8
+  - Cu3
+  distance: 5.2681
+  value: J6
+- type: anisotropic_exchange
+  pair: *id052
+  distance: 5.2681
+  value:
+  - 0.5 * G * J6 * -1.284329
+  - 0.5 * G * J6 * -0.592029
+  - 0.5 * G * J6 * 1.284329
+- type: heisenberg
+  pair: &id053
+  - Cu8
+  - Cu5
+  distance: 5.1898
+  value: J5
+- type: anisotropic_exchange
+  pair: *id053
+  distance: 5.1898
+  value:
+  - 0.5 * G * J5 * -1.284329
+  - 0.5 * G * J5 * -0.592029
+  - 0.5 * G * J5 * 1.284329
+- type: heisenberg
+  pair: &id054
+  - Cu8
+  - Cu6
+  distance: 4.6521
+  value: J3
+- type: anisotropic_exchange
+  pair: *id054
+  distance: 4.6521
+  value:
+  - 0.5 * G * J3 * -1.284329
+  - 0.5 * G * J3 * -0.592029
+  - 0.5 * G * J3 * 1.284329
+- type: heisenberg
+  pair: &id055
+  - Cu8
+  - Cu7
+  distance: 3.2579
+  value: J2
+- type: anisotropic_exchange
+  pair: *id055
+  distance: 3.2579
+  value:
+  - 0.5 * G * J2 * -1.284329
+  - 0.5 * G * J2 * -0.592029
+  - 0.5 * G * J2 * 1.284329
+- type: heisenberg
+  pair: &id056
+  - Cu8
+  - Cu7
+  distance: 4.82
+  value: J4
+- type: anisotropic_exchange
+  pair: *id056
+  distance: 4.82
+  value:
+  - 0.5 * G * J4 * -1.284329
+  - 0.5 * G * J4 * -0.592029
+  - 0.5 * G * J4 * 1.284329
+calculation:
+  cache_mode: auto
+  cache_file_base: ZnCVO_cache
+
+q_path:
+  Start: [0,0,0]
+  End: [0,0,2]
+  path: ["Start", "End"]
+  points_per_segment: 200
+
+output:
+  disp_data_filename: ../../cache/data/ZnCVO_disp.npz
+  sqw_data_filename: ../../cache/data/ZnCVO_sqw.npz
+
+plotting:
+  save_plot: true
+  show_plot: true
+  plot_structure: true
+  disp_plot_filename: ../plots/ZnCVO_disp.png
+  sqw_plot_filename: ../plots/ZnCVO_sqw.png
+  energy_limits_disp:
+  - 0
+  - 10
+  disp_title: ZnCVO Dispersion
+tasks:
+  run_minimization: true
+  run_dispersion: true
+  run_sqw_map: true
+  plot_dispersion: true
+  plot_sqw_map: true

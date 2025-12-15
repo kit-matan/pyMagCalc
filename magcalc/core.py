@@ -470,8 +470,16 @@ def _prepare_hamiltonian(
             # This part seems potentially problematic or overly specific.
             # It keeps the term linear in the *last* parameter from the S^0 part,
             # plus the S^1 and S^2 terms. Revisit if this causes issues.
+            
+            # Fix: Ensure params_sym[-1] is a symbol (scalar) before using it in coeff/mul.
+            # If it's a list (vector value), this logic is invalid/unnecessary for that param.
+            if isinstance(params_sym[-1], sp.Symbol):
+                 term_last_param = hamiltonian_S0.coeff(params_sym[-1]) * params_sym[-1]
+            else:
+                 term_last_param = 0
+
             hamiltonian_sym = (
-                hamiltonian_S0.coeff(params_sym[-1]) * params_sym[-1]
+                term_last_param
                 + hamiltonian_sym.coeff(S_sym, 1) * S_sym
                 + hamiltonian_sym.coeff(S_sym, 2) * S_sym**2
             )
