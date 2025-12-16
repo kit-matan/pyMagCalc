@@ -148,56 +148,57 @@ def run_calculation(config_file: str):
     if should_minimize:
         logger.info("Minimization enabled using MagCalc.minimize_energy...")
         
-        # Check for user-provided initial configuration in config
-        min_config_section = final_config.get('minimization', {})
-        initial_conf = min_config_section.get('initial_configuration')
-        
+        # 1. Check for new 'magnetic_structure' config
         x0 = None
-        if initial_conf:
-             # Expecting list of dicts: [{atom: index/label, theta: val, phi: val}, ...]
-             # Or simplified list of angles?
-             # Let's support list of dicts for explicit mapping by index.
+        if hasattr(spin_model, 'generate_magnetic_structure'):
              try:
-                 # Determine nspins. GenericSpinModel has atom_pos.
-                 # If spin_model is a module or object with atom_pos method.
-                 if hasattr(spin_model, 'atom_pos'):
-                     atoms = spin_model.atom_pos()
-                     nspins = len(atoms)
+                 thetas, phis = spin_model.generate_magnetic_structure()
+                 if thetas is not None and phis is not None:
+                     nspins = len(thetas)
                      x0 = np.zeros(2 * nspins)
-                     # Initialize with some default (e.g. random or zero?) 
-                     # Better to random if partial info? Or zero? 
-                     # MagCalc default is random if x0 is None. 
-                     # If we provide x0 partially filled, we should probably fill the rest randomly or with 0.
-                     # Let's fill with 0 + small noise to break symmetry if needed, or just 0.
-                     x0 = np.random.uniform(0, 0.1, 2*nspins) 
-                     
-                     for item in initial_conf:
-                         idx = item.get('atom_index')
-                         if idx is None:
-                             # Try label?
-                             lbl = item.get('atom_label')
-                             # Mapping label to index would require atom list with labels.
-                             # GenericSpinModel might have access to config['crystal_structure']['atoms_uc']
-                             # This is getting complicated. Let's require atom_index for now.
-                             logger.warning("initial_configuration item missing 'atom_index'. Skipping.")
-                             continue
+                     x0[0::2] = thetas
+                     x0[1::2] = phis
+                     logger.info("Generated initial magnetic structure from 'magnetic_structure' config.")
+             except Exception as e:
+                 logger.error(f"Failed to generate magnetic structure: {e}")
+
+        # 2. Fallback to old 'initial_configuration' in minimization section if x0 is still None
+        if x0 is None:
+            min_config_section = final_config.get('minimization', {})
+            initial_conf = min_config_section.get('initial_configuration')
+            
+            if initial_conf:
+                 # Expecting list of dicts: [{atom_index: 0, theta: val, phi: val}, ...]
+                 try:
+                     # Determine nspins. GenericSpinModel has atom_pos.
+                     if hasattr(spin_model, 'atom_pos'):
+                         atoms = spin_model.atom_pos()
+                         nspins = len(atoms)
+                         # Initialize with small noise
+                         x0 = np.random.uniform(0, 0.1, 2*nspins) 
                          
-                         if idx >= nspins:
-                             logger.warning(f"atom_index {idx} out of range for {nspins} spins.")
-                             continue
+                         for item in initial_conf:
+                             idx = item.get('atom_index')
+                             if idx is None:
+                                 logger.warning("initial_configuration item missing 'atom_index'. Skipping.")
+                                 continue
                              
-                         th = item.get('theta')
-                         ph = item.get('phi')
-                         
-                         if th is not None: x0[2*idx] = float(th)
-                         if ph is not None: x0[2*idx+1] = float(ph)
-                         
-                     logger.info("Using provided initial_configuration for minimization.")
-                 else:
-                     logger.warning("Cannot determine nspins from spin_model to apply initial_configuration.")
-             except Exception as ex:
-                 logger.error(f"Failed to parse initial_configuration: {ex}")
-                 x0 = None
+                             if idx >= nspins:
+                                 logger.warning(f"atom_index {idx} out of range for {nspins} spins.")
+                                 continue
+                                 
+                             th = item.get('theta')
+                             ph = item.get('phi')
+                             
+                             if th is not None: x0[2*idx] = float(th)
+                             if ph is not None: x0[2*idx+1] = float(ph)
+                             
+                         logger.info("Using provided initial_configuration for minimization.")
+                     else:
+                         logger.warning("Cannot determine nspins from spin_model to apply initial_configuration.")
+                 except Exception as ex:
+                     logger.error(f"Failed to parse initial_configuration: {ex}")
+                     x0 = None
 
         # Use MagCalc for efficient minimization (skipping LSWT setup)
         # Assuming params_val for initialization is [..., H_val] which might differ from implementation_plan

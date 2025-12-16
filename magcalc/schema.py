@@ -152,6 +152,15 @@ class MinimizationConfig(BaseModel):
     gtol: float = 1e-7
     maxiter: int = 5000
 
+class MagneticStructureConfig(BaseModel):
+    type: str # 'pattern' or 'explicit'
+    pattern_type: Optional[str] = None
+    directions: Optional[List[Vector3]] = None
+    explicit_list: Optional[List[Dict[str, Any]]] = None
+    configuration: Optional[List[Dict[str, Any]]] = None # Legacy alias?
+    
+    model_config = ConfigDict(extra='allow')
+
 # --- Main Configuration ---
 class MagCalcConfig(BaseModel):
     # Legacy Support: Loading a python file as the model definition
@@ -166,6 +175,7 @@ class MagCalcConfig(BaseModel):
     
     transformations: Optional[TransformationsConfig] = None
     minimization: Optional[MinimizationConfig] = None
+    magnetic_structure: Optional[MagneticStructureConfig] = None
     
     calculation: CalculationConfig = Field(default_factory=CalculationConfig)
     q_path: Optional[QPathConfig] = None

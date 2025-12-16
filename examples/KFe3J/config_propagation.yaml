@@ -1,0 +1,209 @@
+# Modern Configuration for KFe3J (KFe3(OH)6(SO4)2)
+# Fully declarative, replacing spin_model.py
+
+# 1. Structure
+crystal_structure:
+  dimensionality: 2 # Important for neighbor generation order
+  lattice_vectors:
+    - [0.86602540378, -0.5, 0.0]
+    - [0.0, 1.0, 0.0]
+    - [0.0, 0.0, 1.0]
+  atoms_uc:
+    - label: Fe1
+      pos: [0.0, 0.0, 0.0]
+      spin_S: 2.5
+    - label: Fe2
+      pos: [0.43301270189, -0.25, 0.0]
+      spin_S: 2.5
+    - label: Fe3
+      pos: [0.0, 0.5, 0.0]
+      spin_S: 2.5
+  magnetic_elements: ["Fe"]
+
+# 2. Parameters
+parameters:
+  S: 2.5
+  J1: 3.23
+  J2: 0.11
+  Dy: 0.218 # D vector in-plane
+  Dz: -0.195 # D vector out-of-plane (Flipped for Positive Chirality)
+  H_dir: [0.0, 0.0, 1.0] # Field Direction
+  H_mag: 0.0 # Field Magnitude
+
+# 3. Interactions
+interactions:
+  # Heisenberg Exchange
+  - type: heisenberg
+    distance: 0.5
+    value: "J1"
+  - type: heisenberg
+    distance: 0.866 # sqrt(3)/2
+    value: "J2"
+    
+  # DM Interactions (Manual Specification due to Kagome symmetry)
+  # Derived from original spin_model.py mappings
+  
+  # Atom 0 (r1) Connections
+  - type: dm_manual
+    atom_i: 0
+    atom_j: 1 # Intra-cell
+    offset_j: [0, 0, 0]
+    value: ["-Dy/2", "-sqrt(3)/2*Dy", "-Dz"] # -DMvec2: [-Dy/2, -sqrt(3)/2*Dy, -Dz]
+    
+  - type: dm_manual
+    atom_i: 0
+    atom_j: 2 # Intra-cell
+    offset_j: [0, 0, 0]
+    value: ["-Dy", 0, "Dz"] # -DMvec1: [-Dy, 0, Dz] (spin_model says -Dz -> Dz if negated?) 
+    # spin_model: DMvec1 = [Dy, 0, -Dz]. -DMvec1 = [-Dy, 0, Dz]. Correct.
+    
+  - type: dm_manual
+    atom_i: 0
+    atom_j: 1 # Neighbor (-1, 0)
+    offset_j: [-1, 0, 0]
+    value: ["-Dy/2", "-sqrt(3)/2*Dy", "-Dz"] # -DMvec2
+    
+  - type: dm_manual
+    atom_i: 0
+    atom_j: 2 # Neighbor (0, -1)
+    offset_j: [0, -1, 0]
+    value: ["-Dy", 0, "Dz"] # -DMvec1
+    
+  # Atom 1 (r2) Connections
+  - type: dm_manual
+    atom_i: 1
+    atom_j: 0 # Intra-cell
+    offset_j: [0, 0, 0]
+    value: ["Dy/2", "sqrt(3)/2*Dy", "Dz"] # DMvec2
+    
+  - type: dm_manual
+    atom_i: 1
+    atom_j: 2 # Neighbor (0, -1) -> spin_model index 14 mapping
+    offset_j: [0, -1, 0]
+    value: ["-Dy/2", "sqrt(3)/2*Dy", "-Dz"] # DMvec3
+    
+  - type: dm_manual
+    atom_i: 1
+    atom_j: 0 # Neighbor (1, 0)
+    offset_j: [1, 0, 0]
+    value: ["Dy/2", "sqrt(3)/2*Dy", "Dz"] # DMvec2
+    
+  - type: dm_manual
+    atom_i: 1
+    atom_j: 2 # Neighbor (1, 0)
+    offset_j: [1, 0, 0]
+    value: ["-Dy/2", "sqrt(3)/2*Dy", "-Dz"] # DMvec3
+
+  # Atom 2 (r3) Connections
+  - type: dm_manual
+    atom_i: 2
+    atom_j: 0 # Intra-cell
+    offset_j: [0, 0, 0]
+    value: ["Dy", 0, "-Dz"] # DMvec1
+    
+  - type: dm_manual
+    atom_i: 2
+    atom_j: 1 # Neighbor (-1, 0)
+    offset_j: [-1, 0, 0]
+    value: ["Dy/2", "-sqrt(3)/2*Dy", "Dz"] # -DMvec3: [-(-Dy/2), -sqrt(3)/2*Dy, -(-Dz)] -> [Dy/2, -..., Dz]
+    # spin_model: DMvec3 = [-Dy/2, sqrt(3)/2*Dy, -Dz].
+    # -DMvec3 = [Dy/2, -sqrt(3)/2*Dy, Dz]. Correct.
+    
+  - type: dm_manual
+    atom_i: 2
+    atom_j: 0 # Neighbor (0, 1)
+    offset_j: [0, 1, 0]
+    value: ["Dy", 0, "-Dz"] # DMvec1
+    
+  - type: dm_manual
+    atom_i: 2
+    atom_j: 1 # Neighbor (0, 1)
+    offset_j: [0, 1, 0]
+    value: ["Dy/2", "-sqrt(3)/2*Dy", "Dz"] # -DMvec3
+
+# 4. Transformations (Coordinate Frames)
+transformations:
+  variables:
+    # Intermediate calculations for canting angle
+    Z_val: "J2 - sqrt(3)/3*Dz"
+    ca_val: "abs(asin(2/(3*J1)*(-sqrt(3)*Dy)/(1+Z_val/J1))/2)"
+    # Base Rotations (Kagome angles: -pi/3, pi, pi/3)
+    # Custom matrix logic from spin_model: [[0, s, c], [0, -c, s], [1, 0, 0]]
+    # Angle 0 = -pi/3
+    s0: "sin(-pi/3)"
+    c0: "cos(-pi/3)"
+    R0_base: "Matrix([[0, s0, c0], [0, -c0, s0], [1, 0, 0]])"
+    # Angle 1 = pi
+    s1: "sin(pi)"
+    c1: "cos(pi)"
+    R1_base: "Matrix([[0, s1, c1], [0, -c1, s1], [1, 0, 0]])"
+    # Angle 2 = pi/3
+    s2: "sin(pi/3)"
+    c2: "cos(pi/3)"
+    R2_base: "Matrix([[0, s2, c2], [0, -c2, s2], [1, 0, 0]])"
+    # Canting Rotation (RotY(-ca_val))
+    R_cant: "RotY(-ca_val)"
+    
+  atom_frames:
+    - atom: 0
+      rotation: "R0_base * R_cant"
+    - atom: 1
+      rotation: "R1_base * R_cant"
+    - atom: 2
+      rotation: "R2_base * R_cant"
+
+# 5. Calculation Settings
+calculation:
+  cache_mode: 'auto' # Use 'auto' to read from cache if available, or generate if missing
+  cache_file_base: "KFe3J_modern_cache"
+
+# 6. Q-Path
+q_path:
+  G: [0.0, 0.0, 0.0]
+  K: [0.333333, 0.333333, 0.0]
+  M: [0.5, 0.0, 0.0]
+  path: ["G", "K", "M", "G"]
+  points_per_segment: 200
+
+# 7. Output
+output:
+  disp_data_filename: "../../cache/data/KFe3J_modern_disp_data.npz"
+  sqw_data_filename: "../../cache/data/KFe3J_modern_sqw_data.npz"
+
+# 8. Plotting
+plotting:
+  save_plot: true
+  disp_plot_filename: "../plots/KFe3J_modern_disp.png"
+  sqw_plot_filename: "../plots/KFe3J_modern_sqw.png"
+  energy_limits_disp: [0, 20]
+  energy_limits_sqw: [0, 20]
+  sqw_title: "S(Q,w) - Modern Config"
+  disp_title: "Dispersion - Modern Config"
+  show_plot: true
+  plot_structure: true
+
+# 7. Tasks
+tasks:
+    # run_dispersion: true
+    # run_sqw: false
+    # calculate_dispersion_new: true
+  run_minimization: true
+  run_dispersion: true
+  run_sqw_map: true
+  calculate_dispersion_new: true
+  calculate_sqw_map_new: true
+  plot_dispersion: true 
+  plot_sqw_map: true
+
+# 9. Minimization Settings
+  method: "L-BFGS-B"
+  maxiter: 5000
+
+# 10. Magnetic Structure (New Input Method)
+magnetic_structure:
+  type: pattern
+  pattern_type: "antiferromagnetic" # Use generic AFM type for cyclic directions
+  directions:
+    - [-1.0, 0.0, 0.0]            # Atom 0
+    - [0.5, -0.86602540378, 0.0]  # Atom 1
+    - [0.5, 0.86602540378, 0.0]   # Atom 2

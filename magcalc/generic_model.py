@@ -464,7 +464,7 @@ class GenericSpinModel:
                      min_dist = min([la.norm(pos - target_pos) for pos in apos_ouc])
                      print(f"WARNING: DM Interaction i={i}->j_uc={target_j_uc} offset={offset} NOT FOUND.")
                      print(f"  Target Pos: {target_pos}")
-                     print(f"  Target Pos: {target_pos}")
+
                      print(f"  Min Dist to OUC: {min_dist}")
             
             elif itype == 'anisotropic_exchange':
@@ -996,6 +996,131 @@ class GenericSpinModel:
         logger.info("GenericSpinModel: Magnetic structure updated via set_magnetic_structure.")
 
 
+    def generate_magnetic_structure(self) -> Tuple[Optional[List[float]], Optional[List[float]]]:
+        """
+        Generate magnetic structure (theta, phi) based on 'magnetic_structure' in config.
+        Returns:
+            (thetas, phis): Lists of angles, or (None, None) if config missing.
+        """
+        struct_config = self.config.get('magnetic_structure')
+        if not struct_config:
+            return None, None
+
+        method = struct_config.get('type')
+        if method == 'explicit':
+            return self._generate_structure_explicit(struct_config)
+        elif method == 'propagation_vector':
+            return self._generate_structure_from_k(struct_config)
+        elif method == 'pattern':
+            return self._generate_structure_from_pattern(struct_config)
+        else:
+             logger.warning(f"Unknown magnetic_structure type: {method}")
+             return None, None
+
+    def _generate_structure_explicit(self, config):
+        """Parse explicit angle list."""
+        # Use same logic as runner.py legacy parser but cleaner
+        atoms = self.atom_pos()
+        nspins = len(atoms)
+        thetas = [0.0] * nspins
+        phis = [0.0] * nspins
+        
+        entries = config.get('explicit_list', config.get('configuration', []))
+        for item in entries:
+             idx = item.get('atom_index')
+             if idx is not None and 0 <= idx < nspins:
+                 if 'theta' in item: thetas[idx] = float(item['theta'])
+                 if 'phi' in item: phis[idx] = float(item['phi'])
+        return thetas, phis
+
+    def _generate_structure_from_pattern(self, config):
+        """Parse high-level pattern."""
+        pattern = config.get('pattern_type')
+        atoms = self.atom_pos()
+        nspins = len(atoms)
+        thetas = [0.0] * nspins
+        phis = [0.0] * nspins
+        
+        if pattern == 'ferromagnetic':
+            # Direction vector or angles
+            direction = config.get('direction', [0, 0, 1]) # Default z
+            # Convert vector to angles
+            # Simplistic conversion
+            v = np.array(direction, dtype=float)
+            norm = np.linalg.norm(v)
+            if norm > 1e-9:
+                v /= norm
+                # th = acos(z), ph = atan2(y, x)
+                th = np.arccos(v[2])
+                ph = np.arctan2(v[1], v[0])
+                thetas = [float(th)] * nspins
+                phis = [float(ph)] * nspins
+        elif pattern == 'antiferromagnetic':
+             # Need sublattices
+             # Simplest: list of directions applied cyclically or by index mapping
+             directions = config.get('directions', [])
+             if not directions:
+                 # Default Neel for 2 sublattices?
+                 directions = [[0, 0, 1], [0, 0, -1]]
+             
+             for i in range(nspins):
+                 d = directions[i % len(directions)]
+                 v = np.array(d, dtype=float)
+                 norm = np.linalg.norm(v)
+                 if norm > 1e-9:
+                      v /= norm
+                      th = np.arccos(v[2])
+                      ph = np.arctan2(v[1], v[0])
+                      thetas[i] = float(th)
+                      phis[i] = float(ph)
+        
+        return thetas, phis
+
+    def _generate_structure_from_k(self, config):
+        """Generate spiral from propagation vector."""
+        k_vec = np.array(config.get('k', [0, 0, 0]), dtype=float)
+        # Type: 'planar', 'conical', 'complex'
+        stype = config.get('subtype', 'planar')
+        
+        # Basis vectors u, v (and normal n for conical?)
+        # Default planar in ab plane: u=[1,0,0], v=[0,1,0]
+        u_vec = np.array(config.get('u', [1, 0, 0]), dtype=float)
+        v_vec = np.array(config.get('v', [0, 1, 0]), dtype=float)
+        
+        atoms = self.atom_pos()
+        thetas = []
+        phis = []
+        
+        for i, pos in enumerate(atoms):
+            phase = np.dot(k_vec, pos) # k . r
+            
+            if stype == 'planar':
+                # S = u * cos(phase) + v * sin(phase)
+                # Assumes u, v orthogonal and S_mag matches
+                S_vec = u_vec * np.cos(phase) + v_vec * np.sin(phase)
+            elif stype == 'conical':
+                 # Add offset component?
+                 # n + u cos + v sin
+                 n_vec = np.array(config.get('n', [0, 0, 1]), dtype=float)
+                 cone_angle = np.radians(config.get('cone_angle_deg', 0)) # 0 = flat?
+                 # Interpretation: S = n * cos(cone) + (u cos(ph) + v sin(ph)) * sin(cone)
+                 # Wait, usually cone angle is deviation from n.
+                 # Let's assume standard cons.
+                 S_vec = n_vec * np.cos(cone_angle) + (u_vec * np.cos(phase) + v_vec * np.sin(phase)) * np.sin(cone_angle)
+            else:
+                S_vec = np.array([0, 0, 1])
+
+            # Normalize to safe guard
+            norm = np.linalg.norm(S_vec)
+            if norm > 1e-9:
+                S_vec /= norm
+                
+            th = np.arccos(S_vec[2])
+            ph = np.arctan2(S_vec[1], S_vec[0])
+            thetas.append(float(th))
+            phis.append(float(ph))
+            
+        return thetas, phis
     def _classical_energy_func(self, x, Jex, DM, Kex, H_vec, S_val=0.5):
         """
         Calculate total classical energy for angles x.
@@ -1032,11 +1157,7 @@ class GenericSpinModel:
         
         # Zeeman
         if H_vec is not None:
-            # E += gamma * mu * sum(S . H)
-            gamma = 2.0
-            mu_B = 5.788e-2
-            # Sum S . H for all i in UC
-            # Using vectorized dot
+
             # E += gamma * mu * sum(S . H)
             gamma = 2.0
             mu_B = 5.788e-2

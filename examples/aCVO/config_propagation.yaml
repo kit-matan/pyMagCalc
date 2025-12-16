@@ -74,56 +74,16 @@ parameters:
 minimization:
   enabled: true
   method: "L-BFGS-B"
-  maxiter: 0
-  initial_configuration:
-    - atom_index: 0
-      theta: 1.52 # approx pi/2 - 0.05
-      phi: 0.0
-    - atom_index: 1
-      theta: 1.52
-      phi: 3.14159
-    - atom_index: 2
-      theta: 1.52
-      phi: 0.0
-    - atom_index: 3
-      theta: 1.52
-      phi: 3.14159
-    - atom_index: 4
-      theta: 1.52
-      phi: 0.0
-    - atom_index: 5
-      theta: 1.52
-      phi: 3.14159
-    - atom_index: 6
-      theta: 1.52
-      phi: 0.0
-    - atom_index: 7
-      theta: 1.52
-      phi: 3.14159
-    - atom_index: 8
-      theta: 1.52
-      phi: 0.0
-    - atom_index: 9
-      theta: 1.52
-      phi: 3.14159
-    - atom_index: 10
-      theta: 1.52
-      phi: 0.0
-    - atom_index: 11
-      theta: 1.52
-      phi: 3.14159
-    - atom_index: 12
-      theta: 1.52
-      phi: 0.0
-    - atom_index: 13
-      theta: 1.52
-      phi: 3.14159
-    - atom_index: 14
-      theta: 1.52
-      phi: 0.0
-    - atom_index: 15
-      theta: 1.52
-      phi: 3.14159
+  maxiter: 5000
+  # initial_configuration replaced by magnetic_structure below
+magnetic_structure:
+  type: pattern
+  pattern_type: antiferromagnetic
+  # Alternating +x and -x matching the explicit list
+  directions: 
+    - [1.0, 0.0, 0.0]
+    - [-1.0, 0.0, 0.0]
+
       
 # 3. Interactions
 interactions:
@@ -743,6 +703,7 @@ plotting:
 # 9. Tasks
 tasks:
   run_minimization: true
+  maxiter: 0
   run_dispersion: true
   plot_dispersion: true
   run_sqw_map: true
