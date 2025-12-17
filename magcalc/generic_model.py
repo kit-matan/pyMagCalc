@@ -133,28 +133,11 @@ class GenericSpinModel:
     def _load_structure(self):
         """
         Load crystal structure from config (Explicit or CIF).
-        Sets self._uc_vectors and self._r_pos.
+        Sets self._uc_vectors and self._r_pos (Cartesian).
         """
         crystal_struct = self.config.get('crystal_structure', {})
         
-        # 1. Explicit Definition
-        if 'lattice_vectors' in crystal_struct:
-            self._uc_vectors = np.array(crystal_struct['lattice_vectors'], dtype=float)
-            
-            if 'atom_positions' in crystal_struct:
-                 self._r_pos = np.array(crystal_struct['atom_positions'], dtype=float)
-            elif 'atoms_uc' in crystal_struct:
-                 # Extract from AtomConfig objects (dict structure after validation dump)
-                 atoms = crystal_struct['atoms_uc']
-                 # atoms is list of dicts: {'label': '...', 'pos': [x,y,z], ...}
-                 self._r_pos = np.array([a['pos'] for a in atoms], dtype=float)
-            else:
-                 raise ValueError("Must provide 'atom_positions' or 'atoms_uc' with 'lattice_vectors'.")
-            
-            self.atoms = None 
-            return
-
-        # 2. CIF File
+        # 1. CIF File (Priority 1)
         cif_file = crystal_struct.get('cif_file')
         if cif_file:
             if not os.path.isabs(cif_file) and self.base_path:
@@ -164,24 +147,78 @@ class GenericSpinModel:
                 raise ImportError("ASE not installed or read_cif import failed.")
                 
             try:
-                # Use cif_utils to handle scaling and selection if available
-                # Or just basic read
                 self.atoms = read_cif(cif_file)
-                
                 # Filter by magnetic elements
                 mag_elements = crystal_struct.get('magnetic_elements')
                 if mag_elements:
                      self.atoms = self.atoms[
                          [atom.symbol in mag_elements for atom in self.atoms]
                      ]
-                
                 self._uc_vectors = self.atoms.cell[:]
                 self._r_pos = self.atoms.get_positions()
-                
+                return 
             except Exception as e:
                 raise ValueError(f"Failed to load CIF structure from {cif_file}: {e}")
+
+        # 2. Explicit Definition
+        # Determine Unit Cell Vectors
+        if 'lattice_parameters' in crystal_struct:
+            lp = crystal_struct['lattice_parameters']
+            # Dict or object? Config is dict.
+            a, b, c = lp['a'], lp['b'], lp['c']
+            alpha = np.deg2rad(lp.get('alpha', 90.0))
+            beta = np.deg2rad(lp.get('beta', 90.0))
+            gamma = np.deg2rad(lp.get('gamma', 90.0))
+            
+            # Standard conversion (a || x, b in xy)
+            v_a = np.array([a, 0, 0])
+            v_b = np.array([b * np.cos(gamma), b * np.sin(gamma), 0])
+            
+            # c vector components
+            # cos(alpha) = (b.c) / bc = (bx*cx + by*cy)/bc
+            # cos(beta) = (a.c) / ac = cx / c
+            cx = c * np.cos(beta)
+            cy = (c * b * np.cos(alpha) - v_b[0] * cx) / v_b[1] 
+            # cz = sqrt(c^2 - cx^2 - cy^2)
+            cz_sq = c**2 - cx**2 - cy**2
+            cz = np.sqrt(cz_sq) if cz_sq > 0 else 0
+            
+            v_c = np.array([cx, cy, cz])
+            self._uc_vectors = np.array([v_a, v_b, v_c])
+            
+        elif 'lattice_vectors' in crystal_struct:
+             self._uc_vectors = np.array(crystal_struct['lattice_vectors'], dtype=float)
         else:
-             raise ValueError("No crystal structure defined (lattice_vectors+atom_positions or cif_file).")
+             raise ValueError("No crystal structure defined (requires 'lattice_parameters', 'lattice_vectors', or 'cif_file').")
+             
+        # Process Atoms (Fractional -> Cartesian)
+        if 'atoms_uc' in crystal_struct:
+             atoms = crystal_struct['atoms_uc']
+             # Interpret 'pos' as fractional coordinates
+             frac_pos_list = [a['pos'] for a in atoms]
+             frac_pos = np.array(frac_pos_list, dtype=float)
+             
+             # Convert to Cartesian: r = u*a + v*b + w*c
+             # Matrix algebra: R_cart = Frac * UC_matrix (if UC rows are vectors)
+             # Frac shape (N, 3). UC shape (3, 3) rows a,b,c.
+             # R_i = u_i * a + v_i * b + w_i * c
+             #     = [u v w] . [a b c]^T ? No.
+             #     = [u v w] * [a; b; c]
+             self._r_pos = np.dot(frac_pos, self._uc_vectors)
+             
+        elif 'atom_positions' in crystal_struct:
+             # Legacy/Flat support - Assume Cartesian if only this is provided? 
+             # Or assume fractional now? 
+             # To be consistent with "Revise to use fractional", let's assume fractional IF lattice params logic matches expectation?
+             # But 'atom_positions' is raw array. 
+             # Let's assume 'atoms_uc' is the modern way (schema). 'atom_positions' was generic support.
+             # I will treat 'atom_positions' as Cartesian for backward compat if anyone uses it directly without atoms_uc.
+             # But warned in plan.
+             # Let's assume fractional for consistency or CARTESIAN for safety?
+             # Given atoms_uc is preferred, let's treat atom_positions as raw Cartesian override if someone bypasses atoms_uc.
+             self._r_pos = np.array(crystal_struct['atom_positions'], dtype=float)
+        else:
+             raise ValueError("Must provide 'atoms_uc' defining atom positions.")
 
     def unit_cell(self):
         """Find the unit cell vectors."""
