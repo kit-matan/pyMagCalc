@@ -12,55 +12,55 @@ crystal_structure:
     beta: 90.0
     gamma: 90.0
   atoms_uc: # expressed in fractional coordinates
-    - label: V0
+    - label: Cu0
       pos: [0.165720, 0.364600, 0.754500]
       spin_S: 0.5
-    - label: V1
+    - label: Cu1
       pos: [0.834280, 0.635400, 0.754500]
       spin_S: 0.5
-    - label: V2
+    - label: Cu2
       pos: [0.165720, 0.864600, 0.254500]
       spin_S: 0.5
-    - label: V3
+    - label: Cu3
       pos: [0.834280, 0.135400, 0.254500]
       spin_S: 0.5
-    - label: V4
+    - label: Cu4
       pos: [0.665720, 0.364600, 0.254500]
       spin_S: 0.5
-    - label: V5
+    - label: Cu5
       pos: [0.334280, 0.635400, 0.254500]
       spin_S: 0.5
-    - label: V6
+    - label: Cu6
       pos: [0.665720, 0.864600, 0.754500]
       spin_S: 0.5
-    - label: V7
+    - label: Cu7
       pos: [0.334280, 0.135400, 0.754500]
       spin_S: 0.5
-    - label: V8
+    - label: Cu8
       pos: [0.415720, 0.885400, 1.004500]
       spin_S: 0.5
-    - label: V9
+    - label: Cu9
       pos: [0.084280, 0.614600, 1.004500]
       spin_S: 0.5
-    - label: V10
+    - label: Cu10
       pos: [0.415720, 0.385400, 0.504500]
       spin_S: 0.5
-    - label: V11
+    - label: Cu11
       pos: [0.084280, 1.114600, 0.504500]
       spin_S: 0.5
-    - label: V12
+    - label: Cu12
       pos: [0.915720, 0.885400, 0.504500]
       spin_S: 0.5
-    - label: V13
+    - label: Cu13
       pos: [0.584280, 0.614600, 0.504500]
       spin_S: 0.5
-    - label: V14
+    - label: Cu14
       pos: [0.915720, 0.385400, 1.004500]
       spin_S: 0.5
-    - label: V15
+    - label: Cu15
       pos: [0.584280, 0.114600, 1.004500]
       spin_S: 0.5
-  magnetic_elements: ["V"]
+  magnetic_elements: ["Cu"]
 
 # 2. Parameters
 parameters:
@@ -91,19 +91,19 @@ magnetic_structure:
 # 3. Interactions
 interactions:
   - type: heisenberg
-    pair: [V0, V5]
+    pair: [Cu0, Cu5]
     distance: 5.2572
     value: "J3"
   - type: heisenberg
-    pair: [V0, V7]
+    pair: [Cu0, Cu7]
     distance: 3.9751
     value: "J2"
   - type: heisenberg
-    pair: [V0, V9]
+    pair: [Cu0, Cu9]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V0, V9]
+    pair: [Cu0, Cu9]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -112,11 +112,11 @@ interactions:
     offset_j: [0, 0, 0]
     value: [-2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V0, V11]
+    pair: [Cu0, Cu11]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V0, V11]
+    pair: [Cu0, Cu11]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -125,19 +125,19 @@ interactions:
     offset_j: [0, -1, 0]
     value: [2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V1, V4]
+    pair: [Cu1, Cu4]
     distance: 5.2572
     value: "J3"
   - type: heisenberg
-    pair: [V1, V6]
+    pair: [Cu1, Cu6]
     distance: 3.9751
     value: "J2"
   - type: heisenberg
-    pair: [V1, V12]
+    pair: [Cu1, Cu12]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V1, V12]
+    pair: [Cu1, Cu12]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -146,11 +146,11 @@ interactions:
     offset_j: [0, 0, 0]
     value: [-2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V1, V14]
+    pair: [Cu1, Cu14]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V1, V14]
+    pair: [Cu1, Cu14]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -159,15 +159,15 @@ interactions:
     offset_j: [0, 0, 0]
     value: [2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V2, V5]
+    pair: [Cu2, Cu5]
     distance: 3.9751
     value: "J2"
   - type: heisenberg
-    pair: [V2, V11]
+    pair: [Cu2, Cu11]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V2, V11]
+    pair: [Cu2, Cu11]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -176,11 +176,11 @@ interactions:
     offset_j: [0, 0, 0]
     value: [-2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V2, V9]
+    pair: [Cu2, Cu9]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V2, V9]
+    pair: [Cu2, Cu9]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -189,23 +189,23 @@ interactions:
     offset_j: [0, 0, -1]
     value: [2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V2, V7]
+    pair: [Cu2, Cu7]
     distance: 5.2572
     value: "J3"
   - type: heisenberg
-    pair: [V3, V4]
+    pair: [Cu3, Cu4]
     distance: 3.9751
     value: "J2"
   - type: heisenberg
-    pair: [V3, V6]
+    pair: [Cu3, Cu6]
     distance: 5.2572
     value: "J3"
   - type: heisenberg
-    pair: [V3, V12]
+    pair: [Cu3, Cu12]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V3, V12]
+    pair: [Cu3, Cu12]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -214,11 +214,11 @@ interactions:
     offset_j: [0, -1, 0]
     value: [2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V3, V14]
+    pair: [Cu3, Cu14]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V3, V14]
+    pair: [Cu3, Cu14]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -227,19 +227,19 @@ interactions:
     offset_j: [0, 0, -1]
     value: [-2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V4, V1]
+    pair: [Cu4, Cu1]
     distance: 5.2572
     value: "J3"
   - type: heisenberg
-    pair: [V4, V3]
+    pair: [Cu4, Cu3]
     distance: 3.9751
     value: "J2"
   - type: heisenberg
-    pair: [V4, V13]
+    pair: [Cu4, Cu13]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V4, V13]
+    pair: [Cu4, Cu13]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -248,11 +248,11 @@ interactions:
     offset_j: [0, 0, 0]
     value: [-2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V4, V15]
+    pair: [Cu4, Cu15]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V4, V15]
+    pair: [Cu4, Cu15]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -261,19 +261,19 @@ interactions:
     offset_j: [0, 0, -1]
     value: [2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V5, V0]
+    pair: [Cu5, Cu0]
     distance: 5.2572
     value: "J3"
   - type: heisenberg
-    pair: [V5, V2]
+    pair: [Cu5, Cu2]
     distance: 3.9751
     value: "J2"
   - type: heisenberg
-    pair: [V5, V10]
+    pair: [Cu5, Cu10]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V5, V10]
+    pair: [Cu5, Cu10]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -282,11 +282,11 @@ interactions:
     offset_j: [0, 0, 0]
     value: [2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V5, V8]
+    pair: [Cu5, Cu8]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V5, V8]
+    pair: [Cu5, Cu8]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -295,15 +295,15 @@ interactions:
     offset_j: [0, 0, -1]
     value: [-2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V6, V1]
+    pair: [Cu6, Cu1]
     distance: 3.9751
     value: "J2"
   - type: heisenberg
-    pair: [V6, V13]
+    pair: [Cu6, Cu13]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V6, V13]
+    pair: [Cu6, Cu13]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -312,15 +312,15 @@ interactions:
     offset_j: [0, 0, 0]
     value: [2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V6, V3]
+    pair: [Cu6, Cu3]
     distance: 5.2572
     value: "J3"
   - type: heisenberg
-    pair: [V6, V15]
+    pair: [Cu6, Cu15]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V6, V15]
+    pair: [Cu6, Cu15]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -329,15 +329,15 @@ interactions:
     offset_j: [0, 1, 0]
     value: [-2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V7, V0]
+    pair: [Cu7, Cu0]
     distance: 3.9751
     value: "J2"
   - type: heisenberg
-    pair: [V7, V10]
+    pair: [Cu7, Cu10]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V7, V10]
+    pair: [Cu7, Cu10]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -346,15 +346,15 @@ interactions:
     offset_j: [0, 0, 0]
     value: [-2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V7, V2]
+    pair: [Cu7, Cu2]
     distance: 5.2572
     value: "J3"
   - type: heisenberg
-    pair: [V7, V8]
+    pair: [Cu7, Cu8]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V7, V8]
+    pair: [Cu7, Cu8]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -363,15 +363,15 @@ interactions:
     offset_j: [0, -1, 0]
     value: [2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V8, V13]
+    pair: [Cu8, Cu13]
     distance: 5.2572
     value: "J3"
   - type: heisenberg
-    pair: [V8, V5]
+    pair: [Cu8, Cu5]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V8, V5]
+    pair: [Cu8, Cu5]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -380,11 +380,11 @@ interactions:
     offset_j: [0, 0, 1]
     value: [2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V8, V7]
+    pair: [Cu8, Cu7]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V8, V7]
+    pair: [Cu8, Cu7]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -393,15 +393,15 @@ interactions:
     offset_j: [0, 1, 0]
     value: [-2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V8, V15]
+    pair: [Cu8, Cu15]
     distance: 3.9751
     value: "J2"
   - type: heisenberg
-    pair: [V9, V0]
+    pair: [Cu9, Cu0]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V9, V0]
+    pair: [Cu9, Cu0]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -410,19 +410,19 @@ interactions:
     offset_j: [0, 0, 0]
     value: [2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V9, V12]
+    pair: [Cu9, Cu12]
     distance: 5.2572
     value: "J3"
   - type: heisenberg
-    pair: [V9, V14]
+    pair: [Cu9, Cu14]
     distance: 3.9751
     value: "J2"
   - type: heisenberg
-    pair: [V9, V2]
+    pair: [Cu9, Cu2]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V9, V2]
+    pair: [Cu9, Cu2]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -431,11 +431,11 @@ interactions:
     offset_j: [0, 0, 1]
     value: [-2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V10, V5]
+    pair: [Cu10, Cu5]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V10, V5]
+    pair: [Cu10, Cu5]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -444,11 +444,11 @@ interactions:
     offset_j: [0, 0, 0]
     value: [-2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V10, V7]
+    pair: [Cu10, Cu7]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V10, V7]
+    pair: [Cu10, Cu7]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -457,19 +457,19 @@ interactions:
     offset_j: [0, 0, 0]
     value: [2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V10, V13]
+    pair: [Cu10, Cu13]
     distance: 3.9751
     value: "J2"
   - type: heisenberg
-    pair: [V10, V15]
+    pair: [Cu10, Cu15]
     distance: 5.2572
     value: "J3"
   - type: heisenberg
-    pair: [V11, V2]
+    pair: [Cu11, Cu2]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V11, V2]
+    pair: [Cu11, Cu2]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -478,19 +478,19 @@ interactions:
     offset_j: [0, 0, 0]
     value: [2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V11, V12]
+    pair: [Cu11, Cu12]
     distance: 3.9751
     value: "J2"
   - type: heisenberg
-    pair: [V11, V14]
+    pair: [Cu11, Cu14]
     distance: 5.2572
     value: "J3"
   - type: heisenberg
-    pair: [V11, V0]
+    pair: [Cu11, Cu0]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V11, V0]
+    pair: [Cu11, Cu0]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -499,11 +499,11 @@ interactions:
     offset_j: [0, 1, 0]
     value: [-2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V12, V1]
+    pair: [Cu12, Cu1]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V12, V1]
+    pair: [Cu12, Cu1]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -512,11 +512,11 @@ interactions:
     offset_j: [0, 0, 0]
     value: [2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V12, V3]
+    pair: [Cu12, Cu3]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V12, V3]
+    pair: [Cu12, Cu3]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -525,19 +525,19 @@ interactions:
     offset_j: [0, 1, 0]
     value: [-2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V12, V9]
+    pair: [Cu12, Cu9]
     distance: 5.2572
     value: "J3"
   - type: heisenberg
-    pair: [V12, V11]
+    pair: [Cu12, Cu11]
     distance: 3.9751
     value: "J2"
   - type: heisenberg
-    pair: [V13, V4]
+    pair: [Cu13, Cu4]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V13, V4]
+    pair: [Cu13, Cu4]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -546,11 +546,11 @@ interactions:
     offset_j: [0, 0, 0]
     value: [2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V13, V6]
+    pair: [Cu13, Cu6]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V13, V6]
+    pair: [Cu13, Cu6]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -559,19 +559,19 @@ interactions:
     offset_j: [0, 0, 0]
     value: [-2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V13, V8]
+    pair: [Cu13, Cu8]
     distance: 5.2572
     value: "J3"
   - type: heisenberg
-    pair: [V13, V10]
+    pair: [Cu13, Cu10]
     distance: 3.9751
     value: "J2"
   - type: heisenberg
-    pair: [V14, V1]
+    pair: [Cu14, Cu1]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V14, V1]
+    pair: [Cu14, Cu1]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -580,11 +580,11 @@ interactions:
     offset_j: [0, 0, 0]
     value: [-2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V14, V3]
+    pair: [Cu14, Cu3]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V14, V3]
+    pair: [Cu14, Cu3]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -593,23 +593,23 @@ interactions:
     offset_j: [0, 0, 1]
     value: [2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V14, V11]
+    pair: [Cu14, Cu11]
     distance: 5.2572
     value: "J3"
   - type: heisenberg
-    pair: [V14, V9]
+    pair: [Cu14, Cu9]
     distance: 3.9751
     value: "J2"
   - type: heisenberg
-    pair: [V15, V10]
+    pair: [Cu15, Cu10]
     distance: 5.2572
     value: "J3"
   - type: heisenberg
-    pair: [V15, V6]
+    pair: [Cu15, Cu6]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V15, V6]
+    pair: [Cu15, Cu6]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
@@ -618,15 +618,15 @@ interactions:
     offset_j: [0, -1, 0]
     value: [2.67, 0.0, 0.0]
   - type: heisenberg
-    pair: [V15, V8]
+    pair: [Cu15, Cu8]
     distance: 3.9751
     value: "J2"
   - type: heisenberg
-    pair: [V15, V4]
+    pair: [Cu15, Cu4]
     distance: 3.1325
     value: "J1"
   - type: anisotropic_exchange
-    pair: [V15, V4]
+    pair: [Cu15, Cu4]
     distance: 3.1325
     value: ["G1", "-G1", "-G1"]
   - type: dm_manual
