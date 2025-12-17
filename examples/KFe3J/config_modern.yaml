@@ -2,12 +2,16 @@
 # Fully declarative, replacing spin_model.py
 
 # 1. Structure
+# 1. Structure
 crystal_structure:
   dimensionality: 2 # Important for neighbor generation order
-  lattice_vectors:
-    - [0.86602540378, -0.5, 0.0]
-    - [0.0, 1.0, 0.0]
-    - [0.0, 0.0, 1.0]
+  lattice_parameters:
+    a: 7.33
+    b: 7.33
+    c: 17.1374
+    alpha: 90
+    beta: 90
+    gamma: 120
   atoms_uc:
     - label: Fe1
       pos: [0.0, 0.0, 0.0]
@@ -34,92 +38,88 @@ parameters:
 interactions:
   # Heisenberg Exchange
   - type: heisenberg
-    distance: 0.5
+    distance: 3.665 # 0.5 * 7.33
     value: "J1"
   - type: heisenberg
-    distance: 0.866 # sqrt(3)/2
+    distance: 6.348 # 0.866 * 7.33
     value: "J2"
     
   # DM Interactions (Manual Specification due to Kagome symmetry)
-  # Derived from original spin_model.py mappings
   
   # Atom 0 (r1) Connections
   - type: dm_manual
     atom_i: 0
     atom_j: 1 # Intra-cell
     offset_j: [0, 0, 0]
-    value: ["-Dy/2", "-sqrt(3)/2*Dy", "-Dz"] # -DMvec2: [-Dy/2, -sqrt(3)/2*Dy, -Dz]
+    value: ["0", "-Dy", "-Dz"] # -DMvec2_new: [0, -Dy, -Dz]
     
   - type: dm_manual
     atom_i: 0
     atom_j: 2 # Intra-cell
     offset_j: [0, 0, 0]
-    value: ["-Dy", 0, "Dz"] # -DMvec1: [-Dy, 0, Dz] (spin_model says -Dz -> Dz if negated?) 
-    # spin_model: DMvec1 = [Dy, 0, -Dz]. -DMvec1 = [-Dy, 0, Dz]. Correct.
+    value: ["-sqrt(3)/2*Dy", "-Dy/2", "Dz"] # -DMvec1_new: [-sqrt(3)/2*Dy, -Dy/2, Dz]
     
   - type: dm_manual
     atom_i: 0
     atom_j: 1 # Neighbor (-1, 0)
     offset_j: [-1, 0, 0]
-    value: ["-Dy/2", "-sqrt(3)/2*Dy", "-Dz"] # -DMvec2
+    value: ["0", "-Dy", "-Dz"] # -DMvec2_new
     
   - type: dm_manual
     atom_i: 0
     atom_j: 2 # Neighbor (0, -1)
     offset_j: [0, -1, 0]
-    value: ["-Dy", 0, "Dz"] # -DMvec1
+    value: ["-sqrt(3)/2*Dy", "-Dy/2", "Dz"] # -DMvec1_new
     
   # Atom 1 (r2) Connections
   - type: dm_manual
     atom_i: 1
     atom_j: 0 # Intra-cell
     offset_j: [0, 0, 0]
-    value: ["Dy/2", "sqrt(3)/2*Dy", "Dz"] # DMvec2
+    value: ["0", "Dy", "Dz"] # DMvec2_new: [0, Dy, Dz]
     
   - type: dm_manual
     atom_i: 1
-    atom_j: 2 # Neighbor (0, -1) -> spin_model index 14 mapping
+    atom_j: 2 # Neighbor (0, -1)
     offset_j: [0, -1, 0]
-    value: ["-Dy/2", "sqrt(3)/2*Dy", "-Dz"] # DMvec3
+    value: ["-sqrt(3)/2*Dy", "Dy/2", "-Dz"] # DMvec3_new: [-sqrt(3)/2*Dy, Dy/2, -Dz]
     
   - type: dm_manual
     atom_i: 1
     atom_j: 0 # Neighbor (1, 0)
     offset_j: [1, 0, 0]
-    value: ["Dy/2", "sqrt(3)/2*Dy", "Dz"] # DMvec2
+    value: ["0", "Dy", "Dz"] # DMvec2_new
     
   - type: dm_manual
     atom_i: 1
     atom_j: 2 # Neighbor (1, 0)
     offset_j: [1, 0, 0]
-    value: ["-Dy/2", "sqrt(3)/2*Dy", "-Dz"] # DMvec3
-
+    value: ["-sqrt(3)/2*Dy", "Dy/2", "-Dz"] # DMvec3_new
+    
   # Atom 2 (r3) Connections
   - type: dm_manual
     atom_i: 2
     atom_j: 0 # Intra-cell
     offset_j: [0, 0, 0]
-    value: ["Dy", 0, "-Dz"] # DMvec1
+    value: ["sqrt(3)/2*Dy", "Dy/2", "-Dz"] # DMvec1_new: [sqrt(3)/2*Dy, Dy/2, -Dz]
     
   - type: dm_manual
     atom_i: 2
     atom_j: 1 # Neighbor (-1, 0)
     offset_j: [-1, 0, 0]
-    value: ["Dy/2", "-sqrt(3)/2*Dy", "Dz"] # -DMvec3: [-(-Dy/2), -sqrt(3)/2*Dy, -(-Dz)] -> [Dy/2, -..., Dz]
-    # spin_model: DMvec3 = [-Dy/2, sqrt(3)/2*Dy, -Dz].
-    # -DMvec3 = [Dy/2, -sqrt(3)/2*Dy, Dz]. Correct.
+    value: ["sqrt(3)/2*Dy", "-Dy/2", "Dz"] # -DMvec3_new: [sqrt(3)/2*Dy, -Dy/2, Dz]
     
   - type: dm_manual
     atom_i: 2
     atom_j: 0 # Neighbor (0, 1)
     offset_j: [0, 1, 0]
-    value: ["Dy", 0, "-Dz"] # DMvec1
+    value: ["sqrt(3)/2*Dy", "Dy/2", "-Dz"] # DMvec1_new
     
   - type: dm_manual
     atom_i: 2
     atom_j: 1 # Neighbor (0, 1)
     offset_j: [0, 1, 0]
-    value: ["Dy/2", "-sqrt(3)/2*Dy", "Dz"] # -DMvec3
+    value: ["sqrt(3)/2*Dy", "-Dy/2", "Dz"] # -DMvec3_new
 
 # 5. Calculation Settings
 calculation:
@@ -167,15 +167,13 @@ tasks:
 # 9. Minimization Settings
 minimization:
   method: "L-BFGS-B"
-  # Smart initialization to avoid local minima (120-degree structure)
-  # Fe1: 300 deg, Fe2: 180 deg, Fe3: 60 deg (in ab-plane)
-  initial_configuration:
-    - atom_index: 0
-      theta: 1.570796327 # pi/2
-      phi: 5.235987756   # 300 deg
-    - atom_index: 1
-      theta: 1.570796327
-      phi: 3.141592654   # 180 deg
-    - atom_index: 2
-      theta: 1.570796327
-      phi: 1.047197551   # 60 deg
+  maxiter: 5000
+
+# 10. Magnetic Structure (New Input Method)
+magnetic_structure:
+  type: pattern
+  pattern_type: "antiferromagnetic" # Use generic AFM type for cyclic directions
+  directions:
+    - [-1.0, 0.0, 0.0]            # Atom 0 (180 deg)
+    - [0.5, -0.86602540378, 0.0]  # Atom 1 (300 deg)
+    - [0.5, 0.86602540378, 0.0]   # Atom 2 (60 deg)
