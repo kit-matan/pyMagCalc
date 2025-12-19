@@ -305,15 +305,29 @@ class MagCalc:
                 raise ValueError(
                     f"Failed to determine model configuration section from: {config_filepath}"
                 )
-
-            # Derive cache_file_base from config_filepath if not provided
+            # Extract calculation settings from config
+            calculation_section = self.raw_config_data.get("calculation", {})
+            
+            # Update cache_mode from config if valid
+            config_cache_mode = calculation_section.get("cache_mode")
+            if config_cache_mode in ["r", "w", "auto"]:
+                if cache_mode == "r": # Only override default 'r' if config specifies something
+                     self.cache_mode = config_cache_mode
+                     logger.info(f"Using cache_mode='{self.cache_mode}' from configuration.")
+            
+            # Update cache_file_base from config if not provided in args
+            config_cache_base = calculation_section.get("cache_file_base")
             if cache_file_base is None:
-                base_name_from_config = os.path.splitext(
-                    os.path.basename(config_filepath)
-                )[0]
-                self.cache_file_base = base_name_from_config + "_cache"
+                if config_cache_base:
+                    self.cache_file_base = config_cache_base
+                else:
+                    base_name_from_config = os.path.splitext(
+                        os.path.basename(config_filepath)
+                    )[0]
+                    self.cache_file_base = base_name_from_config + "_cache"
             else:
                 self.cache_file_base = cache_file_base
+
             self.sm = generic_spin_model  # Use the generic spin model module
 
             # Extract spin_magnitude from config
@@ -348,20 +362,27 @@ class MagCalc:
                 raise ValueError(
                     "Configuration error: Neither 'model_params' nor 'parameters' section found in model configuration, or it's not a dictionary."
                 )
-            if not all(isinstance(v, (int, float)) for v in self.p_numerical.values()):
+            if not all(isinstance(v, (int, float, list, tuple, np.ndarray)) for v in self.p_numerical.values()):
                 raise TypeError(
-                    "All values in the parameter section ('model_params' or 'parameters') of config must be numbers."
+                    "All values in the parameter section ('model_params' or 'parameters') of config must be numbers or lists/arrays of numbers."
                 )
 
-            # Ordered list of parameter names and symbols
-            _parameter_names_ordered = list(self.p_numerical.keys())
-            self.params_sym: List[sp.Symbol] = [
-                sp.Symbol(name, real=True) for name in _parameter_names_ordered
-            ]
             # Ordered list of numerical parameter values
-            self.hamiltonian_params: List[float] = [
-                float(self.p_numerical[name]) for name in _parameter_names_ordered
-            ]
+            _parameter_names_ordered = list(self.p_numerical.keys())
+            self._params_sym_raw = []
+            self._params_val_raw = []
+            for name in _parameter_names_ordered:
+                val = self.p_numerical[name]
+                if isinstance(val, (list, tuple, np.ndarray)):
+                    val_list = [float(v) for v in val]
+                    sym_list = [sp.Symbol(f"{name}_{i}", real=True) for i in range(len(val_list))]
+                    self._params_sym_raw.append(sym_list)
+                    self._params_val_raw.append(val_list)
+                else:
+                    self._params_sym_raw.append(sp.Symbol(name, real=True))
+                    self._params_val_raw.append(float(val))
+
+            self.params_sym = self._params_sym_raw 
 
             # Determine nspins from config
             self.nspins = len(atoms_uc_config)
@@ -370,7 +391,7 @@ class MagCalc:
                     "Configuration error: 'atoms_uc' in config led to zero spins."
                 )
             logger.info(
-                f"Model loaded from config: {self.nspins} spins, S={self.spin_magnitude}, {len(self.hamiltonian_params)} parameters."
+                f"Model loaded from config: {self.nspins} spins, S={self.spin_magnitude}, {len(self.hamiltonian_params) if hasattr(self, 'hamiltonian_params') else 'unknown'} parameters."
             )
 
         else:  # Traditional spin_model_module approach
@@ -400,46 +421,33 @@ class MagCalc:
                 raise ValueError("spin_magnitude must be positive.")
             self.spin_magnitude = float(spin_magnitude)
 
-            # Validate and set hamiltonian_params (list of floats)
-            assert (
-                hamiltonian_params is not None
-            ), "hamiltonian_params cannot be None when config_filepath is not used"
+            # Validate and set hamiltonian_params (list of floats or nests)
+            if hamiltonian_params is None:
+                raise ValueError("hamiltonian_params cannot be None.")
+            
             if isinstance(hamiltonian_params, np.ndarray):
                 hamiltonian_params_list = hamiltonian_params.tolist()
-            elif isinstance(hamiltonian_params, list):
-                hamiltonian_params_list = hamiltonian_params
             else:
-                raise TypeError("hamiltonian_params must be a list or NumPy array.")
-            if not hamiltonian_params_list:  # Allow empty if model needs no params
-                logger.warning("hamiltonian_params is empty.")
-            if not all(isinstance(x, (int, float, list, tuple, np.ndarray)) for x in hamiltonian_params_list):
-                 raise TypeError("All elements in hamiltonian_params must be numbers or sequences (vectors).")
-            
-            self.hamiltonian_params = []
+                hamiltonian_params_list = list(hamiltonian_params)
+                
+            self._params_sym_raw = []
+            self._params_val_raw = []
+            _sym_counter = 0
             for p in hamiltonian_params_list:
                 if isinstance(p, (list, tuple, np.ndarray)):
-                    self.hamiltonian_params.append([float(v) for v in p])
+                    val_list = [float(v) for v in p]
+                    sym_list = [sp.Symbol(f"p{_sym_counter}_{i}", real=True) for i in range(len(val_list))]
+                    self._params_sym_raw.append(sym_list)
+                    self._params_val_raw.append(val_list)
+                    _sym_counter += 1
                 else:
-                    self.hamiltonian_params.append(float(p))
-
-            self.cache_file_base = cache_file_base
-            # Create symbolic parameters, handling vector constants
-            self.params_sym = []
-            _sym_counter = 0
-            for p in self.hamiltonian_params:
-                if isinstance(p, list):
-                    # Use value directly for vectors/lists
-                    self.params_sym.append(p)
-                else:
-                    self.params_sym.append(sp.Symbol(f"p{_sym_counter}", real=True))
+                    self._params_sym_raw.append(sp.Symbol(f"p{_sym_counter}", real=True))
+                    self._params_val_raw.append(float(p))
                     _sym_counter += 1
 
-            # For consistency, create p_numerical map only for symbolic params
-            self.p_numerical = {}
-            for sym, val in zip(self.params_sym, self.hamiltonian_params):
-                if isinstance(sym, sp.Symbol):
-                    self.p_numerical[sym.name] = val
+            self.params_sym = self._params_sym_raw
 
+            self.cache_file_base = cache_file_base
             # Check spin_model_module validity and get nspins
             self._validate_spin_model_module()
             try:
@@ -449,6 +457,17 @@ class MagCalc:
             except Exception as e:
                 logger.exception("Error getting nspins from spin_model.atom_pos()")
                 raise RuntimeError("Failed to determine nspins from spin model.") from e
+
+        # --- Consolidation ---
+        def _flatten(l):
+            flat = []
+            for item in l:
+                if isinstance(item, list): flat.extend(item)
+                else: flat.append(item)
+            return flat
+
+        self.hamiltonian_params = _flatten(self._params_val_raw)
+        self.params_sym_flat = _flatten(self._params_sym_raw)
 
         self.kx, self.ky, self.kz = sp.symbols("kx ky kz", real=True)
         self.k_sym: List[sp.Symbol] = [self.kx, self.ky, self.kz]
@@ -462,7 +481,7 @@ class MagCalc:
             raise RuntimeError("self.params_sym was not set during initialization.")
 
         self.full_symbol_list: List[sp.Symbol] = (
-            self.k_sym + [self.S_sym] + list(self.params_sym)
+            self.k_sym + [self.S_sym] + self.params_sym_flat
         )
 
         # --- Load or Generate Symbolic Matrices ---
@@ -770,18 +789,15 @@ class MagCalc:
         # Ud_sym existence checked in __init__ before calling this
         logger.info("Calculating numerical Ud matrix...")
         # Ensure correct number of symbols/params match
-        if len(self.params_sym) != len(self.hamiltonian_params):
+        if len(self.params_sym_flat) != len(self.hamiltonian_params):
             raise ValueError(
-                f"Mismatch between number of symbolic params ({len(self.params_sym)}) and numerical params ({len(self.hamiltonian_params)})."
+                f"Mismatch between number of symbolic params ({len(self.params_sym_flat)}) and numerical params ({len(self.hamiltonian_params)})."
             )
 
-        # Filter out vector constant keys from substitution map
-        raw_subs = zip(self.params_sym, self.hamiltonian_params)
-        valid_subs = [(k, v) for k, v in raw_subs if isinstance(k, sp.Symbol)]
-            
+        # All symbols in params_sym_flat are sp.Symbol by construction
         param_substitutions_ud: List[Tuple[sp.Symbol, float]] = [
             (self.S_sym, self.spin_magnitude)
-        ] + valid_subs
+        ] + list(zip(self.params_sym_flat, self.hamiltonian_params))
 
         try:
             # Use evalf(subs=...) for potentially better performance/stability
@@ -921,13 +937,13 @@ class MagCalc:
         )
         nspins_ouc = len(atom_pos_ouc_cart)
 
-        symbolic_params_map_for_gsm = {sym.name: sym for sym in self.params_sym}
+        _parameter_names_ordered = list(self.p_numerical.keys())
+        symbolic_params_map_for_gsm = {
+            name: sym for name, sym in zip(_parameter_names_ordered, self.params_sym)
+        }
 
         rotation_matrices_sym_list = self.sm.mpr_from_config(
-            self.model_config_data["crystal_structure"],  # Pass crystal_structure dict
-            # Pass symbolic parameters for symbolic Ud_sym generation
-            # This assumes mpr_from_config can handle symbolic dict or may need adjustment
-            # in generic_spin_model.py if it strictly expects numerical values.
+            self.model_config_data,  # Pass entire config to access minimization
             symbolic_params_map_for_gsm,  # Pass parameters as positional argument
         )
 
@@ -1045,8 +1061,8 @@ class MagCalc:
         ]
 
         # 6. Define Fourier Substitutions
-        Jex_sym_matrix, _ = (
-            self.sm.spin_interactions_from_config(  # DM matrix also returned but not used here
+        Jex_sym_matrix, DM_sym_matrix, Kex_sym_matrix = (
+            self.sm.spin_interactions_from_config(
                 symbolic_params_map_for_gsm,  # This is a dict of {name: symbol}
                 self.model_config_data["interactions"],  # Pass interactions dict
                 atom_pos_uc_cart,
@@ -1056,7 +1072,7 @@ class MagCalc:
         )
         logger.debug(f"Config-driven: Jex_sym_matrix for FT rules:\n{Jex_sym_matrix}")
 
-        fourier_substitutions = _define_fourier_substitutions_generic(
+        fourier_substitutions_list = _define_fourier_substitutions_generic(
             self.k_sym,
             self.nspins,
             c_ops_ouc,
@@ -1068,70 +1084,63 @@ class MagCalc:
             atom_pos_uc_cart,
             atom_pos_ouc_cart,
             Jex_sym_matrix,
+            DM_sym_matrix,
+            Kex_sym_matrix,
         )
-        logger.debug(
-            f"Config-driven: Number of Fourier substitution rules: {len(fourier_substitutions)}"
-        )
-        # Log a few sample FT rules
-        if fourier_substitutions:
-            logger.debug("Config-driven: Sample Fourier substitution rules (first 3):")
-            for i, rule in enumerate(fourier_substitutions[:3]):
-                logger.debug(f"  Rule {i}: {rule[0]} -> {rule[1]}")
-        # 7. Define Commutation and Placeholder Substitutions
-        commutation_substitutions = _define_commutation_substitutions(
-            self.nspins, ck_ops_uc, ckd_ops_uc, cmk_ops_uc, cmkd_ops_uc
-        )  # No self needed
-        basis_vector_dagger = ckd_ops_uc + cmk_ops_uc
-        basis_vector = ck_ops_uc + cmkd_ops_uc
-        placeholder_symbols, placeholder_substitutions = (
-            _define_placeholder_substitutions(  # No self needed
-                self.nspins, basis_vector_dagger, basis_vector
+        
+        # Convert list to lookup dict for _process_hamiltonian_terms
+        fourier_lookup = {}
+        for pair in fourier_substitutions_list:
+            lhs = pair[0]
+            rhs = pair[1]
+            non_comm = [s for s in lhs.atoms(sp.Symbol) if not s.is_commutative]
+            if len(non_comm) == 2:
+                 args = lhs.args
+                 if len(args) == 2:
+                     op1, op2 = args
+                     fourier_lookup[(op1.name, op2.name)] = rhs
+                 elif len(args) == 1 and args[0].is_Pow:
+                     base, exp = args[0].as_base_exp()
+                     if exp == 2:
+                         fourier_lookup[(base.name, base.name)] = rhs
+            elif len(non_comm) == 1:
+                if lhs.is_Pow:
+                     base, exp = lhs.as_base_exp()
+                     if exp==2:
+                         fourier_lookup[(base.name, base.name)] = rhs
+
+        # Import _process_hamiltonian_terms locally
+        from .symbolic import _process_hamiltonian_terms, _build_TwogH2_matrix
+
+        # Apply Substitutions & Normal Ordering
+        try:
+            hamiltonian_normal_ordered = _process_hamiltonian_terms(
+                hamiltonian_sym_config,
+                fourier_lookup,
+                self.nspins,
+                ck_ops_uc,
+                ckd_ops_uc,
+                cmk_ops_uc,
+                cmkd_ops_uc,
             )
+        except Exception as e:
+            logger.exception("Error during symbolic substitution in _generate_matrices_from_config.")
+            raise RuntimeError("Symbolic substitution failed.") from e
+
+        # Build TwogH2 Matrix directly
+        self.HMat_sym = _build_TwogH2_matrix(
+            hamiltonian_normal_ordered, 
+            self.nspins, 
+            ck_ops_uc, 
+            ckd_ops_uc, 
+            cmk_ops_uc, 
+            cmkd_ops_uc
         )
+        
+        # Build Ud - generic model returns blocks, we need block diagonal
+        self.Ud_sym = _build_ud_matrix(rotation_matrices_sym_list, self.nspins)
 
-        # 8. Apply Substitutions
-        hamiltonian_with_placeholders = _apply_substitutions_parallel(
-            hamiltonian_sym_config,
-            fourier_substitutions,
-            commutation_substitutions,
-            placeholder_substitutions,
-        )
-        H2_matrix = _extract_h2_matrix(
-            hamiltonian_with_placeholders, placeholder_symbols, self.nspins
-        )  # No self needed
-
-        # 10. Calculate TwogH2
-        g_metric_tensor_sym = sp.diag(*([1] * self.nspins + [-1] * self.nspins))
-        dynamical_matrix_TwogH2 = 2 * g_metric_tensor_sym * H2_matrix
-
-        # 11. Build Ud Matrix from Config
-        Ud_rotation_matrix = _build_ud_matrix(
-            rotation_matrices_sym_list, self.nspins
-        )  # No self needed
-
-        end_time_total = timeit.default_timer()
-        logger.info(
-            f"Total run-time for _generate_matrices_from_config: {np.round((end_time_total - start_time_total), 2)} s."
-        )
-
-        # --- Sanity Check for HMat_sym ---
-        expected_symbols_in_HMat = set(self.k_sym + [self.S_sym] + self.params_sym)
-        actual_symbols_in_HMat = dynamical_matrix_TwogH2.free_symbols
-        unexpected_symbols = actual_symbols_in_HMat - expected_symbols_in_HMat
-        if unexpected_symbols:
-            logger.error(
-                f"Config-driven HMat_sym (dynamical_matrix_TwogH2) contains unexpected free symbols: {unexpected_symbols}"
-            )
-            # Detailed element check (optional, can be very verbose)
-            # for r_idx in range(dynamical_matrix_TwogH2.rows):
-            #     for c_idx in range(dynamical_matrix_TwogH2.cols):
-            #         elem_symbols = dynamical_matrix_TwogH2[r_idx, c_idx].free_symbols
-            #         if elem_symbols - expected_symbols_in_HMat:
-            #             logger.error(f"  Element ({r_idx},{c_idx}) '{dynamical_matrix_TwogH2[r_idx, c_idx]}' has unexpected: {elem_symbols - expected_symbols_in_HMat}")
-            raise RuntimeError(
-                f"Generated HMat_sym from config contains unexpected symbols: {unexpected_symbols}. This will cause lambdify to fail."
-            )
-        return dynamical_matrix_TwogH2, Ud_rotation_matrix
+        return self.HMat_sym, self.Ud_sym
 
     def _generate_numerical_cache_key(
         self, q_vectors_list: List[npt.NDArray[np.float64]], calculation_type: str
@@ -1225,11 +1234,8 @@ class MagCalc:
 
         num_processes = processes if processes is not None else os.cpu_count()
 
-        # Prepare numeric params list corresponding to self.params_sym symbols
-        filtered_h_params = [
-            val for sym, val in zip(self.params_sym, self.hamiltonian_params)
-            if isinstance(sym, sp.Symbol)
-        ]
+        # Prepare numeric params list corresponding to self.params_sym_flat symbols
+        filtered_h_params = list(self.hamiltonian_params)
 
         task_args = [
             (
@@ -1397,7 +1403,7 @@ class MagCalc:
                 q,
                 self.nspins,
                 self.spin_magnitude,
-                [p for p in self.hamiltonian_params if not isinstance(p, (list, tuple, np.ndarray))],
+                list(self.hamiltonian_params),
             )
             for q in q_vectors_list
         ]
@@ -1606,10 +1612,8 @@ class MagCalc:
             opt_vars.append(phi_sym[i])
             
         # Filter out non-symbolic keys (e.g. vector lists) from substitution
-        params_sub_list = []
-        for sym, val in zip(self.params_sym, params):
-             if isinstance(sym, sp.Symbol):
-                  params_sub_list.append((sym, val))
+        # Map all flat symbolic parameters to their numerical values
+        params_sub_list = list(zip(self.params_sym_flat, params))
         
         E_sym_num = E_sym.subs(params_sub_list)
         

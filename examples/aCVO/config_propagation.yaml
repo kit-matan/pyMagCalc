@@ -638,7 +638,7 @@ interactions:
 # 5. Calculation
 calculation:
   cache_mode: 'w'
-  cache_file_base: "CVO_modern_cache"
+  cache_file_base: "CVO_propagation_cache"
 
 # 6. Q-Path (Custom path: (0,1,0) to (0,3,0))
 q_path:
@@ -649,20 +649,20 @@ q_path:
 
 # 7. Output
 output:
-  disp_data_filename: "../../cache/data/CVO_modern_disp_data.npz"
-  sqw_data_filename: "../../cache/data/CVO_modern_sqw_data.npz"
+  disp_data_filename: "../../cache/data/CVO_propagation_disp_data.npz"
+  sqw_data_filename: "../../cache/data/CVO_propagation_sqw_data.npz"
 
 # 8. Plotting
 plotting:
   save_plot: true
-  disp_plot_filename: "../plots/CVO_modern_disp.png"
-  sqw_plot_filename: "../plots/CVO_modern_sqw.png"
+  disp_plot_filename: "CVO_propagation_disp.png"
+  sqw_plot_filename: "CVO_propagation_sqw.png"
   energy_limits_disp: [0, 10]
   energy_limits_sqw: [0, 10]
-  disp_title: "aCVO Dispersion (Modern Config)"
-  sqw_title: "aCVO S(Q,w) (Modern Config)"
-  plot_structure: true # Enable plotting of minimized magnetic structure
-  show_plot: true # Set to true to display plots on screen, false to save only
+  disp_title: "aCVO Dispersion (Propagation Config)"
+  sqw_title: "aCVO S(Q,w) (Propagatioin Config)"
+  plot_structure: false # Enable plotting of minimized magnetic structure
+  show_plot: false # Set to true to display plots on screen, false to save only
 
 # 9. Tasks
 tasks:

@@ -57,11 +57,24 @@ def run_calculation(config_file: str):
     # Initialize Generic Model
     # GenericSpinModel will validate schema internally now!
     
-    # Check for legacy python model file
+    # Check for explicitly defined spin model module (package path)
+    spin_module_name = config.get('spin_model_module')
+    
+    # Check for legacy python model file (file path)
     python_model_rel = config.get('python_model_file')
     spin_model = None
     
-    if python_model_rel:
+    if spin_module_name:
+         import importlib
+         try:
+             spin_model = importlib.import_module(spin_module_name)
+             spin_model.config = config # Inject config
+             logger.info(f"Loaded spin model module: {spin_module_name}")
+         except ImportError as e:
+             logger.error(f"Failed to import spin_model_module '{spin_module_name}': {e}")
+             raise e
+
+    elif python_model_rel:
         import importlib.util
         # Resolve path
         if not os.path.isabs(python_model_rel):
@@ -121,10 +134,15 @@ def run_calculation(config_file: str):
     # 1. Use explicit hamiltonian_params list if provided (Preferred for lists/vectors)
     if 'hamiltonian_params' in final_config:
         params_val = final_config['hamiltonian_params']
-    # 2. Use explicit order if provided
     elif param_order:
         try:
-             params_val = [float(parameters_dict[k]) for k in param_order]
+             params_val = []
+             for k in param_order:
+                 val = parameters_dict[k]
+                 if isinstance(val, (list, tuple, np.ndarray)):
+                      params_val.append([float(x) for x in val])
+                 else:
+                      params_val.append(float(val))
         except KeyError as e:
              logger.error(f"Parameter in order list not found in parameters dict: {e}")
              raise e

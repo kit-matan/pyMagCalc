@@ -350,8 +350,14 @@ class GenericSpinModel:
         # Ensure p is long enough
         param_map = {}
         
-        # Filter out 'S' from keys since runner.py excludes it from p
-        keys = [k for k in param_names if k != 'S']
+        if self.config.get('parameter_order'):
+            # Use explicit order if provided
+            keys = [k for k in self.config['parameter_order'] if k in param_names and k != 'S']
+            # Also append any missing keys? Or assume parameter_order is complete?
+            # MagCalc core assumes parameter_order defines the list.
+        else:
+            # Match runner.py/core.py fallback: insertion order excluding 'S'
+            keys = [k for k in param_names if k != 'S']
         
         for i, name in enumerate(keys):
             if i < len(p):
@@ -407,6 +413,7 @@ class GenericSpinModel:
                 
                 atom_labels = [a.get('label') for a in self.config.get('crystal_structure').get('atoms_uc')]
                 target_pair = interaction.get('pair') # Optional [Label1, Label2]
+                offset = interaction.get('rij_offset') # Optional [nx, ny, nz]
 
                 for i in range(N_atom):
                     # Check first label
@@ -415,14 +422,21 @@ class GenericSpinModel:
                         
                     for j in range(N_atom_ouc):
                         # Check second label (mapped to UC)
+                        j_uc = j % N_atom
                         if target_pair:
-                            j_uc = j % N_atom
                             if atom_labels[j_uc] != target_pair[1]:
                                 continue
                                 
+                        # If offset is provided, check it
+                        if offset is not None:
+                            target_pos = apos[j_uc] + offset[0]*self.unit_cell()[0] + \
+                                         offset[1]*self.unit_cell()[1] + offset[2]*self.unit_cell()[2]
+                            if la.norm(apos_ouc[j] - target_pos) > 0.001:
+                                continue
+
                         d = la.norm(apos[i] - apos_ouc[j])
                         if abs(d - target_dist) < dist_tol:
-                            Jex[i, j] += J_val # Additive to support multiple terms
+                            Jex[i, j] += J_val
                             
             elif itype == 'dm':
                 target_dist = interaction.get('distance')
@@ -447,9 +461,18 @@ class GenericSpinModel:
                     param_counter += 3
                 
                 D_vec = sp.Matrix([Dx, Dy, Dz])
-                
+                offset = interaction.get('rij_offset') or interaction.get('offset_j')
+
                 for i in range(N_atom):
                     for j in range(N_atom_ouc):
+                        # If offset is provided, check it
+                        if offset is not None:
+                            j_uc = j % N_atom
+                            target_pos = apos[j_uc] + offset[0]*self.unit_cell()[0] + \
+                                         offset[1]*self.unit_cell()[1] + offset[2]*self.unit_cell()[2]
+                            if la.norm(apos_ouc[j] - target_pos) > 0.001:
+                                continue
+
                         d = la.norm(apos[i] - apos_ouc[j])
                         if abs(d - target_dist) < dist_tol:
                              # Initialize or Add? Usually initialize. 
@@ -522,7 +545,8 @@ class GenericSpinModel:
                 
                 atom_labels = [a.get('label') for a in self.config.get('crystal_structure').get('atoms_uc')]
                 target_pair = interaction.get('pair') 
-                
+                offset = interaction.get('rij_offset')
+
                 K_vec = sp.Matrix(k_vals)
                 
                 for i in range(N_atom):
@@ -530,17 +554,27 @@ class GenericSpinModel:
                         continue
                         
                     for j in range(N_atom_ouc):
+                        j_uc = j % N_atom
                         if target_pair:
-                            j_uc = j % N_atom
                             if atom_labels[j_uc] != target_pair[1]:
                                 continue
                                 
+                        if offset is not None:
+                            target_pos = apos[j_uc] + offset[0]*self.unit_cell()[0] + \
+                                         offset[1]*self.unit_cell()[1] + offset[2]*self.unit_cell()[2]
+                            if la.norm(apos_ouc[j] - target_pos) > 0.001:
+                                continue
+
                         d = la.norm(apos[i] - apos_ouc[j])
                         if abs(d - target_dist) < dist_tol:
+                             # print(f"DEBUG: Match for {target_pair} at i={i}, j={j}")
                              if Kex[i][j] is None:
                                  Kex[i][j] = K_vec
                              else:
                                  Kex[i][j] += K_vec
+                        elif offset is not None and la.norm(apos_ouc[j] - target_pos) <= 0.001:
+                             # Offset matched but distance failed!
+                             print(f"DEBUG: Offset matched for {target_pair} but distance mismatch! d={d:.4f}, target={target_dist:.4f}")
                      
         # Fill None with zeros
         dnull = sp.Matrix([0, 0, 0])
@@ -731,6 +765,9 @@ class GenericSpinModel:
                  H_dir = orig_H_dir
 
         if H_dir is not None and H_mag_val is not None:
+             # Unwrap H_mag_val if list (e.g. from flattened params)
+             if isinstance(H_mag_val, (list, tuple, np.ndarray)) and len(H_mag_val) == 1:
+                  H_mag_val = H_mag_val[0]
              if isinstance(H_dir, (list, tuple, np.ndarray)) and len(H_dir) == 3:
                   Hx = H_mag_val * H_dir[0]
                   Hy = H_mag_val * H_dir[1]

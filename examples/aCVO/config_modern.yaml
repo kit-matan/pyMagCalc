@@ -69,8 +69,8 @@ parameters:
   J3: 5.0546999999999995
   G1: 0.28
   Dx: 2.67
-  H_dir: [1.0, 0.0, 0.0] # Field Direction (H//c)
-  H_mag: 6.0 # Field Magnitude
+  H_dir: [0.0, 0.0, 1.0] # Field Direction (H//c)
+  H_mag: 20.0 # Field Magnitude
   S: 0.5
 
 # 3. Minimization
@@ -678,7 +678,7 @@ interactions:
 # 5. Calculation
 calculation:
   cache_mode: 'w'
-  cache_file_base: "CVO_modern_cache"
+  cache_file_base: "CVO_modern_20T_cache"
 
 # 6. Q-Path (Custom path: (0,1,0) to (0,3,0))
 q_path:
@@ -695,14 +695,14 @@ output:
 # 8. Plotting
 plotting:
   save_plot: true
-  disp_plot_filename: "../plots/CVO_modern_disp.png"
-  sqw_plot_filename: "../plots/CVO_modern_sqw.png"
+  disp_plot_filename: "CVO_modern_disp.png"
+  sqw_plot_filename: "CVO_modern_sqw.png"
   energy_limits_disp: [0, 10]
   energy_limits_sqw: [0, 10]
   disp_title: "aCVO Dispersion (Modern Config)"
   sqw_title: "aCVO S(Q,w) (Modern Config)"
-  plot_structure: true # Enable plotting of minimized magnetic structure
-  show_plot: true # Set to true to display plots on screen, false to save only
+  plot_structure: false  # Enable plotting of minimized magnetic structure
+  show_plot: false # Set to true to display plots on screen, false to save only
 
 # 9. Tasks
 tasks:

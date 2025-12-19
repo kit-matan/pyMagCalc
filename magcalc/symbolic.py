@@ -124,6 +124,27 @@ def _prepare_hamiltonian(
     return hamiltonian_sym
 
 
+def _is_nonzero_at(matrix, i, j):
+    """Robustly check if a matrix/list-of-lists has a non-zero value at (i, j)."""
+    if matrix is None:
+        return False
+    try:
+        # Try SymPy/NumPy matrix indexing M[i, j]
+        val = matrix[i, j]
+    except:
+        try:
+            # Try list-of-lists indexing M[i][j]
+            val = matrix[i][j]
+        except:
+            return False
+            
+    if val is None or val == 0:
+        return False
+    # If it's a vector (3x1 Matrix), check its content
+    if hasattr(val, "is_zero_matrix"):
+        return not val.is_zero_matrix
+    return True
+
 def _generate_fourier_lookup(
     spin_model_module,
     k_sym: List[sp.Symbol],
@@ -145,13 +166,34 @@ def _generate_fourier_lookup(
     """
     atom_positions_uc = spin_model_module.atom_pos()
     atom_positions_ouc = spin_model_module.atom_pos_ouc()
-    interaction_matrix = spin_model_module.spin_interactions(params_sym)[0]
-
+    
+    # Flexible unpacking: accommodate models returning 1, 2, 3 or more values.
+    # Usually J, DM, K, H_vec, etc.
+    res = spin_model_module.spin_interactions(params_sym)
+    if not isinstance(res, (list, tuple)):
+        res = (res,)
+        
+    # We only care about interaction matrices (shape nspins x nspins_ouc)
+    interaction_matrices = []
+    for item in res:
+        # Heuristic: interaction matrices have nspins "rows"
+        try:
+            if hasattr(item, "rows"): # SymPy Matrix
+                if item.rows == nspins:
+                    interaction_matrices.append(item)
+            elif len(item) == nspins: # List of lists or similar
+                interaction_matrices.append(item)
+        except:
+            pass
+    
     ft_lookup = {}
 
     for i in range(nspins):
         for j in range(nspins_ouc):
-            if interaction_matrix[i, j] == 0:
+            # Check if ANY interaction matrix has a non-zero term for this pair
+            is_nonzero = any(_is_nonzero_at(m, i, j) for m in interaction_matrices)
+
+            if not is_nonzero:
                 continue
 
             disp_vec = atom_positions_uc[i, :] - atom_positions_ouc[j, :]
@@ -548,6 +590,8 @@ def _define_fourier_substitutions_generic(
     atom_pos_uc_cart: np.ndarray,  # (N_uc, 3)
     atom_pos_ouc_cart: np.ndarray,  # (N_ouc, 3)
     Jex_sym_matrix: sp.Matrix,  # (N_uc, N_ouc)
+    DM_sym_matrix: sp.Matrix = None, # (N_uc, N_ouc) of 3x1
+    Kex_sym_matrix: sp.Matrix = None, # (N_uc, N_ouc) of 3x1
 ) -> List[List[sp.Expr]]:
     """
     Define Fourier substitutions for the configuration-driven model.
@@ -559,7 +603,14 @@ def _define_fourier_substitutions_generic(
 
     for i_uc in range(nspins_uc):
         for j_ouc in range(nspins_ouc):
-            if Jex_sym_matrix[i_uc, j_ouc] == 0:
+            # Check if ANY of the interaction matrices have non-zero for this pair
+            is_nonzero = (
+                _is_nonzero_at(Jex_sym_matrix, i_uc, j_ouc)
+                or _is_nonzero_at(DM_sym_matrix, i_uc, j_ouc)
+                or _is_nonzero_at(Kex_sym_matrix, i_uc, j_ouc)
+            )
+
+            if not is_nonzero:
                 continue
 
             disp_vec = atom_pos_uc_cart[i_uc, :] - atom_pos_ouc_cart[j_ouc, :]
