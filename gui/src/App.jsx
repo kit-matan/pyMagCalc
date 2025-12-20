@@ -184,11 +184,12 @@ function App() {
       const response = await fetch('/api/save-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename: 'config_pure.yaml', data: expanded }),
+        body: JSON.stringify({ filename: 'config_designer.yaml', data: expanded }),
       })
 
       if (!response.ok) throw new Error('Failed to save to disk')
-      alert('Saved to config_pure.yaml (expanded) successfully!')
+      const result = await response.json()
+      alert(`Success! Saved to project root as 'config_designer.yaml'.\nFull path: ${result.path}`)
     } catch (err) {
       alert('Error saving: ' + err.message)
     }

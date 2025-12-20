@@ -83,14 +83,15 @@ async def save_config(config: Dict[str, Any]):
     """
     try:
         filename = config.get("filename", "config_pure.yaml")
-        # Ensure we don't write outside the allowed project directories
-        # For simplicity, we save to the project root for now.
-        save_path = os.path.join(os.getcwd(), filename)
+        # Save to the project root (parent directory of gui/)
+        gui_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(gui_dir)
+        save_path = os.path.join(project_root, filename)
         
         with open(save_path, 'w') as f:
             yaml.dump(config["data"], f, sort_keys=False)
             
-        return {"message": f"Saved successfully to {save_path}", "path": save_path}
+        return {"message": f"Saved successfully to project root as {filename}", "path": save_path}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
