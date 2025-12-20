@@ -1,0 +1,44 @@
+crystal_structure:
+  dimensionality: 2
+  lattice_parameters:
+    a: 7.33
+    b: 7.33
+    c: 17.1374
+    alpha: 90
+    beta: 90
+    gamma: 120
+    space_group: 163
+  wyckoff_atoms:
+  - label: Fe
+    pos:
+    - 0.5
+    - 0
+    - 0
+    spin_S: 2.5
+  magnetic_elements:
+  - Fe
+interactions:
+  symmetry_rules:
+  - type: heisenberg
+    ref_pair:
+    - Fe0
+    - Fe1
+    distance: 3.665
+    value: JJJJ1J
+  - type: dm
+    ref_pair:
+    - Fe1
+    - Fe2
+    distance: 3.665
+    value: 0,-()JJ,-Dz
+parameters:
+  S: 2.5
+  H_mag: 0
+  H_dir:
+  - 0
+  - 0
+  - 1
+tasks:
+  run_minimization: true
+  run_dispersion: true
+  plot_dispersion: true
