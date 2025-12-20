@@ -108,34 +108,15 @@ function App() {
     reader.readAsText(file)
   }
 
-  const exportYaml = () => {
-    // Structure the output for the Symmetry Builder
-    const output = {
+  const exportYaml = async () => {
+    // Structure the input for the Expansion Backend
+    const input = {
       crystal_structure: {
-        dimensionality: 2, // Defaulting to 2D as requested for KFe3J-like systems
-        lattice_parameters: {
-          a: config.lattice.a,
-          b: config.lattice.b,
-          c: config.lattice.c,
-          alpha: config.lattice.alpha,
-          beta: config.lattice.beta,
-          gamma: config.lattice.gamma,
-          space_group: config.lattice.space_group
-        },
-        wyckoff_atoms: config.wyckoff_atoms.map(a => ({
-          label: a.label,
-          pos: a.pos,
-          spin_S: a.spin_S // Changed from 'spin' to 'spin_S' to match state
-        })),
-        magnetic_elements: [...new Set(config.wyckoff_atoms.map(a => a.label.replace(/[0-9]/g, '')))]
+        lattice_parameters: config.lattice,
+        wyckoff_atoms: config.wyckoff_atoms
       },
       interactions: {
-        symmetry_rules: config.symmetry_interactions.map(i => ({
-          type: i.type,
-          ref_pair: i.ref_pair,
-          distance: i.distance,
-          value: i.value
-        }))
+        symmetry_rules: config.symmetry_interactions
       },
       parameters: config.parameters,
       minimization: {
@@ -150,43 +131,64 @@ function App() {
       }
     }
 
-    const data = yaml.dump(output)
-    const blob = new Blob([data], { type: 'text/yaml' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = 'config_pure.yaml'
-    link.click()
+    try {
+      const response = await fetch('/api/expand-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: input }),
+      })
+
+      if (!response.ok) throw new Error('Failed to expand config')
+
+      const expanded = await response.json()
+      const data = yaml.dump(expanded)
+      const blob = new Blob([data], { type: 'text/yaml' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'config_expanded.yaml'
+      link.click()
+    } catch (err) {
+      alert('Error expanding config: ' + err.message)
+    }
   }
 
   const handleSaveToDisk = async () => {
     try {
-      const output = {
+      const input = {
         crystal_structure: {
-          dimensionality: 2,
           lattice_parameters: config.lattice,
-          wyckoff_atoms: config.wyckoff_atoms.map(a => ({
-            label: a.label,
-            pos: a.pos,
-            spin_S: a.spin_S
-          })),
-          magnetic_elements: [...new Set(config.wyckoff_atoms.map(a => a.label.replace(/[0-9]/g, '')))]
+          wyckoff_atoms: config.wyckoff_atoms
         },
         interactions: {
           symmetry_rules: config.symmetry_interactions
         },
         parameters: config.parameters,
-        tasks: config.tasks
+        tasks: config.tasks,
+        minimization: {
+          enabled: true,
+          method: "L-BFGS-B",
+          maxiter: 3000
+        }
       }
+
+      const expandResponse = await fetch('/api/expand-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: input }),
+      })
+
+      if (!expandResponse.ok) throw new Error('Failed to expand config before saving')
+      const expanded = await expandResponse.json()
 
       const response = await fetch('/api/save-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename: 'config_pure.yaml', data: output }),
+        body: JSON.stringify({ filename: 'config_pure.yaml', data: expanded }),
       })
 
-      if (!response.ok) throw new Error('Failed to save')
-      alert('Saved to config_pure.yaml successfully!')
+      if (!response.ok) throw new Error('Failed to save to disk')
+      alert('Saved to config_pure.yaml (expanded) successfully!')
     } catch (err) {
       alert('Error saving: ' + err.message)
     }
