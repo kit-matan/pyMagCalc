@@ -12,7 +12,7 @@ crystal_structure:
     alpha: 90
     beta: 90
     gamma: 120
-  atoms_uc:
+  atoms_uc: # expressed in fractional coordinates
     - label: Fe1
       pos: [0.0, 0.0, 0.0]
       spin_S: 2.5
@@ -148,8 +148,8 @@ plotting:
   energy_limits_sqw: [0, 20]
   sqw_title: "S(Q,w) - Modern Config"
   disp_title: "Dispersion - Modern Config"
-  show_plot: true
-  plot_structure: true
+  show_plot: false  
+  plot_structure: false
 
 # 7. Tasks
 tasks:

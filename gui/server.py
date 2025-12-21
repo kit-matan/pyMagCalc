@@ -28,6 +28,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/health")
+async def health_check():
+    return {"status": "ok"}
+
 @app.post("/parse-cif")
 async def parse_cif(file: UploadFile = File(...)):
     """
@@ -83,16 +87,26 @@ async def save_config(config: Dict[str, Any]):
     """
     try:
         filename = config.get("filename", "config_pure.yaml")
+        # Sanitize filename to be relative to project root
+        filename = filename.lstrip("/") 
+        
         # Save to the project root (parent directory of gui/)
         gui_dir = os.path.dirname(os.path.abspath(__file__))
         project_root = os.path.dirname(gui_dir)
         save_path = os.path.join(project_root, filename)
+        
+        print(f"Saving config to: {save_path}")
+        
+        # Ensure parent directories exist
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
         
         with open(save_path, 'w') as f:
             yaml.dump(config["data"], f, sort_keys=False)
             
         return {"message": f"Saved successfully to project root as {filename}", "path": save_path}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/expand-config")
@@ -176,6 +190,7 @@ async def expand_config(config: Dict[str, Any]):
             "interactions": final_inters,
             "parameters": builder.config["parameters"],
             "tasks": builder.config["tasks"],
+            "q_path": data.get("q_path", {}),
             "minimization": data.get("minimization", {}),
             "plotting": data.get("plotting", {})
         }

@@ -1,36 +1,750 @@
 crystal_structure:
-  dimensionality: 2
-  lattice_parameters:
-    a: 7.33
-    b: 7.33
-    c: 17.1374
-    alpha: 90
-    beta: 90
-    gamma: 120
-    space_group: 163
-  wyckoff_atoms:
-  - label: Fe
+  lattice_vectors:
+  - - 7.33
+    - 0
+    - 0
+  - - -3.6649999999999987
+    - 6.347966209739936
+    - 0
+  - - 1.0493631027853925e-15
+    - 1.8175502096124213e-15
+    - 17.1374
+  atoms_uc:
+  - label: Fe0
     pos:
     - 0.5
     - 0
     - 0
     spin_S: 2.5
+  - label: Fe1
+    pos:
+    - 0
+    - 0.5
+    - 0
+    spin_S: 2.5
+  - label: Fe2
+    pos:
+    - 0.5
+    - 0.5
+    - 0
+    spin_S: 2.5
+  - label: Fe3
+    pos:
+    - 0
+    - 0.5
+    - 0.5
+    spin_S: 2.5
+  - label: Fe4
+    pos:
+    - 0.5
+    - 0
+    - 0.5
+    spin_S: 2.5
+  - label: Fe5
+    pos:
+    - 0.5
+    - 0.5
+    - 0.5
+    spin_S: 2.5
   magnetic_elements:
   - Fe
 interactions:
-  symmetry_rules:
-  - type: heisenberg
-    ref_pair:
-    - Fe0
-    - Fe1
-    distance: 3.665
-    value: JJJJ1J
-  - type: dm
-    ref_pair:
-    - Fe1
-    - Fe2
-    distance: 3.665
-    value: 0,-()JJ,-Dz
+- type: heisenberg
+  pair:
+  - Fe0
+  - Fe1
+  rij_offset:
+  - 0
+  - -1
+  - 0
+  value: J1
+  distance: 3.665
+- type: heisenberg
+  pair:
+  - Fe1
+  - Fe0
+  rij_offset:
+  - 0
+  - 1
+  - 0
+  value: J1
+  distance: 3.665
+- type: heisenberg
+  pair:
+  - Fe0
+  - Fe1
+  rij_offset:
+  - 1
+  - 0
+  - 0
+  value: J1
+  distance: 3.665
+- type: heisenberg
+  pair:
+  - Fe1
+  - Fe0
+  rij_offset:
+  - -1
+  - 0
+  - 0
+  value: J1
+  distance: 3.665
+- type: heisenberg
+  pair:
+  - Fe1
+  - Fe2
+  rij_offset:
+  - 0
+  - 0
+  - 0
+  value: J1
+  distance: 3.665
+- type: heisenberg
+  pair:
+  - Fe2
+  - Fe1
+  rij_offset:
+  - 0
+  - 0
+  - 0
+  value: J1
+  distance: 3.665
+- type: heisenberg
+  pair:
+  - Fe1
+  - Fe2
+  rij_offset:
+  - -1
+  - 0
+  - 0
+  value: J1
+  distance: 3.665
+- type: heisenberg
+  pair:
+  - Fe2
+  - Fe1
+  rij_offset:
+  - 1
+  - 0
+  - 0
+  value: J1
+  distance: 3.665
+- type: heisenberg
+  pair:
+  - Fe2
+  - Fe0
+  rij_offset:
+  - 0
+  - 1
+  - 0
+  value: J1
+  distance: 3.665
+- type: heisenberg
+  pair:
+  - Fe0
+  - Fe2
+  rij_offset:
+  - 0
+  - -1
+  - 0
+  value: J1
+  distance: 3.665
+- type: heisenberg
+  pair:
+  - Fe2
+  - Fe0
+  rij_offset:
+  - 0
+  - 0
+  - 0
+  value: J1
+  distance: 3.665
+- type: heisenberg
+  pair:
+  - Fe0
+  - Fe2
+  rij_offset:
+  - 0
+  - 0
+  - 0
+  value: J1
+  distance: 3.665
+- type: heisenberg
+  pair:
+  - Fe3
+  - Fe4
+  rij_offset:
+  - 0
+  - 1
+  - 0
+  value: J1
+  distance: 3.665
+- type: heisenberg
+  pair:
+  - Fe4
+  - Fe3
+  rij_offset:
+  - 0
+  - -1
+  - 0
+  value: J1
+  distance: 3.665
+- type: heisenberg
+  pair:
+  - Fe3
+  - Fe4
+  rij_offset:
+  - -1
+  - 0
+  - 0
+  value: J1
+  distance: 3.665
+- type: heisenberg
+  pair:
+  - Fe4
+  - Fe3
+  rij_offset:
+  - 1
+  - 0
+  - 0
+  value: J1
+  distance: 3.665
+- type: heisenberg
+  pair:
+  - Fe4
+  - Fe5
+  rij_offset:
+  - 0
+  - -1
+  - 0
+  value: J1
+  distance: 3.665
+- type: heisenberg
+  pair:
+  - Fe5
+  - Fe4
+  rij_offset:
+  - 0
+  - 1
+  - 0
+  value: J1
+  distance: 3.665
+- type: heisenberg
+  pair:
+  - Fe4
+  - Fe5
+  rij_offset:
+  - 0
+  - 0
+  - 0
+  value: J1
+  distance: 3.665
+- type: heisenberg
+  pair:
+  - Fe5
+  - Fe4
+  rij_offset:
+  - 0
+  - 0
+  - 0
+  value: J1
+  distance: 3.665
+- type: heisenberg
+  pair:
+  - Fe5
+  - Fe3
+  rij_offset:
+  - 0
+  - 0
+  - 0
+  value: J1
+  distance: 3.665
+- type: heisenberg
+  pair:
+  - Fe3
+  - Fe5
+  rij_offset:
+  - 0
+  - 0
+  - 0
+  value: J1
+  distance: 3.665
+- type: heisenberg
+  pair:
+  - Fe5
+  - Fe3
+  rij_offset:
+  - 1
+  - 0
+  - 0
+  value: J1
+  distance: 3.665
+- type: heisenberg
+  pair:
+  - Fe3
+  - Fe5
+  rij_offset:
+  - -1
+  - 0
+  - 0
+  value: J1
+  distance: 3.665
+- type: dm_manual
+  pair:
+  - Fe1
+  - Fe2
+  atom_i: 1
+  atom_j: 2
+  offset_j:
+  - -1
+  - 0
+  - 0
+  rij_offset:
+  - -1
+  - 0
+  - 0
+  value:
+  - 2.80376405998579e-17*Dy - 1.6103277430163e-33*Dz
+  - -1.0*Dy - 2.41435584397759e-33*Dz
+  - -1.0*Dz
+  distance: 3.665
+- type: dm_manual
+  pair:
+  - Fe2
+  - Fe1
+  atom_i: 2
+  atom_j: 1
+  offset_j:
+  - 1
+  - 0
+  - 0
+  rij_offset:
+  - 1
+  - 0
+  - 0
+  value:
+  - -2.80376405998579e-17*Dy + 1.6103277430163e-33*Dz
+  - 1.0*Dy + 2.41435584397759e-33*Dz
+  - 1.0*Dz
+  distance: 3.665
+- type: dm_manual
+  pair:
+  - Fe1
+  - Fe2
+  atom_i: 1
+  atom_j: 2
+  offset_j:
+  - 0
+  - 0
+  - 0
+  rij_offset:
+  - 0
+  - 0
+  - 0
+  value:
+  - 2.80376405998579e-17*Dy - 1.6103277430163e-33*Dz
+  - -1.0*Dy - 2.41435584397759e-33*Dz
+  - -1.0*Dz
+  distance: 3.665
+- type: dm_manual
+  pair:
+  - Fe2
+  - Fe1
+  atom_i: 2
+  atom_j: 1
+  offset_j:
+  - 0
+  - 0
+  - 0
+  rij_offset:
+  - 0
+  - 0
+  - 0
+  value:
+  - -2.80376405998579e-17*Dy + 1.6103277430163e-33*Dz
+  - 1.0*Dy + 2.41435584397759e-33*Dz
+  - 1.0*Dz
+  distance: 3.665
+- type: dm_manual
+  pair:
+  - Fe2
+  - Fe0
+  atom_i: 2
+  atom_j: 0
+  offset_j:
+  - 0
+  - 0
+  - 0
+  rij_offset:
+  - 0
+  - 0
+  - 0
+  value:
+  - 0.866025403784439*Dy - 1.83697019872103e-16*Dz
+  - 0.5*Dy - 1.06057523872491e-16*Dz
+  - -1.0*Dz
+  distance: 3.665
+- type: dm_manual
+  pair:
+  - Fe0
+  - Fe2
+  atom_i: 0
+  atom_j: 2
+  offset_j:
+  - 0
+  - 0
+  - 0
+  rij_offset:
+  - 0
+  - 0
+  - 0
+  value:
+  - -0.866025403784439*Dy + 1.83697019872103e-16*Dz
+  - -0.5*Dy + 1.06057523872491e-16*Dz
+  - 1.0*Dz
+  distance: 3.665
+- type: dm_manual
+  pair:
+  - Fe2
+  - Fe0
+  atom_i: 2
+  atom_j: 0
+  offset_j:
+  - 0
+  - 1
+  - 0
+  rij_offset:
+  - 0
+  - 1
+  - 0
+  value:
+  - 0.866025403784439*Dy - 1.83697019872103e-16*Dz
+  - 0.5*Dy - 1.06057523872491e-16*Dz
+  - -1.0*Dz
+  distance: 3.665
+- type: dm_manual
+  pair:
+  - Fe0
+  - Fe2
+  atom_i: 0
+  atom_j: 2
+  offset_j:
+  - 0
+  - -1
+  - 0
+  rij_offset:
+  - 0
+  - -1
+  - 0
+  value:
+  - -0.866025403784439*Dy + 1.83697019872103e-16*Dz
+  - -0.5*Dy + 1.06057523872491e-16*Dz
+  - 1.0*Dz
+  distance: 3.665
+- type: dm_manual
+  pair:
+  - Fe0
+  - Fe1
+  atom_i: 0
+  atom_j: 1
+  offset_j:
+  - 1
+  - 0
+  - 0
+  rij_offset:
+  - 1
+  - 0
+  - 0
+  value:
+  - -0.866025403784439*Dy - 5.09141343193295e-32*Dz
+  - 0.5*Dy - 2.12115047744981e-16*Dz
+  - -1.0*Dz
+  distance: 3.665
+- type: dm_manual
+  pair:
+  - Fe1
+  - Fe0
+  atom_i: 1
+  atom_j: 0
+  offset_j:
+  - -1
+  - 0
+  - 0
+  rij_offset:
+  - -1
+  - 0
+  - 0
+  value:
+  - 0.866025403784439*Dy + 5.09141343193295e-32*Dz
+  - -0.5*Dy + 2.12115047744981e-16*Dz
+  - 1.0*Dz
+  distance: 3.665
+- type: dm_manual
+  pair:
+  - Fe0
+  - Fe1
+  atom_i: 0
+  atom_j: 1
+  offset_j:
+  - 0
+  - -1
+  - 0
+  rij_offset:
+  - 0
+  - -1
+  - 0
+  value:
+  - -0.866025403784439*Dy - 5.09141343193295e-32*Dz
+  - 0.5*Dy - 2.12115047744981e-16*Dz
+  - -1.0*Dz
+  distance: 3.665
+- type: dm_manual
+  pair:
+  - Fe1
+  - Fe0
+  atom_i: 1
+  atom_j: 0
+  offset_j:
+  - 0
+  - 1
+  - 0
+  rij_offset:
+  - 0
+  - 1
+  - 0
+  value:
+  - 0.866025403784439*Dy + 5.09141343193295e-32*Dz
+  - -0.5*Dy + 2.12115047744981e-16*Dz
+  - 1.0*Dz
+  distance: 3.665
+- type: dm_manual
+  pair:
+  - Fe4
+  - Fe5
+  atom_i: 4
+  atom_j: 5
+  offset_j:
+  - 0
+  - 0
+  - 0
+  rij_offset:
+  - 0
+  - 0
+  - 0
+  value:
+  - 0.866025403784439*Dy + 1.6103277430163e-33*Dz
+  - 0.5*Dy + 2.41435584397759e-33*Dz
+  - 1.0*Dz
+  distance: 3.665
+- type: dm_manual
+  pair:
+  - Fe5
+  - Fe4
+  atom_i: 5
+  atom_j: 4
+  offset_j:
+  - 0
+  - 0
+  - 0
+  rij_offset:
+  - 0
+  - 0
+  - 0
+  value:
+  - -0.866025403784439*Dy - 1.6103277430163e-33*Dz
+  - -0.5*Dy - 2.41435584397759e-33*Dz
+  - -1.0*Dz
+  distance: 3.665
+- type: dm_manual
+  pair:
+  - Fe4
+  - Fe5
+  atom_i: 4
+  atom_j: 5
+  offset_j:
+  - 0
+  - -1
+  - 0
+  rij_offset:
+  - 0
+  - -1
+  - 0
+  value:
+  - 0.866025403784439*Dy + 1.6103277430163e-33*Dz
+  - 0.5*Dy + 2.41435584397759e-33*Dz
+  - 1.0*Dz
+  distance: 3.665
+- type: dm_manual
+  pair:
+  - Fe5
+  - Fe4
+  atom_i: 5
+  atom_j: 4
+  offset_j:
+  - 0
+  - 1
+  - 0
+  rij_offset:
+  - 0
+  - 1
+  - 0
+  value:
+  - -0.866025403784439*Dy - 1.6103277430163e-33*Dz
+  - -0.5*Dy - 2.41435584397759e-33*Dz
+  - -1.0*Dz
+  distance: 3.665
+- type: dm_manual
+  pair:
+  - Fe5
+  - Fe3
+  atom_i: 5
+  atom_j: 3
+  offset_j:
+  - 1
+  - 0
+  - 0
+  rij_offset:
+  - 1
+  - 0
+  - 0
+  value:
+  - -4.47783929578535e-16*Dy + 5.09141343193295e-32*Dz
+  - -1.0*Dy + 2.12115047744981e-16*Dz
+  - 1.0*Dz
+  distance: 3.665
+- type: dm_manual
+  pair:
+  - Fe3
+  - Fe5
+  atom_i: 3
+  atom_j: 5
+  offset_j:
+  - -1
+  - 0
+  - 0
+  rij_offset:
+  - -1
+  - 0
+  - 0
+  value:
+  - 4.47783929578535e-16*Dy - 5.09141343193295e-32*Dz
+  - 1.0*Dy - 2.12115047744981e-16*Dz
+  - -1.0*Dz
+  distance: 3.665
+- type: dm_manual
+  pair:
+  - Fe5
+  - Fe3
+  atom_i: 5
+  atom_j: 3
+  offset_j:
+  - 0
+  - 0
+  - 0
+  rij_offset:
+  - 0
+  - 0
+  - 0
+  value:
+  - -4.47783929578535e-16*Dy + 5.09141343193295e-32*Dz
+  - -1.0*Dy + 2.12115047744981e-16*Dz
+  - 1.0*Dz
+  distance: 3.665
+- type: dm_manual
+  pair:
+  - Fe3
+  - Fe5
+  atom_i: 3
+  atom_j: 5
+  offset_j:
+  - 0
+  - 0
+  - 0
+  rij_offset:
+  - 0
+  - 0
+  - 0
+  value:
+  - 4.47783929578535e-16*Dy - 5.09141343193295e-32*Dz
+  - 1.0*Dy - 2.12115047744981e-16*Dz
+  - -1.0*Dz
+  distance: 3.665
+- type: dm_manual
+  pair:
+  - Fe3
+  - Fe4
+  atom_i: 3
+  atom_j: 4
+  offset_j:
+  - -1
+  - 0
+  - 0
+  rij_offset:
+  - -1
+  - 0
+  - 0
+  value:
+  - -0.866025403784438*Dy + 1.83697019872103e-16*Dz
+  - 0.5*Dy + 1.06057523872491e-16*Dz
+  - 1.0*Dz
+  distance: 3.665
+- type: dm_manual
+  pair:
+  - Fe4
+  - Fe3
+  atom_i: 4
+  atom_j: 3
+  offset_j:
+  - 1
+  - 0
+  - 0
+  rij_offset:
+  - 1
+  - 0
+  - 0
+  value:
+  - 0.866025403784438*Dy - 1.83697019872103e-16*Dz
+  - -0.5*Dy - 1.06057523872491e-16*Dz
+  - -1.0*Dz
+  distance: 3.665
+- type: dm_manual
+  pair:
+  - Fe3
+  - Fe4
+  atom_i: 3
+  atom_j: 4
+  offset_j:
+  - 0
+  - 1
+  - 0
+  rij_offset:
+  - 0
+  - 1
+  - 0
+  value:
+  - -0.866025403784438*Dy + 1.83697019872103e-16*Dz
+  - 0.5*Dy + 1.06057523872491e-16*Dz
+  - 1.0*Dz
+  distance: 3.665
+- type: dm_manual
+  pair:
+  - Fe4
+  - Fe3
+  atom_i: 4
+  atom_j: 3
+  offset_j:
+  - 0
+  - -1
+  - 0
+  rij_offset:
+  - 0
+  - -1
+  - 0
+  value:
+  - 0.866025403784438*Dy - 1.83697019872103e-16*Dz
+  - -0.5*Dy - 1.06057523872491e-16*Dz
+  - -1.0*Dz
+  distance: 3.665
 parameters:
   S: 2.5
   H_mag: 0
@@ -42,3 +756,8 @@ tasks:
   run_minimization: true
   run_dispersion: true
   plot_dispersion: true
+minimization:
+  enabled: true
+  method: L-BFGS-B
+  maxiter: 3000
+plotting: {}

@@ -234,6 +234,31 @@ nav {
   letter-spacing: 0.05em;
 }
 
+.filename-input-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  margin-left: 10px;
+}
+
+.filename-input {
+  background: transparent;
+  border: none;
+  color: var(--color-accent);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  width: 180px;
+  outline: none;
+}
+
+.filename-input::placeholder {
+  color: rgba(255, 255, 255, 0.3);
+}
+
 .luxury-table td,
 .data-table td {
   padding: 8px 16px;
@@ -348,4 +373,43 @@ nav {
 
 .text-accent {
   color: var(--accent-color);
+}
+
+.notification {
+  position: fixed;
+  bottom: 2rem;
+  right: 2rem;
+  padding: 1rem 2rem;
+  border-radius: 12px;
+  background: rgba(30, 41, 59, 0.8);
+  backdrop-filter: blur(12px);
+  z-index: 1000;
+  animation: slide-up 0.3s ease-out;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  font-weight: 500;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.notification.success {
+  background: rgba(16, 185, 129, 0.2);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: #10b981;
+}
+
+.notification.error {
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+}
+
+@keyframes slide-up {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }

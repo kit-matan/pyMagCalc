@@ -7,6 +7,15 @@ import './App.css'
 function App() {
   const [activeTab, setActiveTab] = useState('structure')
   const [showVisualizer, setShowVisualizer] = useState(true)
+  const [designerFilename, setDesignerFilename] = useState('config_designer.yaml')
+  const [notification, setNotification] = useState(null)
+
+  const showNotify = (msg, type = 'success') => {
+    console.log(`[Notification] ${type}: ${msg}`)
+    setNotification({ msg, type })
+    setTimeout(() => setNotification(null), 5000)
+  }
+
   const [config, setConfig] = useState({
     lattice: { a: 7.33, b: 7.33, c: 17.1374, alpha: 90, beta: 90, gamma: 120, space_group: 163 },
     wyckoff_atoms: [
@@ -16,7 +25,7 @@ function App() {
       { type: 'heisenberg', ref_pair: ['Fe0', 'Fe1'], distance: 3.665, value: 'J1' },
       { type: 'dm', ref_pair: ['Fe1', 'Fe2'], distance: 3.665, value: ['0', '-Dy', '-Dz'] }
     ],
-    parameters: { S: 2.5, H_mag: 0.0, H_dir: [0, 0, 1] },
+    parameters: { S: 2.5, H_mag: 0.0, H_dir: [0, 0, 1], J1: -1.0, Dy: 0.1, Dz: -0.1 },
     tasks: { run_minimization: true, run_dispersion: true, plot_dispersion: true }
   })
 
@@ -132,46 +141,66 @@ function App() {
     }
 
     try {
+      console.log('Fetching expanded config for export...')
       const response = await fetch('/api/expand-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ data: input }),
       })
 
-      if (!response.ok) throw new Error('Failed to expand config')
+      if (!response.ok) throw new Error(`Server returned ${response.status}`)
 
       const expanded = await response.json()
+      console.log('Expansion successful, generating file...')
       const data = yaml.dump(expanded)
       const blob = new Blob([data], { type: 'text/yaml' })
       const url = URL.createObjectURL(blob)
+
       const link = document.createElement('a')
       link.href = url
-      link.download = 'config_expanded.yaml'
+      link.download = designerFilename.endsWith('.yaml') ? designerFilename : `${designerFilename}.yaml`
+      document.body.appendChild(link)
       link.click()
+      document.body.removeChild(link)
+
+      URL.revokeObjectURL(url)
+      showNotify('Configuration exported successfully.')
     } catch (err) {
-      alert('Error expanding config: ' + err.message)
+      console.error('Export error:', err)
+      showNotify('Export failed: ' + err.message, 'error')
     }
   }
 
   const handleSaveToDisk = async () => {
-    try {
-      const input = {
-        crystal_structure: {
-          lattice_parameters: config.lattice,
-          wyckoff_atoms: config.wyckoff_atoms
-        },
-        interactions: {
-          symmetry_rules: config.symmetry_interactions
-        },
-        parameters: config.parameters,
-        tasks: config.tasks,
-        minimization: {
-          enabled: true,
-          method: "L-BFGS-B",
-          maxiter: 3000
-        }
+    const input = {
+      crystal_structure: {
+        lattice_parameters: config.lattice,
+        wyckoff_atoms: config.wyckoff_atoms
+      },
+      interactions: {
+        symmetry_rules: config.symmetry_interactions
+      },
+      parameters: config.parameters,
+      tasks: config.tasks,
+      q_path: {
+        Start: [0, 0, 0],
+        End: [0.5, 0.5, 0.5],
+        path: ["Start", "End"],
+        points_per_segment: 100
+      },
+      plotting: {
+        save_plot: true,
+        show_plot: false
+      },
+      minimization: {
+        enabled: true,
+        method: "L-BFGS-B",
+        maxiter: 3000
       }
+    }
 
+    try {
+      console.log('Sending save request to backend...')
       const expandResponse = await fetch('/api/expand-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -184,14 +213,15 @@ function App() {
       const response = await fetch('/api/save-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename: 'config_designer.yaml', data: expanded }),
+        body: JSON.stringify({ filename: designerFilename, data: expanded }),
       })
 
       if (!response.ok) throw new Error('Failed to save to disk')
       const result = await response.json()
-      alert(`Success! Saved to project root as 'config_designer.yaml'.\nFull path: ${result.path}`)
+      showNotify(`Success! Saved to ${result.path}`)
     } catch (err) {
-      alert('Error saving: ' + err.message)
+      console.error('Save error:', err)
+      showNotify('Error saving: ' + err.message, 'error')
     }
   }
 
@@ -213,7 +243,19 @@ function App() {
           </div>
           <div>
             <h1 className="vibrant-text">MagCalc Pure Designer</h1>
-            <span className="version-tag">STABLE v2.0</span>
+            <div className="flex-gap-xs align-center">
+              <span className="version-tag">STABLE v2.0</span>
+              <div className="filename-input-wrapper glass">
+                <Code size={12} className="opacity-60" />
+                <input
+                  type="text"
+                  value={designerFilename}
+                  onChange={(e) => setDesignerFilename(e.target.value)}
+                  placeholder="filename.yaml"
+                  className="filename-input"
+                />
+              </div>
+            </div>
           </div>
         </div>
         <div className="header-actions">
@@ -332,9 +374,10 @@ function App() {
               <div className="flex-between mb-md">
                 <h2 className="section-title">Bonding Rules</h2>
                 <button className="btn btn-primary btn-sm" onClick={() => {
-                  const next = [...config.symmetry_interactions];
-                  next.push({ type: 'heisenberg', distance: 3.0, value: 'J1' });
-                  setConfig({ ...config, symmetry_interactions: next });
+                  const nextRules = [...config.symmetry_interactions, { type: 'heisenberg', distance: 3.0, value: 'J1' }];
+                  const nextParams = { ...config.parameters };
+                  if (!nextParams.J1) nextParams.J1 = 0.0;
+                  setConfig({ ...config, symmetry_interactions: nextRules, parameters: nextParams });
                 }}><Plus size={14} /> Add Rule</button>
               </div>
               <div className="card">
@@ -385,7 +428,7 @@ function App() {
           {activeTab === 'params' && (
             <div className="form-section">
               <h2 className="section-title">Environment Settings</h2>
-              <div className="card">
+              <div className="card mb-lg">
                 <div className="grid-form">
                   <div className="input-group">
                     <label>Applied Field (T)</label>
@@ -401,7 +444,73 @@ function App() {
                       ))}
                     </div>
                   </div>
+                  <div className="input-group">
+                    <label>Default Spin (S)</label>
+                    <input type="number" step="0.5" value={config.parameters.S} onChange={(e) => updateField('parameters', 'S', parseFloat(e.target.value))} />
+                  </div>
                 </div>
+              </div>
+
+              <div className="flex-between mb-md">
+                <h2 className="section-title">Model Parameters</h2>
+                <button className="btn btn-primary btn-sm" onClick={() => {
+                  const name = prompt("Enter parameter name (e.g. J1):")
+                  if (name) {
+                    setConfig(prev => ({
+                      ...prev,
+                      parameters: { ...prev.parameters, [name]: 0.0 }
+                    }))
+                  }
+                }}><Plus size={14} /> Add Parameter</button>
+              </div>
+              <div className="card">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Symbol</th>
+                      <th>Value</th>
+                      <th style={{ width: '40px' }}></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(config.parameters)
+                      .filter(([key]) => !['S', 'H_mag', 'H_dir'].includes(key))
+                      .map(([key, value]) => (
+                        <tr key={key}>
+                          <td className="mono">{key}</td>
+                          <td>
+                            <input
+                              type="number"
+                              step="0.001"
+                              className="table-input"
+                              value={value}
+                              onChange={(e) => {
+                                setConfig(prev => ({
+                                  ...prev,
+                                  parameters: { ...prev.parameters, [key]: parseFloat(e.target.value) }
+                                }))
+                              }}
+                            />
+                          </td>
+                          <td>
+                            <button
+                              className="icon-btn text-error"
+                              onClick={() => {
+                                const next = { ...config.parameters }
+                                delete next[key]
+                                setConfig(prev => ({ ...prev, parameters: next }))
+                              }}
+                            ><Trash2 size={14} /></button>
+                          </td>
+                        </tr>
+                      ))}
+                    {Object.keys(config.parameters).filter(k => !['S', 'H_mag', 'H_dir'].includes(k)).length === 0 && (
+                      <tr>
+                        <td colSpan="3" className="center text-secondary py-md">No model parameters defined.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
@@ -415,6 +524,11 @@ function App() {
           </aside>
         )}
       </main>
+      {notification && (
+        <div className={`notification ${notification.type}`}>
+          {notification.msg}
+        </div>
+      )}
     </div>
   )
 }

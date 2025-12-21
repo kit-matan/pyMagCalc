@@ -545,12 +545,12 @@ q_path:
   - G
   points_per_segment: 200
 output:
-  disp_data_filename: ../cache/data/KFe3J_pure_disp.npz
-  sqw_data_filename: ../cache/data/KFe3J_pure_sqw.npz
+  disp_data_filename: "../../cache/data/KFe3J_pure_disp.npz"
+  sqw_data_filename: "../../cache/data/KFe3J_pure_sqw.npz"
 plotting:
   save_plot: true
-  disp_plot_filename: ../plots/KFe3J_pure_disp.png
-  sqw_plot_filename: ../plots/KFe3J_pure_sqw.png
+  disp_plot_filename: "../plots/KFe3J_pure_disp.png"
+  sqw_plot_filename: "../plots/KFe3J_pure_sqw.png"
   show_plot: false
   energy_limits_disp:
   - 0
