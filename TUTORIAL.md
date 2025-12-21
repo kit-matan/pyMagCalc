@@ -18,12 +18,27 @@ magcalc --help
 
 ---
 
-## 2. Quick Start (CLI Workflow)
+## 2. Quick Start (modern workflow)
 
-The fastest way to get results is using the `magcalc` CLI.
+The fastest way to get results is using the **MagCalc Pure Designer** GUI followed by the CLI.
 
-### Step 1: Initialize a Project
-Create a new configuration template:
+### Step 0: Using the MagCalc Designer
+The Designer allows you to generate robust, symmetry-consistent configurations without manual scripting.
+
+1.  **Start Services**:
+    ```bash
+    python3 gui/server.py &
+    npm --prefix gui run dev
+    ```
+2.  **Design**:
+    -   Open [http://localhost:5173/](http://localhost:5173/).
+    -   **Load CIF**: Import your crystal structure.
+    -   **Define Rules**: Add Bonding Rules (e.g., "Heisenberg" or "DM"). The system automatically expands these based on the structure's space group.
+    -   **Configure Tasks**: Enable "Run Dispersion" or "Run S(Q,w)" in the Tasks tab.
+3.  **Save**: Click **"Save to Disk"**. This creates an expanded `config_designer.yaml` in your workspace root.
+
+### Step 1: Initialize a Project (Legacy / Manual)
+If you prefer manual configuration, create a new template:
 
 ```bash
 mkdir my_project

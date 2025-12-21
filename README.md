@@ -9,6 +9,7 @@
 
 ## Key Features
 
+*   **MagCalc Pure Designer:** Interactive web GUI for designing models from CIF files and symmetry-based bonding rules.
 *   **Diffraction Physics:** Calculates spin-wave dispersion and neutron scattering intensity (S(Q,ω)) with magnetic form factor and polarization factor corrections.
 *   **Energy Minimization:** Numerically finds the classical magnetic ground state by minimizing the Hamiltonian energy, supporting both simple and complex (e.g., canted) structures.
 *   **3D Visualization:** Visualizes the magnetic structure in 3D with scaled spins and correct aspect ratios.
@@ -75,6 +76,31 @@ Run dispersion, S(Q,w), and plotting as defined in the config:
 ```bash
 magcalc run my_config.yaml
 ```
+
+## Graphical User Interface: MagCalc Pure Designer
+
+The **MagCalc Pure Designer** is a modern web application designed to simplify the creation of complex spin models using a "pure" (symmetry-based) approach.
+
+### Feature Highlights
+- **CIF Integration**: Load crystal structures directly from CIF files.
+- **Symmetry-Aware Bonding**: Define interaction rules (Heisenberg, DM, Anisotropic Exchange) that are automatically propagated by space group symmetry.
+- **Real-time Feedback**: Export to YAML or save expanded configurations directly to your workspace.
+
+### Starting the Designer
+
+1.  **Start the Backend**:
+    ```bash
+    python3 gui/server.py
+    ```
+2.  **Start the Frontend**:
+    ```bash
+    cd gui
+    npm install  # (First time only)
+    npm run dev
+    ```
+3.  **Access**: Open [http://localhost:5173/](http://localhost:5173/) in your browser.
+
+The designer facilitates a seamless **Design -> Save -> Run** workflow, where the generated `config_designer.yaml` can be executed immediately using `magcalc run`.
 
 ## Basic Usage
 
