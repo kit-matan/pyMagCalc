@@ -337,7 +337,26 @@ nav {
 }
 
 .mt-xl {
-  margin-top: var(--spacing-xl);
+  margin-top: calc(var(--spacing-xl) * 1.5);
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--spacing-lg);
+}
+
+.flex-col {
+  display: flex;
+  flex-direction: column;
+}
+
+.flex-wrap {
+  flex-wrap: wrap;
+}
+
+.pointer {
+  cursor: pointer;
 }
 
 .mt-lg {
@@ -369,6 +388,30 @@ nav {
 
 .text-xs {
   font-size: 0.75rem;
+}
+
+.text-xxs {
+  font-size: 0.65rem;
+}
+
+.tracking-wider {
+  letter-spacing: 0.05em;
+}
+
+.tracking-widest {
+  letter-spacing: 0.15em;
+}
+
+.font-bold {
+  font-weight: 700;
+}
+
+.font-black {
+  font-weight: 900;
+}
+
+.mb-sm {
+  margin-bottom: var(--spacing-sm);
 }
 
 .text-accent {

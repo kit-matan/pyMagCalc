@@ -9,6 +9,7 @@ function App() {
   const [showVisualizer, setShowVisualizer] = useState(true)
   const [designerFilename, setDesignerFilename] = useState('config_designer.yaml')
   const [notification, setNotification] = useState(null)
+  const [neighborDistances, setNeighborDistances] = useState([])
 
   const showNotify = (msg, type = 'success') => {
     console.log(`[Notification] ${type}: ${msg}`)
@@ -26,7 +27,26 @@ function App() {
       { type: 'dm', ref_pair: ['Fe1', 'Fe2'], distance: 3.665, value: ['0', '-Dy', '-Dz'] }
     ],
     parameters: { S: 2.5, H_mag: 0.0, H_dir: [0, 0, 1], J1: -1.0, Dy: 0.1, Dz: -0.1 },
-    tasks: { run_minimization: true, run_dispersion: true, plot_dispersion: true }
+    tasks: {
+      run_minimization: true,
+      run_dispersion: true,
+      plot_dispersion: true,
+      run_sqw_map: false,
+      plot_sqw_map: false
+    },
+    q_path: {
+      points: { Gamma: [0, 0, 0], M: [0.5, 0, 0], K: [0.333, 0.333, 0] },
+      path: ['Gamma', 'M', 'K', 'Gamma'],
+      points_per_segment: 100
+    },
+    plotting: {
+      energy_min: 0,
+      energy_max: 10,
+      broadening: 0.2,
+      energy_resolution: 0.05,
+      momentum_max: 4.0,
+      save_plot: true
+    }
   })
 
   const exportPython = () => {
@@ -108,6 +128,16 @@ function App() {
           }
         }
         if (doc.parameters) newConfig.parameters = { ...newConfig.parameters, ...doc.parameters }
+        if (doc.tasks) newConfig.tasks = { ...newConfig.tasks, ...doc.tasks }
+        if (doc.plotting) newConfig.plotting = { ...newConfig.plotting, ...doc.plotting }
+        if (doc.q_path) {
+          const { path, points_per_segment, ...points } = doc.q_path
+          newConfig.q_path = {
+            points: points || {},
+            path: path || [],
+            points_per_segment: points_per_segment || 100
+          }
+        }
         setConfig(newConfig)
         alert('Configuration imported successfully! Note: Symmetry rules may need manual adjustment.')
       } catch (err) {
@@ -134,9 +164,15 @@ function App() {
         maxiter: 3000
       },
       tasks: config.tasks,
+      q_path: {
+        ...config.q_path.points,
+        path: config.q_path.path,
+        points_per_segment: config.q_path.points_per_segment
+      },
       plotting: {
-        save_plot: true,
-        show_plot: false
+        ...config.plotting,
+        energy_limits_disp: [config.plotting.energy_min, config.plotting.energy_max],
+        broadening_width: config.plotting.broadening
       }
     }
 
@@ -183,17 +219,17 @@ function App() {
       parameters: config.parameters,
       tasks: config.tasks,
       q_path: {
-        Start: [0, 0, 0],
-        End: [0.5, 0.5, 0.5],
-        path: ["Start", "End"],
-        points_per_segment: 100
+        ...config.q_path.points,
+        path: config.q_path.path,
+        points_per_segment: config.q_path.points_per_segment
       },
       plotting: {
-        save_plot: true,
-        show_plot: false
+        ...config.plotting,
+        energy_limits_disp: [config.plotting.energy_min, config.plotting.energy_max],
+        broadening_width: config.plotting.broadening
       },
       minimization: {
-        enabled: true,
+        enabled: config.tasks.run_minimization,
         method: "L-BFGS-B",
         maxiter: 3000
       }
@@ -224,6 +260,34 @@ function App() {
       showNotify('Error saving: ' + err.message, 'error')
     }
   }
+
+  const fetchNeighbors = async () => {
+    try {
+      const response = await fetch('/api/get-neighbors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          data: {
+            crystal_structure: {
+              lattice_parameters: config.lattice,
+              wyckoff_atoms: config.wyckoff_atoms
+            }
+          }
+        }),
+      })
+      if (!response.ok) throw new Error('Failed to fetch neighbors')
+      const data = await response.json()
+      setNeighborDistances(data)
+    } catch (err) {
+      console.error('Error fetching neighbors:', err)
+    }
+  }
+
+  React.useEffect(() => {
+    if (activeTab === 'interactions') {
+      fetchNeighbors()
+    }
+  }, [activeTab, config.lattice, config.wyckoff_atoms])
 
   const updateField = (section, field, value) => {
     setConfig(prev => ({
@@ -287,6 +351,9 @@ function App() {
             </button>
             <button className={`nav-item ${activeTab === 'params' ? 'active' : ''}`} onClick={() => setActiveTab('params')}>
               <Settings size={20} /> Environment
+            </button>
+            <button className={`nav-item ${activeTab === 'tasks' ? 'active' : ''}`} onClick={() => setActiveTab('tasks')}>
+              <Activity size={20} /> Tasks & Plotting
             </button>
           </nav>
 
@@ -422,6 +489,54 @@ function App() {
                   </tbody>
                 </table>
               </div>
+
+              {neighborDistances.length > 0 && (
+                <div className="mt-xl">
+                  <h3 className="section-subtitle mb-lg">Neighbor Shell Suggestions</h3>
+                  {(() => {
+                    const groups = {};
+                    neighborDistances.forEach(n => {
+                      if (!groups[n.shell_label]) groups[n.shell_label] = [];
+                      groups[n.shell_label].push(n);
+                    });
+
+                    return Object.keys(groups).map(label => (
+                      <div key={label} className="mb-lg">
+                        <h4 className="text-xs uppercase tracking-widest opacity-40 font-black mb-sm flex items-center gap-xs">
+                          <span className="w-8 h-px bg-current opacity-20" /> {label} Neighbors
+                        </h4>
+                        <div className="neighbor-grid">
+                          {groups[label].map((n, i) => (
+                            <div key={i} className="neighbor-card glass pointer" onClick={() => {
+                              const nextRules = [...config.symmetry_interactions, {
+                                type: 'heisenberg',
+                                distance: n.distance,
+                                value: `J${config.symmetry_interactions.length + 1}`,
+                                ref_pair: n.ref_pair
+                              }];
+                              const nextParams = { ...config.parameters };
+                              const pName = `J${config.symmetry_interactions.length + 1}`;
+                              if (!nextParams[pName]) nextParams[pName] = 0.0;
+                              setConfig({ ...config, symmetry_interactions: nextRules, parameters: nextParams });
+                              showNotify(`Added ${n.shell_label} ${n.ref_pair.join('-')} bond at ${n.distance} Å`);
+                            }}>
+                              <div className="flex-between mb-xs">
+                                <span className="mono text-accent">{n.ref_pair.join(' - ')}</span>
+                                <div style={{ textAlign: 'right' }}>
+                                  <div className="badge">{n.distance} Å</div>
+                                  <div className="text-xxs opacity-40 mt-xs" style={{ fontSize: '0.6rem' }}>{n.multiplicity} equivalent bonds</div>
+                                </div>
+                              </div>
+                              <div className="text-xxs opacity-60">Offset: [{n.offset.join(', ')}]</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ));
+                  })()}
+                </div>
+              )}
+
             </div>
           )}
 
@@ -511,6 +626,160 @@ function App() {
                     )}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          )}
+          {activeTab === 'tasks' && (
+            <div className="form-section">
+              <h2 className="section-title">Tasks & Plotting</h2>
+
+              <div className="grid-2 mt-md">
+                <div className="card shadow-glow">
+                  <h3>Calculation Tasks</h3>
+                  <div className="flex-col gap-sm mt-md">
+                    {Object.keys(config.tasks).map(taskKey => (
+                      <label key={taskKey} className="flex-gap-sm pointer">
+                        <input
+                          type="checkbox"
+                          checked={config.tasks[taskKey]}
+                          onChange={(e) => updateField('tasks', taskKey, e.target.checked)}
+                        />
+                        <span className="text-sm opacity-80">{taskKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="card shadow-glow">
+                  <h3>Display Parameters</h3>
+                  <div className="grid-form mt-md">
+                    <div className="input-group">
+                      <label>Energy Min (meV)</label>
+                      <input type="number" step="0.1" value={config.plotting.energy_min}
+                        onChange={(e) => updateField('plotting', 'energy_min', parseFloat(e.target.value))} />
+                    </div>
+                    <div className="input-group">
+                      <label>Energy Max (meV)</label>
+                      <input type="number" step="0.1" value={config.plotting.energy_max}
+                        onChange={(e) => updateField('plotting', 'energy_max', parseFloat(e.target.value))} />
+                    </div>
+                    <div className="input-group">
+                      <label>Broadening (meV)</label>
+                      <input type="number" step="0.01" value={config.plotting.broadening}
+                        onChange={(e) => updateField('plotting', 'broadening', parseFloat(e.target.value))} />
+                    </div>
+                    <div className="input-group">
+                      <label>Energy Res. (meV)</label>
+                      <input type="number" step="0.01" value={config.plotting.energy_resolution}
+                        onChange={(e) => updateField('plotting', 'energy_resolution', parseFloat(e.target.value))} />
+                    </div>
+                    <div className="input-group">
+                      <label>Momentum Max (Å⁻¹)</label>
+                      <input type="number" step="0.1" value={config.plotting.momentum_max}
+                        onChange={(e) => updateField('plotting', 'momentum_max', parseFloat(e.target.value))} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="card mt-xl">
+                <div className="flex-between mb-md">
+                  <h3>High Symmetry Points</h3>
+                  <button className="btn btn-secondary btn-sm" onClick={() => {
+                    const name = prompt("Enter point name (e.g. L):");
+                    if (name) {
+                      setConfig(prev => ({
+                        ...prev,
+                        q_path: {
+                          ...prev.q_path,
+                          points: { ...prev.q_path.points, [name]: [0, 0, 0] }
+                        }
+                      }));
+                    }
+                  }}><Plus size={14} /> Add Point</button>
+                </div>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Label</th>
+                      <th>Coordinates (H, K, L)</th>
+                      <th style={{ width: '40px' }}></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(config.q_path.points).map(([label, pos], idx) => (
+                      <tr key={label}>
+                        <td className="mono">{label}</td>
+                        <td>
+                          <div className="flex-gap-xs">
+                            {[0, 1, 2].map(i => (
+                              <input
+                                key={i}
+                                type="number"
+                                step="0.001"
+                                value={pos[i]}
+                                onChange={(e) => {
+                                  const nextPoints = { ...config.q_path.points };
+                                  nextPoints[label][i] = parseFloat(e.target.value);
+                                  setConfig({ ...config, q_path: { ...config.q_path, points: nextPoints } });
+                                }}
+                              />
+                            ))}
+                          </div>
+                        </td>
+                        <td>
+                          <button className="icon-btn text-error" onClick={() => {
+                            const nextPoints = { ...config.q_path.points };
+                            delete nextPoints[label];
+                            setConfig({ ...config, q_path: { ...config.q_path, points: nextPoints } });
+                          }}><Trash2 size={14} /></button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="card mt-xl">
+                <h3>Q-Path Sequence</h3>
+                <div className="mt-md">
+                  <div className="flex-gap-sm mb-md flex-wrap">
+                    {config.q_path.path.map((p, idx) => (
+                      <div key={idx} className="badge glass flex-gap-xs align-center">
+                        {p}
+                        <button className="icon-btn" onClick={() => {
+                          const nextPath = config.q_path.path.filter((_, i) => i !== idx);
+                          setConfig({ ...config, q_path: { ...config.q_path, path: nextPath } });
+                        }}><Trash2 size={10} /></button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex-gap-sm align-center">
+                    <select className="table-select" id="point-select" style={{ maxWidth: '150px' }}>
+                      <option value="">Select Point...</option>
+                      {Object.keys(config.q_path.points).map(p => (
+                        <option key={p} value={p}>{p}</option>
+                      ))}
+                    </select>
+                    <button className="btn btn-secondary btn-sm" onClick={() => {
+                      const sel = document.getElementById('point-select');
+                      if (sel.value) {
+                        setConfig({ ...config, q_path: { ...config.q_path, path: [...config.q_path.path, sel.value] } });
+                        sel.value = "";
+                      }
+                    }}><Plus size={14} /> Add to Path</button>
+                    <div className="ml-auto flex-gap-sm align-center">
+                      <span className="text-xxs opacity-60">Points per segment:</span>
+                      <input
+                        type="number"
+                        value={config.q_path.points_per_segment}
+                        onChange={(e) => updateField('q_path', 'points_per_segment', parseInt(e.target.value))}
+                        className="minimal-input"
+                        style={{ width: '60px' }}
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           )}

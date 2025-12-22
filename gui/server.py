@@ -109,6 +109,152 @@ async def save_config(config: Dict[str, Any]):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/get-neighbors")
+async def get_neighbors(config: Dict[str, Any]):
+    """
+    Find unique neighbor distances for the given crystal structure.
+    """
+    if MagCalcConfigBuilder is None:
+        raise HTTPException(status_code=500, detail="MagCalcConfigBuilder not found on server.")
+        
+    try:
+        builder = MagCalcConfigBuilder()
+        data = config.get("data", {})
+        
+        # 1. Lattice
+        lattice = data.get("crystal_structure", {}).get("lattice_parameters", {})
+        builder.set_lattice(
+            a=lattice.get("a", 1.0),
+            b=lattice.get("b", 1.0),
+            c=lattice.get("c", 1.0),
+            alpha=lattice.get("alpha", 90),
+            beta=lattice.get("beta", 90),
+            gamma=lattice.get("gamma", 90),
+            space_group=lattice.get("space_group")
+        )
+        
+        # 2. Wyckoff Atoms
+        wyckoff_atoms = data.get("crystal_structure", {}).get("wyckoff_atoms", [])
+        for atom in wyckoff_atoms:
+            builder.add_wyckoff_atom(
+                label=atom.get("label", "Atom"),
+                pos=atom.get("pos", [0,0,0]),
+                spin=atom.get("spin_S", 0.5)
+            )
+            
+        # 3. Calculate Distances
+        labels = [a['label'] for a in builder.atoms_uc]
+        positions = [np.array(a['pos']) for a in builder.atoms_uc]
+        lattice_vecs = builder.lattice_vectors
+        
+        max_dist = 10.0
+        unique_bonds = []
+        
+        from itertools import product
+        # Search a slightly larger cube of cells
+        offsets = list(product([-1, 0, 1], repeat=3))
+        
+        for i in range(len(positions)):
+            for j in range(len(positions)):
+                for off in offsets:
+                    off_vec = np.array(off)
+                    pos_j_img = positions[j] + off_vec
+                    dist = np.linalg.norm((pos_j_img - positions[i]) @ lattice_vecs)
+                    
+                    if 0.1 < dist < max_dist:
+                        unique_bonds.append({
+                            "distance": round(float(dist), 4),
+                            "ref_pair": [labels[i], labels[j]],
+                            "offset": off_vec.tolist()
+                        })
+        
+        # 4. Group by symmetry
+        if not builder.symmetry_ops:
+            # Fallback to simple distance grouping
+            unique_shells = {}
+            for b in unique_bonds:
+                key = (b["distance"], tuple(sorted(b["ref_pair"])))
+                if key not in unique_shells:
+                    unique_shells[key] = {**b, "multiplicity": 1}
+                else:
+                    unique_shells[key]["multiplicity"] += 1
+            sorted_shells = sorted(list(unique_shells.values()), key=lambda x: x["distance"])
+        else:
+            # Full Symmetry Grouping
+            rots = builder.symmetry_ops['rotations']
+            trans = builder.symmetry_ops['translations']
+            processed_bonds = set()
+            orbits = []
+
+            def find_atom_idx(pos):
+                p = pos % 1.0
+                for idx, a_pos in enumerate(positions):
+                    diff = np.abs(a_pos - p)
+                    diff = np.minimum(diff, 1.0 - diff)
+                    if np.linalg.norm(diff) < 1e-3: return idx
+                return None
+
+            # Prepare list for sorting/processing
+            bond_keys = []
+            for b in unique_bonds:
+                bond_keys.append((
+                    labels.index(b["ref_pair"][0]),
+                    labels.index(b["ref_pair"][1]),
+                    tuple(b["offset"]),
+                    b["distance"]
+                ))
+
+            for i, j, off, dist in bond_keys:
+                if (i, j, off) in processed_bonds: continue
+                
+                current_orbit = set()
+                p_i = positions[i]
+                p_j_off = positions[j] + np.array(off)
+                
+                for R, t in zip(rots, trans):
+                    p_i_p = R @ p_i + t
+                    p_j_o_p = R @ p_j_off + t
+                    idx_i_p = find_atom_idx(p_i_p)
+                    idx_j_p = find_atom_idx(p_j_o_p)
+                    
+                    if idx_i_p is not None and idx_j_p is not None:
+                        off_i_p = np.round(p_i_p - positions[idx_i_p]).astype(int)
+                        off_j_p = np.round(p_j_o_p - positions[idx_j_p]).astype(int)
+                        final_off = tuple(off_j_p - off_i_p)
+                        current_orbit.add((idx_i_p, idx_j_p, final_off))
+                        current_orbit.add((idx_j_p, idx_i_p, tuple(-np.array(final_off))))
+                
+                processed_bonds.update(current_orbit)
+                orbits.append({
+                    "distance": dist,
+                    "ref_pair": [labels[i], labels[j]],
+                    "offset": list(off),
+                    "multiplicity": len(current_orbit) // 2
+                })
+            sorted_shells = sorted(orbits, key=lambda x: x["distance"])
+
+        # 5. Assign 1st, 2nd, 3rd labels based on distance
+        unique_distances = sorted(list(set(s["distance"] for s in sorted_shells)))
+        dist_to_rank = {d: i + 1 for i, d in enumerate(unique_distances)}
+        
+        def get_rank_label(rank):
+            if 10 <= rank % 100 <= 20: return f"{rank}th"
+            else:
+                mapping = {1: "st", 2: "nd", 3: "rd"}
+                return f"{rank}{mapping.get(rank % 10, 'th')}"
+
+        for s in sorted_shells:
+            rank = dist_to_rank[s["distance"]]
+            s["shell_label"] = get_rank_label(rank)
+            s["rank"] = rank
+
+        return sorted_shells[:40]
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/expand-config")
 async def expand_config(config: Dict[str, Any]):
     """
