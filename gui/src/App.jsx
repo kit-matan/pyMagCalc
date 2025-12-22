@@ -10,6 +10,7 @@ function App() {
   const [designerFilename, setDesignerFilename] = useState('config_designer.yaml')
   const [notification, setNotification] = useState(null)
   const [neighborDistances, setNeighborDistances] = useState([])
+  const [interactionMode, setInteractionMode] = useState('explicit') // 'symmetry' or 'explicit'
 
   const showNotify = (msg, type = 'success') => {
     console.log(`[Notification] ${type}: ${msg}`)
@@ -18,21 +19,40 @@ function App() {
   }
 
   const [config, setConfig] = useState({
-    lattice: { a: 7.33, b: 7.33, c: 17.1374, alpha: 90, beta: 90, gamma: 120, space_group: 163 },
+    lattice: { a: 7.33, b: 7.33, c: 17.1374, alpha: 90, beta: 90, gamma: 120, space_group: 163, dimensionality: '2D' },
     wyckoff_atoms: [
-      { label: 'Fe', pos: [0.5, 0, 0], spin_S: 2.5 }
+      { label: 'Fe0', pos: [0.0, 0.0, 0.0], spin_S: 2.5 },
+      { label: 'Fe1', pos: [0.5, 0.0, 0.0], spin_S: 2.5 },
+      { label: 'Fe2', pos: [0.0, 0.5, 0.0], spin_S: 2.5 }
     ],
     symmetry_interactions: [
       { type: 'heisenberg', ref_pair: ['Fe0', 'Fe1'], distance: 3.665, value: 'J1' },
+      { type: 'heisenberg', ref_pair: ['Fe0', 'Fe1'], distance: 6.348, value: 'J2' },
       { type: 'dm', ref_pair: ['Fe1', 'Fe2'], distance: 3.665, value: ['0', '-Dy', '-Dz'] }
     ],
-    parameters: { S: 2.5, H_mag: 0.0, H_dir: [0, 0, 1], J1: -1.0, Dy: 0.1, Dz: -0.1 },
+    explicit_interactions: [
+      { type: 'heisenberg', distance: 3.665, value: "J1" },
+      { type: 'heisenberg', distance: 6.348, value: "J2" },
+      { type: 'dm_manual', atom_i: 0, atom_j: 1, offset_j: [0, 0, 0], value: ["0", "-Dy", "-Dz"], distance: 3.665 },
+      { type: 'dm_manual', atom_i: 0, atom_j: 2, offset_j: [0, 0, 0], value: ["-0.86602540378*Dy", "-0.5*Dy", "Dz"], distance: 3.665 },
+      { type: 'dm_manual', atom_i: 0, atom_j: 1, offset_j: [-1, 0, 0], value: ["0", "-Dy", "-Dz"], distance: 3.665 },
+      { type: 'dm_manual', atom_i: 0, atom_j: 2, offset_j: [0, -1, 0], value: ["-0.86602540378*Dy", "-0.5*Dy", "Dz"], distance: 3.665 },
+      { type: 'dm_manual', atom_i: 1, atom_j: 0, offset_j: [0, 0, 0], value: ["0", "Dy", "Dz"], distance: 3.665 },
+      { type: 'dm_manual', atom_i: 1, atom_j: 2, offset_j: [0, -1, 0], value: ["-0.86602540378*Dy", "0.5*Dy", "-Dz"], distance: 3.665 },
+      { type: 'dm_manual', atom_i: 1, atom_j: 0, offset_j: [1, 0, 0], value: ["0", "Dy", "Dz"], distance: 3.665 },
+      { type: 'dm_manual', atom_i: 1, atom_j: 2, offset_j: [1, 0, 0], value: ["-0.86602540378*Dy", "0.5*Dy", "-Dz"], distance: 3.665 },
+      { type: 'dm_manual', atom_i: 2, atom_j: 0, offset_j: [0, 0, 0], value: ["0.86602540378*Dy", "0.5*Dy", "-Dz"], distance: 3.665 },
+      { type: 'dm_manual', atom_i: 2, atom_j: 1, offset_j: [-1, 0, 0], value: ["0.86602540378*Dy", "-0.5*Dy", "Dz"], distance: 3.665 },
+      { type: 'dm_manual', atom_i: 2, atom_j: 0, offset_j: [0, 1, 0], value: ["0.86602540378*Dy", "0.5*Dy", "-Dz"], distance: 3.665 },
+      { type: 'dm_manual', atom_i: 2, atom_j: 1, offset_j: [0, 1, 0], value: ["0.86602540378*Dy", "-0.5*Dy", "Dz"], distance: 3.665 }
+    ],
+    parameters: { S: 2.5, H_mag: 0.0, H_dir: [0, 0, 1], J1: 3.23, J2: 0.11, Dy: 0.218, Dz: -0.195 },
     tasks: {
-      run_minimization: true,
+      run_minimization: false,
       run_dispersion: true,
       plot_dispersion: true,
-      run_sqw_map: false,
-      plot_sqw_map: false
+      run_sqw_map: true,
+      plot_sqw_map: true
     },
     q_path: {
       points: { Gamma: [0, 0, 0], M: [0.5, 0, 0], K: [0.333, 0.333, 0] },
@@ -46,6 +66,15 @@ function App() {
       energy_resolution: 0.05,
       momentum_max: 4.0,
       save_plot: true
+    },
+    magnetic_structure: {
+      type: 'pattern',
+      pattern_type: 'antiferromagnetic',
+      directions: [
+        [-1, 0, 0],
+        [0.5, -0.86602540378, 0],
+        [0.5, 0.86602540378, 0]
+      ]
     }
   })
 
@@ -152,11 +181,13 @@ function App() {
     const input = {
       crystal_structure: {
         lattice_parameters: config.lattice,
-        wyckoff_atoms: config.wyckoff_atoms
+        wyckoff_atoms: config.wyckoff_atoms,
+        dimensionality: config.lattice.dimensionality === '2D' ? 2 : (config.lattice.dimensionality === '3D' ? 3 : config.lattice.dimensionality)
       },
-      interactions: {
+      interactions: config.explicit_interactions ? { list: config.explicit_interactions } : {
         symmetry_rules: config.symmetry_interactions
       },
+      magnetic_structure: config.magnetic_structure,
       parameters: config.parameters,
       minimization: {
         enabled: true,
@@ -185,22 +216,38 @@ function App() {
       })
 
       if (!response.ok) throw new Error(`Server returned ${response.status}`)
-
       const expanded = await response.json()
       console.log('Expansion successful, generating file...')
       const data = yaml.dump(expanded)
-      const blob = new Blob([data], { type: 'text/yaml' })
-      const url = URL.createObjectURL(blob)
 
-      const link = document.createElement('a')
-      link.href = url
-      link.download = designerFilename.endsWith('.yaml') ? designerFilename : `${designerFilename}.yaml`
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
+      // Server-side download flow (v2: Filename in URL)
+      // This is necessary for strict enterprise environments that block Blob/Data URIs
+      const fname = designerFilename && designerFilename.trim() ? designerFilename : 'config_export.yaml'
 
-      URL.revokeObjectURL(url)
-      showNotify('Configuration exported successfully.')
+      const downloadResponse = await fetch('/api/prepare-download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: data, filename: fname })
+      });
+
+      if (!downloadResponse.ok) throw new Error('Failed to prepare download');
+      const { download_url } = await downloadResponse.json();
+      // Navigate to: http://localhost:8000/download/{uuid}/{filename}
+      // This looks like a static file to the browser policy.
+      const finalUrl = `http://localhost:8000${download_url}`;
+      console.log('Downloading from:', finalUrl);
+
+      // Use anchor click with target="_blank" to bypass strict navigation policies
+      // behaving like a user click rather than a scripted redirect.
+      const link = document.createElement('a');
+      link.href = finalUrl;
+      link.setAttribute('download', fname); // Hint to browser
+      link.target = "_blank";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      showNotify(`Configuration exported successfully.`)
     } catch (err) {
       console.error('Export error:', err)
       showNotify('Export failed: ' + err.message, 'error')
@@ -211,11 +258,13 @@ function App() {
     const input = {
       crystal_structure: {
         lattice_parameters: config.lattice,
-        wyckoff_atoms: config.wyckoff_atoms
+        wyckoff_atoms: config.wyckoff_atoms,
+        dimensionality: config.lattice.dimensionality === '2D' ? 2 : (config.lattice.dimensionality === '3D' ? 3 : config.lattice.dimensionality)
       },
-      interactions: {
+      interactions: interactionMode === 'explicit' ? { list: config.explicit_interactions || [] } : {
         symmetry_rules: config.symmetry_interactions
       },
+      magnetic_structure: config.magnetic_structure,
       parameters: config.parameters,
       tasks: config.tasks,
       q_path: {
@@ -270,7 +319,8 @@ function App() {
           data: {
             crystal_structure: {
               lattice_parameters: config.lattice,
-              wyckoff_atoms: config.wyckoff_atoms
+              wyckoff_atoms: config.wyckoff_atoms,
+              dimensionality: config.lattice.dimensionality
             }
           }
         }),
@@ -355,6 +405,9 @@ function App() {
             <button className={`nav-item ${activeTab === 'tasks' ? 'active' : ''}`} onClick={() => setActiveTab('tasks')}>
               <Activity size={20} /> Tasks & Plotting
             </button>
+            <button className={`nav-item ${activeTab === 'magstruct' ? 'active' : ''}`} onClick={() => setActiveTab('magstruct')}>
+              <Wind size={20} /> Mag. Structure
+            </button>
           </nav>
 
           <div className="mt-xl card glass text-xs opacity-60">
@@ -381,6 +434,17 @@ function App() {
                     <label>Space Group (#)</label>
                     <input type="number" value={config.lattice.space_group}
                       onChange={(e) => updateField('lattice', 'space_group', parseInt(e.target.value))} />
+                  </div>
+                  <div className="input-group">
+                    <label>Dimensionality</label>
+                    <select
+                      className="minimal-select"
+                      value={config.lattice.dimensionality || '3D'}
+                      onChange={(e) => updateField('lattice', 'dimensionality', e.target.value)}
+                    >
+                      <option value="3D">3D (Bulk)</option>
+                      <option value="2D">2D (Monolayer/Layered)</option>
+                    </select>
                   </div>
                 </div>
               </div>
@@ -438,105 +502,204 @@ function App() {
 
           {activeTab === 'interactions' && (
             <div className="form-section">
-              <div className="flex-between mb-md">
-                <h2 className="section-title">Bonding Rules</h2>
-                <button className="btn btn-primary btn-sm" onClick={() => {
-                  const nextRules = [...config.symmetry_interactions, { type: 'heisenberg', distance: 3.0, value: 'J1' }];
-                  const nextParams = { ...config.parameters };
-                  if (!nextParams.J1) nextParams.J1 = 0.0;
-                  setConfig({ ...config, symmetry_interactions: nextRules, parameters: nextParams });
-                }}><Plus size={14} /> Add Rule</button>
-              </div>
-              <div className="card">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Type</th>
-                      <th>Distance (Å)</th>
-                      <th>Value (Symbol)</th>
-                      <th style={{ width: '40px' }}></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {config.symmetry_interactions.map((inter, idx) => (
-                      <tr key={idx}>
-                        <td>
-                          <select
-                            className="table-select"
-                            value={inter.type}
-                            onChange={(e) => {
-                              const next = [...config.symmetry_interactions];
-                              next[idx].type = e.target.value;
-                              setConfig({ ...config, symmetry_interactions: next })
-                            }}
-                          >
-                            <option value="heisenberg">Heisenberg</option>
-                            <option value="dm">DM Interaction</option>
-                            <option value="anisotropic_exchange">Anisotropic</option>
-                          </select>
-                        </td>
-                        <td><input type="number" step="0.01" className="table-input center" value={inter.distance} onChange={(e) => {
-                          const next = [...config.symmetry_interactions]; next[idx].distance = parseFloat(e.target.value); setConfig({ ...config, symmetry_interactions: next })
-                        }} /></td>
-                        <td><input type="text" className="table-input accent-text" value={inter.value} onChange={(e) => {
-                          const next = [...config.symmetry_interactions]; next[idx].value = e.target.value; setConfig({ ...config, symmetry_interactions: next })
-                        }} /></td>
-                        <td><button onClick={() => {
-                          const next = config.symmetry_interactions.filter((_, i) => i !== idx); setConfig({ ...config, symmetry_interactions: next })
-                        }} className="icon-btn text-error"><Trash2 size={14} /></button></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="flex-center mb-lg">
+                <div className="toggle-group glass p-xs rounded-full flex gap-xs">
+                  <button
+                    className={`btn px-md py-xs rounded-full transition-all ${interactionMode === 'symmetry' ? 'bg-accent text-white shadow-glow' : 'opacity-60 hover:opacity-100'}`}
+                    onClick={() => setInteractionMode('symmetry')}
+                  >
+                    Symmetry Rules
+                  </button>
+                  <button
+                    className={`btn px-md py-xs rounded-full transition-all ${interactionMode === 'explicit' ? 'bg-accent text-white shadow-glow' : 'opacity-60 hover:opacity-100'}`}
+                    onClick={() => setInteractionMode('explicit')}
+                  >
+                    Explicit Interactions
+                  </button>
+                </div>
               </div>
 
-              {neighborDistances.length > 0 && (
-                <div className="mt-xl">
-                  <h3 className="section-subtitle mb-lg">Neighbor Shell Suggestions</h3>
-                  {(() => {
-                    const groups = {};
-                    neighborDistances.forEach(n => {
-                      if (!groups[n.shell_label]) groups[n.shell_label] = [];
-                      groups[n.shell_label].push(n);
-                    });
+              {interactionMode === 'symmetry' ? (
+                <>
+                  <div className="flex-between mb-md">
+                    <h2 className="section-title">Bonding Rules</h2>
+                    <button className="btn btn-primary btn-sm" onClick={() => {
+                      const nextRules = [...config.symmetry_interactions, { type: 'heisenberg', distance: 3.0, value: 'J1' }];
+                      const nextParams = { ...config.parameters };
+                      if (!nextParams.J1) nextParams.J1 = 0.0;
+                      setConfig({ ...config, symmetry_interactions: nextRules, parameters: nextParams });
+                    }}><Plus size={14} /> Add Rule</button>
+                  </div>
+                  <div className="card">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Type</th>
+                          <th>Distance (Å)</th>
+                          <th>Value (Symbol)</th>
+                          <th>Ref Pair</th>
+                          <th style={{ width: '40px' }}></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {config.symmetry_interactions.map((inter, idx) => (
+                          <tr key={idx}>
+                            <td>
+                              <select
+                                className="table-select"
+                                value={inter.type}
+                                onChange={(e) => {
+                                  const next = [...config.symmetry_interactions];
+                                  next[idx].type = e.target.value;
+                                  setConfig({ ...config, symmetry_interactions: next })
+                                }}
+                              >
+                                <option value="heisenberg">Heisenberg</option>
+                                <option value="dm">DM Interaction</option>
+                                <option value="anisotropic_exchange">Anisotropic</option>
+                              </select>
+                            </td>
+                            <td><input type="number" step="0.01" className="table-input center" value={inter.distance} onChange={(e) => {
+                              const next = [...config.symmetry_interactions]; next[idx].distance = parseFloat(e.target.value); setConfig({ ...config, symmetry_interactions: next })
+                            }} /></td>
+                            <td><input type="text" className="table-input accent-text" value={inter.value} onChange={(e) => {
+                              const next = [...config.symmetry_interactions]; next[idx].value = e.target.value; setConfig({ ...config, symmetry_interactions: next })
+                            }} /></td>
+                            <td className="text-xs mono opacity-60">
+                              {inter.ref_pair ? inter.ref_pair.join('-') : 'Auto'}
+                            </td>
+                            <td><button onClick={() => {
+                              const next = config.symmetry_interactions.filter((_, i) => i !== idx); setConfig({ ...config, symmetry_interactions: next })
+                            }} className="icon-btn text-error"><Trash2 size={14} /></button></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
 
-                    return Object.keys(groups).map(label => (
-                      <div key={label} className="mb-lg">
-                        <h4 className="text-xs uppercase tracking-widest opacity-40 font-black mb-sm flex items-center gap-xs">
-                          <span className="w-8 h-px bg-current opacity-20" /> {label} Neighbors
-                        </h4>
-                        <div className="neighbor-grid">
-                          {groups[label].map((n, i) => (
-                            <div key={i} className="neighbor-card glass pointer" onClick={() => {
+                  <div className="mt-md">
+                    <h3 className="section-title text-sm mb-sm">Neighbor Shell Suggestions</h3>
+                    <div className="flex gap-2 mb-sm items-center">
+                      <button className="btn btn-secondary btn-sm" onClick={fetchNeighbors}>Re-calculate Neighbors</button>
+                    </div>
+                    {neighborDistances && neighborDistances.length > 0 ? (
+                      <div className="code-block" style={{ maxHeight: '200px' }}>
+                        {neighborDistances.map((n, i) => (
+                          <div key={i} className="flex-between p-xs border-b border-light">
+                            <span className="text-xs">
+                              d={n.distance.toFixed(3)} Å ({n.count} pairs, ref: {n.ref_pair ? n.ref_pair.join('-') : '?'})
+                            </span>
+                            <button className="btn btn-primary btn-xs" onClick={() => {
+                              // Add rule based on this distance
                               const nextRules = [...config.symmetry_interactions, {
                                 type: 'heisenberg',
                                 distance: n.distance,
-                                value: `J${config.symmetry_interactions.length + 1}`,
+                                value: `J${i + 1}`,
                                 ref_pair: n.ref_pair
                               }];
                               const nextParams = { ...config.parameters };
-                              const pName = `J${config.symmetry_interactions.length + 1}`;
-                              if (!nextParams[pName]) nextParams[pName] = 0.0;
+                              if (!nextParams[`J${i + 1}`]) nextParams[`J${i + 1}`] = 0.0;
                               setConfig({ ...config, symmetry_interactions: nextRules, parameters: nextParams });
-                              showNotify(`Added ${n.shell_label} ${n.ref_pair.join('-')} bond at ${n.distance} Å`);
-                            }}>
-                              <div className="flex-between mb-xs">
-                                <span className="mono text-accent">{n.ref_pair.join(' - ')}</span>
-                                <div style={{ textAlign: 'right' }}>
-                                  <div className="badge">{n.distance} Å</div>
-                                  <div className="text-xxs opacity-40 mt-xs" style={{ fontSize: '0.6rem' }}>{n.multiplicity} equivalent bonds</div>
-                                </div>
-                              </div>
-                              <div className="text-xxs opacity-60">Offset: [{n.offset.join(', ')}]</div>
-                            </div>
-                          ))}
-                        </div>
+                            }}>Add J{i + 1}</button>
+                          </div>
+                        ))}
                       </div>
-                    ));
-                  })()}
-                </div>
+                    ) : (
+                      <p className="text-xs opacity-60 italic">No neighbor suggestions available. Try recalculating.</p>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex-between mb-md">
+                    <h2 className="section-title">Explicit Interactions (Manual)</h2>
+                    <button className="btn btn-primary btn-sm" onClick={() => {
+                      const next = [...(config.explicit_interactions || [])];
+                      next.push({ type: 'heisenberg', distance: 3.0, value: "J1", atom_i: 0, atom_j: 1, offset_j: [0, 0, 0] });
+                      setConfig({ ...config, explicit_interactions: next });
+                    }}><Plus size={14} /> Add Interaction</button>
+                  </div>
+                  <div className="card" style={{ overflowX: 'auto' }}>
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Type</th>
+                          <th>i</th>
+                          <th>j</th>
+                          <th>Offset [x,y,z]</th>
+                          <th>Value / Vector</th>
+                          <th>Dist</th>
+                          <th></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(config.explicit_interactions || []).map((inter, idx) => (
+                          <tr key={idx}>
+                            <td>
+                              <select className="table-select" value={inter.type} onChange={(e) => {
+                                const next = [...(config.explicit_interactions || [])];
+                                next[idx].type = e.target.value;
+                                if (e.target.value.startsWith('dm')) {
+                                  next[idx].value = ["0", "0", "0"];
+                                } else {
+                                  next[idx].value = "J1";
+                                }
+                                setConfig({ ...config, explicit_interactions: next });
+                              }}>
+                                <option value="heisenberg">Heisenberg</option>
+                                <option value="dm_manual">DM Manual</option>
+                              </select>
+                            </td>
+                            <td><input type="number" className="table-input center w-12" value={inter.atom_i} onChange={(e) => {
+                              const next = [...config.explicit_interactions]; next[idx].atom_i = parseInt(e.target.value); setConfig({ ...config, explicit_interactions: next })
+                            }} /></td>
+                            <td><input type="number" className="table-input center w-12" value={inter.atom_j} onChange={(e) => {
+                              const next = [...config.explicit_interactions]; next[idx].atom_j = parseInt(e.target.value); setConfig({ ...config, explicit_interactions: next })
+                            }} /></td>
+                            <td>
+                              <div className="flex gap-1">
+                                {[0, 1, 2].map(k => (
+                                  <input key={k} type="number" className="table-input center w-10" value={inter.offset_j ? inter.offset_j[k] : 0} onChange={(e) => {
+                                    const next = [...config.explicit_interactions];
+                                    if (!next[idx].offset_j) next[idx].offset_j = [0, 0, 0];
+                                    next[idx].offset_j[k] = parseInt(e.target.value);
+                                    setConfig({ ...config, explicit_interactions: next })
+                                  }} />
+                                ))}
+                              </div>
+                            </td>
+                            <td>
+                              {Array.isArray(inter.value) ? (
+                                <div className="flex gap-1 flex-col">
+                                  <input type="text" className="table-input text-xs" value={inter.value[0]} onChange={(e) => {
+                                    const next = [...config.explicit_interactions]; next[idx].value[0] = e.target.value; setConfig({ ...config, explicit_interactions: next })
+                                  }} placeholder="Dx" />
+                                  <input type="text" className="table-input text-xs" value={inter.value[1]} onChange={(e) => {
+                                    const next = [...config.explicit_interactions]; next[idx].value[1] = e.target.value; setConfig({ ...config, explicit_interactions: next })
+                                  }} placeholder="Dy" />
+                                  <input type="text" className="table-input text-xs" value={inter.value[2]} onChange={(e) => {
+                                    const next = [...config.explicit_interactions]; next[idx].value[2] = e.target.value; setConfig({ ...config, explicit_interactions: next })
+                                  }} placeholder="Dz" />
+                                </div>
+                              ) : (
+                                <input type="text" className="table-input accent-text" value={inter.value} onChange={(e) => {
+                                  const next = [...config.explicit_interactions]; next[idx].value = e.target.value; setConfig({ ...config, explicit_interactions: next })
+                                }} />
+                              )}
+                            </td>
+                            <td><input type="number" step="0.01" className="table-input center w-16" value={inter.distance} onChange={(e) => {
+                              const next = [...config.explicit_interactions]; next[idx].distance = parseFloat(e.target.value); setConfig({ ...config, explicit_interactions: next })
+                            }} /></td>
+                            <td><button onClick={() => {
+                              const next = config.explicit_interactions.filter((_, i) => i !== idx); setConfig({ ...config, explicit_interactions: next })
+                            }} className="icon-btn text-error"><Trash2 size={14} /></button></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
               )}
-
             </div>
           )}
 
@@ -780,6 +943,82 @@ function App() {
                     </div>
                   </div>
                 </div>
+              </div>
+            </div>
+          )}
+          {activeTab === 'magstruct' && (
+            <div className="form-section">
+              <h2 className="section-title">Magnetic Structure</h2>
+              <div className="card mb-lg">
+                <div className="input-group">
+                  <label>Structure Type</label>
+                  <select
+                    className="minimal-select"
+                    value={config.magnetic_structure.type}
+                    onChange={(e) => updateField('magnetic_structure', 'type', e.target.value)}
+                  >
+                    <option value="pattern">Pattern Based</option>
+                  </select>
+                </div>
+                {config.magnetic_structure.type === 'pattern' && (
+                  <div className="mt-md">
+                    <div className="input-group">
+                      <label>Pattern Type</label>
+                      <select
+                        className="minimal-select"
+                        value={config.magnetic_structure.pattern_type}
+                        onChange={(e) => updateField('magnetic_structure', 'pattern_type', e.target.value)}
+                      >
+                        <option value="antiferromagnetic">Antiferromagnetic</option>
+                        <option value="generic">Generic/Custom List</option>
+                      </select>
+                    </div>
+
+                    <div className="mt-xl">
+                      <div className="flex-between mb-md">
+                        <h3>Spin Directions (Unit Vectors)</h3>
+                        <button className="btn btn-secondary btn-sm" onClick={() => {
+                          const next = [...config.magnetic_structure.directions];
+                          next.push([1, 0, 0]);
+                          updateField('magnetic_structure', 'directions', next);
+                        }}><Plus size={14} /> Add Direction</button>
+                      </div>
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th style={{ width: '60px' }}>#</th>
+                            <th>Direction (Sx, Sy, Sz)</th>
+                            <th style={{ width: '40px' }}></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {config.magnetic_structure.directions.map((dir, idx) => (
+                            <tr key={idx}>
+                              <td className="center opacity-40">{idx}</td>
+                              <td>
+                                <div className="flex-gap-xs">
+                                  {[0, 1, 2].map(i => (
+                                    <input key={i} type="number" step="0.001" value={dir[i]} onChange={(e) => {
+                                      const next = [...config.magnetic_structure.directions];
+                                      next[idx][i] = parseFloat(e.target.value);
+                                      updateField('magnetic_structure', 'directions', next);
+                                    }} />
+                                  ))}
+                                </div>
+                              </td>
+                              <td>
+                                <button className="icon-btn text-error" onClick={() => {
+                                  const next = config.magnetic_structure.directions.filter((_, i) => i !== idx);
+                                  updateField('magnetic_structure', 'directions', next);
+                                }}><Trash2 size={14} /></button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}

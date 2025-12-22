@@ -29,7 +29,8 @@ class MagCalcConfigBuilder:
             "q_path": {},
             "output": {},
             "plotting": {},
-            "tasks": {}
+            "tasks": {},
+            "magnetic_structure": {}
         }
         
         # Internal State
@@ -40,6 +41,7 @@ class MagCalcConfigBuilder:
         # Atom Storage: List of dicts {label, species, pos (frac), spin_S, wyckoff_label}
         # We store the *full expanded* unit cell here.
         self.atoms_uc = [] 
+        self.dimensionality = "3D" 
         
         # Validation mapping
         self._atom_label_to_idx = {}
@@ -124,15 +126,7 @@ class MagCalcConfigBuilder:
         # 1. Identify Reference Bond Vector
         idx_i = self._atom_label_to_idx[ref_pair[0]]
         idx_j = self._atom_label_to_idx[ref_pair[1]]
-        # DEBUG
-        for atom in self.atoms_uc:
-            p_end = np.array(atom['pos'])
-            for off in [ [0,0,0], [1,0,0], [-1,0,0], [0,1,0], [0,-1,0], [0,0,1], [0,0,-1] ]:
-                 d_vec = (p_end + off - np.array(self.atoms_uc[idx_i]["pos"])) @ self.lattice_vectors
-                 d = np.linalg.norm(d_vec)
-                 if d < 10.0:
-                     print(f"DEBUG_DIST: {ref_pair[0]} -> {atom['label']} (off {off}) = {d:.6f}")
-
+        
         pos_i = np.array(self.atoms_uc[idx_i]["pos"])
         pos_j_uc = np.array(self.atoms_uc[idx_j]["pos"])
         
@@ -143,7 +137,12 @@ class MagCalcConfigBuilder:
         best_dist = 1e9
         
         from itertools import product
-        for offset in product([-1, 0, 1], repeat=3):
+        if self.dimensionality == "2D":
+            offsets_to_check = [ (u, v, 0) for u, v in product([-1, 0, 1], repeat=2) ]
+        else:
+            offsets_to_check = list(product([-1, 0, 1], repeat=3))
+
+        for offset in offsets_to_check:
             off_vec = np.array(offset)
             pos_j_img = pos_j_uc + off_vec
             
@@ -219,7 +218,10 @@ class MagCalcConfigBuilder:
              off_l = np.round(p_end_prime - pos_l_uc).astype(int)
              offset_final = off_l - off_k
              
-             # SANITY CHECK: distance
+             # SANITY CHECK: distance & Dimensionality
+             if self.dimensionality == "2D" and abs(offset_final[2]) > 0.01:
+                 continue
+
              d_final_vec = (pos_l_uc + offset_final - pos_k_uc) @ self.lattice_vectors
              d_final = np.linalg.norm(d_final_vec)
              if abs(d_final - final_dist) > 0.1:
@@ -436,7 +438,8 @@ class MagCalcConfigBuilder:
         """
         if not self.symmetry_ops:
             # No symmetry? Just add the one atom.
-            self._add_atom_raw(f"{label}0", pos, spin, species)
+            # Use label exactly as provided (don't append 0)
+            self._add_atom_raw(label, pos, spin, species)
             return
 
         pos_array = np.array(pos, dtype=float)
@@ -603,6 +606,10 @@ class MagCalcConfigBuilder:
         """Set output paths."""
         self.config["output"] = kwargs
 
+    def set_magnetic_structure(self, **kwargs):
+        """Set magnetic structure (e.g. type='pattern', directions=[...])."""
+        self.config["magnetic_structure"] = kwargs
+
     def _expand_heisenberg_rules(self):
         """
         Expand distance-based Heisenberg rules into explicit pair interactions.
@@ -625,7 +632,10 @@ class MagCalcConfigBuilder:
         
         # Neighbor offsets to check
         from itertools import product
-        offsets = list(product([-1, 0, 1], repeat=3))
+        if self.dimensionality == "2D":
+            offsets = [ (u, v, 0) for u, v in product([-1, 0, 1], repeat=2) ]
+        else:
+            offsets = list(product([-1, 0, 1], repeat=3))
         
         expanded_rules = []
         
@@ -687,12 +697,12 @@ class MagCalcConfigBuilder:
         if not generic_rules:
             return
 
-        # Pre-calc positions
-        positions_uc = [np.array(a["pos"]) for a in self.atoms_uc]
-        labels = [a["label"] for a in self.atoms_uc]
-        
+        # Neighbor offsets to check
         from itertools import product
-        offsets = list(product([-1, 0, 1], repeat=3))
+        if self.dimensionality == "2D":
+            offsets = [ (u, v, 0) for u, v in product([-1, 0, 1], repeat=2) ]
+        else:
+            offsets = list(product([-1, 0, 1], repeat=3))
         
         expanded_rules = []
         for rule in generic_rules:
@@ -739,6 +749,7 @@ class MagCalcConfigBuilder:
             species = [] # Logic refinement needed if user doesn't provide
             
         self.config["crystal_structure"]["magnetic_elements"] = species
+        self.config["crystal_structure"]["dimensionality"] = self.dimensionality
 
         # 3. Expand Interaction Rules
         self._expand_heisenberg_rules()

@@ -5,8 +5,10 @@ import numpy as np
 import spglib
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse, Response
 from ase.io import read
 from typing import List, Dict, Any
+import uuid
 
 import sys
 # Add parent directory to sys.path to find magcalc package
@@ -18,6 +20,51 @@ except ImportError:
     MagCalcConfigBuilder = None
 
 app = FastAPI(title="MagCalc Designer Backend")
+
+DOWNLOAD_CACHE = {}
+
+
+@app.get("/download/{item_id}/{filename}")
+async def download_file(item_id: str, filename: str):
+    if item_id not in DOWNLOAD_CACHE:
+        raise HTTPException(status_code=404, detail="File not found or expired")
+    
+    item = DOWNLOAD_CACHE.pop(item_id) # One-time use
+    content = item["content"]
+    # filename argument is mostly for browser to see in URL, but we also put it in header
+    
+    disposition = f'attachment; filename="{filename}"'
+    return Response(content=content, media_type="application/octet-stream", headers={
+        "Content-Disposition": disposition
+    })
+
+@app.post("/prepare-download")
+async def prepare_download(payload: Dict[str, Any]):
+    try:
+        filename = payload.get("filename", "config.yaml")
+        if not filename.endswith(".yaml") and not filename.endswith(".yml"):
+            filename += ".yaml"
+        
+        # Sanitize filename for URL
+        filename = os.path.basename(filename)
+
+        content = payload.get("content")
+        if not content:
+             raise HTTPException(status_code=400, detail="Content required")
+
+        item_id = str(uuid.uuid4())
+        DOWNLOAD_CACHE[item_id] = {
+            "content": content,
+            "filename": filename
+        }
+        # Include filename in URL!
+        return {"download_url": f"/download/{item_id}/{filename}"}
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # Enable CORS for local development
 app.add_middleware(
@@ -147,12 +194,17 @@ async def get_neighbors(config: Dict[str, Any]):
         positions = [np.array(a['pos']) for a in builder.atoms_uc]
         lattice_vecs = builder.lattice_vectors
         
+        dimensionality = data.get("crystal_structure", {}).get("dimensionality", "3D")
+        
         max_dist = 10.0
         unique_bonds = []
         
         from itertools import product
         # Search a slightly larger cube of cells
-        offsets = list(product([-1, 0, 1], repeat=3))
+        if dimensionality == "2D":
+            offsets = [ (u, v, 0) for u, v in product([-1, 0, 1], repeat=2) ]
+        else:
+            offsets = list(product([-1, 0, 1], repeat=3))
         
         for i in range(len(positions)):
             for j in range(len(positions)):
@@ -287,53 +339,77 @@ async def expand_config(config: Dict[str, Any]):
                 pos=atom.get("pos", [0,0,0]),
                 spin=atom.get("spin_S", 0.5)
             )
-            
-        # 3. Symmetry Interactions
-        # The GUI provides 'symmetry_rules' in 'interactions'
-        rules = data.get("interactions", {}).get("symmetry_rules", [])
-        for rule in rules:
-            builder.add_symmetry_interaction(
-                type=rule.get("type", "heisenberg"),
-                ref_pair=rule.get("ref_pair"),
-                distance=rule.get("distance"),
-                value=rule.get("value")
-            )
-            
+        
+        # 2.5 Set Dimensionality
+        builder.dimensionality = data.get("crystal_structure", {}).get("dimensionality", "3D")
+        
         # 4. Global Parameters & Tasks
         builder.config["parameters"] = data.get("parameters", {})
         builder.config["tasks"] = data.get("tasks", {})
-        
-        # 5. Expand & Return
-        # We use builder.save logic but captured in a dict
-        builder._expand_heisenberg_rules()
-        builder._expand_anisotropic_exchange_rules()
-        
-        # Build the final atoms list (atoms_uc)
-        config_atoms = []
-        for a in builder.atoms_uc:
-            config_atoms.append({
-                "label": a["label"],
-                "pos": [float(x) for x in a["pos"]],
-                "spin_S": a["spin_S"]
-            })
-        builder.config["crystal_structure"]["atoms_uc"] = config_atoms
-        
-        # Derive magnetic_elements
-        species = sorted(list(set(a["species"] for a in builder.atoms_uc if a.get("species"))))
-        builder.config["crystal_structure"]["magnetic_elements"] = species
-        
-        # Flatten interactions into a single list for the runner if desired, 
-        # or keep them grouped. config_acvo_pure uses a flat list under 'interactions'.
-        # However, MagCalcConfigRunner usually expects a flat list.
-        # Let's flatten to match config_acvo_pure.yaml
-        final_inters = []
-        final_inters.extend(builder.config["interactions"].get("heisenberg", []))
-        final_inters.extend(builder.config["interactions"].get("dm_interaction", []))
-        final_inters.extend(builder.config["interactions"].get("anisotropic_exchange", []))
+
+        if "list" in data.get("interactions", {}):
+            # Explicit interactions provided (Pure Design Mode)
+            # Bypass symmetry expansion for interactions and atoms
+            final_inters = data["interactions"]["list"]
+            
+            # Use input Wyckoff atoms directly as the unit cell atoms
+            # ensuring they follow the correct format
+            config_atoms = []
+            for a in wyckoff_atoms:
+                config_atoms.append({
+                    "label": a.get("label", "Atom"),
+                    "pos": [float(x) for x in a.get("pos", [0,0,0])],
+                    "spin_S": a.get("spin_S", 0.5),
+                    "species": a.get("label", "Atom") # Fallback for now
+                })
+            builder.config["crystal_structure"]["atoms_uc"] = config_atoms
+            
+        else:
+            # Symmetry-based expansion (Standard Mode)
+            
+            # 3. Symmetry Interactions
+            # The GUI provides 'symmetry_rules' in 'interactions'
+            rules = data.get("interactions", {}).get("symmetry_rules", [])
+            for rule in rules:
+                try:
+                    builder.add_symmetry_interaction(
+                        type=rule.get("type", "heisenberg"),
+                        ref_pair=rule.get("ref_pair"),
+                        distance=rule.get("distance"),
+                        value=rule.get("value")
+                    )
+                except KeyError as e:
+                    print(f"Warning: Skipping invalid interaction rule referencing missing atom: {e}")
+                except Exception as e:
+                     print(f"Warning: Skipping rule due to error: {e}")
+            
+            # 5. Expand
+            builder._expand_heisenberg_rules()
+            builder._expand_anisotropic_exchange_rules()
+            
+            # Build the final atoms list (atoms_uc)
+            config_atoms = []
+            for a in builder.atoms_uc:
+                config_atoms.append({
+                    "label": a["label"],
+                    "pos": [float(x) for x in a["pos"]],
+                    "spin_S": a["spin_S"]
+                })
+            builder.config["crystal_structure"]["atoms_uc"] = config_atoms
+            
+            # Flatten interactions
+            final_inters = []
+            final_inters.extend(builder.config["interactions"].get("heisenberg", []))
+            final_inters.extend(builder.config["interactions"].get("dm_interaction", []))
+            final_inters.extend(builder.config["interactions"].get("anisotropic_exchange", []))
         
         expanded_config = {
-            "crystal_structure": builder.config["crystal_structure"],
+            "crystal_structure": {
+                **builder.config["crystal_structure"],
+                "dimensionality": builder.dimensionality
+            },
             "interactions": final_inters,
+            "magnetic_structure": data.get("magnetic_structure", {}),
             "parameters": builder.config["parameters"],
             "tasks": builder.config["tasks"],
             "q_path": data.get("q_path", {}),

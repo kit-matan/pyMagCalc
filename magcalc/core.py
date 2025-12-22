@@ -613,16 +613,32 @@ class MagCalc:
             logger.info(
                 f"Metadata check: spin_magnitude mismatch (cache: {cached_meta.get('spin_magnitude')}, current: {self.spin_magnitude})."
             )
-        if not p_match:
-            logger.info(
-                f"Metadata check: hamiltonian_params mismatch (cache: {cached_meta.get('hamiltonian_params')}, current: {self.hamiltonian_params})."
-            )
+            return False
+
         if not id_match:
             logger.info(
                 f"Metadata check: model_identifier mismatch (cache: {cached_meta.get('model_identifier')}, current: {current_model_identifier})."
             )
+            return False
 
-        return s_match and p_match and id_match
+        # Structural check: number of parameters
+        cached_params = cached_meta.get("hamiltonian_params", [])
+        if len(cached_params) != len(self.hamiltonian_params):
+            logger.info(
+                f"Metadata check: structural mismatch (parameter count changed from {len(cached_params)} to {len(self.hamiltonian_params)}). Regenerating symbolic cache."
+            )
+            return False
+
+        # Numerical check
+        if not p_match:
+            logger.debug(
+                f"Metadata check: numerical parameter values changed. Symbolic cache is still valid, but will update numerical Ud."
+            )
+            # We return True here because for SYMBOLIC matrices, numerical value changes don't require regeneration.
+            # Ud_numeric will be re-calculated during MagCalc initialization.
+            return True
+
+        return True
 
     def _generate_and_save_symbolic_matrices(
         self, hm_cache_file: str, ud_cache_file: str, meta_cache_file: str

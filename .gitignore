@@ -14,9 +14,10 @@ tests/pckFiles/
 # Project specifics - DS_Store can be covered by global, but keeping specific ignores if desired, 
 KFe3J/.DS_Store
 aCVO/.DS_Store
-
+examples/.DS_Store
 
 examples/plots/
 **/.pytest_cache/
 **/.ipynb_checkpoints/
 *.egg-info/
+
