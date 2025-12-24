@@ -34,3 +34,8 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["magcalc*"]
+
+[tool.pytest.ini_options]
+norecursedirs = ["archive", "scripts", "tmp", ".git", ".vscode", "gui"]
+testpaths = ["tests"]
+python_files = "test_*.py"

@@ -456,14 +456,20 @@ class MagCalc:
             _sym_counter = 0
             for p in hamiltonian_params_list:
                 if isinstance(p, (list, tuple, np.ndarray)):
-                    val_list = [float(v) for v in p]
+                    try:
+                        val_list = [float(v) for v in p]
+                    except (ValueError, TypeError):
+                        raise TypeError("All elements in hamiltonian_params must be numbers.")
                     sym_list = [sp.Symbol(f"p{_sym_counter}_{i}", real=True) for i in range(len(val_list))]
                     self._params_sym_raw.append(sym_list)
                     self._params_val_raw.append(val_list)
                     _sym_counter += 1
                 else:
                     self._params_sym_raw.append(sp.Symbol(f"p{_sym_counter}", real=True))
-                    self._params_val_raw.append(float(p))
+                    try:
+                        self._params_val_raw.append(float(p))
+                    except (ValueError, TypeError):
+                        raise TypeError("All elements in hamiltonian_params must be numbers.")
                     _sym_counter += 1
 
             self.params_sym = self._params_sym_raw
