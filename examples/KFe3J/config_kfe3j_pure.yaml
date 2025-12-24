@@ -558,7 +558,7 @@ plotting:
   energy_limits_sqw:
   - 0
   - 20
-  plot_structure: true
+  plot_structure: false
 tasks:
   run_minimization: true
   run_dispersion: true

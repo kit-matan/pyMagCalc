@@ -135,14 +135,14 @@ q_path:
 
 # 7. Output
 output:
-  disp_data_filename: "../../cache/data/KFe3J_modern_disp_data.npz"
-  sqw_data_filename: "../../cache/data/KFe3J_modern_sqw_data.npz"
+  disp_data_filename: "../../cache/data/KFe3J_propagation_disp_data.npz"
+  sqw_data_filename: "../../cache/data/KFe3J_propagation_sqw_data.npz"
 
 # 8. Plotting
 plotting:
   save_plot: true
-  disp_plot_filename: "../plots/KFe3J_modern_disp.png"
-  sqw_plot_filename: "../plots/KFe3J_modern_sqw.png"
+  disp_plot_filename: "../plots/KFe3J_propagation_disp.png"
+  sqw_plot_filename: "../plots/KFe3J_propagation_sqw.png"
   energy_limits_disp: [0, 20]
   energy_limits_sqw: [0, 20]
   sqw_title: "S(Q,w) - Modern Config"

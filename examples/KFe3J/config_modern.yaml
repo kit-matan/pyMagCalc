@@ -2,7 +2,6 @@
 # Fully declarative, replacing spin_model.py
 
 # 1. Structure
-# 1. Structure
 crystal_structure:
   dimensionality: 2 # Important for neighbor generation order
   lattice_parameters:

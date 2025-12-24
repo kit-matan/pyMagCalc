@@ -695,8 +695,8 @@ output:
 # 8. Plotting
 plotting:
   save_plot: true
-  disp_plot_filename: "CVO_modern_disp.png"
-  sqw_plot_filename: "CVO_modern_sqw.png"
+  disp_plot_filename: "../plots/CVO_modern_disp.png"
+  sqw_plot_filename: "../plots/CVO_modern_sqw.png"
   energy_limits_disp: [0, 10]
   energy_limits_sqw: [0, 10]
   disp_title: "aCVO Dispersion (Modern Config)"

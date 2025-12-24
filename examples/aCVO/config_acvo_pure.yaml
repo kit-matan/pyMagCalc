@@ -2015,10 +2015,10 @@ q_path:
   - End
   points_per_segment: 200
 output:
-  disp_data_filename: acvo_pure_disp.npz
+  disp_data_filename: "../../cache/data/acvo_pure_disp.npz"
 plotting:
   save_plot: true
-  disp_plot_filename: acvo_pure_disp.png
+  disp_plot_filename: "../plots/acvo_pure_disp.png"
   show_plot: false
 tasks:
   run_minimization: true
