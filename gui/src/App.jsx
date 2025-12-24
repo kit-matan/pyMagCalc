@@ -7,7 +7,6 @@ import './App.css'
 function App() {
   const [activeTab, setActiveTab] = useState('structure')
   const [showVisualizer, setShowVisualizer] = useState(true)
-  const [designerFilename, setDesignerFilename] = useState('config_designer.yaml')
   const [notification, setNotification] = useState(null)
   const [neighborDistances, setNeighborDistances] = useState([])
   const [interactionMode, setInteractionMode] = useState('explicit') // 'symmetry' or 'explicit'
@@ -68,6 +67,7 @@ function App() {
       save_plot: true
     },
     magnetic_structure: {
+      enabled: true,
       type: 'pattern',
       pattern_type: 'antiferromagnetic',
       directions: [
@@ -75,6 +75,12 @@ function App() {
         [0.5, -0.86602540378, 0],
         [0.5, 0.86602540378, 0]
       ]
+    },
+    minimization: {
+      num_starts: 1000,
+      n_workers: 8,
+      early_stopping: 10,
+      method: "L-BFGS-B"
     }
   })
 
@@ -176,85 +182,8 @@ function App() {
     reader.readAsText(file)
   }
 
-  const exportYaml = async () => {
+  const handleExportYaml = async () => {
     // Structure the input for the Expansion Backend
-    const input = {
-      crystal_structure: {
-        lattice_parameters: config.lattice,
-        wyckoff_atoms: config.wyckoff_atoms,
-        dimensionality: config.lattice.dimensionality === '2D' ? 2 : (config.lattice.dimensionality === '3D' ? 3 : config.lattice.dimensionality)
-      },
-      interactions: config.explicit_interactions ? { list: config.explicit_interactions } : {
-        symmetry_rules: config.symmetry_interactions
-      },
-      magnetic_structure: config.magnetic_structure,
-      parameters: config.parameters,
-      minimization: {
-        enabled: true,
-        method: "L-BFGS-B",
-        maxiter: 3000
-      },
-      tasks: config.tasks,
-      q_path: {
-        ...config.q_path.points,
-        path: config.q_path.path,
-        points_per_segment: config.q_path.points_per_segment
-      },
-      plotting: {
-        ...config.plotting,
-        energy_limits_disp: [config.plotting.energy_min, config.plotting.energy_max],
-        broadening_width: config.plotting.broadening
-      }
-    }
-
-    try {
-      console.log('Fetching expanded config for export...')
-      const response = await fetch('/api/expand-config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: input }),
-      })
-
-      if (!response.ok) throw new Error(`Server returned ${response.status}`)
-      const expanded = await response.json()
-      console.log('Expansion successful, generating file...')
-      const data = yaml.dump(expanded)
-
-      // Server-side download flow (v2: Filename in URL)
-      // This is necessary for strict enterprise environments that block Blob/Data URIs
-      const fname = designerFilename && designerFilename.trim() ? designerFilename : 'config_export.yaml'
-
-      const downloadResponse = await fetch('/api/prepare-download', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: data, filename: fname })
-      });
-
-      if (!downloadResponse.ok) throw new Error('Failed to prepare download');
-      const { download_url } = await downloadResponse.json();
-      // Navigate to: http://localhost:8000/download/{uuid}/{filename}
-      // This looks like a static file to the browser policy.
-      const finalUrl = `http://localhost:8000${download_url}`;
-      console.log('Downloading from:', finalUrl);
-
-      // Use anchor click with target="_blank" to bypass strict navigation policies
-      // behaving like a user click rather than a scripted redirect.
-      const link = document.createElement('a');
-      link.href = finalUrl;
-      link.setAttribute('download', fname); // Hint to browser
-      link.target = "_blank";
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-
-      showNotify(`Configuration exported successfully.`)
-    } catch (err) {
-      console.error('Export error:', err)
-      showNotify('Export failed: ' + err.message, 'error')
-    }
-  }
-
-  const handleSaveToDisk = async () => {
     const input = {
       crystal_structure: {
         lattice_parameters: config.lattice,
@@ -279,36 +208,61 @@ function App() {
       },
       minimization: {
         enabled: config.tasks.run_minimization,
-        method: "L-BFGS-B",
-        maxiter: 3000
+        ...config.minimization
       }
     }
 
     try {
-      console.log('Sending save request to backend...')
-      const expandResponse = await fetch('/api/expand-config', {
+      console.log('Fetching expanded config for export...')
+      const response = await fetch('/api/expand-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ data: input }),
       })
 
-      if (!expandResponse.ok) throw new Error('Failed to expand config before saving')
-      const expanded = await expandResponse.json()
+      if (!response.ok) throw new Error(`Server returned ${response.status}`)
+      const expanded = await response.json()
 
-      const response = await fetch('/api/save-config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename: designerFilename, data: expanded }),
-      })
+      // Conditionally omit magnetic structure
+      if (!config.magnetic_structure.enabled) {
+        delete expanded.magnetic_structure;
+      }
 
-      if (!response.ok) throw new Error('Failed to save to disk')
-      const result = await response.json()
-      showNotify(`Success! Saved to ${result.path}`)
+      console.log('Expansion successful, generating file...')
+      const data = yaml.dump(expanded)
+
+      if ('showSaveFilePicker' in window) {
+        try {
+          const handle = await window.showSaveFilePicker({
+            suggestedName: 'config_designer.yaml',
+            types: [{
+              description: 'YAML Configuration',
+              accept: { 'text/yaml': ['.yaml', '.yml'] },
+            }],
+          });
+          const writable = await handle.createWritable();
+          await writable.write(data);
+          await writable.close();
+          showNotify(`Success! Configuration exported.`)
+        } catch (err) {
+          if (err.name !== 'AbortError') throw err;
+        }
+      } else {
+        // Fallback for browsers without showSaveFilePicker
+        const blob = new Blob([data], { type: 'text/yaml' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'config_designer.yaml';
+        link.click();
+        showNotify(`Configuration exported (fallback download).`)
+      }
     } catch (err) {
-      console.error('Save error:', err)
-      showNotify('Error saving: ' + err.message, 'error')
+      console.error('Export error:', err)
+      showNotify('Export failed: ' + err.message, 'error')
     }
   }
+
 
   const fetchNeighbors = async () => {
     try {
@@ -359,16 +313,6 @@ function App() {
             <h1 className="vibrant-text">MagCalc Pure Designer</h1>
             <div className="flex-gap-xs align-center">
               <span className="version-tag">STABLE v2.0</span>
-              <div className="filename-input-wrapper glass">
-                <Code size={12} className="opacity-60" />
-                <input
-                  type="text"
-                  value={designerFilename}
-                  onChange={(e) => setDesignerFilename(e.target.value)}
-                  placeholder="filename.yaml"
-                  className="filename-input"
-                />
-              </div>
             </div>
           </div>
         </div>
@@ -381,11 +325,8 @@ function App() {
             <Code size={16} /> Load YAML
             <input type="file" accept=".yaml,.yml" hidden onChange={handleImport} />
           </label>
-          <button className="btn btn-secondary glass" onClick={exportYaml}>
-            <Download size={16} /> Export
-          </button>
-          <button className="btn btn-primary shadow-glow" onClick={handleSaveToDisk}>
-            <Database size={16} /> Save to Disk
+          <button className="btn btn-primary shadow-glow" onClick={handleExportYaml}>
+            <Download size={16} /> Export YAML
           </button>
         </div>
       </header>
@@ -795,7 +736,6 @@ function App() {
           {activeTab === 'tasks' && (
             <div className="form-section">
               <h2 className="section-title">Tasks & Plotting</h2>
-
               <div className="grid-2 mt-md">
                 <div className="card shadow-glow">
                   <h3>Calculation Tasks</h3>
@@ -813,6 +753,41 @@ function App() {
                   </div>
                 </div>
 
+                <div className="card shadow-glow">
+                  <h3>Minimization Parameters</h3>
+                  <div className="grid-form mt-md">
+                    <div className="input-group">
+                      <label>Num Starts</label>
+                      <input type="number" value={config.minimization.num_starts}
+                        onChange={(e) => updateField('minimization', 'num_starts', parseInt(e.target.value))} />
+                    </div>
+                    <div className="input-group">
+                      <label>N Workers</label>
+                      <input type="number" value={config.minimization.n_workers}
+                        onChange={(e) => updateField('minimization', 'n_workers', parseInt(e.target.value))} />
+                    </div>
+                    <div className="input-group">
+                      <label>Early Stopping</label>
+                      <input type="number" value={config.minimization.early_stopping}
+                        onChange={(e) => updateField('minimization', 'early_stopping', parseInt(e.target.value))} />
+                    </div>
+                    <div className="input-group">
+                      <label>Method</label>
+                      <select
+                        className="minimal-select"
+                        value={config.minimization.method}
+                        onChange={(e) => updateField('minimization', 'method', e.target.value)}
+                      >
+                        <option value="L-BFGS-B">L-BFGS-B</option>
+                        <option value="TNC">TNC</option>
+                        <option value="SLSQP">SLSQP</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid-2 mt-md">
                 <div className="card shadow-glow">
                   <h3>Display Parameters</h3>
                   <div className="grid-form mt-md">
@@ -948,78 +923,99 @@ function App() {
           )}
           {activeTab === 'magstruct' && (
             <div className="form-section">
-              <h2 className="section-title">Magnetic Structure</h2>
-              <div className="card mb-lg">
-                <div className="input-group">
-                  <label>Structure Type</label>
-                  <select
-                    className="minimal-select"
-                    value={config.magnetic_structure.type}
-                    onChange={(e) => updateField('magnetic_structure', 'type', e.target.value)}
-                  >
-                    <option value="pattern">Pattern Based</option>
-                  </select>
-                </div>
-                {config.magnetic_structure.type === 'pattern' && (
-                  <div className="mt-md">
-                    <div className="input-group">
-                      <label>Pattern Type</label>
-                      <select
-                        className="minimal-select"
-                        value={config.magnetic_structure.pattern_type}
-                        onChange={(e) => updateField('magnetic_structure', 'pattern_type', e.target.value)}
-                      >
-                        <option value="antiferromagnetic">Antiferromagnetic</option>
-                        <option value="generic">Generic/Custom List</option>
-                      </select>
-                    </div>
-
-                    <div className="mt-xl">
-                      <div className="flex-between mb-md">
-                        <h3>Spin Directions (Unit Vectors)</h3>
-                        <button className="btn btn-secondary btn-sm" onClick={() => {
-                          const next = [...config.magnetic_structure.directions];
-                          next.push([1, 0, 0]);
-                          updateField('magnetic_structure', 'directions', next);
-                        }}><Plus size={14} /> Add Direction</button>
-                      </div>
-                      <table className="data-table">
-                        <thead>
-                          <tr>
-                            <th style={{ width: '60px' }}>#</th>
-                            <th>Direction (Sx, Sy, Sz)</th>
-                            <th style={{ width: '40px' }}></th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {config.magnetic_structure.directions.map((dir, idx) => (
-                            <tr key={idx}>
-                              <td className="center opacity-40">{idx}</td>
-                              <td>
-                                <div className="flex-gap-xs">
-                                  {[0, 1, 2].map(i => (
-                                    <input key={i} type="number" step="0.001" value={dir[i]} onChange={(e) => {
-                                      const next = [...config.magnetic_structure.directions];
-                                      next[idx][i] = parseFloat(e.target.value);
-                                      updateField('magnetic_structure', 'directions', next);
-                                    }} />
-                                  ))}
-                                </div>
-                              </td>
-                              <td>
-                                <button className="icon-btn text-error" onClick={() => {
-                                  const next = config.magnetic_structure.directions.filter((_, i) => i !== idx);
-                                  updateField('magnetic_structure', 'directions', next);
-                                }}><Trash2 size={14} /></button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
+              <div className="flex-between mb-md">
+                <h2 className="section-title">Magnetic Structure</h2>
+                <label className="flex-gap-sm pointer glass p-xs px-sm rounded-full border border-light">
+                  <input
+                    type="checkbox"
+                    checked={config.magnetic_structure.enabled}
+                    onChange={(e) => updateField('magnetic_structure', 'enabled', e.target.checked)}
+                  />
+                  <span className="text-sm font-bold vibrant-text">Include Manual Structure</span>
+                </label>
               </div>
+
+              {!config.magnetic_structure.enabled && (
+                <div className="card glass opacity-60 text-center py-xl border-dashed">
+                  <Magnet className="mx-auto mb-sm opacity-40" size={32} />
+                  <p>Manual magnetic structure is currently disabled.</p>
+                  <p className="text-xs mt-xs">Use the toggle above to enable manual spin direction input. If disabled, the calculation will rely on the optimizer to find the ground state.</p>
+                </div>
+              )}
+
+              {config.magnetic_structure.enabled && (
+                <div className="card mb-lg animate-fade-in">
+                  <div className="input-group">
+                    <label>Structure Type</label>
+                    <select
+                      className="minimal-select"
+                      value={config.magnetic_structure.type}
+                      onChange={(e) => updateField('magnetic_structure', 'type', e.target.value)}
+                    >
+                      <option value="pattern">Pattern Based</option>
+                    </select>
+                  </div>
+                  {config.magnetic_structure.type === 'pattern' && (
+                    <div className="mt-md">
+                      <div className="input-group">
+                        <label>Pattern Type</label>
+                        <select
+                          className="minimal-select"
+                          value={config.magnetic_structure.pattern_type}
+                          onChange={(e) => updateField('magnetic_structure', 'pattern_type', e.target.value)}
+                        >
+                          <option value="antiferromagnetic">Antiferromagnetic</option>
+                          <option value="generic">Generic/Custom List</option>
+                        </select>
+                      </div>
+
+                      <div className="mt-xl">
+                        <div className="flex-between mb-md">
+                          <h3>Spin Directions (Unit Vectors)</h3>
+                          <button className="btn btn-secondary btn-sm" onClick={() => {
+                            const next = [...config.magnetic_structure.directions];
+                            next.push([1, 0, 0]);
+                            updateField('magnetic_structure', 'directions', next);
+                          }}><Plus size={14} /> Add Direction</button>
+                        </div>
+                        <table className="data-table">
+                          <thead>
+                            <tr>
+                              <th style={{ width: '60px' }}>#</th>
+                              <th>Direction (Sx, Sy, Sz)</th>
+                              <th style={{ width: '40px' }}></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {config.magnetic_structure.directions.map((dir, idx) => (
+                              <tr key={idx}>
+                                <td className="center opacity-40">{idx}</td>
+                                <td>
+                                  <div className="flex-gap-xs">
+                                    {[0, 1, 2].map(i => (
+                                      <input key={i} type="number" step="0.001" value={dir[i]} onChange={(e) => {
+                                        const next = [...config.magnetic_structure.directions];
+                                        next[idx][i] = parseFloat(e.target.value);
+                                        updateField('magnetic_structure', 'directions', next);
+                                      }} />
+                                    ))}
+                                  </div>
+                                </td>
+                                <td>
+                                  <button className="icon-btn text-error" onClick={() => {
+                                    const next = config.magnetic_structure.directions.filter((_, i) => i !== idx);
+                                    updateField('magnetic_structure', 'directions', next);
+                                  }}><Trash2 size={14} /></button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </section>
