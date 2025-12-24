@@ -75,17 +75,10 @@ parameters:
 
 # 3. Minimization
 minimization:
-  enabled: true
+  num_starts: 1000
+  n_workers: 8 # Increase if you have more cores
+  early_stopping: 10 # Stop if the same minimum is found 20 times
   method: "L-BFGS-B"
-  maxiter: 5000
-  # initial_configuration replaced by magnetic_structure below
-magnetic_structure:
-  type: pattern
-  pattern_type: antiferromagnetic
-  # Alternating +x and -x matching the explicit list
-  directions: 
-    - [1.0, 0.0, 0.0]
-    - [-1.0, 0.0, 0.0]
 
       
 # 3. Interactions

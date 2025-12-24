@@ -164,14 +164,8 @@ tasks:
   plot_sqw_map: true
 
 # 9. Minimization Settings
+minimization:
+  num_starts: 1000
+  n_workers: 8 # Increase if you have more cores
+  early_stopping: 10 # Stop if the same minimum is found 20 times
   method: "L-BFGS-B"
-  maxiter: 5000
-
-# 10. Magnetic Structure (New Input Method)
-magnetic_structure:
-  type: pattern
-  pattern_type: "antiferromagnetic" # Use generic AFM type for cyclic directions
-  directions:
-    - [-1.0, 0.0, 0.0]            # Atom 0
-    - [0.5, -0.86602540378, 0.0]  # Atom 1
-    - [0.5, 0.86602540378, 0.0]   # Atom 2

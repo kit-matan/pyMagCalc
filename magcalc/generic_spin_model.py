@@ -216,7 +216,7 @@ def mpr_from_config(
 
 def spin_interactions_from_config(
     symbolic_params_map: Dict[str, sp.Symbol],
-    config_interactions: Dict[str, Any],
+    config_interactions: Union[Dict[str, Any], List[Dict[str, Any]]],
     atom_pos_uc_cartesian: np.ndarray,
     atom_pos_ouc_cartesian: np.ndarray,
     unit_cell_vectors_cartesian: np.ndarray,
@@ -240,6 +240,17 @@ def spin_interactions_from_config(
 
     sympify_locals = {**symbolic_params_map, "sqrt": sp.sqrt, "S": sp.S}
 
+    # Pre-process interactions if list
+    if isinstance(config_interactions, list):
+        grouped = {}
+        for inter in config_interactions:
+            itype = inter.get("type")
+            if itype:
+                if itype not in grouped:
+                    grouped[itype] = []
+                grouped[itype].append(inter)
+        config_interactions = grouped
+
     # Helper for OUC matching
     def find_j_ouc(label_j, offset_frac):
         idx_j_uc = _atom_label_to_index_uc.get(label_j)
@@ -254,17 +265,27 @@ def spin_interactions_from_config(
 
     # Heisenberg
     for heis_inter_def in config_interactions.get("heisenberg", []):
-        label_i, label_j = heis_inter_def["pair"]
-        offset_frac = heis_inter_def.get("rij_offset", [0, 0, 0])
-        idx_i_uc = _atom_label_to_index_uc.get(label_i)
-        idx_j_ouc = find_j_ouc(label_j, offset_frac)
+        J_val_config = heis_inter_def.get("J") or heis_inter_def.get("value")
+        J_sympy_val = symbolic_params_map.get(J_val_config, sp.Symbol(J_val_config)) if isinstance(J_val_config, str) else sp.S(J_val_config)
 
-        if idx_i_uc is not None and idx_j_ouc is not None:
-            J_val_config = heis_inter_def.get("J") or heis_inter_def.get("value")
-            J_sympy_val = symbolic_params_map.get(J_val_config, sp.Symbol(J_val_config)) if isinstance(J_val_config, str) else sp.S(J_val_config)
-            Jex_sym[idx_i_uc, idx_j_ouc] = J_sympy_val
-        else:
-            logger.error(f"Heisenberg expansion skip: {label_i}-{label_j} offset {offset_frac}")
+        if "pair" in heis_inter_def:
+            label_i, label_j = heis_inter_def["pair"]
+            offset_frac = heis_inter_def.get("rij_offset", [0, 0, 0])
+            idx_i_uc = _atom_label_to_index_uc.get(label_i)
+            idx_j_ouc = find_j_ouc(label_j, offset_frac)
+
+            if idx_i_uc is not None and idx_j_ouc is not None:
+                Jex_sym[idx_i_uc, idx_j_ouc] = J_sympy_val
+            else:
+                logger.error(f"Heisenberg expansion skip: {label_i}-{label_j} offset {offset_frac}")
+        elif "distance" in heis_inter_def:
+            target_dist = float(heis_inter_def["distance"])
+            # Match all pairs within distance tolerance
+            for i_uc in range(N_atom_uc):
+                for j_ouc in range(N_atom_ouc):
+                    dist = np.linalg.norm(atom_pos_uc_cartesian[i_uc] - atom_pos_ouc_cartesian[j_ouc])
+                    if abs(dist - target_dist) < DIST_TOL:
+                        Jex_sym[i_uc, j_ouc] = J_sympy_val
 
     # DM Interaction (Symmetry Propagated or Manual)
     dm_list = config_interactions.get("dm_interaction", []) + config_interactions.get("dm_manual", [])
@@ -329,9 +350,21 @@ def Hamiltonian_from_config(
         raise ValueError(
             f"Sxyz_operators_ouc len {len(Sxyz_operators_ouc)} != atom_pos_ouc len {len(atom_pos_ouc)}."
         )
+    
+    interactions_config = config_data["interactions"]
+    if isinstance(interactions_config, list):
+        grouped = {}
+        for inter in interactions_config:
+            itype = inter.get("type")
+            if itype:
+                if itype not in grouped:
+                    grouped[itype] = []
+                grouped[itype].append(inter)
+        interactions_config = grouped
+
     Jex_sym, DM_matrix_sym, Kex_matrix_sym = spin_interactions_from_config(
         symbolic_parameters,
-        config_data["interactions"],
+        interactions_config,
         atom_pos_uc,
         atom_pos_ouc,
         uc_vecs,
@@ -377,7 +410,7 @@ def Hamiltonian_from_config(
 
         atom_i_label = _atom_index_to_label_uc.get(i)
         if atom_i_label:
-            for sia_def in config_data["interactions"].get("single_ion_anisotropy", []):
+            for sia_def in interactions_config.get("single_ion_anisotropy", []):
                 if sia_def.get("atom_label") == atom_i_label:
                     if sia_def.get("type") == "uniaxial_K_Sz_sq_global":
                         K_val_str = sia_def.get("K_global")
@@ -387,8 +420,9 @@ def Hamiltonian_from_config(
                                 * S_i[2, 0] ** 2
                             )
 
-        H_field_config = config_data.get("interactions", {}).get("applied_field", {})
+        H_field_config = interactions_config.get("applied_field", {})
         if H_field_config:
+            if isinstance(H_field_config, list): H_field_config = H_field_config[0]
             H_vec_config = H_field_config.get("H_vector", [0, 0, 0])
             H_mag_symbol_name = H_field_config.get("H_magnitude_symbol")
             actual_H_vector_sympy_comps = [sp.S(0)] * 3
@@ -399,19 +433,11 @@ def Hamiltonian_from_config(
                 )
                 
                 if isinstance(H_vec_config, str):
-                    # H_vector is a single symbol/name (e.g. "H_dir")
-                    # We expect this parameter to be a unit vector or handle it
                     h_dir_val = symbolic_parameters.get(H_vec_config, sp.Symbol(H_vec_config))
                     if isinstance(h_dir_val, (list, tuple, np.ndarray, sp.Matrix)):
-                        # If the parameter is a literal list in the dict (rare but possible if core.py allows)
-                        # Or if we want to support it being expanded later.
                         for k_ax in range(3):
                             actual_H_vector_sympy_comps[k_ax] = h_dir_val[k_ax] * H_mag_val_sym
                     else:
-                        # Assume it's a symbolic name that core.py will substitute later
-                        # But we need 3 components. This is tricky. 
-                        # If H_dir is [1,0,0], subs(H_dir, [1,0,0]) might not work if it's not a list.
-                        # For now, let's assume H_vector is a list of symbols if symbolic.
                         pass
                 elif isinstance(H_vec_config, (list, tuple)):
                     direction_H_numeric = np.array(H_vec_config, dtype=float)
@@ -427,7 +453,6 @@ def Hamiltonian_from_config(
                             f"Field symbol '{H_mag_symbol_name}' has zero direction. Field term is zero."
                         )
             else:
-                # No magnitude symbol, elements of H_vector are symbols or values
                 if isinstance(H_vec_config, str):
                     h_vec_val = symbolic_parameters.get(H_vec_config, sp.Symbol(H_vec_config))
                     if isinstance(h_vec_val, (list, tuple, np.ndarray, sp.Matrix)):
@@ -444,7 +469,6 @@ def Hamiltonian_from_config(
             if any(c != 0 for c in actual_H_vector_sympy_comps):
                 H_field_col_vec = sp.Matrix(actual_H_vector_sympy_comps)
                 Zeeman_dot_product = (S_i.T * H_field_col_vec)[0, 0]
-                # Using float for gamma and mu_B to match spin_model.py
                 HM_expr += gamma_val * mu_B_val * Zeeman_dot_product
     return HM_expr.expand()
 

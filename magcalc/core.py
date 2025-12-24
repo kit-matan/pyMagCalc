@@ -143,9 +143,30 @@ logger.addHandler(logging.NullHandler())
 # KKdMatrix is now imported from magcalc.linalg
 
 
-# --- Worker Functions (Keep outside class) ---
+def _minimize_worker(args):
+    """
+    Worker function for parallel minimization.
+    Args:
+        (E_sym_num, opt_vars, x0, method, bounds, constraints, kwargs)
+    """
+    E_sym_num, opt_vars, x0, method, bounds, constraints, kwargs = args
+    from scipy.optimize import minimize
+    import sympy as sp
 
+    # Lambdify inside the worker to avoid pickling issues with generated functions
+    E_func = sp.lambdify(opt_vars, E_sym_num, modules="numpy")
 
+    def wrapper(x):
+        return E_func(*x)
+
+    return minimize(
+        wrapper,
+        x0,
+        method=method,
+        bounds=bounds,
+        constraints=constraints,
+        **kwargs,
+    )
 
 
 # --- gen_HM Helper Functions ---
@@ -1565,6 +1586,9 @@ class MagCalc:
         method: str = "L-BFGS-B",
         bounds: Optional[List[Tuple[float, float]]] = None,
         constraints: Optional[Dict] = None,
+        num_starts: int = 1,
+        n_workers: int = 1,
+        early_stopping: int = 0,
         **kwargs,
     ) -> Any:
         """
@@ -1581,9 +1605,13 @@ class MagCalc:
             method (str): Minimization method (default: 'L-BFGS-B').
             bounds (Optional[List[Tuple]]): Bounds for variables.
             constraints (Optional[Dict]): Constraints for optimization.
+            num_starts (int): Number of independent minimizations from random starts (default: 1).
+                              If num_starts > 1 and x0 is provided, x0 is used as the first start.
+            n_workers (int): Number of parallel workers for multistart (default: 1).
+            early_stopping (int): Stop after N hits of the same minimum energy (default: 0, disabled).
 
         Returns:
-            OptimizeResult: The result of the optimization.
+            OptimizeResult: The result of the optimization (best result found).
         """
         if params is None:
             if self.hamiltonian_params is None:
@@ -1644,22 +1672,124 @@ class MagCalc:
             # x is [th0, ph0, th1, ph1, ...]
             return E_func_args(*x)
             
-        # 5. Minimize
-        if x0 is None:
-            # Default guess: Random to break symmetry
-            x0 = np.random.rand(2 * nspins) * 2 * np.pi
-            
         if bounds is None:
             # Bounds: theta [0, pi], phi [0, 2pi]
             bounds = []
             for _ in range(nspins):
                 bounds.append((0, np.pi))     # Theta
                 bounds.append((0, 2 * np.pi)) # Phi
-                
-        logger.info(f"Starting minimization with method {method}...")
-        res = minimize(energy_wrapper, x0, method=method, bounds=bounds, constraints=constraints, **kwargs)
-        
-        return res
+
+        best_res = None
+        best_energy = np.inf
+
+        logger.info(
+            f"Starting minimization (num_starts={num_starts}, n_workers={n_workers}, early_stopping={early_stopping}) with method {method}..."
+        )
+
+        tasks = []
+        for start_idx in range(num_starts):
+            # 5. Determine initial guess for this start
+            if start_idx == 0 and x0 is not None:
+                current_x0 = x0
+            else:
+                # Default guess: Random to break symmetry
+                current_x0 = np.random.rand(2 * nspins)
+                # Scale theta [0, pi], phi [0, 2pi]
+                for i in range(nspins):
+                    current_x0[2 * i] *= np.pi
+                    current_x0[2 * i + 1] *= 2 * np.pi
+            
+            if n_workers > 1:
+                # Pass expression and vars for worker to lambdify
+                tasks.append((E_sym_num, opt_vars, current_x0, method, bounds, constraints, kwargs))
+            else:
+                # Sequential can use the already lambdified function
+                tasks.append((E_func_args, current_x0, method, bounds, constraints, kwargs))
+
+        if n_workers > 1:
+            from multiprocessing import Pool
+
+            best_res = None
+            best_energy = np.inf
+            hits = 0
+
+            with Pool(processes=n_workers) as pool:
+                try:
+                    # Use imap_unordered to process as they finish
+                    for res in pool.imap_unordered(_minimize_worker, tasks):
+                        if res.success:
+                            if np.isclose(res.fun, best_energy, atol=1e-6):
+                                hits += 1
+                            elif res.fun < best_energy:
+                                best_energy = res.fun
+                                best_res = res
+                                hits = 1
+                                logger.info(
+                                    f"New best energy found: {best_energy:.6f} meV"
+                                )
+
+                            if early_stopping > 0 and hits >= early_stopping:
+                                logger.info(
+                                    f"Early stopping condition met: ground state found {hits} times."
+                                )
+                                pool.terminate()
+                                break
+                except KeyboardInterrupt:
+                    pool.terminate()
+                    raise
+
+        else:
+            # Sequential execution (original logic with early stopping)
+            hits = 0
+            for start_idx, task_args in enumerate(tasks):
+                # Manual decomposition since sequential task_args is (func, x0, ...)
+                func, x0_task, method_task, bounds_task, constraints_task, kwargs_task = task_args
+                def energy_wrapper(x):
+                    return func(*x)
+                res = minimize(energy_wrapper, x0_task, method=method_task, bounds=bounds_task, constraints=constraints_task, **kwargs_task)
+
+                if res.success:
+                    if np.isclose(res.fun, best_energy, atol=1e-6):
+                        hits += 1
+                    elif res.fun < best_energy:
+                        best_energy = res.fun
+                        best_res = res
+                        hits = 1
+                        logger.info(
+                            "New best energy found at start {}: {:.6f} meV".format(
+                                start_idx + 1, best_energy
+                            )
+                        )
+                    
+                    if early_stopping > 0 and hits >= early_stopping:
+                        logger.info(
+                            f"Early stopping condition met at start {start_idx+1}: ground state found {hits} times."
+                        )
+                        break
+                else:
+                    logger.debug(
+                        "Start {} failed to converge: {}".format(
+                            start_idx + 1, res.message
+                        )
+                    )
+
+        if best_res is None:
+            logger.warning("All minimization starts failed.")
+            # If all failed, we might want to return the last res if it exists, 
+            # but usually it's better to return something indicating failure.
+            # However, for consistency with original behavior:
+            if 'res' in locals():
+                 return res
+            return None
+
+        return best_res
+
+        if best_res is None:
+            logger.warning("All minimization starts failed.")
+            # Return last result anyway if all failed, but it might be None if range(num_starts) was somehow empty
+            return res
+
+        return best_res
 
 
 # --- Plotting Helper Functions ---

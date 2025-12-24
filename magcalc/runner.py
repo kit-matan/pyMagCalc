@@ -191,7 +191,18 @@ def run_calculation(config_file: str):
                 initialize=False
             )
             
-            min_res = calc_min.minimize_energy(method="L-BFGS-B", x0=x0)
+            min_config_section = final_config.get('minimization', {})
+            num_starts = min_config_section.get('num_starts', 1)
+            n_workers = min_config_section.get('n_workers', 1)
+            early_stopping = min_config_section.get('early_stopping', 0)
+            
+            min_res = calc_min.minimize_energy(
+                method="L-BFGS-B", 
+                x0=x0, 
+                num_starts=num_starts, 
+                n_workers=n_workers, 
+                early_stopping=early_stopping
+            )
             
             if min_res.success:
                 logger.info(f"Minimization converged. Energy: {min_res.fun:.6f}")
