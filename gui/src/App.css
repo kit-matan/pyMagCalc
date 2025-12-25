@@ -1047,3 +1047,15 @@ input:checked+.switch-slider:before {
 .border-accent {
   border-color: var(--accent-color);
 }
+
+.flex-between {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.flex-gap-sm {
+  display: flex;
+  gap: var(--spacing-sm);
+  align-items: center;
+}

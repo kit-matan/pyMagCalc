@@ -12,7 +12,7 @@ import uuid
 
 import sys
 # Add parent directory to sys.path to find magcalc package
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 try:
     from magcalc.config_builder import MagCalcConfigBuilder
 except ImportError:
@@ -211,7 +211,7 @@ async def get_neighbors(config: Dict[str, Any]):
         dimensionality = data.get("crystal_structure", {}).get("dimensionality", "3D")
         
         max_dist = 10.0
-        unique_bonds = []
+        candidate_bonds = []
         
         from itertools import product
         # Search a slightly larger cube of cells
@@ -228,23 +228,41 @@ async def get_neighbors(config: Dict[str, Any]):
                     dist = np.linalg.norm((pos_j_img - positions[i]) @ lattice_vecs)
                     
                     if 0.1 < dist < max_dist:
-                        unique_bonds.append({
-                            "distance": round(float(dist), 4),
+                        candidate_bonds.append({
+                            "distance": float(dist),
                             "ref_pair": [labels[i], labels[j]],
-                            "offset": off_vec.tolist()
+                            "offset": off_vec.tolist(),
+                            "offset_mag": float(np.linalg.norm(off_vec)),
+                            "indices": (i, j)
                         })
         
+        # Sort candidates to prioritize:
+        # 1. Distance (rounded to 5 decimals for shell grouping)
+        # 2. Offset Magnitude (prefer zero offset)
+        # 3. Atom indices (consistency)
+        candidate_bonds.sort(key=lambda b: (round(b["distance"], 5), b["offset_mag"], b["indices"]))
+
         # 4. Group by symmetry
+        unique_shells = []
         if not builder.symmetry_ops:
             # Fallback to simple distance grouping
-            unique_shells = {}
-            for b in unique_bonds:
-                key = (b["distance"], tuple(sorted(b["ref_pair"])))
-                if key not in unique_shells:
-                    unique_shells[key] = {**b, "multiplicity": 1}
-                else:
-                    unique_shells[key]["multiplicity"] += 1
-            sorted_shells = sorted(list(unique_shells.values()), key=lambda x: x["distance"])
+            processed_keys = set()
+            for b in candidate_bonds:
+                # Use sorted pair and rounded distance as shell key
+                key = (round(b["distance"], 5), tuple(sorted(b["ref_pair"])))
+                if key not in processed_keys:
+                    unique_shells.append({**b, "multiplicity": 0}) # Logic below will count
+                    processed_keys.add(key)
+            
+            # Count multiplicities
+            for shell in unique_shells:
+                count = 0
+                for b in candidate_bonds:
+                    if round(b["distance"], 5) == round(shell["distance"], 5) and \
+                       tuple(sorted(b["ref_pair"])) == tuple(sorted(shell["ref_pair"])):
+                        count += 1
+                shell["multiplicity"] = count
+            sorted_shells = unique_shells
         else:
             # Full Symmetry Grouping
             rots = builder.symmetry_ops['rotations']
@@ -262,10 +280,10 @@ async def get_neighbors(config: Dict[str, Any]):
 
             # Prepare list for sorting/processing
             bond_keys = []
-            for b in unique_bonds:
+            for b in candidate_bonds:
                 bond_keys.append((
-                    labels.index(b["ref_pair"][0]),
-                    labels.index(b["ref_pair"][1]),
+                    b["indices"][0],
+                    b["indices"][1],
                     tuple(b["offset"]),
                     b["distance"]
                 ))
@@ -294,13 +312,18 @@ async def get_neighbors(config: Dict[str, Any]):
                 orbits.append({
                     "distance": dist,
                     "ref_pair": [labels[i], labels[j]],
-                    "offset": list(off),
-                    "multiplicity": len(current_orbit) // 2
+                    "offset": list(map(int, off)),
+                    "multiplicity": len(current_orbit) // 2,
+                    "equivalent_bonds": [
+                        {"pair": [labels[int(b[0])], labels[int(b[1])]], "offset": list(map(int, b[2]))}
+                        for b in sorted(list(current_orbit), key=lambda x: (x[0], x[1], x[2]))
+                        if b[0] <= b[1] # Deduplicate list
+                    ]
                 })
             sorted_shells = sorted(orbits, key=lambda x: x["distance"])
 
         # 5. Assign 1st, 2nd, 3rd labels based on distance
-        unique_distances = sorted(list(set(s["distance"] for s in sorted_shells)))
+        unique_distances = sorted(list(set(round(s["distance"], 5) for s in sorted_shells)))
         dist_to_rank = {d: i + 1 for i, d in enumerate(unique_distances)}
         
         def get_rank_label(rank):
@@ -310,7 +333,7 @@ async def get_neighbors(config: Dict[str, Any]):
                 return f"{rank}{mapping.get(rank % 10, 'th')}"
 
         for s in sorted_shells:
-            rank = dist_to_rank[s["distance"]]
+            rank = dist_to_rank[round(s["distance"], 5)]
             s["shell_label"] = get_rank_label(rank)
             s["rank"] = rank
 
@@ -391,7 +414,8 @@ async def expand_config(config: Dict[str, Any]):
                         type=rule.get("type", "heisenberg"),
                         ref_pair=rule.get("ref_pair"),
                         distance=rule.get("distance"),
-                        value=rule.get("value")
+                        value=rule.get("value"),
+                        offset=rule.get("offset")
                     )
                 except KeyError as e:
                     print(f"Warning: Skipping invalid interaction rule referencing missing atom: {e}")
@@ -430,7 +454,9 @@ async def expand_config(config: Dict[str, Any]):
             "tasks": builder.config["tasks"],
             "q_path": data.get("q_path", {}),
             "minimization": data.get("minimization", {}),
-            "plotting": data.get("plotting", {})
+            "plotting": data.get("plotting", {}),
+            "calculation": data.get("calculation", {"cache_mode": "none"}),
+            "output": data.get("output", {"export_csv": False})
         }
         
         return expanded_config
@@ -517,6 +543,12 @@ async def get_visualizer_data(config: Dict[str, Any]):
         builder = MagCalcConfigBuilder()
         data = config.get("data", {})
         
+        # 2. Basis Atoms
+        struct_data = data.get("crystal_structure", {})
+        wyckoff_atoms = struct_data.get("wyckoff_atoms", [])
+        atom_mode = struct_data.get("atom_mode", "symmetry")
+        builder.dimensionality = struct_data.get("dimensionality", "3D")
+
         # 1. Lattice
         lattice = data.get("crystal_structure", {}).get("lattice_parameters", {})
         builder.set_lattice(
@@ -526,14 +558,8 @@ async def get_visualizer_data(config: Dict[str, Any]):
             alpha=lattice.get("alpha", 90),
             beta=lattice.get("beta", 90),
             gamma=lattice.get("gamma", 90),
-            space_group=lattice.get("space_group")
+            space_group=lattice.get("space_group") if atom_mode == "symmetry" else None
         )
-        
-        # 2. Basis Atoms
-        struct_data = data.get("crystal_structure", {})
-        wyckoff_atoms = struct_data.get("wyckoff_atoms", [])
-        atom_mode = struct_data.get("atom_mode", "symmetry")
-        builder.dimensionality = struct_data.get("dimensionality", "3D")
 
         if atom_mode == "explicit":
             config_atoms = []
@@ -565,24 +591,32 @@ async def get_visualizer_data(config: Dict[str, Any]):
         }
         
         if "list" in data.get("interactions", {}):
-            builder.config["interactions"]["heisenberg"] = data["interactions"]["list"]
+            # Explicit List Mode
+            explicit_list = data["interactions"]["list"]
+            for item in explicit_list:
+                rtype = item.get("type", "heisenberg")
+                if rtype == "heisenberg":
+                    builder.config["interactions"]["heisenberg"].append(item)
+                elif rtype in ["dm", "dm_interaction", "dm_manual"]:
+                    builder.config["interactions"]["dm_interaction"].append(item)
+                elif rtype == "anisotropic_exchange":
+                    builder.config["interactions"]["anisotropic_exchange"].append(item)
         else:
-            # Symmetry Rules
+            # Symmetry Rules Mode
             rules = data.get("interactions", {}).get("symmetry_rules", [])
             for rule in rules:
-                 # Map input rule format to builder's structure
-                 if rule.get("type") == "heisenberg":
-                     builder.config["interactions"]["heisenberg"].append(rule)
-                 elif rule.get("type") in ["dm", "dm_interaction"]:
-                     # Ensure key 'value' is list if generic DM
-                     if "value" in rule and isinstance(rule["value"], str):
-                         # If symbolic string "0,-Dy,-Dz", keep it string?
-                         pass
-                     builder.config["interactions"]["dm_interaction"].append(rule)
-                 elif rule.get("type") == "anisotropic_exchange":
-                     builder.config["interactions"]["anisotropic_exchange"].append(rule)
-            
-            # Expand
+                 builder.add_symmetry_interaction(
+                     type=rule.get("type"),
+                     ref_pair=rule.get("ref_pair"),
+                     value=rule.get("value"),
+                     distance=rule.get("distance"),
+                     offset=rule.get("offset")
+                 )
+        
+        # 3. Expand Rules (Only in symmetry mode)
+        # We don't need _expand_*_rules anymore if using add_symmetry_interaction,
+        # but for BACKWARDS COMPATIBILITY with rules without ref_pair:
+        if atom_mode == "symmetry":
             builder._expand_heisenberg_rules()
             builder._expand_anisotropic_exchange_rules()
             builder._expand_dm_rules()
@@ -617,17 +651,29 @@ async def get_visualizer_data(config: Dict[str, Any]):
              all_inters.append(r)
              
         for rule in all_inters:
-            if "pair" not in rule: continue
+            idx_i = -1
+            idx_j = -1
             
-            lbl_i = rule["pair"][0]
-            lbl_j = rule["pair"][1]
-            
-            if lbl_i not in label_map or lbl_j not in label_map:
-                continue
+            if "pair" in rule:
+                lbl_i = rule["pair"][0]
+                lbl_j = rule["pair"][1]
                 
-            idx_i = label_map[lbl_i]
-            idx_j = label_map[lbl_j]
+                if lbl_i in label_map and lbl_j in label_map:
+                    idx_i = label_map[lbl_i]
+                    idx_j = label_map[lbl_j]
+            elif "atom_i" in rule and "atom_j" in rule:
+                # Direct indices (explicit mode)
+                idx_i = rule["atom_i"]
+                idx_j = rule["atom_j"]
+            
+            if idx_i == -1 or idx_j == -1:
+                continue
+            
             offset = rule.get("rij_offset", [0, 0, 0])
+             
+            # Handle dm_manual specialized offset keys if present
+            if "offset_j" in rule:
+                offset = rule["offset_j"]
             
             # Format value for label
             val = rule.get("value")
@@ -692,4 +738,5 @@ async def get_visualizer_data(config: Dict[str, Any]):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Enable reload to pick up code changes automatically!
+    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)

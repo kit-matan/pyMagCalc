@@ -1,20 +1,37 @@
 import React, { useRef } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
-import { OrbitControls, Stars, PerspectiveCamera, Line, Text } from '@react-three/drei'
+import { OrbitControls, Stars, PerspectiveCamera, Line, Text, GizmoHelper, GizmoViewport } from '@react-three/drei'
 import * as THREE from 'three'
 
-function Atom({ position, color, label }) {
+function Atom({ position, color, label, isGhost = false }) {
     return (
-        <mesh position={position}>
-            <sphereGeometry args={[0.5, 32, 32]} />
-            <meshStandardMaterial
-                color={color}
-                roughness={0.4}
-                metalness={0.2}
-                emissive={color}
-                emissiveIntensity={0.1}
-            />
-        </mesh>
+        <group position={position}>
+            <mesh>
+                <sphereGeometry args={[isGhost ? 0.3 : 0.5, 32, 32]} />
+                <meshStandardMaterial
+                    color={color}
+                    transparent={isGhost}
+                    opacity={isGhost ? 0.6 : 1.0}
+                    roughness={0.4}
+                    metalness={0.2}
+                    emissive={color}
+                    emissiveIntensity={isGhost ? 0.05 : 0.1}
+                />
+            </mesh>
+            {label && !isGhost && (
+                <Text
+                    position={[0, 0.7, 0]}
+                    fontSize={0.35}
+                    color="#ffffff"
+                    anchorX="center"
+                    anchorY="middle"
+                    outlineWidth={0.03}
+                    outlineColor="#000000"
+                >
+                    {label}
+                </Text>
+            )}
+        </group>
     )
 }
 
@@ -120,8 +137,11 @@ export default function Visualizer({ atoms, lattice, isDark, dimensionality, zFi
     return (
         <div style={{ width: '100%', height: '100%', borderRadius: '16px', overflow: 'hidden', background: bgColor }}>
             <Canvas shadows>
-                <PerspectiveCamera makeDefault position={[12, 12, 12]} />
+                <PerspectiveCamera makeDefault position={[12, 12, 10]} up={[0, 0, 1]} />
                 <OrbitControls makeDefault />
+                <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
+                    <GizmoViewport axisColors={['#f87171', '#34d399', '#38bdf8']} labelColor="white" />
+                </GizmoHelper>
 
                 {isDark && <Stars radius={100} depth={50} count={5000} factor={4} saturation={0} fade speed={1} />}
 
@@ -135,12 +155,10 @@ export default function Visualizer({ atoms, lattice, isDark, dimensionality, zFi
                         const finalAtomColor = isDark ? atomColor : (atom.label.includes('Cu') ? '#ef4444' : '#0ea5e9')
 
                         const rawCartPos = transformPos(atom.pos, matrix)
-                        // Swap Y and Z so crystallography C is UP (Three.js Y)
-                        // This makes the ab plane the ground plane (XZ)
-                        const cartPos = [rawCartPos[0], rawCartPos[2], rawCartPos[1]]
+                        const cartPos = [rawCartPos[0], rawCartPos[1], rawCartPos[2]]
 
                         const rawCartDir = transformPos(atom.magmom_classical || [0, 0, 1], matrix)
-                        const cartDir = [rawCartDir[0], rawCartDir[2], rawCartDir[1]]
+                        const cartDir = [rawCartDir[0], rawCartDir[1], rawCartDir[2]]
 
                         return (
                             <React.Fragment key={idx}>
@@ -178,10 +196,10 @@ export default function Visualizer({ atoms, lattice, isDark, dimensionality, zFi
                         ]
 
                         const startRaw = transformPos(posI, matrix)
-                        const start = [startRaw[0], startRaw[2], startRaw[1]]
+                        const start = [startRaw[0], startRaw[1], startRaw[2]]
 
                         const endRaw = transformPos(posJExpanded, matrix)
-                        const end = [endRaw[0], endRaw[2], endRaw[1]]
+                        const end = [endRaw[0], endRaw[1], endRaw[2]]
 
                         // Colors
                         const bondColor = bond.type === 'dm' ? '#f472b6' : (bond.type === 'anisotropic' ? '#fbbf24' : '#94a3b8')
@@ -192,8 +210,7 @@ export default function Visualizer({ atoms, lattice, isDark, dimensionality, zFi
                             // DM vector at midpoint
                             const mid = [(start[0] + end[0]) / 2, (start[1] + end[1]) / 2, (start[2] + end[2]) / 2]
                             const dmVecRaw = transformPos(bond.dm_vector, matrix)
-                            // Reorient DM vector to match visualizer coordinates (Y <-> Z swap)
-                            const dmVec = [dmVecRaw[0], dmVecRaw[2], dmVecRaw[1]]
+                            const dmVec = [dmVecRaw[0], dmVecRaw[1], dmVecRaw[2]]
 
                             dmArrow = (
                                 <SpinArrow
@@ -222,15 +239,16 @@ export default function Visualizer({ atoms, lattice, isDark, dimensionality, zFi
 
                         if (isExternal && bond.atom_j < atoms.length) {
                             const atomJ = atoms[bond.atom_j]
-                            const atomColor = atomJ.label.includes('Cu') ? '#f87171' : '#38bdf8'
-                            const finalAtomColor = isDark ? atomColor : (atomJ.label.includes('Cu') ? '#ef4444' : '#0ea5e9')
+                            // Ghost color: desaturated and lighter/darker depending on theme
+                            const ghostColor = isDark ? '#475569' : '#cbd5e1'
 
                             ghostAtom = (
                                 <Atom
                                     key={`ghost-${idx}`}
                                     position={end}
                                     label={atomJ.label}
-                                    color={finalAtomColor}
+                                    color={ghostColor}
+                                    isGhost={true}
                                 />
                             )
                         }
@@ -253,9 +271,9 @@ export default function Visualizer({ atoms, lattice, isDark, dimensionality, zFi
                 </group>
 
                 {dimensionality === '2D' ? (
-                    <gridHelper args={[20, 20, gridMain, gridSec]} position={[0, -0.1, 0]} />
+                    <gridHelper args={[20, 20, gridMain, gridSec]} rotation={[Math.PI / 2, 0, 0]} position={[0, 0, -0.1]} />
                 ) : (
-                    <gridHelper args={[20, 20, gridMain, gridSec]} />
+                    <gridHelper args={[20, 20, gridMain, gridSec]} rotation={[Math.PI / 2, 0, 0]} />
                 )}
             </Canvas>
         </div>

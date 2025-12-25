@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Beaker, Database, Activity, Code, Download, Plus, Trash2, Settings, Box, Eye, Share2, Info, Magnet, Wind, Check, ChevronRight, Zap, Crosshair } from 'lucide-react'
+import { Beaker, Database, Activity, Code, Download, Plus, Trash2, Settings, Box, Eye, Share2, Info, Magnet, Wind, Check, ChevronRight, Zap, Crosshair, FileText } from 'lucide-react'
 import yaml from 'js-yaml'
 import Visualizer from './components/Visualizer'
 import './App.css'
@@ -9,8 +9,9 @@ function App() {
   const [showVisualizer, setShowVisualizer] = useState(true)
   const [notification, setNotification] = useState(null)
   const [neighborDistances, setNeighborDistances] = useState([])
+  const [selectedBondIdxs, setSelectedBondIdxs] = useState({}) // { suggestionIdx: bondIdx }
   const [interactionMode, setInteractionMode] = useState('explicit') // 'symmetry' or 'explicit'
-  const [atomMode, setAtomMode] = useState('symmetry') // 'symmetry' or 'explicit'
+  const [atomMode, setAtomMode] = useState('explicit') // 'symmetry' or 'explicit'
   const [previewAtoms, setPreviewAtoms] = useState([]) // Expanded atoms for visualizer
   const [bonds, setBonds] = useState([]) // Bonds for visualizer
   const [zFilter, setZFilter] = useState(false) // Filter for z=0 plane in 2D
@@ -38,9 +39,9 @@ function App() {
   const [config, setConfig] = useState({
     lattice: { a: 7.33, b: 7.33, c: 17.1374, alpha: 90, beta: 90, gamma: 120, space_group: 163, dimensionality: '2D' },
     wyckoff_atoms: [
-      { label: 'Fe0', pos: [0.5, 0.0, 0.0], spin_S: 2.5 },
-      { label: 'Fe1', pos: [0.0, 0.5, 0.0], spin_S: 2.5 },
-      { label: 'Fe2', pos: [0.5, 0.5, 0.0], spin_S: 2.5 }
+      { label: 'Fe0', pos: [0.0, 0.0, 0.0], spin_S: 2.5 },
+      { label: 'Fe1', pos: [0.5, 0.0, 0.0], spin_S: 2.5 },
+      { label: 'Fe2', pos: [0.0, 0.5, 0.0], spin_S: 2.5 }
     ],
     symmetry_interactions: [
       { type: 'heisenberg', ref_pair: ['Fe0', 'Fe1'], distance: 3.665, value: 'J1' },
@@ -65,11 +66,14 @@ function App() {
     ],
     parameters: { S: 2.5, H_mag: 0.0, H_dir: [0, 0, 1], J1: 3.23, J2: 0.11, Dy: 0.218, Dz: -0.195 },
     tasks: {
-      run_minimization: false,
+      run_minimization: true,
       run_dispersion: true,
+      calculate_dispersion_new: true,
       plot_dispersion: true,
       run_sqw_map: true,
-      plot_sqw_map: true
+      calculate_sqw_map_new: true,
+      plot_sqw_map: true,
+      export_csv: false
     },
     q_path: {
       points: { Gamma: [0, 0, 0], M: [0.5, 0, 0], K: [0.333, 0.333, 0] },
@@ -78,14 +82,18 @@ function App() {
     },
     plotting: {
       energy_min: 0,
-      energy_max: 10,
+      energy_max: 20,
       broadening: 0.2,
       energy_resolution: 0.05,
       momentum_max: 4.0,
       save_plot: true
     },
+    output: {
+      disp_csv_filename: 'disp_data.csv',
+      sqw_csv_filename: 'sqw_data.csv'
+    },
     magnetic_structure: {
-      enabled: true,
+      enabled: false,
       type: 'pattern',
       pattern_type: 'antiferromagnetic',
       directions: [
@@ -99,6 +107,9 @@ function App() {
       n_workers: 8,
       early_stopping: 10,
       method: "L-BFGS-B"
+    },
+    calculation: {
+      cache_mode: 'none'
     }
   })
 
@@ -143,7 +154,7 @@ function App() {
     // Debounce slightly
     const timer = setTimeout(updatePreview, 500)
     return () => clearTimeout(timer)
-  }, [config.lattice, config.wyckoff_atoms, atomMode, config.lattice.dimensionality, config.interactions, interactionMode])
+  }, [config.lattice, config.wyckoff_atoms, atomMode, config.lattice.dimensionality, config.symmetry_interactions, config.explicit_interactions, config.parameters, interactionMode])
 
   const exportPython = () => {
     let script = `from magcalc.config_builder import MagCalcConfigBuilder\n\n`
@@ -347,6 +358,7 @@ function App() {
       setNeighborDistances(data)
     } catch (err) {
       console.error('Error fetching neighbors:', err)
+      showNotify("Failed to fetch neighbor suggestions. Check server logs.", "error")
     }
   }
 
@@ -396,7 +408,7 @@ function App() {
       </header>
 
       <main>
-        <aside className="left-sidebar glass">
+        <aside className="sidebar glass">
           <nav>
             <button className={`nav-item ${activeTab === 'structure' ? 'active' : ''}`} onClick={() => setActiveTab('structure')}>
               <Box size={20} /> Structure
@@ -421,7 +433,7 @@ function App() {
         <section className="content-area animate-fade-in">
           {activeTab === 'structure' && (
             <div className="form-section">
-              <h2 className="section-title">Crystal Architecture</h2>
+              <h2 className="section-title mb-xl">Crystal Architecture</h2>
               <div className="card shadow-glow">
                 <div className="mb-lg">
                   <h3 className="mb-md text-xs opacity-60 tracking-wider">Lattice Constants (Å)</h3>
@@ -612,7 +624,10 @@ function App() {
                             </div>
                             <div>
                               <span className="interaction-type">{inter.type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</span>
-                              <span className="interaction-subtitle">{inter.ref_pair ? `Ref: ${inter.ref_pair.join('-')}` : 'Auto-detected'}</span>
+                              <span className="interaction-subtitle">
+                                {inter.ref_pair ? `Ref: ${inter.ref_pair.join('-')}` : 'Auto-detected'}
+                                {inter.offset && (inter.offset[0] !== 0 || inter.offset[1] !== 0 || inter.offset[2] !== 0) && ` [${inter.offset.join(',')}]`}
+                              </span>
                             </div>
                           </div>
                           <button onClick={() => {
@@ -675,15 +690,33 @@ function App() {
                             </div>
                             <div className="shell-info">
                               <span className="ref-pair-label">Reference Bond</span>
-                              <span className="ref-pair-value">{n.ref_pair ? n.ref_pair.join(' → ') : 'N/A'}</span>
+                              {n.equivalent_bonds && n.equivalent_bonds.length > 1 ? (
+                                <select
+                                  className="minimal-select text-xs mt-xs"
+                                  value={selectedBondIdxs[i] || 0}
+                                  onChange={(e) => setSelectedBondIdxs({ ...selectedBondIdxs, [i]: parseInt(e.target.value) })}
+                                >
+                                  {n.equivalent_bonds.map((b, bidx) => (
+                                    <option key={bidx} value={bidx}>
+                                      {b.pair.join(' → ')} [{b.offset.join(',')}]
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <span className="ref-pair-value">{n.ref_pair ? n.ref_pair.join(' → ') : 'N/A'}</span>
+                              )}
                             </div>
                             <div className="suggestion-footer">
                               <button className="btn btn-primary btn-xs" onClick={() => {
+                                const bidx = selectedBondIdxs[i] || 0;
+                                const chosenBond = n.equivalent_bonds ? n.equivalent_bonds[bidx] : { pair: n.ref_pair, offset: n.offset };
+
                                 const nextRules = [...config.symmetry_interactions, {
                                   type: 'heisenberg',
                                   distance: n.distance,
                                   value: `J${i + 1}`,
-                                  ref_pair: n.ref_pair
+                                  ref_pair: chosenBond.pair,
+                                  offset: chosenBond.offset
                                 }];
                                 const nextParams = { ...config.parameters };
                                 if (!nextParams[`J${i + 1}`]) nextParams[`J${i + 1}`] = 0.0;
@@ -956,7 +989,7 @@ function App() {
                 <div className="card shadow-glow">
                   <h3>Calculation Tasks</h3>
                   <div className="task-cards-grid">
-                    {Object.keys(config.tasks).map(taskKey => {
+                    {Object.keys(config.tasks).filter(k => k !== 'export_csv').map(taskKey => {
                       const Icon = taskKey.includes('plot') ? Eye : (taskKey.includes('minimization') ? Magnet : Activity);
                       const label = taskKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
                       const desc = taskKey.includes('run') ? 'Calculate results' : 'Generate visualization';
@@ -1013,6 +1046,67 @@ function App() {
                         <option value="SLSQP">SLSQP</option>
                       </select>
                     </div>
+                  </div>
+
+                  <h3 className="mt-xl">Calculation Settings</h3>
+                  <div className="grid-form mt-md">
+                    <div className="input-group">
+                      <label>Cache Mode</label>
+                      <select
+                        value={config.calculation.cache_mode}
+                        className="minimal-input"
+                        onChange={(e) => updateField('calculation', 'cache_mode', e.target.value)}
+                      >
+                        <option value="none">None (No Caching)</option>
+                        <option value="auto">Auto (Smart Caching)</option>
+                        <option value="r">Read (Force Read Cache)</option>
+                        <option value="w">Write (Force Regeneration)</option>
+                      </select>
+                      <p className="text-xs opacity-50 mt-xs">
+                        'None' is recommended for small systems or when debugging symmetry.
+                      </p>
+                    </div>
+                  </div>
+
+                  <h3 className="mt-xl">Data Export</h3>
+                  <div className="mt-md">
+                    <label className="flex-between align-center glass rounded-lg border-light mb-md modern-switch-container pointer" style={{ padding: '12px 16px', display: 'flex' }}>
+                      <div className="flex align-center gap-md">
+                        <FileText size={18} className="vibrant-text" />
+                        <span className="text-sm font-bold">Export results to CSV</span>
+                      </div>
+                      <label className="modern-switch" style={{ marginBottom: 0 }}>
+                        <input
+                          type="checkbox"
+                          checked={config.tasks.export_csv}
+                          onChange={(e) => updateField('tasks', 'export_csv', e.target.checked)}
+                        />
+                        <span className="switch-slider"></span>
+                      </label>
+                    </label>
+
+                    {config.tasks.export_csv && (
+                      <div className="grid-form animate-fade-in">
+                        <div className="input-group">
+                          <label>Dispersion CSV</label>
+                          <input
+                            type="text"
+                            value={config.output.disp_csv_filename}
+                            className="minimal-input"
+                            onChange={(e) => updateField('output', 'disp_csv_filename', e.target.value)}
+                          />
+                        </div>
+                        <div className="input-group">
+                          <label>S(Q,w) CSV</label>
+                          <input
+                            type="text"
+                            value={config.output.sqw_csv_filename}
+                            className="minimal-input"
+                            onChange={(e) => updateField('output', 'sqw_csv_filename', e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1167,109 +1261,107 @@ function App() {
               </div>
             </div>
           )}
-          {
-            activeTab === 'magstruct' && (
-              <div className="form-section">
-                <div className="flex-between mb-md">
-                  <h2 className="section-title">Magnetic Structure</h2>
-                  <label className="flex-gap-sm align-center modern-switch-container pointer">
-                    <span className="text-sm font-bold vibrant-text">Include Manual Structure</span>
-                    <label className="modern-switch">
-                      <input
-                        type="checkbox"
-                        checked={config.magnetic_structure.enabled}
-                        onChange={(e) => updateField('magnetic_structure', 'enabled', e.target.checked)}
-                      />
-                      <span className="switch-slider"></span>
-                    </label>
+          {activeTab === 'magstruct' && (
+            <div className="form-section">
+              <div className="flex-between mb-md">
+                <h2 className="section-title">Magnetic Structure</h2>
+                <label className="flex-gap-sm align-center modern-switch-container pointer">
+                  <span className="text-sm font-bold vibrant-text">Include Manual Structure</span>
+                  <label className="modern-switch">
+                    <input
+                      type="checkbox"
+                      checked={config.magnetic_structure.enabled}
+                      onChange={(e) => updateField('magnetic_structure', 'enabled', e.target.checked)}
+                    />
+                    <span className="switch-slider"></span>
                   </label>
-                </div>
-
-                {!config.magnetic_structure.enabled && (
-                  <div className="card glass opacity-60 text-center py-xl border-dashed">
-                    <Magnet className="mx-auto mb-sm opacity-40" size={32} />
-                    <p>Manual magnetic structure is currently disabled.</p>
-                    <p className="text-xs mt-xs">Use the toggle above to enable manual spin direction input. If disabled, the calculation will rely on the optimizer to find the ground state.</p>
-                  </div>
-                )}
-
-                {config.magnetic_structure.enabled && (
-                  <div className="card mb-lg animate-fade-in">
-                    <div className="input-group">
-                      <label>Structure Type</label>
-                      <select
-                        className="minimal-select"
-                        value={config.magnetic_structure.type}
-                        onChange={(e) => updateField('magnetic_structure', 'type', e.target.value)}
-                      >
-                        <option value="pattern">Pattern Based</option>
-                      </select>
-                    </div>
-                    {config.magnetic_structure.type === 'pattern' && (
-                      <div className="mt-md">
-                        <div className="input-group">
-                          <label>Pattern Type</label>
-                          <select
-                            className="minimal-select"
-                            value={config.magnetic_structure.pattern_type}
-                            onChange={(e) => updateField('magnetic_structure', 'pattern_type', e.target.value)}
-                          >
-                            <option value="antiferromagnetic">Antiferromagnetic</option>
-                            <option value="generic">Generic/Custom List</option>
-                          </select>
-                        </div>
-
-                        <div className="mt-xl">
-                          <div className="flex-between mb-md">
-                            <h3>Spin Directions (Unit Vectors)</h3>
-                            <button className="btn btn-secondary btn-sm" onClick={() => {
-                              const next = [...config.magnetic_structure.directions];
-                              next.push([1, 0, 0]);
-                              updateField('magnetic_structure', 'directions', next);
-                            }}><Plus size={14} /> Add Direction</button>
-                          </div>
-                          <table className="data-table">
-                            <thead>
-                              <tr>
-                                <th style={{ width: '60px' }}>#</th>
-                                <th>Direction (Sx, Sy, Sz)</th>
-                                <th style={{ width: '40px' }}></th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {config.magnetic_structure.directions.map((dir, idx) => (
-                                <tr key={idx}>
-                                  <td className="center opacity-40">{idx}</td>
-                                  <td>
-                                    <div className="flex-gap-xs">
-                                      {[0, 1, 2].map(i => (
-                                        <input key={i} type="number" step="0.001" value={dir[i]} className="table-input" onChange={(e) => {
-                                          const next = [...config.magnetic_structure.directions];
-                                          next[idx][i] = parseFloat(e.target.value);
-                                          updateField('magnetic_structure', 'directions', next);
-                                        }} />
-                                      ))}
-                                    </div>
-                                  </td>
-                                  <td>
-                                    <button className="icon-btn text-error" onClick={() => {
-                                      const next = config.magnetic_structure.directions.filter((_, i) => i !== idx);
-                                      updateField('magnetic_structure', 'directions', next);
-                                    }}><Trash2 size={14} /></button>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
+                </label>
               </div>
-            )
-          }
-        </section >
+
+              {!config.magnetic_structure.enabled && (
+                <div className="card glass opacity-60 text-center py-xl border-dashed">
+                  <Magnet className="mx-auto mb-sm opacity-40" size={32} />
+                  <p>Manual magnetic structure is currently disabled.</p>
+                  <p className="text-xs mt-xs">Use the toggle above to enable manual spin direction input. If disabled, the calculation will rely on the optimizer to find the ground state.</p>
+                </div>
+              )}
+
+              {config.magnetic_structure.enabled && (
+                <div className="card mb-lg animate-fade-in">
+                  <div className="input-group">
+                    <label>Structure Type</label>
+                    <select
+                      className="minimal-select"
+                      value={config.magnetic_structure.type}
+                      onChange={(e) => updateField('magnetic_structure', 'type', e.target.value)}
+                    >
+                      <option value="pattern">Pattern Based</option>
+                    </select>
+                  </div>
+                  {config.magnetic_structure.type === 'pattern' && (
+                    <div className="mt-md">
+                      <div className="input-group">
+                        <label>Pattern Type</label>
+                        <select
+                          className="minimal-select"
+                          value={config.magnetic_structure.pattern_type}
+                          onChange={(e) => updateField('magnetic_structure', 'pattern_type', e.target.value)}
+                        >
+                          <option value="antiferromagnetic">Antiferromagnetic</option>
+                          <option value="generic">Generic/Custom List</option>
+                        </select>
+                      </div>
+
+                      <div className="mt-xl">
+                        <div className="flex-between mb-md">
+                          <h3>Spin Directions (Unit Vectors)</h3>
+                          <button className="btn btn-secondary btn-sm" onClick={() => {
+                            const next = [...config.magnetic_structure.directions];
+                            next.push([1, 0, 0]);
+                            updateField('magnetic_structure', 'directions', next);
+                          }}><Plus size={14} /> Add Direction</button>
+                        </div>
+                        <table className="data-table">
+                          <thead>
+                            <tr>
+                              <th style={{ width: '60px' }}>#</th>
+                              <th>Direction (Sx, Sy, Sz)</th>
+                              <th style={{ width: '40px' }}></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {config.magnetic_structure.directions.map((dir, idx) => (
+                              <tr key={idx}>
+                                <td className="center opacity-40">{idx}</td>
+                                <td>
+                                  <div className="flex-gap-xs">
+                                    {[0, 1, 2].map(i => (
+                                      <input key={i} type="number" step="0.001" value={dir[i]} className="table-input" onChange={(e) => {
+                                        const next = [...config.magnetic_structure.directions];
+                                        next[idx][i] = parseFloat(e.target.value);
+                                        updateField('magnetic_structure', 'directions', next);
+                                      }} />
+                                    ))}
+                                  </div>
+                                </td>
+                                <td>
+                                  <button className="icon-btn text-error" onClick={() => {
+                                    const next = config.magnetic_structure.directions.filter((_, i) => i !== idx);
+                                    updateField('magnetic_structure', 'directions', next);
+                                  }}><Trash2 size={14} /></button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </section>
 
         {showVisualizer && (
           <aside className="right-preview glass">
@@ -1297,13 +1389,15 @@ function App() {
             </div>
           </aside>
         )}
-      </main >
-      {notification && (
-        <div className={`notification ${notification.type}`}>
-          {notification.msg}
-        </div>
-      )}
-    </div >
+      </main>
+      {
+        notification && (
+          <div className={`notification ${notification.type}`}>
+            {notification.msg}
+          </div>
+        )
+      }
+    </div>
   )
 }
 

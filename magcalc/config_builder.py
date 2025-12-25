@@ -112,52 +112,69 @@ class MagCalcConfigBuilder:
             logger.warning(f"Unknown interaction type {type}")
 
     def add_symmetry_interaction(self, type: str, ref_pair: Tuple[str, str], value: Any, 
-                                 distance: float = None):
+                                 distance: float = None, offset: List[int] = None):
         """
         Add an interaction and propagate it by symmetry.
         Especially for DM (dm_manual) and Anisotropic Exchange.
         
         :param value: The interaction value (e.g. D vector [Dx, Dy, Dz] or matrix).
+        :param offset: Optional explicit offset [u, v, w] for the reference bond j relative to i.
         """
         if not self.symmetry_ops:
              logger.warning("No symmetry operations loaded. Cannot propagate.")
              return
 
         # 1. Identify Reference Bond Vector
-        idx_i = self._atom_label_to_idx[ref_pair[0]]
-        idx_j = self._atom_label_to_idx[ref_pair[1]]
-        
+        def _resolve_atom_idx(lbl):
+            if lbl in self._atom_label_to_idx:
+                return self._atom_label_to_idx[lbl]
+            # Fallback: try appending "0" (common renaming pattern for single/multiplicity handling)
+            lbl_0 = f"{lbl}0"
+            if lbl_0 in self._atom_label_to_idx:
+                return self._atom_label_to_idx[lbl_0]
+            raise KeyError(lbl)
+
+        try:
+            idx_i = _resolve_atom_idx(ref_pair[0])
+            idx_j = _resolve_atom_idx(ref_pair[1])
+        except KeyError as e:
+            logger.error(f"Could not find atom {e} in unit cell for interaction rule.")
+            return
+
         pos_i = np.array(self.atoms_uc[idx_i]["pos"])
         pos_j_uc = np.array(self.atoms_uc[idx_j]["pos"])
         
-        # Find the specific image of j that matches "distance" (or assume nearest)
-        # We need the relative vector r_ij in CARTESIAN to check distance, but fractional for symmetry.
-        # Let's search nearest images.
         best_offset = None
-        best_dist = 1e9
-        
-        from itertools import product
-        if self.dimensionality == "2D":
-            offsets_to_check = [ (u, v, 0) for u, v in product([-1, 0, 1], repeat=2) ]
+        if offset is not None:
+            best_offset = np.array(offset)
         else:
-            offsets_to_check = list(product([-1, 0, 1], repeat=3))
-
-        for offset in offsets_to_check:
-            off_vec = np.array(offset)
-            pos_j_img = pos_j_uc + off_vec
+            # Find the specific image of j that matches "distance" (or assume nearest)
+            # We need the relative vector r_ij in CARTESIAN to check distance, but fractional for symmetry.
+            # Let's search nearest images.
+            best_dist = 1e9
             
-            # Cartesian distance
-            d_vec_cart = (pos_j_img - pos_i) @ self.lattice_vectors
-            dist = np.linalg.norm(d_vec_cart)
-            
-            if distance:
-                if abs(dist - distance) < 0.05:
-                     best_offset = off_vec
-                     break
+            from itertools import product
+            if self.dimensionality == "2D":
+                offsets_to_check = [ (u, v, 0) for u, v in product([-1, 0, 1], repeat=2) ]
             else:
-                if dist < best_dist and dist > 0.01:
-                    best_dist = dist
-                    best_offset = off_vec
+                offsets_to_check = list(product([-1, 0, 1], repeat=3))
+
+            for off in offsets_to_check:
+                off_vec = np.array(off)
+                pos_j_img = pos_j_uc + off_vec
+                
+                # Cartesian distance
+                d_vec_cart = (pos_j_img - pos_i) @ self.lattice_vectors
+                dist = np.linalg.norm(d_vec_cart)
+                
+                if distance:
+                    if abs(dist - distance) < 0.05:
+                         best_offset = off_vec
+                         break
+                else:
+                    if dist < best_dist and dist > 0.01:
+                        best_dist = dist
+                        best_offset = off_vec
         
         if best_offset is None:
              raise ValueError(f"Could not identify reference bond for {ref_pair} near distance {distance}")
@@ -458,18 +475,23 @@ class MagCalcConfigBuilder:
                 orbit_positions.append(new_pos)
         
         # Add all generated atoms
-        # Determine starting index based on existing atoms with this label prefix?
-        # For simplicity, let's just use 0-based index for this batch.
-        # User might want continuous indexing across calls.
-        # Let's count existing atoms starting with this label?
-        start_idx = 0
-        existing_labels = [a['label'] for a in self.atoms_uc]
-        while f"{label}{start_idx}" in existing_labels:
-            start_idx += 1
-            
-        for i, p in enumerate(orbit_positions):
-            atom_name = f"{label}{start_idx + i}"
-            self._add_atom_raw(atom_name, p, spin, species)
+        if len(orbit_positions) == 1:
+            # Single site? Try to preserve the label exactly as given
+            atom_name = label
+            if atom_name in [a['label'] for a in self.atoms_uc]:
+                # Collision? Fall back to indexed
+                atom_name = f"{label}0"
+            self._add_atom_raw(atom_name, orbit_positions[0], spin, species)
+        else:
+            # Determine starting index based on existing atoms
+            start_idx = 0
+            existing_labels = [a['label'] for a in self.atoms_uc]
+            while f"{label}{start_idx}" in existing_labels:
+                start_idx += 1
+                
+            for i, p in enumerate(orbit_positions):
+                atom_name = f"{label}{start_idx + i}"
+                self._add_atom_raw(atom_name, p, spin, species)
 
     def _add_atom_raw(self, label, pos, spin, species):
         if species is None:
@@ -686,6 +708,7 @@ class MagCalcConfigBuilder:
     def _expand_anisotropic_exchange_rules(self):
         """
         Expand distance-based anisotropic exchange rules into explicit pair interactions.
+        Symmetry-aware: picks an orbit representative and transforms the matrix.
         """
         rules = self.config["interactions"].get("anisotropic_exchange", [])
         if not rules:
@@ -697,46 +720,53 @@ class MagCalcConfigBuilder:
         if not generic_rules:
             return
 
-        # Pre-calc positions
-        positions_uc = [np.array(a["pos"]) for a in self.atoms_uc]
-        labels = [a["label"] for a in self.atoms_uc]
-
-        # Neighbor offsets to check
+        # Start fresh for expansion (preserving explicit ones)
+        self.config["interactions"]["anisotropic_exchange"] = explicit_rules
+        
+        # Neighbor offsets
         from itertools import product
         if self.dimensionality == "2D":
             offsets = [ (u, v, 0) for u, v in product([-1, 0, 1], repeat=2) ]
         else:
             offsets = list(product([-1, 0, 1], repeat=3))
-        
-        expanded_rules = []
+            
+        labels = [a["label"] for a in self.atoms_uc]
+        positions = [np.array(a["pos"]) for a in self.atoms_uc]
+
         for rule in generic_rules:
             target_dist = rule["distance"]
-            val_vec = rule["value"]
+            value = rule["value"]
             
-            for idx_i, pos_i in enumerate(positions_uc):
-                for idx_j, pos_j in enumerate(positions_uc):
+            # Find all potential bonds at this distance
+            pool = []
+            for i, pos_i in enumerate(positions):
+                for j, pos_j in enumerate(positions):
                     for off in offsets:
-                        # BIDIRECTIONAL
                         off_vec = np.array(off)
                         pos_j_img = pos_j + off_vec
-                        d_vec_cart = (pos_j_img - pos_i) @ self.lattice_vectors
-                        dist = np.linalg.norm(d_vec_cart)
-                        
-                        if abs(dist - target_dist) < 0.01:
-                            expanded_rules.append({
-                                "type": "anisotropic_exchange",
-                                "pair": [labels[idx_i], labels[idx_j]],
-                                "value": val_vec,
-                                "rij_offset": list(off),
-                                "distance": float(dist)
-                            })
-        
-        self.config["interactions"]["anisotropic_exchange"] = explicit_rules + expanded_rules
-        logger.info(f"Expanded {len(generic_rules)} generic anisotropic rules into {len(expanded_rules)} explicit pairs.")
+                        d_cart = (pos_j_img - pos_i) @ self.lattice_vectors
+                        dist = np.linalg.norm(d_cart)
+                        if abs(dist - target_dist) < 0.05:
+                            pool.append((labels[i], labels[j], tuple(off)))
+            
+            # Group into orbits via symmetry
+            while pool:
+                ref_i, ref_j, ref_off = pool[0]
+                # add_symmetry_interaction will add the whole orbit and transform values
+                self.add_symmetry_interaction("anisotropic_exchange", (ref_i, ref_j), value, 
+                                             distance=target_dist, offset=list(ref_off))
+                
+                # Remove added bonds from pool
+                expanded = self.config["interactions"]["anisotropic_exchange"]
+                pool = [b for b in pool if not any(
+                    (e["pair"] == [b[0], b[1]] and e.get("rij_offset") == list(b[2]))
+                    for e in expanded
+                )]
 
     def _expand_dm_rules(self):
         """
         Expand distance-based DM rules into explicit pair interactions.
+        Symmetry-aware: picks an orbit representative and transforms the DM vector.
         """
         rules = self.config["interactions"].get("dm_interaction", [])
         if not rules:
@@ -748,41 +778,63 @@ class MagCalcConfigBuilder:
         if not generic_rules:
             return
 
-        # Pre-calc positions
-        positions_uc = [np.array(a["pos"]) for a in self.atoms_uc]
-        labels = [a["label"] for a in self.atoms_uc]
+        # Start fresh for expansion (preserving explicit ones)
+        self.config["interactions"]["dm_interaction"] = explicit_rules
         
-        # Neighbor offsets to check
+        # Neighbor offsets
         from itertools import product
         if self.dimensionality == "2D":
             offsets = [ (u, v, 0) for u, v in product([-1, 0, 1], repeat=2) ]
         else:
             offsets = list(product([-1, 0, 1], repeat=3))
-        
-        expanded_rules = []
+            
+        labels = [a["label"] for a in self.atoms_uc]
+        positions = [np.array(a["pos"]) for a in self.atoms_uc]
+
         for rule in generic_rules:
             target_dist = rule["distance"]
-            val_vec = rule["value"]
+            value = rule["value"]
             
-            for idx_i, pos_i in enumerate(positions_uc):
-                for idx_j, pos_j in enumerate(positions_uc):
+            # Find all potential bonds at this distance
+            pool = []
+            for i, pos_i in enumerate(positions):
+                for j, pos_j in enumerate(positions):
                     for off in offsets:
                         off_vec = np.array(off)
                         pos_j_img = pos_j + off_vec
-                        d_vec_cart = (pos_j_img - pos_i) @ self.lattice_vectors
-                        dist = np.linalg.norm(d_vec_cart)
-                        
-                        if abs(dist - target_dist) < 0.01:
-                            expanded_rules.append({
-                                "type": "dm_interaction",
-                                "pair": [labels[idx_i], labels[idx_j]],
-                                "value": val_vec,
-                                "rij_offset": list(off),
-                                "distance": float(dist)
-                            })
-        
-        self.config["interactions"]["dm_interaction"] = explicit_rules + expanded_rules
-        logger.info(f"Expanded {len(generic_rules)} generic DM rules into {len(expanded_rules)} explicit pairs.")
+                        d_cart = (pos_j_img - pos_i) @ self.lattice_vectors
+                        dist = np.linalg.norm(d_cart)
+                        if abs(dist - target_dist) < 0.05:
+                            pool.append((labels[i], labels[j], tuple(off)))
+            
+            # Group into orbits via symmetry
+            while pool:
+                ref_i, ref_j, ref_off = pool[0]
+                
+                # Check if this exact bond is already failing to be added
+                # to prevent infinite loop if add_symmetry_interaction fails logic.
+                initial_pool_size = len(pool)
+                
+                # add_symmetry_interaction will add the whole orbit and transform values
+                try:
+                    self.add_symmetry_interaction("dm", (ref_i, ref_j), value, 
+                                                 distance=target_dist, offset=list(ref_off))
+                except Exception as e:
+                    logger.error(f"Error propagating DM interaction for {ref_i}->{ref_j}: {e}")
+                
+                # Remove added bonds from pool
+                expanded = self.config["interactions"]["dm_interaction"]
+                pool_after = [b for b in pool if not any(
+                    (e["pair"] == [b[0], b[1]] and e.get("rij_offset") == list(b[2]))
+                    for e in expanded
+                )]
+                
+                # Loop breaker: if pool didn't shrink (and not empty), force remove first item
+                if len(pool_after) >= initial_pool_size and pool_after:
+                     logger.warning(f"Preventing infinite loop: forcing removal of {pool_after[0]}")
+                     pool_after.pop(0)
+                     
+                pool = pool_after
 
     def save(self, filename: str):
         """Export configuration to YAML file."""
