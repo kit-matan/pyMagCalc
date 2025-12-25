@@ -1,17 +1,24 @@
 # General
-/.DS_Store
+.DS_Store
 __pycache__/
 **/__pycache__/
 *.py[cod]
-/.pytest_cache
-/.vscode
+.pytest_cache
+.vscode
 .idea
+
+# Logs
+*.log
 
 # Cache and Data
 cache/
 archive/
 tests/pckFiles/
-# Project specifics - DS_Store can be covered by global, but keeping specific ignores if desired, 
+*.npz
+*_plot.png
+*.pkl
+
+# Project specifics
 KFe3J/.DS_Store
 aCVO/.DS_Store
 examples/.DS_Store
@@ -20,4 +27,3 @@ examples/plots/
 **/.pytest_cache/
 **/.ipynb_checkpoints/
 *.egg-info/
-
