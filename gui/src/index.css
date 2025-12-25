@@ -15,6 +15,8 @@
   --error-color: #ef4444;
   --warning-color: #f59e0b;
   --success-color: #10b981;
+  --accent-gradient: linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%);
+  --glass-bg: rgba(15, 23, 42, 0.7);
 
   --spacing-xs: 0.25rem;
   --spacing-sm: 0.5rem;
@@ -28,6 +30,19 @@
 
   --transition-fast: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   --transition-base: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg-color: #f8fafc;
+    --surface-color: #ffffff;
+    --surface-hover: #f1f5f9;
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --text-muted: #94a3b8;
+    --border-color: #e2e8f0;
+    --glass-bg: rgba(255, 255, 255, 0.7);
+  }
 }
 
 * {
@@ -86,27 +101,30 @@ body {
 }
 
 .btn-secondary {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--surface-hover);
   color: var(--text-primary);
   border-color: var(--border-color);
 }
 
 .btn-secondary:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--surface-color);
   border-color: var(--text-secondary);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
 }
 
 .card {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--surface-color);
   border: 1px solid var(--border-color);
   padding: var(--spacing-lg);
   border-radius: var(--radius-md);
   transition: var(--transition-base);
+  box-shadow: 0 4px 20px -5px rgba(0, 0, 0, 0.1);
 }
 
 .card:hover {
-  border-color: rgba(14, 165, 233, 0.3);
-  background: rgba(255, 255, 255, 0.03);
+  border-color: var(--accent-color);
+  transform: translateY(-2px);
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.15);
 }
 
 /* Animations */

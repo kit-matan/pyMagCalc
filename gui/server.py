@@ -180,14 +180,28 @@ async def get_neighbors(config: Dict[str, Any]):
             space_group=lattice.get("space_group")
         )
         
-        # 2. Wyckoff Atoms
-        wyckoff_atoms = data.get("crystal_structure", {}).get("wyckoff_atoms", [])
-        for atom in wyckoff_atoms:
-            builder.add_wyckoff_atom(
-                label=atom.get("label", "Atom"),
-                pos=atom.get("pos", [0,0,0]),
-                spin=atom.get("spin_S", 0.5)
-            )
+        # 2. Basis Atoms
+        struct_data = data.get("crystal_structure", {})
+        wyckoff_atoms = struct_data.get("wyckoff_atoms", [])
+        atom_mode = struct_data.get("atom_mode", "symmetry")
+
+        if atom_mode == "explicit":
+            # Treat Wyckoff atoms as the full unit cell directly
+            builder.atoms_uc = []
+            for atom in wyckoff_atoms:
+                builder.atoms_uc.append({
+                    "label": atom.get("label", "Atom"),
+                    "pos": atom.get("pos", [0, 0, 0]),
+                    "spin_S": atom.get("spin_S", 0.5)
+                })
+        else:
+            # Standard Wyckoff expansion
+            for atom in wyckoff_atoms:
+                builder.add_wyckoff_atom(
+                    label=atom.get("label", "Atom"),
+                    pos=atom.get("pos", [0, 0, 0]),
+                    spin=atom.get("spin_S", 0.5)
+                )
             
         # 3. Calculate Distances
         labels = [a['label'] for a in builder.atoms_uc]
@@ -331,15 +345,32 @@ async def expand_config(config: Dict[str, Any]):
             space_group=lattice.get("space_group")
         )
         
-        # 2. Wyckoff Atoms
-        wyckoff_atoms = data.get("crystal_structure", {}).get("wyckoff_atoms", [])
-        for atom in wyckoff_atoms:
-            builder.add_wyckoff_atom(
-                label=atom.get("label", "Atom"),
-                pos=atom.get("pos", [0,0,0]),
-                spin=atom.get("spin_S", 0.5)
-            )
-        
+        # 2. Basis Atoms
+        struct_data = data.get("crystal_structure", {})
+        wyckoff_atoms = struct_data.get("wyckoff_atoms", [])
+        atom_mode = struct_data.get("atom_mode", "symmetry")
+
+        if atom_mode == "explicit":
+            # Treat Wyckoff atoms as the full unit cell directly
+            config_atoms = []
+            for a in wyckoff_atoms:
+                config_atoms.append({
+                    "label": a.get("label", "Atom"),
+                    "pos": [float(x) for x in a.get("pos", [0, 0, 0])],
+                    "spin_S": a.get("spin_S", 0.5),
+                    "species": a.get("label", "Atom")
+                })
+            builder.config["crystal_structure"]["atoms_uc"] = config_atoms
+            builder.atoms_uc = config_atoms # Ensure builder also knows them for neighbor search
+        else:
+            # Standard Wyckoff expansion
+            for atom in wyckoff_atoms:
+                builder.add_wyckoff_atom(
+                    label=atom.get("label", "Atom"),
+                    pos=atom.get("pos", [0, 0, 0]),
+                    spin=atom.get("spin_S", 0.5)
+                )
+
         # 2.5 Set Dimensionality
         builder.dimensionality = data.get("crystal_structure", {}).get("dimensionality", "3D")
         
@@ -347,28 +378,12 @@ async def expand_config(config: Dict[str, Any]):
         builder.config["parameters"] = data.get("parameters", {})
         builder.config["tasks"] = data.get("tasks", {})
 
+        # 3. Interactions
         if "list" in data.get("interactions", {}):
-            # Explicit interactions provided (Pure Design Mode)
-            # Bypass symmetry expansion for interactions and atoms
+            # Explicit interactions provided
             final_inters = data["interactions"]["list"]
-            
-            # Use input Wyckoff atoms directly as the unit cell atoms
-            # ensuring they follow the correct format
-            config_atoms = []
-            for a in wyckoff_atoms:
-                config_atoms.append({
-                    "label": a.get("label", "Atom"),
-                    "pos": [float(x) for x in a.get("pos", [0,0,0])],
-                    "spin_S": a.get("spin_S", 0.5),
-                    "species": a.get("label", "Atom") # Fallback for now
-                })
-            builder.config["crystal_structure"]["atoms_uc"] = config_atoms
-            
         else:
-            # Symmetry-based expansion (Standard Mode)
-            
-            # 3. Symmetry Interactions
-            # The GUI provides 'symmetry_rules' in 'interactions'
+            # Symmetry-based expansion
             rules = data.get("interactions", {}).get("symmetry_rules", [])
             for rule in rules:
                 try:
@@ -383,11 +398,18 @@ async def expand_config(config: Dict[str, Any]):
                 except Exception as e:
                      print(f"Warning: Skipping rule due to error: {e}")
             
-            # 5. Expand
+            # Expand rules based on current atoms_uc (which might be explicit or symmetry-expanded)
             builder._expand_heisenberg_rules()
             builder._expand_anisotropic_exchange_rules()
             
-            # Build the final atoms list (atoms_uc)
+            # Filter and flatten interactions
+            final_inters = []
+            final_inters.extend(builder.config["interactions"].get("heisenberg", []))
+            final_inters.extend(builder.config["interactions"].get("dm_interaction", []))
+            final_inters.extend(builder.config["interactions"].get("anisotropic_exchange", []))
+
+        # Re-build atoms list for response if symmetry was used
+        if atom_mode != "explicit":
             config_atoms = []
             for a in builder.atoms_uc:
                 config_atoms.append({
@@ -396,12 +418,6 @@ async def expand_config(config: Dict[str, Any]):
                     "spin_S": a["spin_S"]
                 })
             builder.config["crystal_structure"]["atoms_uc"] = config_atoms
-            
-            # Flatten interactions
-            final_inters = []
-            final_inters.extend(builder.config["interactions"].get("heisenberg", []))
-            final_inters.extend(builder.config["interactions"].get("dm_interaction", []))
-            final_inters.extend(builder.config["interactions"].get("anisotropic_exchange", []))
         
         expanded_config = {
             "crystal_structure": {
@@ -419,6 +435,256 @@ async def expand_config(config: Dict[str, Any]):
         
         return expanded_config
         
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/get-unit-cell-atoms")
+async def get_unit_cell_atoms(config: Dict[str, Any]):
+    """
+    Expand Wyckoff positions or return explicit atoms for visualizer preview.
+    """
+    if MagCalcConfigBuilder is None:
+        raise HTTPException(status_code=500, detail="MagCalcConfigBuilder not found on server.")
+        
+    try:
+        builder = MagCalcConfigBuilder()
+        data = config.get("data", {})
+        
+        # 1. Lattice
+        lattice = data.get("crystal_structure", {}).get("lattice_parameters", {})
+        builder.set_lattice(
+            a=lattice.get("a", 1.0),
+            b=lattice.get("b", 1.0),
+            c=lattice.get("c", 1.0),
+            alpha=lattice.get("alpha", 90),
+            beta=lattice.get("beta", 90),
+            gamma=lattice.get("gamma", 90),
+            space_group=lattice.get("space_group")
+        )
+        
+        # 2. Basis Atoms
+        struct_data = data.get("crystal_structure", {})
+        wyckoff_atoms = struct_data.get("wyckoff_atoms", [])
+        atom_mode = struct_data.get("atom_mode", "symmetry")
+        builder.dimensionality = struct_data.get("dimensionality", "3D")
+
+        if atom_mode == "explicit":
+            # Treat Wyckoff atoms as the full unit cell directly
+            config_atoms = []
+            for a in wyckoff_atoms:
+                config_atoms.append({
+                    "label": a.get("label", "Atom"),
+                    "pos": [float(x) for x in a.get("pos", [0, 0, 0])],
+                    "spin_S": a.get("spin_S", 0.5)
+                })
+            return config_atoms
+        else:
+            # Standard Wyckoff expansion
+            for atom in wyckoff_atoms:
+                builder.add_wyckoff_atom(
+                    label=atom.get("label", "Atom"),
+                    pos=atom.get("pos", [0, 0, 0]),
+                    spin=atom.get("spin_S", 0.5)
+                )
+            
+            # Re-build atoms list
+            config_atoms = []
+            for a in builder.atoms_uc:
+                config_atoms.append({
+                    "label": a["label"],
+                    "pos": [float(x) for x in a["pos"]],
+                    "spin_S": a["spin_S"]
+                })
+            return config_atoms
+            
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/get-visualizer-data")
+async def get_visualizer_data(config: Dict[str, Any]):
+    """
+    Return atoms and expanded bonds for visualization.
+    Uses full symmetry expansion and rule expansion.
+    """
+    if MagCalcConfigBuilder is None:
+        raise HTTPException(status_code=500, detail="MagCalcConfigBuilder not found on server.")
+        
+    try:
+        builder = MagCalcConfigBuilder()
+        data = config.get("data", {})
+        
+        # 1. Lattice
+        lattice = data.get("crystal_structure", {}).get("lattice_parameters", {})
+        builder.set_lattice(
+            a=lattice.get("a", 1.0),
+            b=lattice.get("b", 1.0),
+            c=lattice.get("c", 1.0),
+            alpha=lattice.get("alpha", 90),
+            beta=lattice.get("beta", 90),
+            gamma=lattice.get("gamma", 90),
+            space_group=lattice.get("space_group")
+        )
+        
+        # 2. Basis Atoms
+        struct_data = data.get("crystal_structure", {})
+        wyckoff_atoms = struct_data.get("wyckoff_atoms", [])
+        atom_mode = struct_data.get("atom_mode", "symmetry")
+        builder.dimensionality = struct_data.get("dimensionality", "3D")
+
+        if atom_mode == "explicit":
+            config_atoms = []
+            for a in wyckoff_atoms:
+                config_atoms.append({
+                    "label": a.get("label", "Atom"),
+                    "pos": [float(x) for x in a.get("pos", [0, 0, 0])],
+                    "spin_S": a.get("spin_S", 0.5),
+                    "species": a.get("label", "Atom")
+                })
+            builder.config["crystal_structure"]["atoms_uc"] = config_atoms
+            builder.atoms_uc = config_atoms
+        else:
+            for atom in wyckoff_atoms:
+                builder.add_wyckoff_atom(
+                    label=atom.get("label", "Atom"),
+                    pos=atom.get("pos", [0, 0, 0]),
+                    spin=atom.get("spin_S", 0.5)
+                )
+
+        # 3. Interactions
+        # Copy interactions from input
+        builder.config["interactions"] = {
+            "heisenberg": [],
+            "dm_interaction": [],
+            "single_ion_anisotropy": [],
+            "anisotropic_exchange": [],
+            "applied_field": {}
+        }
+        
+        if "list" in data.get("interactions", {}):
+            builder.config["interactions"]["heisenberg"] = data["interactions"]["list"]
+        else:
+            # Symmetry Rules
+            rules = data.get("interactions", {}).get("symmetry_rules", [])
+            for rule in rules:
+                 # Map input rule format to builder's structure
+                 if rule.get("type") == "heisenberg":
+                     builder.config["interactions"]["heisenberg"].append(rule)
+                 elif rule.get("type") in ["dm", "dm_interaction"]:
+                     # Ensure key 'value' is list if generic DM
+                     if "value" in rule and isinstance(rule["value"], str):
+                         # If symbolic string "0,-Dy,-Dz", keep it string?
+                         pass
+                     builder.config["interactions"]["dm_interaction"].append(rule)
+                 elif rule.get("type") == "anisotropic_exchange":
+                     builder.config["interactions"]["anisotropic_exchange"].append(rule)
+            
+            # Expand
+            builder._expand_heisenberg_rules()
+            builder._expand_anisotropic_exchange_rules()
+            builder._expand_dm_rules()
+
+        # 4. Prepare Response
+        # Atoms
+        resp_atoms = []
+        for i, a in enumerate(builder.atoms_uc):
+            resp_atoms.append({
+                "label": a["label"],
+                "pos": [float(x) for x in a["pos"]],
+                "spin_S": a["spin_S"],
+                "idx": i
+            })
+            
+        # Bonds
+        resp_bonds = []
+        
+        # Helper to find index by label (assuming unique labels in atoms_uc)
+        label_map = {a["label"]: i for i, a in enumerate(builder.atoms_uc)}
+        
+        # Collect all types
+        all_inters = []
+        for r in builder.config["interactions"]["heisenberg"]:
+             r["interaction_type"] = "heisenberg"
+             all_inters.append(r)
+        for r in builder.config["interactions"]["dm_interaction"]:
+             r["interaction_type"] = "dm"
+             all_inters.append(r)
+        for r in builder.config["interactions"]["anisotropic_exchange"]:
+             r["interaction_type"] = "anisotropic"
+             all_inters.append(r)
+             
+        for rule in all_inters:
+            if "pair" not in rule: continue
+            
+            lbl_i = rule["pair"][0]
+            lbl_j = rule["pair"][1]
+            
+            if lbl_i not in label_map or lbl_j not in label_map:
+                continue
+                
+            idx_i = label_map[lbl_i]
+            idx_j = label_map[lbl_j]
+            offset = rule.get("rij_offset", [0, 0, 0])
+            
+            # Format value for label
+            val = rule.get("value")
+            label_text = ""
+            dm_vec = None
+            
+            if rule["interaction_type"] == "heisenberg":
+                label_text = str(val)
+            elif rule["interaction_type"] == "dm":
+                label_text = "DM"
+                # If val is vector, store it
+                # It might be symbolic strings, e.g. ["0", "-Dy", "-Dz"]
+                # We need to evaluate them using config['parameters']
+                if isinstance(val, list) and len(val) == 3:
+                     # Get parameters dict
+                     params = config.get("data", {}).get("parameters", {})
+                     # Simple safe eval context
+                     ctx = {k: float(v) for k, v in params.items() if isinstance(v, (int, float))}
+                     
+                     eval_vec = []
+                     for comp in val:
+                         if isinstance(comp, (int, float)):
+                             eval_vec.append(float(comp))
+                         elif isinstance(comp, str):
+                             try:
+                                 # Very basic eval: simple arithmetic + params
+                                 # We use python's eval but restricted globals
+                                 # Using simple replacements or eval with restricted scope
+                                 allowed_names = ctx
+                                 # Safe enough for local tool - standard eval with restricted context
+                                 res = eval(comp, {"__builtins__": {}}, allowed_names)
+                                 eval_vec.append(float(res))
+                             except Exception:
+                                 # If eval fails (e.g. unknown param), default to 0 or keep as is?
+                                 # Visualizer needs numbers.
+                                 eval_vec.append(0.0)
+                         else:
+                             eval_vec.append(0.0)
+                     dm_vec = eval_vec
+            elif rule["interaction_type"] == "anisotropic":
+                label_text = "Aniso"
+
+            resp_bonds.append({
+                "atom_i": idx_i,
+                "atom_j": idx_j,
+                "offset": offset,
+                "type": rule["interaction_type"],
+                "label": label_text,
+                "dm_vector": dm_vec,
+                "distance": rule.get("distance", 0)
+            })
+
+        return {
+            "atoms": resp_atoms,
+            "bonds": resp_bonds
+        }
+
     except Exception as e:
         import traceback
         traceback.print_exc()

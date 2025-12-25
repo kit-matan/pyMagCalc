@@ -697,6 +697,10 @@ class MagCalcConfigBuilder:
         if not generic_rules:
             return
 
+        # Pre-calc positions
+        positions_uc = [np.array(a["pos"]) for a in self.atoms_uc]
+        labels = [a["label"] for a in self.atoms_uc]
+
         # Neighbor offsets to check
         from itertools import product
         if self.dimensionality == "2D":
@@ -730,6 +734,56 @@ class MagCalcConfigBuilder:
         self.config["interactions"]["anisotropic_exchange"] = explicit_rules + expanded_rules
         logger.info(f"Expanded {len(generic_rules)} generic anisotropic rules into {len(expanded_rules)} explicit pairs.")
 
+    def _expand_dm_rules(self):
+        """
+        Expand distance-based DM rules into explicit pair interactions.
+        """
+        rules = self.config["interactions"].get("dm_interaction", [])
+        if not rules:
+            return
+
+        explicit_rules = [r for r in rules if "pair" in r]
+        generic_rules = [r for r in rules if "pair" not in r]
+
+        if not generic_rules:
+            return
+
+        # Pre-calc positions
+        positions_uc = [np.array(a["pos"]) for a in self.atoms_uc]
+        labels = [a["label"] for a in self.atoms_uc]
+        
+        # Neighbor offsets to check
+        from itertools import product
+        if self.dimensionality == "2D":
+            offsets = [ (u, v, 0) for u, v in product([-1, 0, 1], repeat=2) ]
+        else:
+            offsets = list(product([-1, 0, 1], repeat=3))
+        
+        expanded_rules = []
+        for rule in generic_rules:
+            target_dist = rule["distance"]
+            val_vec = rule["value"]
+            
+            for idx_i, pos_i in enumerate(positions_uc):
+                for idx_j, pos_j in enumerate(positions_uc):
+                    for off in offsets:
+                        off_vec = np.array(off)
+                        pos_j_img = pos_j + off_vec
+                        d_vec_cart = (pos_j_img - pos_i) @ self.lattice_vectors
+                        dist = np.linalg.norm(d_vec_cart)
+                        
+                        if abs(dist - target_dist) < 0.01:
+                            expanded_rules.append({
+                                "type": "dm_interaction",
+                                "pair": [labels[idx_i], labels[idx_j]],
+                                "value": val_vec,
+                                "rij_offset": list(off),
+                                "distance": float(dist)
+                            })
+        
+        self.config["interactions"]["dm_interaction"] = explicit_rules + expanded_rules
+        logger.info(f"Expanded {len(generic_rules)} generic DM rules into {len(expanded_rules)} explicit pairs.")
+
     def save(self, filename: str):
         """Export configuration to YAML file."""
         # 1. Ensure atoms are in config
@@ -754,6 +808,9 @@ class MagCalcConfigBuilder:
         # 3. Expand Interaction Rules
         self._expand_heisenberg_rules()
         self._expand_anisotropic_exchange_rules()
+        self._expand_dm_rules()
+
+        # WRITE
 
         # WRITE
         with open(filename, 'w') as f:
