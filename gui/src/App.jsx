@@ -1,8 +1,40 @@
 import React, { useState } from 'react'
-import { Beaker, Database, Activity, Code, Download, Plus, Trash2, Settings, Box, Eye, Share2, Info, Magnet, Wind, Check, ChevronRight, Zap, Crosshair, FileText } from 'lucide-react'
+import { Beaker, Database, Activity, Code, Download, Plus, Trash2, Settings, Box, Eye, Share2, Info, Magnet, Wind, Check, ChevronRight, Zap, Crosshair, FileText, BarChart2, Play } from 'lucide-react'
 import yaml from 'js-yaml'
 import Visualizer from './components/Visualizer'
 import './App.css'
+
+const LogConsole = ({ logs }) => {
+  const endRef = React.useRef(null)
+  React.useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [logs])
+
+  return (
+    <div className="log-console mt-lg rounded-md border border-color bg-surface-hover p-md overflow-hidden flex flex-col" style={{ height: '300px' }}>
+      <div className="flex-between mb-sm align-center border-b border-color pb-sm">
+        <div className="flex align-center gap-xs text-xs font-mono opacity-70">
+          <FileText size={14} />
+          <span>Execution Logs</span>
+        </div>
+        <span className="text-xs opacity-50">{logs.length} lines</span>
+      </div>
+      <div className="flex-1 overflow-y-auto font-mono text-xs opacity-80 leading-relaxed custom-scrollbar">
+        {logs.length === 0 ? (
+          <div className="text-center opacity-30 mt-xl">Waiting for logs...</div>
+        ) : (
+          logs.map((log, i) => (
+            <div key={i} className="whitespace-pre-wrap break-all py-xxs border-b border-light border-opacity-5">
+              <span className="opacity-50 mr-sm select-none">{i + 1}</span>
+              {log}
+            </div>
+          ))
+        )}
+        <div ref={endRef} />
+      </div>
+    </div>
+  )
+}
 
 function App() {
   const [activeTab, setActiveTab] = useState('structure')
@@ -17,6 +49,54 @@ function App() {
   const [zFilter, setZFilter] = useState(false) // Filter for z=0 plane in 2D
   const [isAddingParam, setIsAddingParam] = useState(false)
   const [newParamName, setNewParamName] = useState('')
+  const [calcLoading, setCalcLoading] = useState(false)
+  const [calcResults, setCalcResults] = useState(null)
+
+  const [calcError, setCalcError] = useState(null)
+  const [logs, setLogs] = useState([])
+
+  // WebSocket Log Connection
+  React.useEffect(() => {
+    // Only connect if on run tab or globally? Let's do globally to catch background logs
+    // But maybe retry if connection fails?
+    let ws = null;
+    try {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      // Note: Vite proxy handles /ws -> localhost:8000
+      const wsUrl = `${protocol}//${window.location.host}/ws/logs`;
+      console.log("Connecting log WS:", wsUrl);
+
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        console.log("Log WebSocket Connected");
+      };
+
+      ws.onmessage = (event) => {
+        setLogs(prev => {
+          // Keep last 1000 lines
+          const newLogs = [...prev, event.data];
+          if (newLogs.length > 1000) return newLogs.slice(newLogs.length - 1000);
+          return newLogs;
+        });
+      };
+
+      ws.onclose = () => {
+        console.log("Log WebSocket Closed");
+      };
+
+      ws.onerror = (err) => {
+        console.error("Log WebSocket Error:", err);
+      };
+
+    } catch (e) {
+      console.error("Failed to init WebSocket:", e);
+    }
+
+    return () => {
+      if (ws) ws.close();
+    }
+  }, []);
 
 
   // Theme Detection
@@ -375,6 +455,67 @@ function App() {
     }))
   }
 
+  const runCalculation = async () => {
+    setCalcLoading(true)
+    setCalcResults(null)
+    setCalcError(null)
+
+    // Construct payload as expected by expand-config logic backend
+    const input = {
+      crystal_structure: {
+        lattice_parameters: config.lattice,
+        wyckoff_atoms: config.wyckoff_atoms,
+        atom_mode: atomMode,
+        dimensionality: config.lattice.dimensionality
+      },
+      interactions: interactionMode === 'explicit' ? { list: config.explicit_interactions || [] } : {
+        symmetry_rules: config.symmetry_interactions
+      },
+      magnetic_structure: config.magnetic_structure,
+      parameters: config.parameters,
+      tasks: config.tasks,
+      q_path: {
+        ...config.q_path.points,
+        path: config.q_path.path,
+        points_per_segment: config.q_path.points_per_segment
+      },
+      plotting: {
+        ...config.plotting,
+        energy_limits_disp: [config.plotting.energy_min, config.plotting.energy_max],
+        broadening_width: config.plotting.broadening
+      },
+      minimization: {
+        enabled: config.tasks.run_minimization,
+        ...config.minimization
+      }
+    }
+
+    try {
+      // First ensure backend can expand it (optional check, but good for robust config)
+      // Actually, run-calculation endpoint expects the raw data structure
+      const response = await fetch('/api/run-calculation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: input }),
+      })
+
+      if (!response.ok) {
+        const err = await response.json()
+        throw new Error(err.detail || 'Calculation failed')
+      }
+
+      const data = await response.json()
+      setCalcResults(data)
+      showNotify("Calculation completed!", "success")
+    } catch (err) {
+      console.error(err)
+      setCalcError(err.message)
+      showNotify("Calculation failed", "error")
+    } finally {
+      setCalcLoading(false)
+    }
+  }
+
   return (
     <div className="app-container">
       <div className="background-glow"></div>
@@ -425,943 +566,1036 @@ function App() {
             <button className={`nav-item ${activeTab === 'magstruct' ? 'active' : ''}`} onClick={() => setActiveTab('magstruct')}>
               <Wind size={20} /> Mag. Structure
             </button>
+            <div className="nav-divider"></div>
+            <button className={`nav-item ${activeTab === 'run' ? 'active' : ''}`} onClick={() => setActiveTab('run')}>
+              <BarChart2 size={20} /> Run & Analyze
+            </button>
           </nav>
 
 
         </aside>
 
-        <section className="content-area animate-fade-in">
-          {activeTab === 'structure' && (
-            <div className="form-section">
-              <h2 className="section-title mb-xl">Crystal Architecture</h2>
-              <div className="card shadow-glow">
-                <div className="mb-lg">
-                  <h3 className="mb-md text-xs opacity-60 tracking-wider">Lattice Constants (Å)</h3>
-                  <div className="lattice-grid">
-                    {['a', 'b', 'c'].map(k => (
-                      <div key={k} className="input-group">
-                        <label>{k}</label>
-                        <input type="number" step="0.001" value={config.lattice[k]} className="minimal-input"
-                          onChange={(e) => updateField('lattice', k, parseFloat(e.target.value))} />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="mb-lg">
-                  <h3 className="mb-md text-xs opacity-60 tracking-wider">Angles (°)</h3>
-                  <div className="lattice-grid">
-                    {['alpha', 'beta', 'gamma'].map(k => (
-                      <div key={k} className="input-group">
-                        <label>{k}</label>
-                        <input
-                          type="number"
-                          step="0.001"
-                          value={config.lattice[k]}
-                          className={`minimal-input ${(config.lattice.dimensionality === '2D' && (k === 'alpha' || k === 'beta')) ? 'opacity-40 pointer-events-none' : ''}`}
-                          disabled={config.lattice.dimensionality === '2D' && (k === 'alpha' || k === 'beta')}
-                          onChange={(e) => updateField('lattice', k, parseFloat(e.target.value))}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="grid-form border-t border-light pt-lg mt-md">
-                  <div className="input-group">
-                    <label>Space Group (#)</label>
-                    <input type="number" value={config.lattice.space_group} className="minimal-input"
-                      onChange={(e) => updateField('lattice', 'space_group', parseInt(e.target.value))} />
-                  </div>
-                  <div className="input-group">
-                    <label>Dimensionality</label>
-                    <select
-                      className="minimal-select"
-                      value={config.lattice.dimensionality || '3D'}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        updateField('lattice', 'dimensionality', val);
-                        if (val === '2D') {
-                          updateField('lattice', 'alpha', 90);
-                          updateField('lattice', 'beta', 90);
-                        }
-                      }}
-                    >
-                      <option value="3D">3D (Bulk)</option>
-                      <option value="2D">2D (Monolayer/Layered)</option>
-                    </select>
-                  </div>
-                </div>
-
-                {config.lattice.dimensionality === '2D' && (
-                  <div className="mt-md p-md glass shadow-sm rounded-xl border border-blue-500/20 animate-fade-in">
-                    <div className="flex align-center gap-xs text-xs font-bold text-blue-400 mb-xs">
-                      <Info size={14} />
-                      <span>Note on 2D Symmetry</span>
-                    </div>
-                    <p className="text-xxs opacity-70 leading-relaxed">
-                      Symmetry operations (like the glide in SG 163) may generate multiple planes in a single unit cell.
-                      If processing a monolayer, consider using a non-glide space group or <strong>Explicit Unit Cell</strong> mode.
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              <div className="card mt-xl">
-                <div className="flex-between mb-md align-end">
-                  <div>
-                    <h3 className="mb-xs">Basis Atoms</h3>
-                    <div className="modern-toggle-group mb-sm">
-                      <button
-                        className={`toggle-btn ${atomMode === 'symmetry' ? 'active' : ''}`}
-                        onClick={() => setAtomMode('symmetry')}
-                      >
-                        <Wind size={14} className="mr-xs" />
-                        Wyckoff Positions
-                      </button>
-                      <button
-                        className={`toggle-btn ${atomMode === 'explicit' ? 'active' : ''}`}
-                        onClick={() => setAtomMode('explicit')}
-                      >
-                        <Box size={14} className="mr-xs" />
-                        Explicit Unit Cell
-                      </button>
-                    </div>
-                    <p className="text-xs text-muted max-w-md">
-                      {atomMode === 'symmetry'
-                        ? "Define unique atoms (Wyckoff positions). The full structure will be generated using the Space Group symmetry."
-                        : "Define all atoms in the unit cell explicitly. Space group symmetry will be ignored for atomic positions."}
-                    </p>
-                  </div>
-                  <button className="btn btn-secondary btn-sm" onClick={() => {
-                    const next = [...config.wyckoff_atoms];
-                    next.push({ label: 'Cu', pos: [0, 0, 0], spin_S: 0.5 });
-                    setConfig({ ...config, wyckoff_atoms: next });
-                  }}><Plus size={14} /> Add Atom</button>
-                </div>
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Label</th>
-                      <th>Pos (x,y,z)</th>
-                      <th>S</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {config.wyckoff_atoms.map((atom, idx) => (
-                      <tr key={idx}>
-                        <td><input type="text" className="table-input mono" value={atom.label} onChange={(e) => {
-                          const next = [...config.wyckoff_atoms]; next[idx].label = e.target.value; setConfig({ ...config, wyckoff_atoms: next })
-                        }} /></td>
-                        <td>
-                          <div className="flex-gap-xs">
-                            {[0, 1, 2].map(i => (
-                              <input key={i} type="number" step="0.01" value={atom.pos[i]} className="table-input" onChange={(e) => {
-                                const next = [...config.wyckoff_atoms]; next[idx].pos[i] = parseFloat(e.target.value); setConfig({ ...config, wyckoff_atoms: next })
-                              }} />
-                            ))}
-                          </div>
-                        </td>
-                        <td>
-                          <input type="number" step="0.5" className="minimal-input" value={atom.spin_S} onChange={(e) => {
-                            const next = [...config.wyckoff_atoms]
-                            next[idx].spin_S = parseFloat(e.target.value)
-                            setConfig({ ...config, wyckoff_atoms: next })
-                          }} />
-                        </td>
-                        <td><button onClick={() => {
-                          const next = config.wyckoff_atoms.filter((_, i) => i !== idx); setConfig({ ...config, wyckoff_atoms: next })
-                        }} className="icon-btn text-error"><Trash2 size={14} /></button></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'interactions' && (
-            <div className="form-section">
-
-
-              {interactionMode === 'symmetry' ? (
-                <>
-                  <h2 className="section-title compact">Bonding Rules</h2>
-
-                  <div className="flex align-center gap-md mb-lg">
-                    <div className="modern-toggle-group">
-                      <button
-                        className={`toggle-btn ${interactionMode === 'symmetry' ? 'active' : ''}`}
-                        onClick={() => setInteractionMode('symmetry')}
-                      >
-                        <Wind size={14} className="mr-xs" />
-                        Symmetry Rules
-                      </button>
-                      <button
-                        className={`toggle-btn ${interactionMode === 'explicit' ? 'active' : ''}`}
-                        onClick={() => setInteractionMode('explicit')}
-                      >
-                        <Activity size={14} className="mr-xs" />
-                        Explicit Interactions
-                      </button>
-                    </div>
-
-                    <button className="btn btn-primary btn-sm" onClick={() => {
-                      const nextRules = [...config.symmetry_interactions, { type: 'heisenberg', distance: 3.0, value: 'J1' }];
-                      const nextParams = { ...config.parameters };
-                      if (!nextParams.J1) nextParams.J1 = 0.0;
-                      setConfig({ ...config, symmetry_interactions: nextRules, parameters: nextParams });
-                    }}><Plus size={14} /> Add Rule</button>
-                  </div>
-                  <div className="interaction-grid">
-                    {config.symmetry_interactions.map((inter, idx) => (
-                      <div key={idx} className="interaction-card animate-fade-in">
-                        <div className="interaction-header">
-                          <div className="interaction-info">
-                            <div className="interaction-icon-box">
-                              {inter.type === 'heisenberg' ? <Zap size={16} /> : (inter.type === 'dm' ? <Wind size={16} /> : <Crosshair size={16} />)}
-                            </div>
-                            <div>
-                              <span className="interaction-type">{inter.type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</span>
-                              <span className="interaction-subtitle">
-                                {inter.ref_pair ? `Ref: ${inter.ref_pair.join('-')}` : 'Auto-detected'}
-                                {inter.offset && (inter.offset[0] !== 0 || inter.offset[1] !== 0 || inter.offset[2] !== 0) && ` [${inter.offset.join(',')}]`}
-                              </span>
-                            </div>
-                          </div>
-                          <button onClick={() => {
-                            const next = config.symmetry_interactions.filter((_, i) => i !== idx); setConfig({ ...config, symmetry_interactions: next })
-                          }} className="icon-btn text-error"><Trash2 size={14} /></button>
+        {activeTab !== 'run' && (
+          <section className="content-area animate-fade-in">
+            {activeTab === 'structure' && (
+              <div className="form-section">
+                <h2 className="section-title mb-xl">Crystal Architecture</h2>
+                <div className="card shadow-glow">
+                  <div className="mb-lg">
+                    <h3 className="mb-md text-xs opacity-60 tracking-wider">Lattice Constants (Å)</h3>
+                    <div className="lattice-grid">
+                      {['a', 'b', 'c'].map(k => (
+                        <div key={k} className="input-group">
+                          <label>{k}</label>
+                          <input type="number" step="0.001" value={config.lattice[k]} className="minimal-input"
+                            onChange={(e) => updateField('lattice', k, parseFloat(e.target.value))} />
                         </div>
-
-                        <div className="interaction-params">
-                          <div className="input-group">
-                            <label>Distance (Å)</label>
-                            <input type="number" step="0.01" className="minimal-input" value={inter.distance} onChange={(e) => {
-                              const next = [...config.symmetry_interactions]; next[idx].distance = parseFloat(e.target.value); setConfig({ ...config, symmetry_interactions: next })
-                            }} />
-                          </div>
-                          <div className="input-group">
-                            <label>Value (Symbol)</label>
-                            <input type="text" className="minimal-input accent-text" value={inter.value} onChange={(e) => {
-                              const next = [...config.symmetry_interactions]; next[idx].value = e.target.value; setConfig({ ...config, symmetry_interactions: next })
-                            }} />
-                          </div>
-                          <div className="input-group">
-                            <label>Type</label>
-                            <select
-                              className="minimal-select"
-                              value={inter.type}
-                              onChange={(e) => {
-                                const next = [...config.symmetry_interactions];
-                                next[idx].type = e.target.value;
-                                setConfig({ ...config, symmetry_interactions: next })
-                              }}
-                            >
-                              <option value="heisenberg">Heisenberg</option>
-                              <option value="dm">DM Interaction</option>
-                              <option value="anisotropic_exchange">Anisotropic</option>
-                            </select>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="mt-md">
-                    <h3 className="section-title text-sm mb-sm">Neighbor Shell Suggestions</h3>
-                    <div className="flex gap-2 mb-sm items-center">
-                      <button className="btn btn-secondary btn-sm" onClick={fetchNeighbors}>
-                        <Activity size={14} className="mr-xs" />
-                        Re-calculate Neighbors
-                      </button>
-                    </div>
-                    {neighborDistances && neighborDistances.length > 0 ? (
-                      <div className="suggestion-grid">
-                        {neighborDistances.map((n, i) => (
-                          <div key={i} className="suggestion-card animate-fade-in" style={{ animationDelay: `${i * 0.05}s` }}>
-                            <div className="suggestion-header">
-                              <div className="distance-badge">{n.distance.toFixed(4)} Å</div>
-                              <div className="pair-count">
-                                <Box size={14} />
-                                {n.count} Pairs
-                              </div>
-                            </div>
-                            <div className="shell-info">
-                              <span className="ref-pair-label">Reference Bond</span>
-                              {n.equivalent_bonds && n.equivalent_bonds.length > 1 ? (
-                                <select
-                                  className="minimal-select text-xs mt-xs"
-                                  value={selectedBondIdxs[i] || 0}
-                                  onChange={(e) => setSelectedBondIdxs({ ...selectedBondIdxs, [i]: parseInt(e.target.value) })}
-                                >
-                                  {n.equivalent_bonds.map((b, bidx) => (
-                                    <option key={bidx} value={bidx}>
-                                      {b.pair.join(' → ')} [{b.offset.join(',')}]
-                                    </option>
-                                  ))}
-                                </select>
-                              ) : (
-                                <span className="ref-pair-value">{n.ref_pair ? n.ref_pair.join(' → ') : 'N/A'}</span>
-                              )}
-                            </div>
-                            <div className="suggestion-footer">
-                              <button className="btn btn-primary btn-xs" onClick={() => {
-                                const bidx = selectedBondIdxs[i] || 0;
-                                const chosenBond = n.equivalent_bonds ? n.equivalent_bonds[bidx] : { pair: n.ref_pair, offset: n.offset };
-
-                                const nextRules = [...config.symmetry_interactions, {
-                                  type: 'heisenberg',
-                                  distance: n.distance,
-                                  value: `J${i + 1}`,
-                                  ref_pair: chosenBond.pair,
-                                  offset: chosenBond.offset
-                                }];
-                                const nextParams = { ...config.parameters };
-                                if (!nextParams[`J${i + 1}`]) nextParams[`J${i + 1}`] = 0.0;
-                                setConfig({ ...config, symmetry_interactions: nextRules, parameters: nextParams });
-                                showNotify(`Added Interaction Rule J${i + 1}`, 'success');
-                              }}>
-                                <Plus size={12} className="mr-xs" />
-                                Add J{i + 1}
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="glass p-lg rounded-xl center">
-                        <Info size={32} className="text-muted mb-md mx-auto opacity-20" />
-                        <p className="text-sm text-muted italic">Click the button above to analyze the crystal structure and find neighbor shell distances.</p>
-                      </div>
-                    )}
-                  </div>
-
-                </>
-              ) : (
-                <>
-                  <h2 className="section-title compact">Explicit Interactions (Manual)</h2>
-
-                  <div className="flex align-center gap-md mb-lg">
-                    <div className="modern-toggle-group">
-                      <button
-                        className={`toggle-btn ${interactionMode === 'symmetry' ? 'active' : ''}`}
-                        onClick={() => setInteractionMode('symmetry')}
-                      >
-                        <Wind size={14} className="mr-xs" />
-                        Symmetry Rules
-                      </button>
-                      <button
-                        className={`toggle-btn ${interactionMode === 'explicit' ? 'active' : ''}`}
-                        onClick={() => setInteractionMode('explicit')}
-                      >
-                        <Activity size={14} className="mr-xs" />
-                        Explicit Interactions
-                      </button>
-                    </div>
-
-                    <button className="btn btn-primary btn-sm" onClick={() => {
-                      const next = [...(config.explicit_interactions || [])];
-                      next.push({ type: 'heisenberg', distance: 3.0, value: "J1", atom_i: 0, atom_j: 1, offset_j: [0, 0, 0] });
-                      setConfig({ ...config, explicit_interactions: next });
-                    }}><Plus size={14} /> Add Interaction</button>
-                  </div>
-                  <div className="interaction-grid">
-                    {(config.explicit_interactions || []).map((inter, idx) => (
-                      <div key={idx} className="interaction-card animate-fade-in">
-                        <div className="interaction-header">
-                          <div className="interaction-info">
-                            <div className="interaction-icon-box">
-                              {inter.type === 'heisenberg' ? <Zap size={16} /> : <Wind size={16} />}
-                            </div>
-                            <div>
-                              <span className="interaction-type">{inter.type === 'heisenberg' ? 'Heisenberg' : 'DM Manual'}</span>
-                              <span className="interaction-subtitle">Atoms: {inter.atom_i} → {inter.atom_j}</span>
-                            </div>
-                          </div>
-                          <button onClick={() => {
-                            const next = config.explicit_interactions.filter((_, i) => i !== idx);
-                            setConfig({ ...config, explicit_interactions: next });
-                          }} className="icon-btn text-error"><Trash2 size={14} /></button>
-                        </div>
-
-                        <div className="interaction-params">
-                          <div className="input-group">
-                            <label>Type</label>
-                            <select className="minimal-select" value={inter.type} onChange={(e) => {
-                              const next = [...(config.explicit_interactions || [])];
-                              next[idx].type = e.target.value;
-                              if (e.target.value.startsWith('dm')) {
-                                next[idx].value = ["0", "0", "0"];
-                              } else {
-                                next[idx].value = "J1";
-                              }
-                              setConfig({ ...config, explicit_interactions: next });
-                            }}>
-                              <option value="heisenberg">Heisenberg</option>
-                              <option value="dm_manual">DM Manual</option>
-                            </select>
-                          </div>
-                          <div className="input-group">
-                            <label>Distance</label>
-                            <input type="number" step="0.01" className="minimal-input" value={inter.distance} onChange={(e) => {
-                              const next = [...config.explicit_interactions]; next[idx].distance = parseFloat(e.target.value); setConfig({ ...config, explicit_interactions: next })
-                            }} />
-                          </div>
-                          <div className="input-group">
-                            <label>Value / Vector</label>
-                            {Array.isArray(inter.value) ? (
-                              <div className="vector-input-grid">
-                                {['Dx', 'Dy', 'Dz'].map((label, k) => (
-                                  <input
-                                    key={k}
-                                    type="text"
-                                    className="table-input center"
-                                    value={inter.value[k]}
-                                    onChange={(e) => {
-                                      const next = [...config.explicit_interactions]; next[idx].value[k] = e.target.value; setConfig({ ...config, explicit_interactions: next })
-                                    }}
-                                    placeholder={label}
-                                  />
-                                ))}
-                              </div>
-                            ) : (
-                              <input type="text" className="minimal-input accent-text" value={inter.value} onChange={(e) => {
-                                const next = [...config.explicit_interactions]; next[idx].value = e.target.value; setConfig({ ...config, explicit_interactions: next })
-                              }} />
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="interaction-footer">
-                          <div className="flex-gap-sm align-center">
-                            <span className="text-xxs opacity-60 font-bold uppercase">Offset J:</span>
-                            {[0, 1, 2].map(k => (
-                              <input key={k} type="number" className="table-input center w-10" value={inter.offset_j ? inter.offset_j[k] : 0} onChange={(e) => {
-                                const next = [...config.explicit_interactions];
-                                if (!next[idx].offset_j) next[idx].offset_j = [0, 0, 0];
-                                next[idx].offset_j[k] = parseInt(e.target.value);
-                                setConfig({ ...config, explicit_interactions: next })
-                              }} />
-                            ))}
-                          </div>
-                          <div className="flex-gap-sm align-center">
-                            <span className="text-xxs opacity-60 font-bold uppercase">Indices:</span>
-                            <input type="number" className="table-input center w-12" value={inter.atom_i} onChange={(e) => {
-                              const next = [...config.explicit_interactions]; next[idx].atom_i = parseInt(e.target.value); setConfig({ ...config, explicit_interactions: next })
-                            }} />
-                            <ChevronRight size={10} className="opacity-40" />
-                            <input type="number" className="table-input center w-12" value={inter.atom_j} onChange={(e) => {
-                              const next = [...config.explicit_interactions]; next[idx].atom_j = parseInt(e.target.value); setConfig({ ...config, explicit_interactions: next })
-                            }} />
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-
-          {activeTab === 'params' && (
-            <div className="form-section">
-              <h2 className="section-title">Environment Settings</h2>
-              <div className="card mb-lg">
-                <div className="grid-form">
-                  <div className="input-group">
-                    <label>Applied Field (T)</label>
-                    <input type="number" value={config.parameters.H_mag} className="minimal-input" onChange={(e) => updateField('parameters', 'H_mag', parseFloat(e.target.value))} />
-                  </div>
-                  <div className="input-group">
-                    <label>Field Direction (h,k,l)</label>
-                    <div className="flex-gap-xs">
-                      {[0, 1, 2].map(i => (
-                        <input key={i} type="number" value={config.parameters.H_dir[i]} className="minimal-input" onChange={(e) => {
-                          const next = [...config.parameters.H_dir]; next[i] = parseFloat(e.target.value); updateField('parameters', 'H_dir', next)
-                        }} />
                       ))}
                     </div>
                   </div>
-                  <div className="input-group">
-                    <label>Default Spin (S)</label>
-                    <input type="number" step="0.5" value={config.parameters.S} className="minimal-input" onChange={(e) => updateField('parameters', 'S', parseFloat(e.target.value))} />
+
+                  <div className="mb-lg">
+                    <h3 className="mb-md text-xs opacity-60 tracking-wider">Angles (°)</h3>
+                    <div className="lattice-grid">
+                      {['alpha', 'beta', 'gamma'].map(k => (
+                        <div key={k} className="input-group">
+                          <label>{k}</label>
+                          <input
+                            type="number"
+                            step="0.001"
+                            value={config.lattice[k]}
+                            className={`minimal-input ${(config.lattice.dimensionality === '2D' && (k === 'alpha' || k === 'beta')) ? 'opacity-40 pointer-events-none' : ''}`}
+                            disabled={config.lattice.dimensionality === '2D' && (k === 'alpha' || k === 'beta')}
+                            onChange={(e) => updateField('lattice', k, parseFloat(e.target.value))}
+                          />
+                        </div>
+                      ))}
+                    </div>
                   </div>
+
+                  <div className="grid-form border-t border-light pt-lg mt-md">
+                    <div className="input-group">
+                      <label>Space Group (#)</label>
+                      <input type="number" value={config.lattice.space_group} className="minimal-input"
+                        onChange={(e) => updateField('lattice', 'space_group', parseInt(e.target.value))} />
+                    </div>
+                    <div className="input-group">
+                      <label>Dimensionality</label>
+                      <select
+                        className="minimal-select"
+                        value={config.lattice.dimensionality || '3D'}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          updateField('lattice', 'dimensionality', val);
+                          if (val === '2D') {
+                            updateField('lattice', 'alpha', 90);
+                            updateField('lattice', 'beta', 90);
+                          }
+                        }}
+                      >
+                        <option value="3D">3D (Bulk)</option>
+                        <option value="2D">2D (Monolayer/Layered)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {config.lattice.dimensionality === '2D' && (
+                    <div className="mt-md p-md glass shadow-sm rounded-xl border border-blue-500/20 animate-fade-in">
+                      <div className="flex align-center gap-xs text-xs font-bold text-blue-400 mb-xs">
+                        <Info size={14} />
+                        <span>Note on 2D Symmetry</span>
+                      </div>
+                      <p className="text-xxs opacity-70 leading-relaxed">
+                        Symmetry operations (like the glide in SG 163) may generate multiple planes in a single unit cell.
+                        If processing a monolayer, consider using a non-glide space group or <strong>Explicit Unit Cell</strong> mode.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="card mt-xl">
+                  <div className="flex-between mb-md align-end">
+                    <div>
+                      <h3 className="mb-xs">Basis Atoms</h3>
+                      <div className="modern-toggle-group mb-sm">
+                        <button
+                          className={`toggle-btn ${atomMode === 'symmetry' ? 'active' : ''}`}
+                          onClick={() => setAtomMode('symmetry')}
+                        >
+                          <Wind size={14} className="mr-xs" />
+                          Wyckoff Positions
+                        </button>
+                        <button
+                          className={`toggle-btn ${atomMode === 'explicit' ? 'active' : ''}`}
+                          onClick={() => setAtomMode('explicit')}
+                        >
+                          <Box size={14} className="mr-xs" />
+                          Explicit Unit Cell
+                        </button>
+                      </div>
+                      <p className="text-xs text-muted max-w-md">
+                        {atomMode === 'symmetry'
+                          ? "Define unique atoms (Wyckoff positions). The full structure will be generated using the Space Group symmetry."
+                          : "Define all atoms in the unit cell explicitly. Space group symmetry will be ignored for atomic positions."}
+                      </p>
+                    </div>
+                    <button className="btn btn-secondary btn-sm" onClick={() => {
+                      const next = [...config.wyckoff_atoms];
+                      next.push({ label: 'Cu', pos: [0, 0, 0], spin_S: 0.5 });
+                      setConfig({ ...config, wyckoff_atoms: next });
+                    }}><Plus size={14} /> Add Atom</button>
+                  </div>
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Label</th>
+                        <th>Pos (x,y,z)</th>
+                        <th>S</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {config.wyckoff_atoms.map((atom, idx) => (
+                        <tr key={idx}>
+                          <td><input type="text" className="table-input mono" value={atom.label} onChange={(e) => {
+                            const next = [...config.wyckoff_atoms]; next[idx].label = e.target.value; setConfig({ ...config, wyckoff_atoms: next })
+                          }} /></td>
+                          <td>
+                            <div className="flex-gap-xs">
+                              {[0, 1, 2].map(i => (
+                                <input key={i} type="number" step="0.01" value={atom.pos[i]} className="table-input" onChange={(e) => {
+                                  const next = [...config.wyckoff_atoms]; next[idx].pos[i] = parseFloat(e.target.value); setConfig({ ...config, wyckoff_atoms: next })
+                                }} />
+                              ))}
+                            </div>
+                          </td>
+                          <td>
+                            <input type="number" step="0.5" className="minimal-input" value={atom.spin_S} onChange={(e) => {
+                              const next = [...config.wyckoff_atoms]
+                              next[idx].spin_S = parseFloat(e.target.value)
+                              setConfig({ ...config, wyckoff_atoms: next })
+                            }} />
+                          </td>
+                          <td><button onClick={() => {
+                            const next = config.wyckoff_atoms.filter((_, i) => i !== idx); setConfig({ ...config, wyckoff_atoms: next })
+                          }} className="icon-btn text-error"><Trash2 size={14} /></button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
+            )}
 
-              <div className="flex-between mb-md">
-                <h2 className="section-title">Model Parameters</h2>
-                {!isAddingParam ? (
-                  <button className="btn btn-primary btn-sm" onClick={() => {
-                    setIsAddingParam(true)
-                    setNewParamName('')
-                  }}><Plus size={14} /> Add Parameter</button>
+            {activeTab === 'interactions' && (
+              <div className="form-section">
+
+
+                {interactionMode === 'symmetry' ? (
+                  <>
+                    <h2 className="section-title compact">Bonding Rules</h2>
+
+                    <div className="flex align-center gap-md mb-lg">
+                      <div className="modern-toggle-group">
+                        <button
+                          className={`toggle-btn ${interactionMode === 'symmetry' ? 'active' : ''}`}
+                          onClick={() => setInteractionMode('symmetry')}
+                        >
+                          <Wind size={14} className="mr-xs" />
+                          Symmetry Rules
+                        </button>
+                        <button
+                          className={`toggle-btn ${interactionMode === 'explicit' ? 'active' : ''}`}
+                          onClick={() => setInteractionMode('explicit')}
+                        >
+                          <Activity size={14} className="mr-xs" />
+                          Explicit Interactions
+                        </button>
+                      </div>
+
+                      <button className="btn btn-primary btn-sm" onClick={() => {
+                        const nextRules = [...config.symmetry_interactions, { type: 'heisenberg', distance: 3.0, value: 'J1' }];
+                        const nextParams = { ...config.parameters };
+                        if (!nextParams.J1) nextParams.J1 = 0.0;
+                        setConfig({ ...config, symmetry_interactions: nextRules, parameters: nextParams });
+                      }}><Plus size={14} /> Add Rule</button>
+                    </div>
+                    <div className="interaction-grid">
+                      {config.symmetry_interactions.map((inter, idx) => (
+                        <div key={idx} className="interaction-card animate-fade-in">
+                          <div className="interaction-header">
+                            <div className="interaction-info">
+                              <div className="interaction-icon-box">
+                                {inter.type === 'heisenberg' ? <Zap size={16} /> : (inter.type === 'dm' ? <Wind size={16} /> : <Crosshair size={16} />)}
+                              </div>
+                              <div>
+                                <span className="interaction-type">{inter.type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</span>
+                                <span className="interaction-subtitle">
+                                  {inter.ref_pair ? `Ref: ${inter.ref_pair.join('-')}` : 'Auto-detected'}
+                                  {inter.offset && (inter.offset[0] !== 0 || inter.offset[1] !== 0 || inter.offset[2] !== 0) && ` [${inter.offset.join(',')}]`}
+                                </span>
+                              </div>
+                            </div>
+                            <button onClick={() => {
+                              const next = config.symmetry_interactions.filter((_, i) => i !== idx); setConfig({ ...config, symmetry_interactions: next })
+                            }} className="icon-btn text-error"><Trash2 size={14} /></button>
+                          </div>
+
+                          <div className="interaction-params">
+                            <div className="input-group">
+                              <label>Distance (Å)</label>
+                              <input type="number" step="0.01" className="minimal-input" value={inter.distance} onChange={(e) => {
+                                const next = [...config.symmetry_interactions]; next[idx].distance = parseFloat(e.target.value); setConfig({ ...config, symmetry_interactions: next })
+                              }} />
+                            </div>
+                            <div className="input-group">
+                              <label>Value (Symbol)</label>
+                              <input type="text" className="minimal-input accent-text" value={inter.value} onChange={(e) => {
+                                const next = [...config.symmetry_interactions]; next[idx].value = e.target.value; setConfig({ ...config, symmetry_interactions: next })
+                              }} />
+                            </div>
+                            <div className="input-group">
+                              <label>Type</label>
+                              <select
+                                className="minimal-select"
+                                value={inter.type}
+                                onChange={(e) => {
+                                  const next = [...config.symmetry_interactions];
+                                  next[idx].type = e.target.value;
+                                  setConfig({ ...config, symmetry_interactions: next })
+                                }}
+                              >
+                                <option value="heisenberg">Heisenberg</option>
+                                <option value="dm">DM Interaction</option>
+                                <option value="anisotropic_exchange">Anisotropic</option>
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="mt-md">
+                      <h3 className="section-title text-sm mb-sm">Neighbor Shell Suggestions</h3>
+                      <div className="flex gap-2 mb-sm items-center">
+                        <button className="btn btn-secondary btn-sm" onClick={fetchNeighbors}>
+                          <Activity size={14} className="mr-xs" />
+                          Re-calculate Neighbors
+                        </button>
+                      </div>
+                      {neighborDistances && neighborDistances.length > 0 ? (
+                        <div className="suggestion-grid">
+                          {neighborDistances.map((n, i) => (
+                            <div key={i} className="suggestion-card animate-fade-in" style={{ animationDelay: `${i * 0.05}s` }}>
+                              <div className="suggestion-header">
+                                <div className="distance-badge">{n.distance.toFixed(4)} Å</div>
+                                <div className="pair-count">
+                                  <Box size={14} />
+                                  {n.count} Pairs
+                                </div>
+                              </div>
+                              <div className="shell-info">
+                                <span className="ref-pair-label">Reference Bond</span>
+                                {n.equivalent_bonds && n.equivalent_bonds.length > 1 ? (
+                                  <select
+                                    className="minimal-select text-xs mt-xs"
+                                    value={selectedBondIdxs[i] || 0}
+                                    onChange={(e) => setSelectedBondIdxs({ ...selectedBondIdxs, [i]: parseInt(e.target.value) })}
+                                  >
+                                    {n.equivalent_bonds.map((b, bidx) => (
+                                      <option key={bidx} value={bidx}>
+                                        {b.pair.join(' → ')} [{b.offset.join(',')}]
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <span className="ref-pair-value">{n.ref_pair ? n.ref_pair.join(' → ') : 'N/A'}</span>
+                                )}
+                              </div>
+                              <div className="suggestion-footer">
+                                <button className="btn btn-primary btn-xs" onClick={() => {
+                                  const bidx = selectedBondIdxs[i] || 0;
+                                  const chosenBond = n.equivalent_bonds ? n.equivalent_bonds[bidx] : { pair: n.ref_pair, offset: n.offset };
+
+                                  const nextRules = [...config.symmetry_interactions, {
+                                    type: 'heisenberg',
+                                    distance: n.distance,
+                                    value: `J${i + 1}`,
+                                    ref_pair: chosenBond.pair,
+                                    offset: chosenBond.offset
+                                  }];
+                                  const nextParams = { ...config.parameters };
+                                  if (!nextParams[`J${i + 1}`]) nextParams[`J${i + 1}`] = 0.0;
+                                  setConfig({ ...config, symmetry_interactions: nextRules, parameters: nextParams });
+                                  showNotify(`Added Interaction Rule J${i + 1}`, 'success');
+                                }}>
+                                  <Plus size={12} className="mr-xs" />
+                                  Add J{i + 1}
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="glass p-lg rounded-xl center">
+                          <Info size={32} className="text-muted mb-md mx-auto opacity-20" />
+                          <p className="text-sm text-muted italic">Click the button above to analyze the crystal structure and find neighbor shell distances.</p>
+                        </div>
+                      )}
+                    </div>
+
+                  </>
                 ) : (
-                  <div className="flex-gap-sm">
-                    <input
-                      type="text"
-                      className="minimal-input"
-                      placeholder="Name (e.g. J3)"
-                      value={newParamName}
-                      onChange={(e) => setNewParamName(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && newParamName.trim()) {
+                  <>
+                    <h2 className="section-title compact">Explicit Interactions (Manual)</h2>
+
+                    <div className="flex align-center gap-md mb-lg">
+                      <div className="modern-toggle-group">
+                        <button
+                          className={`toggle-btn ${interactionMode === 'symmetry' ? 'active' : ''}`}
+                          onClick={() => setInteractionMode('symmetry')}
+                        >
+                          <Wind size={14} className="mr-xs" />
+                          Symmetry Rules
+                        </button>
+                        <button
+                          className={`toggle-btn ${interactionMode === 'explicit' ? 'active' : ''}`}
+                          onClick={() => setInteractionMode('explicit')}
+                        >
+                          <Activity size={14} className="mr-xs" />
+                          Explicit Interactions
+                        </button>
+                      </div>
+
+                      <button className="btn btn-primary btn-sm" onClick={() => {
+                        const next = [...(config.explicit_interactions || [])];
+                        next.push({ type: 'heisenberg', distance: 3.0, value: "J1", atom_i: 0, atom_j: 1, offset_j: [0, 0, 0] });
+                        setConfig({ ...config, explicit_interactions: next });
+                      }}><Plus size={14} /> Add Interaction</button>
+                    </div>
+                    <div className="interaction-grid">
+                      {(config.explicit_interactions || []).map((inter, idx) => (
+                        <div key={idx} className="interaction-card animate-fade-in">
+                          <div className="interaction-header">
+                            <div className="interaction-info">
+                              <div className="interaction-icon-box">
+                                {inter.type === 'heisenberg' ? <Zap size={16} /> : <Wind size={16} />}
+                              </div>
+                              <div>
+                                <span className="interaction-type">{inter.type === 'heisenberg' ? 'Heisenberg' : 'DM Manual'}</span>
+                                <span className="interaction-subtitle">Atoms: {inter.atom_i} → {inter.atom_j}</span>
+                              </div>
+                            </div>
+                            <button onClick={() => {
+                              const next = config.explicit_interactions.filter((_, i) => i !== idx);
+                              setConfig({ ...config, explicit_interactions: next });
+                            }} className="icon-btn text-error"><Trash2 size={14} /></button>
+                          </div>
+
+                          <div className="interaction-params">
+                            <div className="input-group">
+                              <label>Type</label>
+                              <select className="minimal-select" value={inter.type} onChange={(e) => {
+                                const next = [...(config.explicit_interactions || [])];
+                                next[idx].type = e.target.value;
+                                if (e.target.value.startsWith('dm')) {
+                                  next[idx].value = ["0", "0", "0"];
+                                } else {
+                                  next[idx].value = "J1";
+                                }
+                                setConfig({ ...config, explicit_interactions: next });
+                              }}>
+                                <option value="heisenberg">Heisenberg</option>
+                                <option value="dm_manual">DM Manual</option>
+                              </select>
+                            </div>
+                            <div className="input-group">
+                              <label>Distance</label>
+                              <input type="number" step="0.01" className="minimal-input" value={inter.distance} onChange={(e) => {
+                                const next = [...config.explicit_interactions]; next[idx].distance = parseFloat(e.target.value); setConfig({ ...config, explicit_interactions: next })
+                              }} />
+                            </div>
+                            <div className="input-group">
+                              <label>Value / Vector</label>
+                              {Array.isArray(inter.value) ? (
+                                <div className="vector-input-grid">
+                                  {['Dx', 'Dy', 'Dz'].map((label, k) => (
+                                    <input
+                                      key={k}
+                                      type="text"
+                                      className="table-input center"
+                                      value={inter.value[k]}
+                                      onChange={(e) => {
+                                        const next = [...config.explicit_interactions]; next[idx].value[k] = e.target.value; setConfig({ ...config, explicit_interactions: next })
+                                      }}
+                                      placeholder={label}
+                                    />
+                                  ))}
+                                </div>
+                              ) : (
+                                <input type="text" className="minimal-input accent-text" value={inter.value} onChange={(e) => {
+                                  const next = [...config.explicit_interactions]; next[idx].value = e.target.value; setConfig({ ...config, explicit_interactions: next })
+                                }} />
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="interaction-footer">
+                            <div className="flex-gap-sm align-center">
+                              <span className="text-xxs opacity-60 font-bold uppercase">Offset J:</span>
+                              {[0, 1, 2].map(k => (
+                                <input key={k} type="number" className="table-input center w-10" value={inter.offset_j ? inter.offset_j[k] : 0} onChange={(e) => {
+                                  const next = [...config.explicit_interactions];
+                                  if (!next[idx].offset_j) next[idx].offset_j = [0, 0, 0];
+                                  next[idx].offset_j[k] = parseInt(e.target.value);
+                                  setConfig({ ...config, explicit_interactions: next })
+                                }} />
+                              ))}
+                            </div>
+                            <div className="flex-gap-sm align-center">
+                              <span className="text-xxs opacity-60 font-bold uppercase">Indices:</span>
+                              <input type="number" className="table-input center w-12" value={inter.atom_i} onChange={(e) => {
+                                const next = [...config.explicit_interactions]; next[idx].atom_i = parseInt(e.target.value); setConfig({ ...config, explicit_interactions: next })
+                              }} />
+                              <ChevronRight size={10} className="opacity-40" />
+                              <input type="number" className="table-input center w-12" value={inter.atom_j} onChange={(e) => {
+                                const next = [...config.explicit_interactions]; next[idx].atom_j = parseInt(e.target.value); setConfig({ ...config, explicit_interactions: next })
+                              }} />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {activeTab === 'params' && (
+              <div className="form-section">
+                <h2 className="section-title">Environment Settings</h2>
+                <div className="card mb-lg">
+                  <div className="grid-form">
+                    <div className="input-group">
+                      <label>Applied Field (T)</label>
+                      <input type="number" value={config.parameters.H_mag} className="minimal-input" onChange={(e) => updateField('parameters', 'H_mag', parseFloat(e.target.value))} />
+                    </div>
+                    <div className="input-group">
+                      <label>Field Direction (h,k,l)</label>
+                      <div className="flex-gap-xs">
+                        {[0, 1, 2].map(i => (
+                          <input key={i} type="number" value={config.parameters.H_dir[i]} className="minimal-input" onChange={(e) => {
+                            const next = [...config.parameters.H_dir]; next[i] = parseFloat(e.target.value); updateField('parameters', 'H_dir', next)
+                          }} />
+                        ))}
+                      </div>
+                    </div>
+                    <div className="input-group">
+                      <label>Default Spin (S)</label>
+                      <input type="number" step="0.5" value={config.parameters.S} className="minimal-input" onChange={(e) => updateField('parameters', 'S', parseFloat(e.target.value))} />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex-between mb-md">
+                  <h2 className="section-title">Model Parameters</h2>
+                  {!isAddingParam ? (
+                    <button className="btn btn-primary btn-sm" onClick={() => {
+                      setIsAddingParam(true)
+                      setNewParamName('')
+                    }}><Plus size={14} /> Add Parameter</button>
+                  ) : (
+                    <div className="flex-gap-sm">
+                      <input
+                        type="text"
+                        className="minimal-input"
+                        placeholder="Name (e.g. J3)"
+                        value={newParamName}
+                        onChange={(e) => setNewParamName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && newParamName.trim()) {
+                            setConfig(prev => ({
+                              ...prev,
+                              parameters: { ...prev.parameters, [newParamName.trim()]: 0.0 }
+                            }))
+                            setIsAddingParam(false)
+                          }
+                        }}
+                        autoFocus
+                        style={{ width: '120px' }}
+                      />
+                      <button className="icon-btn text-success" onClick={() => {
+                        if (newParamName.trim()) {
                           setConfig(prev => ({
                             ...prev,
                             parameters: { ...prev.parameters, [newParamName.trim()]: 0.0 }
                           }))
                           setIsAddingParam(false)
                         }
-                      }}
-                      autoFocus
-                      style={{ width: '120px' }}
-                    />
-                    <button className="icon-btn text-success" onClick={() => {
-                      if (newParamName.trim()) {
-                        setConfig(prev => ({
-                          ...prev,
-                          parameters: { ...prev.parameters, [newParamName.trim()]: 0.0 }
-                        }))
-                        setIsAddingParam(false)
-                      }
-                    }}><Check size={16} /></button>
-                    <button className="icon-btn text-error" onClick={() => setIsAddingParam(false)}><Trash2 size={16} /></button>
-                  </div>
-                )}
-              </div>
-              <div className="card">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Symbol</th>
-                      <th>Value</th>
-                      <th style={{ width: '40px' }}></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Object.entries(config.parameters)
-                      .filter(([key]) => !['S', 'H_mag', 'H_dir'].includes(key))
-                      .map(([key, value]) => (
-                        <tr key={key}>
-                          <td className="mono">{key}</td>
-                          <td>
-                            <input
-                              type="number"
-                              step="0.001"
-                              className="table-input"
-                              value={value}
-                              onChange={(e) => {
-                                setConfig(prev => ({
-                                  ...prev,
-                                  parameters: { ...prev.parameters, [key]: parseFloat(e.target.value) }
-                                }))
-                              }}
-                            />
-                          </td>
-                          <td>
-                            <button
-                              className="icon-btn text-error"
-                              onClick={() => {
-                                const next = { ...config.parameters }
-                                delete next[key]
-                                setConfig(prev => ({ ...prev, parameters: next }))
-                              }}
-                            ><Trash2 size={14} /></button>
-                          </td>
-                        </tr>
-                      ))}
-                    {Object.keys(config.parameters).filter(k => !['S', 'H_mag', 'H_dir'].includes(k)).length === 0 && (
-                      <tr>
-                        <td colSpan="3" className="center text-secondary py-md">No model parameters defined.</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-          {activeTab === 'tasks' && (
-            <div className="form-section">
-              <h2 className="section-title">Tasks & Plotting</h2>
-              <div className="grid-2 mt-md">
-                <div className="card shadow-glow">
-                  <h3>Calculation Tasks</h3>
-                  <div className="task-cards-grid">
-                    {Object.keys(config.tasks).filter(k => k !== 'export_csv').map(taskKey => {
-                      const Icon = taskKey.includes('plot') ? Eye : (taskKey.includes('minimization') ? Magnet : Activity);
-                      const label = taskKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                      const desc = taskKey.includes('run') ? 'Calculate results' : 'Generate visualization';
-
-                      return (
-                        <div
-                          key={taskKey}
-                          className={`task-card ${config.tasks[taskKey] ? 'active' : ''}`}
-                          onClick={() => updateField('tasks', taskKey, !config.tasks[taskKey])}
-                        >
-                          <div className="task-icon-box">
-                            <Icon size={18} />
-                          </div>
-                          <div className="task-info">
-                            <span className="task-name">{label}</span>
-                            <span className="task-desc">{desc}</span>
-                          </div>
-                          <div className="task-check">
-                            <Check size={12} strokeWidth={4} />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="card shadow-glow">
-                  <h3>Minimization Parameters</h3>
-                  <div className="grid-form mt-md">
-                    <div className="input-group">
-                      <label>Num Starts</label>
-                      <input type="number" value={config.minimization.num_starts} className="minimal-input"
-                        onChange={(e) => updateField('minimization', 'num_starts', parseInt(e.target.value))} />
-                    </div>
-                    <div className="input-group">
-                      <label>N Workers</label>
-                      <input type="number" value={config.minimization.n_workers} className="minimal-input"
-                        onChange={(e) => updateField('minimization', 'n_workers', parseInt(e.target.value))} />
-                    </div>
-                    <div className="input-group">
-                      <label>Early Stopping</label>
-                      <input type="number" value={config.minimization.early_stopping} className="minimal-input"
-                        onChange={(e) => updateField('minimization', 'early_stopping', parseInt(e.target.value))} />
-                    </div>
-                    <div className="input-group">
-                      <label>Method</label>
-                      <select
-                        className="minimal-select"
-                        value={config.minimization.method}
-                        onChange={(e) => updateField('minimization', 'method', e.target.value)}
-                      >
-                        <option value="L-BFGS-B">L-BFGS-B</option>
-                        <option value="TNC">TNC</option>
-                        <option value="SLSQP">SLSQP</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <h3 className="mt-xl">Calculation Settings</h3>
-                  <div className="grid-form mt-md">
-                    <div className="input-group">
-                      <label>Cache Mode</label>
-                      <select
-                        value={config.calculation.cache_mode}
-                        className="minimal-input"
-                        onChange={(e) => updateField('calculation', 'cache_mode', e.target.value)}
-                      >
-                        <option value="none">None (No Caching)</option>
-                        <option value="auto">Auto (Smart Caching)</option>
-                        <option value="r">Read (Force Read Cache)</option>
-                        <option value="w">Write (Force Regeneration)</option>
-                      </select>
-                      <p className="text-xs opacity-50 mt-xs">
-                        'None' is recommended for small systems or when debugging symmetry.
-                      </p>
-                    </div>
-                  </div>
-
-                  <h3 className="mt-xl">Data Export</h3>
-                  <div className="mt-md">
-                    <label className="flex-between align-center glass rounded-lg border-light mb-md modern-switch-container pointer" style={{ padding: '12px 16px', display: 'flex' }}>
-                      <div className="flex align-center gap-md">
-                        <FileText size={18} className="vibrant-text" />
-                        <span className="text-sm font-bold">Export results to CSV</span>
-                      </div>
-                      <label className="modern-switch" style={{ marginBottom: 0 }}>
-                        <input
-                          type="checkbox"
-                          checked={config.tasks.export_csv}
-                          onChange={(e) => updateField('tasks', 'export_csv', e.target.checked)}
-                        />
-                        <span className="switch-slider"></span>
-                      </label>
-                    </label>
-
-                    {config.tasks.export_csv && (
-                      <div className="grid-form animate-fade-in">
-                        <div className="input-group">
-                          <label>Dispersion CSV</label>
-                          <input
-                            type="text"
-                            value={config.output.disp_csv_filename}
-                            className="minimal-input"
-                            onChange={(e) => updateField('output', 'disp_csv_filename', e.target.value)}
-                          />
-                        </div>
-                        <div className="input-group">
-                          <label>S(Q,w) CSV</label>
-                          <input
-                            type="text"
-                            value={config.output.sqw_csv_filename}
-                            className="minimal-input"
-                            onChange={(e) => updateField('output', 'sqw_csv_filename', e.target.value)}
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid-2 mt-md">
-                <div className="card shadow-glow">
-                  <h3>Display Parameters</h3>
-                  <div className="grid-form mt-md">
-                    <div className="input-group">
-                      <label>Energy Min (meV)</label>
-                      <input type="number" step="0.1" value={config.plotting.energy_min} className="minimal-input"
-                        onChange={(e) => updateField('plotting', 'energy_min', parseFloat(e.target.value))} />
-                    </div>
-                    <div className="input-group">
-                      <label>Energy Max (meV)</label>
-                      <input type="number" step="0.1" value={config.plotting.energy_max} className="minimal-input"
-                        onChange={(e) => updateField('plotting', 'energy_max', parseFloat(e.target.value))} />
-                    </div>
-                    <div className="input-group">
-                      <label>Broadening (meV)</label>
-                      <input type="number" step="0.01" value={config.plotting.broadening} className="minimal-input"
-                        onChange={(e) => updateField('plotting', 'broadening', parseFloat(e.target.value))} />
-                    </div>
-                    <div className="input-group">
-                      <label>Energy Res. (meV)</label>
-                      <input type="number" step="0.01" value={config.plotting.energy_resolution} className="minimal-input"
-                        onChange={(e) => updateField('plotting', 'energy_resolution', parseFloat(e.target.value))} />
-                    </div>
-                    <div className="input-group">
-                      <label>Momentum Max (Å⁻¹)</label>
-                      <input type="number" step="0.1" value={config.plotting.momentum_max} className="minimal-input"
-                        onChange={(e) => updateField('plotting', 'momentum_max', parseFloat(e.target.value))} />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="card mt-xl">
-                <div className="flex-between mb-md">
-                  <h3>High Symmetry Points</h3>
-                  <button className="btn btn-secondary btn-sm" onClick={() => {
-                    const name = prompt("Enter point name (e.g. L):");
-                    if (name) {
-                      setConfig(prev => ({
-                        ...prev,
-                        q_path: {
-                          ...prev.q_path,
-                          points: { ...prev.q_path.points, [name]: [0, 0, 0] }
-                        }
-                      }));
-                    }
-                  }}><Plus size={14} /> Add Point</button>
-                </div>
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Label</th>
-                      <th>Coordinates (H, K, L)</th>
-                      <th style={{ width: '40px' }}></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Object.entries(config.q_path.points).map(([label, pos], idx) => (
-                      <tr key={label}>
-                        <td className="mono">{label}</td>
-                        <td>
-                          <div className="flex-gap-xs">
-                            {[0, 1, 2].map(i => (
-                              <input
-                                key={i}
-                                type="number"
-                                step="0.001"
-                                value={pos[i]}
-                                className="table-input"
-                                onChange={(e) => {
-                                  const nextPoints = { ...config.q_path.points };
-                                  nextPoints[label][i] = parseFloat(e.target.value);
-                                  setConfig({ ...config, q_path: { ...config.q_path, points: nextPoints } });
-                                }}
-                              />
-                            ))}
-                          </div>
-                        </td>
-                        <td>
-                          <button className="icon-btn text-error" onClick={() => {
-                            const nextPoints = { ...config.q_path.points };
-                            delete nextPoints[label];
-                            setConfig({ ...config, q_path: { ...config.q_path, points: nextPoints } });
-                          }}><Trash2 size={14} /></button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="card mt-xl">
-                <h3>Q-Path Sequence</h3>
-                <div className="mt-md">
-                  <div className="q-path-flow mb-xl">
-                    {config.q_path.path.length === 0 && (
-                      <span className="text-sm opacity-40 italic">Add points below to build your calculation path...</span>
-                    )}
-                    {config.q_path.path.map((p, idx) => (
-                      <React.Fragment key={idx}>
-                        <div className="q-path-node">
-                          <span className="q-path-step-num">{idx + 1}</span>
-                          {p}
-                          <button className="icon-btn ml-xs" onClick={() => {
-                            const nextPath = config.q_path.path.filter((_, i) => i !== idx);
-                            setConfig({ ...config, q_path: { ...config.q_path, path: nextPath } });
-                          }}><Trash2 size={12} /></button>
-                        </div>
-                        {idx < config.q_path.path.length - 1 && (
-                          <div className="q-path-connector">
-                            <ChevronRight size={16} />
-                          </div>
-                        )}
-                      </React.Fragment>
-                    ))}
-                  </div>
-
-                  <div className="flex-between align-center p-md glass rounded-lg border-light">
-                    <div className="flex-gap-sm align-center">
-                      <select className="minimal-select" id="point-select" style={{ width: '180px' }}>
-                        <option value="">Select Point...</option>
-                        {Object.keys(config.q_path.points).map(p => (
-                          <option key={p} value={p}>{p}</option>
-                        ))}
-                      </select>
-                      <button className="btn btn-primary btn-sm" onClick={() => {
-                        const sel = document.getElementById('point-select');
-                        if (sel.value) {
-                          setConfig({ ...config, q_path: { ...config.q_path, path: [...config.q_path.path, sel.value] } });
-                          sel.value = "";
-                        }
-                      }}><Plus size={14} /> Add to Path</button>
-                    </div>
-
-                    <div className="flex-gap-sm align-center">
-                      <span className="text-xxs opacity-60 font-bold uppercase tracking-wider">Points per segment:</span>
-                      <input
-                        type="number"
-                        value={config.q_path.points_per_segment}
-                        onChange={(e) => updateField('q_path', 'points_per_segment', parseInt(e.target.value))}
-                        className="minimal-input"
-                        style={{ width: '80px', textAlign: 'center' }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-          {activeTab === 'magstruct' && (
-            <div className="form-section">
-              <div className="flex-between mb-md">
-                <h2 className="section-title">Magnetic Structure</h2>
-                <label className="flex-gap-sm align-center modern-switch-container pointer">
-                  <span className="text-sm font-bold vibrant-text">Include Manual Structure</span>
-                  <label className="modern-switch">
-                    <input
-                      type="checkbox"
-                      checked={config.magnetic_structure.enabled}
-                      onChange={(e) => updateField('magnetic_structure', 'enabled', e.target.checked)}
-                    />
-                    <span className="switch-slider"></span>
-                  </label>
-                </label>
-              </div>
-
-              {!config.magnetic_structure.enabled && (
-                <div className="card glass opacity-60 text-center py-xl border-dashed">
-                  <Magnet className="mx-auto mb-sm opacity-40" size={32} />
-                  <p>Manual magnetic structure is currently disabled.</p>
-                  <p className="text-xs mt-xs">Use the toggle above to enable manual spin direction input. If disabled, the calculation will rely on the optimizer to find the ground state.</p>
-                </div>
-              )}
-
-              {config.magnetic_structure.enabled && (
-                <div className="card mb-lg animate-fade-in">
-                  <div className="input-group">
-                    <label>Structure Type</label>
-                    <select
-                      className="minimal-select"
-                      value={config.magnetic_structure.type}
-                      onChange={(e) => updateField('magnetic_structure', 'type', e.target.value)}
-                    >
-                      <option value="pattern">Pattern Based</option>
-                    </select>
-                  </div>
-                  {config.magnetic_structure.type === 'pattern' && (
-                    <div className="mt-md">
-                      <div className="input-group">
-                        <label>Pattern Type</label>
-                        <select
-                          className="minimal-select"
-                          value={config.magnetic_structure.pattern_type}
-                          onChange={(e) => updateField('magnetic_structure', 'pattern_type', e.target.value)}
-                        >
-                          <option value="antiferromagnetic">Antiferromagnetic</option>
-                          <option value="generic">Generic/Custom List</option>
-                        </select>
-                      </div>
-
-                      <div className="mt-xl">
-                        <div className="flex-between mb-md">
-                          <h3>Spin Directions (Unit Vectors)</h3>
-                          <button className="btn btn-secondary btn-sm" onClick={() => {
-                            const next = [...config.magnetic_structure.directions];
-                            next.push([1, 0, 0]);
-                            updateField('magnetic_structure', 'directions', next);
-                          }}><Plus size={14} /> Add Direction</button>
-                        </div>
-                        <table className="data-table">
-                          <thead>
-                            <tr>
-                              <th style={{ width: '60px' }}>#</th>
-                              <th>Direction (Sx, Sy, Sz)</th>
-                              <th style={{ width: '40px' }}></th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {config.magnetic_structure.directions.map((dir, idx) => (
-                              <tr key={idx}>
-                                <td className="center opacity-40">{idx}</td>
-                                <td>
-                                  <div className="flex-gap-xs">
-                                    {[0, 1, 2].map(i => (
-                                      <input key={i} type="number" step="0.001" value={dir[i]} className="table-input" onChange={(e) => {
-                                        const next = [...config.magnetic_structure.directions];
-                                        next[idx][i] = parseFloat(e.target.value);
-                                        updateField('magnetic_structure', 'directions', next);
-                                      }} />
-                                    ))}
-                                  </div>
-                                </td>
-                                <td>
-                                  <button className="icon-btn text-error" onClick={() => {
-                                    const next = config.magnetic_structure.directions.filter((_, i) => i !== idx);
-                                    updateField('magnetic_structure', 'directions', next);
-                                  }}><Trash2 size={14} /></button>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
+                      }}><Check size={16} /></button>
+                      <button className="icon-btn text-error" onClick={() => setIsAddingParam(false)}><Trash2 size={16} /></button>
                     </div>
                   )}
                 </div>
-              )}
+                <div className="card">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Symbol</th>
+                        <th>Value</th>
+                        <th style={{ width: '40px' }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(config.parameters)
+                        .filter(([key]) => !['S', 'H_mag', 'H_dir'].includes(key))
+                        .map(([key, value]) => (
+                          <tr key={key}>
+                            <td className="mono">{key}</td>
+                            <td>
+                              <input
+                                type="number"
+                                step="0.001"
+                                className="table-input"
+                                value={value}
+                                onChange={(e) => {
+                                  setConfig(prev => ({
+                                    ...prev,
+                                    parameters: { ...prev.parameters, [key]: parseFloat(e.target.value) }
+                                  }))
+                                }}
+                              />
+                            </td>
+                            <td>
+                              <button
+                                className="icon-btn text-error"
+                                onClick={() => {
+                                  const next = { ...config.parameters }
+                                  delete next[key]
+                                  setConfig(prev => ({ ...prev, parameters: next }))
+                                }}
+                              ><Trash2 size={14} /></button>
+                            </td>
+                          </tr>
+                        ))}
+                      {Object.keys(config.parameters).filter(k => !['S', 'H_mag', 'H_dir'].includes(k)).length === 0 && (
+                        <tr>
+                          <td colSpan="3" className="center text-secondary py-md">No model parameters defined.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+            {activeTab === 'tasks' && (
+              <div className="form-section">
+                <h2 className="section-title">Tasks & Plotting</h2>
+                <div className="grid-2 mt-md">
+                  <div className="card shadow-glow">
+                    <h3>Calculation Tasks</h3>
+                    <div className="task-cards-grid">
+                      {Object.keys(config.tasks).filter(k => k !== 'export_csv').map(taskKey => {
+                        const Icon = taskKey.includes('plot') ? Eye : (taskKey.includes('minimization') ? Magnet : Activity);
+                        const label = taskKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                        const desc = taskKey.includes('run') ? 'Calculate results' : 'Generate visualization';
+
+                        return (
+                          <div
+                            key={taskKey}
+                            className={`task-card ${config.tasks[taskKey] ? 'active' : ''}`}
+                            onClick={() => updateField('tasks', taskKey, !config.tasks[taskKey])}
+                          >
+                            <div className="task-icon-box">
+                              <Icon size={18} />
+                            </div>
+                            <div className="task-info">
+                              <span className="task-name">{label}</span>
+                              <span className="task-desc">{desc}</span>
+                            </div>
+                            <div className="task-check">
+                              <Check size={12} strokeWidth={4} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="card shadow-glow">
+                    <h3>Minimization Parameters</h3>
+                    <div className="grid-form mt-md">
+                      <div className="input-group">
+                        <label>Num Starts</label>
+                        <input type="number" value={config.minimization.num_starts} className="minimal-input"
+                          onChange={(e) => updateField('minimization', 'num_starts', parseInt(e.target.value))} />
+                      </div>
+                      <div className="input-group">
+                        <label>N Workers</label>
+                        <input type="number" value={config.minimization.n_workers} className="minimal-input"
+                          onChange={(e) => updateField('minimization', 'n_workers', parseInt(e.target.value))} />
+                      </div>
+                      <div className="input-group">
+                        <label>Early Stopping</label>
+                        <input type="number" value={config.minimization.early_stopping} className="minimal-input"
+                          onChange={(e) => updateField('minimization', 'early_stopping', parseInt(e.target.value))} />
+                      </div>
+                      <div className="input-group">
+                        <label>Method</label>
+                        <select
+                          className="minimal-select"
+                          value={config.minimization.method}
+                          onChange={(e) => updateField('minimization', 'method', e.target.value)}
+                        >
+                          <option value="L-BFGS-B">L-BFGS-B</option>
+                          <option value="TNC">TNC</option>
+                          <option value="SLSQP">SLSQP</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <h3 className="mt-xl">Calculation Settings</h3>
+                    <div className="grid-form mt-md">
+                      <div className="input-group">
+                        <label>Cache Mode</label>
+                        <select
+                          value={config.calculation.cache_mode}
+                          className="minimal-input"
+                          onChange={(e) => updateField('calculation', 'cache_mode', e.target.value)}
+                        >
+                          <option value="none">None (No Caching)</option>
+                          <option value="auto">Auto (Smart Caching)</option>
+                          <option value="r">Read (Force Read Cache)</option>
+                          <option value="w">Write (Force Regeneration)</option>
+                        </select>
+                        <p className="text-xs opacity-50 mt-xs">
+                          'None' is recommended for small systems or when debugging symmetry.
+                        </p>
+                      </div>
+                    </div>
+
+                    <h3 className="mt-xl">Data Export</h3>
+                    <div className="mt-md">
+                      <label className="flex-between align-center glass rounded-lg border-light mb-md modern-switch-container pointer" style={{ padding: '12px 16px', display: 'flex' }}>
+                        <div className="flex align-center gap-md">
+                          <FileText size={18} className="vibrant-text" />
+                          <span className="text-sm font-bold">Export results to CSV</span>
+                        </div>
+                        <label className="modern-switch" style={{ marginBottom: 0 }}>
+                          <input
+                            type="checkbox"
+                            checked={config.tasks.export_csv}
+                            onChange={(e) => updateField('tasks', 'export_csv', e.target.checked)}
+                          />
+                          <span className="switch-slider"></span>
+                        </label>
+                      </label>
+
+                      {config.tasks.export_csv && (
+                        <div className="grid-form animate-fade-in">
+                          <div className="input-group">
+                            <label>Dispersion CSV</label>
+                            <input
+                              type="text"
+                              value={config.output.disp_csv_filename}
+                              className="minimal-input"
+                              onChange={(e) => updateField('output', 'disp_csv_filename', e.target.value)}
+                            />
+                          </div>
+                          <div className="input-group">
+                            <label>S(Q,w) CSV</label>
+                            <input
+                              type="text"
+                              value={config.output.sqw_csv_filename}
+                              className="minimal-input"
+                              onChange={(e) => updateField('output', 'sqw_csv_filename', e.target.value)}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid-2 mt-md">
+                  <div className="card shadow-glow">
+                    <h3>Display Parameters</h3>
+                    <div className="grid-form mt-md">
+                      <div className="input-group">
+                        <label>Energy Min (meV)</label>
+                        <input type="number" step="0.1" value={config.plotting.energy_min} className="minimal-input"
+                          onChange={(e) => updateField('plotting', 'energy_min', parseFloat(e.target.value))} />
+                      </div>
+                      <div className="input-group">
+                        <label>Energy Max (meV)</label>
+                        <input type="number" step="0.1" value={config.plotting.energy_max} className="minimal-input"
+                          onChange={(e) => updateField('plotting', 'energy_max', parseFloat(e.target.value))} />
+                      </div>
+                      <div className="input-group">
+                        <label>Broadening (meV)</label>
+                        <input type="number" step="0.01" value={config.plotting.broadening} className="minimal-input"
+                          onChange={(e) => updateField('plotting', 'broadening', parseFloat(e.target.value))} />
+                      </div>
+                      <div className="input-group">
+                        <label>Energy Res. (meV)</label>
+                        <input type="number" step="0.01" value={config.plotting.energy_resolution} className="minimal-input"
+                          onChange={(e) => updateField('plotting', 'energy_resolution', parseFloat(e.target.value))} />
+                      </div>
+                      <div className="input-group">
+                        <label>Momentum Max (Å⁻¹)</label>
+                        <input type="number" step="0.1" value={config.plotting.momentum_max} className="minimal-input"
+                          onChange={(e) => updateField('plotting', 'momentum_max', parseFloat(e.target.value))} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="card mt-xl">
+                  <div className="flex-between mb-md">
+                    <h3>High Symmetry Points</h3>
+                    <button className="btn btn-secondary btn-sm" onClick={() => {
+                      const name = prompt("Enter point name (e.g. L):");
+                      if (name) {
+                        setConfig(prev => ({
+                          ...prev,
+                          q_path: {
+                            ...prev.q_path,
+                            points: { ...prev.q_path.points, [name]: [0, 0, 0] }
+                          }
+                        }));
+                      }
+                    }}><Plus size={14} /> Add Point</button>
+                  </div>
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Label</th>
+                        <th>Coordinates (H, K, L)</th>
+                        <th style={{ width: '40px' }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(config.q_path.points).map(([label, pos], idx) => (
+                        <tr key={label}>
+                          <td className="mono">{label}</td>
+                          <td>
+                            <div className="flex-gap-xs">
+                              {[0, 1, 2].map(i => (
+                                <input
+                                  key={i}
+                                  type="number"
+                                  step="0.001"
+                                  value={pos[i]}
+                                  className="table-input"
+                                  onChange={(e) => {
+                                    const nextPoints = { ...config.q_path.points };
+                                    nextPoints[label][i] = parseFloat(e.target.value);
+                                    setConfig({ ...config, q_path: { ...config.q_path, points: nextPoints } });
+                                  }}
+                                />
+                              ))}
+                            </div>
+                          </td>
+                          <td>
+                            <button className="icon-btn text-error" onClick={() => {
+                              const nextPoints = { ...config.q_path.points };
+                              delete nextPoints[label];
+                              setConfig({ ...config, q_path: { ...config.q_path, points: nextPoints } });
+                            }}><Trash2 size={14} /></button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="card mt-xl">
+                  <h3>Q-Path Sequence</h3>
+                  <div className="mt-md">
+                    <div className="q-path-flow mb-xl">
+                      {config.q_path.path.length === 0 && (
+                        <span className="text-sm opacity-40 italic">Add points below to build your calculation path...</span>
+                      )}
+                      {config.q_path.path.map((p, idx) => (
+                        <React.Fragment key={idx}>
+                          <div className="q-path-node">
+                            <span className="q-path-step-num">{idx + 1}</span>
+                            {p}
+                            <button className="icon-btn ml-xs" onClick={() => {
+                              const nextPath = config.q_path.path.filter((_, i) => i !== idx);
+                              setConfig({ ...config, q_path: { ...config.q_path, path: nextPath } });
+                            }}><Trash2 size={12} /></button>
+                          </div>
+                          {idx < config.q_path.path.length - 1 && (
+                            <div className="q-path-connector">
+                              <ChevronRight size={16} />
+                            </div>
+                          )}
+                        </React.Fragment>
+                      ))}
+                    </div>
+
+                    <div className="flex-between align-center p-md glass rounded-lg border-light">
+                      <div className="flex-gap-sm align-center">
+                        <select className="minimal-select" id="point-select" style={{ width: '180px' }}>
+                          <option value="">Select Point...</option>
+                          {Object.keys(config.q_path.points).map(p => (
+                            <option key={p} value={p}>{p}</option>
+                          ))}
+                        </select>
+                        <button className="btn btn-primary btn-sm" onClick={() => {
+                          const sel = document.getElementById('point-select');
+                          if (sel.value) {
+                            setConfig({ ...config, q_path: { ...config.q_path, path: [...config.q_path.path, sel.value] } });
+                            sel.value = "";
+                          }
+                        }}><Plus size={14} /> Add to Path</button>
+                      </div>
+
+                      <div className="flex-gap-sm align-center">
+                        <span className="text-xxs opacity-60 font-bold uppercase tracking-wider">Points per segment:</span>
+                        <input
+                          type="number"
+                          value={config.q_path.points_per_segment}
+                          onChange={(e) => updateField('q_path', 'points_per_segment', parseInt(e.target.value))}
+                          className="minimal-input"
+                          style={{ width: '80px', textAlign: 'center' }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+            {activeTab === 'magstruct' && (
+              <div className="form-section">
+                <div className="flex-between mb-md">
+                  <h2 className="section-title">Magnetic Structure</h2>
+                  <label className="flex-gap-sm align-center modern-switch-container pointer">
+                    <span className="text-sm font-bold vibrant-text">Include Manual Structure</span>
+                    <label className="modern-switch">
+                      <input
+                        type="checkbox"
+                        checked={config.magnetic_structure.enabled}
+                        onChange={(e) => updateField('magnetic_structure', 'enabled', e.target.checked)}
+                      />
+                      <span className="switch-slider"></span>
+                    </label>
+                  </label>
+                </div>
+
+                {!config.magnetic_structure.enabled && (
+                  <div className="card glass opacity-60 text-center py-xl border-dashed">
+                    <Magnet className="mx-auto mb-sm opacity-40" size={32} />
+                    <p>Manual magnetic structure is currently disabled.</p>
+                    <p className="text-xs mt-xs">Use the toggle above to enable manual spin direction input. If disabled, the calculation will rely on the optimizer to find the ground state.</p>
+                  </div>
+                )}
+
+                {config.magnetic_structure.enabled && (
+                  <div className="card mb-lg animate-fade-in">
+                    <div className="input-group">
+                      <label>Structure Type</label>
+                      <select
+                        className="minimal-select"
+                        value={config.magnetic_structure.type}
+                        onChange={(e) => updateField('magnetic_structure', 'type', e.target.value)}
+                      >
+                        <option value="pattern">Pattern Based</option>
+                      </select>
+                    </div>
+                    {config.magnetic_structure.type === 'pattern' && (
+                      <div className="mt-md">
+                        <div className="input-group">
+                          <label>Pattern Type</label>
+                          <select
+                            className="minimal-select"
+                            value={config.magnetic_structure.pattern_type}
+                            onChange={(e) => updateField('magnetic_structure', 'pattern_type', e.target.value)}
+                          >
+                            <option value="antiferromagnetic">Antiferromagnetic</option>
+                            <option value="generic">Generic/Custom List</option>
+                          </select>
+                        </div>
+
+                        <div className="mt-xl">
+                          <div className="flex-between mb-md">
+                            <h3>Spin Directions (Unit Vectors)</h3>
+                            <button className="btn btn-secondary btn-sm" onClick={() => {
+                              const next = [...config.magnetic_structure.directions];
+                              next.push([1, 0, 0]);
+                              updateField('magnetic_structure', 'directions', next);
+                            }}><Plus size={14} /> Add Direction</button>
+                          </div>
+                          <table className="data-table">
+                            <thead>
+                              <tr>
+                                <th style={{ width: '60px' }}>#</th>
+                                <th>Direction (Sx, Sy, Sz)</th>
+                                <th style={{ width: '40px' }}></th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {config.magnetic_structure.directions.map((dir, idx) => (
+                                <tr key={idx}>
+                                  <td className="center opacity-40">{idx}</td>
+                                  <td>
+                                    <div className="flex-gap-xs">
+                                      {[0, 1, 2].map(i => (
+                                        <input key={i} type="number" step="0.001" value={dir[i]} className="table-input" onChange={(e) => {
+                                          const next = [...config.magnetic_structure.directions];
+                                          next[idx][i] = parseFloat(e.target.value);
+                                          updateField('magnetic_structure', 'directions', next);
+                                        }} />
+                                      ))}
+                                    </div>
+                                  </td>
+                                  <td>
+                                    <button className="icon-btn text-error" onClick={() => {
+                                      const next = config.magnetic_structure.directions.filter((_, i) => i !== idx);
+                                      updateField('magnetic_structure', 'directions', next);
+                                    }}><Trash2 size={14} /></button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+        )}
+
+        {activeTab === 'run' && (
+          <div className="content-area animate-fade-in full-width-tab">
+            <div className="flex-between align-center mb-xl">
+              <div>
+                <h2 className="section-title mb-xs">Run Calculation & Analysis</h2>
+                <p className="text-sm opacity-60">Execute the simulation using current settings and visualize results.</p>
+              </div>
+              <button
+                className={`btn btn-primary btn-lg shadow-glow ${calcLoading ? 'opacity-50 pointer-events-none' : ''}`}
+                onClick={runCalculation}
+              >
+                {calcLoading ? (
+                  <>
+                    <Activity className="animate-spin mr-sm" /> Calculating...
+                  </>
+                ) : (
+                  <>
+                    <Play size={18} className="mr-sm" /> Run Calculation
+                  </>
+                )}
+              </button>
             </div>
-          )}
-        </section>
+
+            {calcError && (
+              <div className="card border-error mb-xl bg-error-dim">
+                <div className="flex align-center gap-md text-error">
+                  <Info />
+                  <div>
+                    <h4 className="font-bold">Execution Failed</h4>
+                    <p className="text-sm opacity-80 mt-xs font-mono">{calcError}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {calcResults && (
+              <div className="animate-slide-up">
+                <div className="card mb-xl border-success bg-success-dim">
+                  <div className="flex align-center gap-md text-success">
+                    <Check />
+                    <span className="font-bold">Calculation Completed Successfully</span>
+                  </div>
+                </div>
+
+                <div className="flex-col gap-xl">
+                  {calcResults.plots.map((plotUrl, idx) => (
+                    <div key={idx} className="card p-0 overflow-hidden shadow-lg">
+                      <div className="p-sm glass border-b border-light flex-between">
+                        <span className="font-bold text-sm uppercase tracking-wider opacity-70">
+                          {plotUrl.includes('disp') ? 'Spin Wave Dispersion' : 'S(Q,ω) Intensity Map'}
+                        </span>
+                        <a href={plotUrl} download className="icon-btn" title="Download Plot">
+                          <Download size={14} />
+                        </a>
+                      </div>
+                      <div className="plot-container bg-white">
+                        {/* Add timestamp to bust cache */}
+                        <img src={`${plotUrl}?t=${Date.now()}`} alt="Result Plot" className="w-full h-auto object-contain" />
+                      </div>
+                    </div>
+                  ))}
+                  {calcResults.plots.length === 0 && (
+                    <div className="card opacity-60 text-center py-xl">
+                      <Info className="mx-auto mb-sm" />
+                      <p>No plots generated. Enable plotting in "Tasks & Plotting" tab.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {!calcResults && !calcError && !calcLoading && (
+              <div className="card glass opacity-40 text-center py-xxl border-dashed">
+                <BarChart2 size={48} className="mx-auto mb-md opacity-30" />
+                <p className="text-lg">Ready to Calculate</p>
+                <p className="text-sm mt-sm max-w-md mx-auto">
+                  Press the "Run Calculation" button to minimize energy (if enabled) and compute spin wave dispersion/intensity maps based on your configuration.
+                </p>
+              </div>
+            )}
+
+            {/* Log Console - Always visible in Run tab */}
+            <LogConsole logs={logs} />
+
+          </div>
+        )}
 
         {showVisualizer && (
           <aside className="right-preview glass">

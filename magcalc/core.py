@@ -252,9 +252,9 @@ class MagCalc:
         """
         logger.info(f"Initializing MagCalc (cache_mode='{cache_mode}')...")
 
-        if cache_mode not in ["r", "w", "auto"]:
+        if cache_mode not in ["r", "w", "auto", "none"]:
             raise ValueError(
-                f"Invalid cache_mode '{cache_mode}'. Use 'r', 'w', or 'auto'."
+                f"Invalid cache_mode '{cache_mode}'. Use 'r', 'w', 'auto', or 'none'."
             )
         self.cache_mode = cache_mode
 
@@ -780,6 +780,17 @@ class MagCalc:
                     hm_cache_file, ud_cache_file, meta_cache_file
                 )
 
+        elif self.cache_mode == "none":
+            logger.info("Cache mode is 'none'. Generating symbolic matrices in memory without saving to disk.")
+            if self.config_data:
+                self.HMat_sym, self.Ud_sym = self._generate_matrices_from_config()
+            else:
+                self.HMat_sym, self.Ud_sym = gen_HM(
+                    self.sm,
+                    self.k_sym,
+                    self.S_sym,
+                    list(self.params_sym),
+                )
         elif self.cache_mode == "r":
             logger.info(
                 f"Importing symbolic matrices from cache files ({hm_cache_file}, {ud_cache_file})..."
@@ -1297,7 +1308,7 @@ class MagCalc:
         cache_key = self._generate_numerical_cache_key(q_vectors_list, "dispersion")
         cache_filepath = os.path.join(self.numerical_cache_dir, cache_key + ".pkl")
 
-        if os.path.exists(cache_filepath) and self.cache_mode != 'w':
+        if self.cache_mode not in ['w', 'none'] and os.path.exists(cache_filepath):
             try:
                 with open(cache_filepath, "rb") as f:
                     cached_result = pickle.load(f)
@@ -1399,14 +1410,15 @@ class MagCalc:
             energies=np.array(energies_list) 
         )
         # --- Save to Numerical Cache ---
-        try:
-            with open(cache_filepath, "wb") as f:
-                pickle.dump(dispersion_result, f)
-            logger.info(
-                f"Saved dispersion results to numerical cache: {cache_filepath}"
-            )
-        except Exception as e:
-            logger.warning(f"Failed to save to numerical cache {cache_filepath}: {e}")
+        if self.cache_mode != 'none':
+            try:
+                with open(cache_filepath, "wb") as f:
+                    pickle.dump(dispersion_result, f)
+                logger.info(
+                    f"Saved dispersion results to numerical cache: {cache_filepath}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to save to numerical cache {cache_filepath}: {e}")
 
         return dispersion_result
     def calculate_sqw_generator(

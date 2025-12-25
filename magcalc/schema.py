@@ -108,7 +108,7 @@ class TransformationsConfig(BaseModel):
 
 # --- Other Sections ---
 class CalculationConfig(BaseModel):
-    cache_mode: str = 'r'
+    cache_mode: str = 'none'
     cache_file_base: str = 'magcalc_cache'
 
 class QPathConfig(BaseModel):
@@ -120,6 +120,8 @@ class QPathConfig(BaseModel):
 class OutputConfig(BaseModel):
     disp_data_filename: str = 'disp_data.npz'
     sqw_data_filename: str = 'sqw_data.npz'
+    disp_csv_filename: str = 'disp_data.csv'
+    sqw_csv_filename: str = 'sqw_data.csv'
 
 class PlottingConfig(BaseModel):
     save_plot: bool = True
@@ -144,6 +146,7 @@ class TasksConfig(BaseModel):
     run_sqw_map: bool = False
     calculate_sqw_map_new: bool = True
     plot_sqw_map: bool = False
+    export_csv: bool = False
     
 class MinimizationConfig(BaseModel):
     enabled: bool = False

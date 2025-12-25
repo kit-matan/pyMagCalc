@@ -10,14 +10,14 @@
 ## Key Features
 
 *   **MagCalc Pure Designer:** Interactive web GUI for designing models from CIF files and symmetry-based bonding rules.
-*   **Diffraction Physics:** Calculates spin-wave dispersion and neutron scattering intensity (S(Q,ω)) with magnetic form factor and polarization factor corrections.
-*   **Energy Minimization:** Numerically finds the classical magnetic ground state by minimizing the Hamiltonian energy, supporting both simple and complex (e.g., canted) structures.
-*   **3D Visualization:** Visualizes the magnetic structure in 3D with scaled spins and correct aspect ratios.
-*   **Modular Architecture:** Separation of concerns with `MagCalc` core logic, linear algebra utilities, and model definitions.
-*   **Symbolic Hamiltonian:** Generates symbolic quadratic boson Hamiltonians using `SymPy` for arbitrary spin interactions.
+*   **Symmetry-Aware Mechanics:** Automatically propagates Heisenberg ($J$), DM ($D$), and Anisotropic Exchange ($T$) rules across the crystal using space-group symmetry operators.
+*   **Diffraction Physics:** Calculates spin-wave dispersion and dynamic structure factors $S(Q,\omega)$ with magnetic form factor and polarization factor corrections.
+*   **Energy Minimization:** Numerically finds the classical magnetic ground state by minimizing the Hamiltonian energy, supporting parallel multistart and early stopping.
+*   **3D Visualization:** Visualizes the magnetic structure in 3D with scaled spins, DM vectors (arrows), and orientation guides.
+*   **Symbolic Engine:** Generates symbolic quadratic boson Hamiltonians using `SymPy` for arbitrary spin interactions.
 *   **Numerical Engine:** Efficient numerical evaluation using `NumPy` and `multiprocessing` for parallel q-point calculations.
-*   **Caching System:** Caches computationally expensive symbolic Hamiltonian diagonalization to disk for faster re-runs.
-*   **Centralized Outputs:** Automatically saves all generated plots and data to structured directories (`examples/plots/` and `cache/data/`).
+*   **Flexible Caching:** Supports disk caching (`auto`, `r`, `w`) for expensive symbolic matrices, or `none` for purely in-memory execution.
+*   **Data Export (CSV):** Optionally export dispersion and $S(Q,\omega)$ results to `.csv` files for external analysis.
 *   **Flexible Inputs:** Supports declarative YAML configurations (validated against schema) or Python-based model definitions.
 
 ## Directory Structure
@@ -133,7 +133,7 @@ with open("examples/KFe3J/config_modern.yaml") as f:
 model = GenericSpinModel(config)
 
 # 2. Initialize Calculator
-calc = mc.MagCalc(spin_model_module=model, spin_magnitude=2.5, cache_mode='auto')
+calc = mc.MagCalc(spin_model_module=model, spin_magnitude=2.5, cache_mode='none')
 
 # 3. Minimize Energy
 # Use a smart initial guess to avoid local minima

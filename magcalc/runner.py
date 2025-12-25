@@ -107,7 +107,7 @@ def run_calculation(config_file: str):
     
     # Initialize MagCalc
     calc_config = final_config.get('calculation', {})
-    cache_mode = calc_config.get('cache_mode', 'auto')
+    cache_mode = calc_config.get('cache_mode', 'none')
     cache_base = calc_config.get('cache_file_base', 'magcalc_cache')
     
     # Parameters Logic
@@ -187,7 +187,7 @@ def run_calculation(config_file: str):
                 spin_magnitude=S_val,
                 hamiltonian_params=params_val,
                 cache_file_base=f"{cache_base}_min",
-                cache_mode="auto",
+                cache_mode="none",
                 initialize=False
             )
             
@@ -293,6 +293,21 @@ def run_calculation(config_file: str):
                     os.makedirs(os.path.dirname(disp_file), exist_ok=True)
                     np.savez(disp_file, q_vectors=q_vectors_cart, energies=energies_arr)
                     logger.info(f"Dispersion saved to {disp_file}")
+
+                    if tasks.get('export_csv', False):
+                        disp_csv = final_config.get('output', {}).get('disp_csv_filename', 'disp_data.csv')
+                        if not os.path.isabs(disp_csv): disp_csv = os.path.join(config_dir, disp_csv)
+                        
+                        logger.info(f"Exporting dispersion to CSV: {disp_csv}")
+                        # qx, qy, qz, en1, en2, ...
+                        header = "qx,qy,qz," + ",".join([f"en{i}" for i in range(energies_arr.shape[1])])
+                        with open(disp_csv, 'w') as f:
+                            f.write(header + "\n")
+                            for i in range(len(q_vectors_cart)):
+                                q = q_vectors_cart[i]
+                                en = energies_arr[i]
+                                line = f"{q[0]:.6f},{q[1]:.6f},{q[2]:.6f}," + ",".join([f"{e:.6f}" for e in en])
+                                f.write(line + "\n")
                 
             else:
                 logger.warning("No Q-vectors.")
@@ -328,6 +343,22 @@ def run_calculation(config_file: str):
                 os.makedirs(os.path.dirname(sqw_file), exist_ok=True)
                 np.savez(sqw_file, q_vectors=q_out, energies=en_out, intensities=int_out)
                 logger.info(f"S(Q,w) saved to {sqw_file}")
+
+                if tasks.get('export_csv', False):
+                    sqw_csv = final_config.get('output', {}).get('sqw_csv_filename', 'sqw_data.csv')
+                    if not os.path.isabs(sqw_csv): sqw_csv = os.path.join(config_dir, sqw_csv)
+                    
+                    logger.info(f"Exporting S(Q,w) to CSV: {sqw_csv}")
+                    # qx, qy, qz, mode, energy, intensity
+                    header = "qx,qy,qz,mode,energy,intensity"
+                    with open(sqw_csv, 'w') as f:
+                        f.write(header + "\n")
+                        for i in range(len(q_out)):
+                            q = q_out[i]
+                            # en_out and int_out are [nq, nmodes]
+                            for m in range(en_out.shape[1]):
+                                line = f"{q[0]:.6f},{q[1]:.6f},{q[2]:.6f},{m},{en_out[i,m]:.6f},{int_out[i,m]:.6f}"
+                                f.write(line + "\n")
 
     # 3. Plotting
     plot_config = final_config.get('plotting', {})

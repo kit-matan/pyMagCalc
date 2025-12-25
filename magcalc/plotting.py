@@ -68,7 +68,8 @@ def plot_dispersion(
         # Ensure directory exists
         if save_filename:
              os.makedirs(os.path.dirname(os.path.abspath(save_filename)), exist_ok=True)
-             plt.savefig(save_filename, dpi=150)
+             plt.tight_layout()
+             plt.savefig(save_filename, dpi=150, bbox_inches='tight', pad_inches=0.1)
              logger.info(f"Dispersion plot saved to {save_filename}")
         
         if show_plot:
@@ -175,7 +176,8 @@ def plot_sqw_map(
         
         if save_filename:
              os.makedirs(os.path.dirname(os.path.abspath(save_filename)), exist_ok=True)
-             plt.savefig(save_filename, dpi=150)
+             # tight_layout is already called above, but good to ensure
+             plt.savefig(save_filename, dpi=150, bbox_inches='tight', pad_inches=0.1)
              logger.info(f"S(Q,w) plot saved to {save_filename}")
 
         if show_plot:

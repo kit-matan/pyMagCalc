@@ -8,9 +8,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, Response
 from ase.io import read
 from typing import List, Dict, Any
+import asyncio
+import logging
 import uuid
+from starlette.websockets import WebSocket, WebSocketDisconnect
 
 import sys
+import matplotlib
+matplotlib.use('Agg') # Force non-interactive backend for thread safety
 # Add parent directory to sys.path to find magcalc package
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 try:
@@ -19,138 +24,122 @@ except ImportError:
     # If not found (e.g. running in a way where it's not available), we'll handle it in the endpoint
     MagCalcConfigBuilder = None
 
+from fastapi.staticfiles import StaticFiles
+from magcalc.runner import run_calculation
+
 app = FastAPI(title="MagCalc Designer Backend")
 
-DOWNLOAD_CACHE = {}
+# Mount the project root to serve generated files (e.g. plots)
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+app.mount("/files", StaticFiles(directory=project_root), name="files")
 
+# --- Log Streaming Setup ---
+log_queue = asyncio.Queue()
 
-@app.get("/download/{item_id}/{filename}")
-async def download_file(item_id: str, filename: str):
-    if item_id not in DOWNLOAD_CACHE:
-        raise HTTPException(status_code=404, detail="File not found or expired")
+class BroadcastingLogHandler(logging.Handler):
+    """
+    Pushes log records to an asyncio Queue for WebSocket broadcasting.
+    """
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            # Schedule the put operation on the event loop
+            try:
+                loop = asyncio.get_running_loop()
+                loop.call_soon_threadsafe(log_queue.put_nowait, msg)
+            except RuntimeError:
+                # Loop might not be running yet
+                pass
+        except Exception:
+            self.handleError(record)
+
+@app.on_event("startup")
+async def startup_event():
+    # Setup global logger to capture magcalc output
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
     
-    item = DOWNLOAD_CACHE.pop(item_id) # One-time use
-    content = item["content"]
-    # filename argument is mostly for browser to see in URL, but we also put it in header
+    # Add our broadcasting handler
+    handler = BroadcastingLogHandler()
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
     
-    disposition = f'attachment; filename="{filename}"'
-    return Response(content=content, media_type="application/octet-stream", headers={
-        "Content-Disposition": disposition
-    })
+    # Attach to root logger
+    logger.addHandler(handler)
+    
+    # Explicitly attach to magcalc logger and ensure level is INFO
+    mc_logger = logging.getLogger("magcalc")
+    mc_logger.setLevel(logging.INFO)
+    mc_logger.addHandler(handler)
+    mc_logger.propagate = False # Prevent double logging if root also handles it, but here we want to be sure logging works.
+    # Actually, keep propagate=True mostly, but if duplicate, we set to False. 
+    # Let's just set level and attach handler. Use propagate=False to avoid root capturing it IF root has handler.
+    # But wait, root HAS handler. So we will get duplicates if we attach to both and propagate is True.
+    # But currently we get NOTHING. So propagate might be False by default or blocked?
+    # Safest: Attach to magcalc, set propagate=False.
+    mc_logger.propagate = False
+    
+    # Also attach to uvicorn loggers to capture access logs if desired, or ensure magcalc logs propagated
+    # logging.getLogger("uvicorn").addHandler(handler)
 
-@app.post("/prepare-download")
-async def prepare_download(payload: Dict[str, Any]):
+@app.websocket("/ws/logs")
+async def websocket_logs(websocket: WebSocket):
+    await websocket.accept()
+    # Send a welcome message to confirm connection
+    await websocket.send_text("Connected to Log Stream. Waiting for activity...")
     try:
-        filename = payload.get("filename", "config.yaml")
-        if not filename.endswith(".yaml") and not filename.endswith(".yml"):
-            filename += ".yaml"
-        
-        # Sanitize filename for URL
-        filename = os.path.basename(filename)
-
-        content = payload.get("content")
-        if not content:
-             raise HTTPException(status_code=400, detail="Content required")
-
-        item_id = str(uuid.uuid4())
-        DOWNLOAD_CACHE[item_id] = {
-            "content": content,
-            "filename": filename
-        }
-        # Include filename in URL!
-        return {"download_url": f"/download/{item_id}/{filename}"}
-
+        while True:
+            # Wait for next log entry
+            log_entry = await log_queue.get()
+            await websocket.send_text(log_entry)
+            log_queue.task_done()
+    except WebSocketDisconnect:
+        print("Log client disconnected")
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"WebSocket error: {e}")
 
+# ... (rest of code)
 
-# Enable CORS for local development
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-@app.get("/health")
-async def health_check():
-    return {"status": "ok"}
-
-@app.post("/parse-cif")
-async def parse_cif(file: UploadFile = File(...)):
+@app.post("/run-calculation")
+async def trigger_calculation(config: Dict[str, Any]):
     """
-    Parse an uploaded CIF file and extract lattice parameters + Wyckoff positions.
+    Save config to a temporary run file and trigger magcalc.runner.run_calculation.
     """
     try:
-        content = await file.read()
-        # ASE can read from a file-like object
-        f = io.StringIO(content.decode('utf-8'))
-        atoms = read(f, format="cif")
+        # 0. Expand the Config (Crucial step: generates atoms_uc, bonds, etc.)
+        # We can reuse the logic from expand_config endpoint
+        expanded_data = await expand_config(config)
         
-        # Prepare spglib cell
-        cell = (atoms.get_cell(), atoms.get_scaled_positions(), atoms.get_atomic_numbers())
-        dataset = spglib.get_symmetry_dataset(cell)
-        
-        if not dataset:
-            raise HTTPException(status_code=400, detail="Could not determine symmetry for this CIF.")
-            
-        unique_indices = np.unique(dataset.equivalent_atoms)
-        
-        lattice_params = atoms.get_cell().cellpar()
-        
-        basis_atoms = []
-        for idx in unique_indices:
-            atom = atoms[int(idx)]
-            basis_atoms.append({
-                "label": atom.symbol,
-                "pos": atom.scaled_position.tolist(),
-                "spin_S": 0.5 # Default fallback
-            })
-            
-        return {
-            "lattice": {
-                "a": float(lattice_params[0]),
-                "b": float(lattice_params[1]),
-                "c": float(lattice_params[2]),
-                "alpha": float(lattice_params[3]),
-                "beta": float(lattice_params[4]),
-                "gamma": float(lattice_params[5]),
-                "space_group": int(dataset.number)
-            },
-            "wyckoff_atoms": basis_atoms,
-            "hall_number": int(dataset.hall_number),
-            "international": dataset.international
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/save-config")
-async def save_config(config: Dict[str, Any]):
-    """
-    Save the designer state to a YAML file in the workspace.
-    """
-    try:
-        filename = config.get("filename", "config_pure.yaml")
-        # Sanitize filename to be relative to project root
-        filename = filename.lstrip("/") 
-        
-        # Save to the project root (parent directory of gui/)
+        # 1. Save Config
         gui_dir = os.path.dirname(os.path.abspath(__file__))
         project_root = os.path.dirname(gui_dir)
-        save_path = os.path.join(project_root, filename)
+        run_config_path = os.path.join(project_root, "config_gui_run.yaml")
         
-        print(f"Saving config to: {save_path}")
-        
-        # Ensure parent directories exist
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        
-        with open(save_path, 'w') as f:
-            yaml.dump(config["data"], f, sort_keys=False)
+        with open(run_config_path, 'w') as f:
+            yaml.dump(expanded_data, f, sort_keys=False)
             
-        return {"message": f"Saved successfully to project root as {filename}", "path": save_path}
+        logging.getLogger().info(f"Starting calculation with config: {run_config_path}")
+        
+        # 2. Run Calculation: Non-blocking execution
+        # This function is blocking, so we run it in a thread pool to keep the loop free for WS
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, run_calculation, run_config_path)
+        
+        # 3. Check for outputs
+        # We expect disp_plot.png and sqw_plot.png in project root if plotting was enabled
+        results = {
+            "message": "Calculation completed successfully.",
+            "plots": []
+        }
+        
+        if os.path.exists(os.path.join(project_root, "disp_plot.png")):
+            results["plots"].append("/files/disp_plot.png")
+            
+        if os.path.exists(os.path.join(project_root, "sqw_plot.png")):
+            results["plots"].append("/files/sqw_plot.png")
+            
+        return results
+
     except Exception as e:
         import traceback
         traceback.print_exc()

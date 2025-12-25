@@ -60,7 +60,8 @@ Open `config.yaml` and define your physics.
     -   `show_plot`: Set to `true` to see plots on screen, `false` to save only.
     -   `plot_structure`: Visualize the minimized magnetic state.
 -   `parameters`: Values for variables used in interactions (e.g., `J1: 3.23`).
--   `tasks`: Toggle `run_dispersion`, `run_sqw_map`, and `plot_*` flags.
+-   `tasks`: Toggle `run_dispersion`, `run_sqw_map`, `export_csv`, and `plot_*` flags.
+-   `output`: Define output filenames for data (e.g., `disp_csv_filename: "my_data.csv"`).
 
 ### Step 3: Validate
 Check if your configuration is physically valid without running heavy calculations:
@@ -110,6 +111,19 @@ interactions:
     - pair: ["Fe1", "Fe1"]
       J: "J1"
       rij_offset: [0.5, 0.0, 0.0]
+
+### Data Export (CSV)
+To export your results to a readable CSV format (compatible with Excel/Origin):
+```yaml
+tasks:
+  export_csv: true
+output:
+  disp_csv_filename: "disp_results.csv"
+  sqw_csv_filename: "sqw_results.csv"
+```
+**Formats:**
+*   **Dispersion**: One row per Q-point: `qx, qy, qz, en0, en1, ...`
+*   **S(Q,w)**: Tidy format (one row per mode): `qx, qy, qz, mode, energy, intensity`
 ```
 
 ---
@@ -139,8 +153,9 @@ minimization:
       phi: 4.18 # 240 deg
 ```
 
-### Performance
-*   Use `cache_mode: 'auto'` (default) to reuse symbolic Hamiltonian calculations.
+### Performance & Caching
+*   Use `cache_mode: 'none'` (default) to avoid disk I/O. This is recommended for small systems or when rapidly iterating on symmetry rules.
+*   Use `cache_mode: 'auto'` to reuse symbolic calculations for very large units cells where matrix construction is slow.
 *   Set `calculate_dispersion_new: false` if you only want to change plot aesthetics (titles, limits) without re-running the physics.
 
 ---
