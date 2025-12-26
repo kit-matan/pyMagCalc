@@ -9,10 +9,10 @@
 
 ## Key Features
 
-*   **MagCalc Pure Designer:** Interactive web GUI for designing models from CIF files and symmetry-based bonding rules.
+*   **pyMagCalc Studio:** Interactive web GUI for designing models from CIF files and symmetry-based bonding rules.
 *   **Symmetry-Aware Mechanics:** Automatically propagates Heisenberg ($J$), DM ($D$), and Anisotropic Exchange ($T$) rules across the crystal using space-group symmetry operators.
 *   **Diffraction Physics:** Calculates spin-wave dispersion and dynamic structure factors $S(Q,\omega)$ with magnetic form factor and polarization factor corrections.
-*   **Energy Minimization:** Numerically finds the classical magnetic ground state by minimizing the Hamiltonian energy, supporting parallel multistart and early stopping.
+*   **Energy Minimization:** Numerically finds the classical magnetic ground state by minimizing the Hamiltonian energy, supporting **parallel multistart** and **early stopping** for robust convergence.
 *   **3D Visualization:** Visualizes the magnetic structure in 3D with scaled spins, DM vectors (arrows), and orientation guides.
 *   **Symbolic Engine:** Generates symbolic quadratic boson Hamiltonians using `SymPy` for arbitrary spin interactions.
 *   **Numerical Engine:** Efficient numerical evaluation using `NumPy` and `multiprocessing` for parallel q-point calculations.
@@ -77,9 +77,9 @@ Run dispersion, S(Q,w), and plotting as defined in the config:
 magcalc run my_config.yaml
 ```
 
-## Graphical User Interface: MagCalc Pure Designer
+## Graphical User Interface: pyMagCalc Studio
 
-The **MagCalc Pure Designer** is a modern web application designed to simplify the creation of complex spin models using a "pure" (symmetry-based) approach.
+The **pyMagCalc Studio** is a modern web application designed to simplify the creation of complex spin models using a "pure" (symmetry-based) approach.
 
 ### Feature Highlights
 - **CIF Integration**: Load crystal structures directly from CIF files.

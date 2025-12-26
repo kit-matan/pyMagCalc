@@ -835,7 +835,7 @@ function App() {
 
                 {interactionMode === 'symmetry' ? (
                   <>
-                    <h2 className="section-title compact">Bonding Rules</h2>
+                    <h2 className="section-title compact mb-xl">Bonding Rules</h2>
 
                     <div className="flex align-center gap-md mb-lg">
                       <div className="modern-toggle-group">
