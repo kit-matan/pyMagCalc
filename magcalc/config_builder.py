@@ -22,6 +22,7 @@ class MagCalcConfigBuilder:
                 "dm_interaction": [],
                 "single_ion_anisotropy": [],
                 "anisotropic_exchange": [],
+                "interaction_matrix": [],
                 "applied_field": {}
             },
             "parameters": {},
@@ -195,12 +196,35 @@ class MagCalcConfigBuilder:
         added_bonds_keys = set()
         
         # Check if value is symbolic (contains strings)
+        # Check if value is symbolic (contains strings)
+        if isinstance(value, str):
+            # Parse CSV string if needed (e.g. "0,-Dy,Dz" or "[0, -Dy, 0]")
+            # Remove brackets and parentheses
+            cleaned_val = value.replace('[', '').replace(']', '').replace('(', '').replace(')', '')
+            if ',' in cleaned_val:
+                value = [v.strip() for v in cleaned_val.split(',') if v.strip()]
+            
+            # Auto-pad 2D vectors to 3D if likely intended (e.g. "0, -Dy" -> "0, -Dy, 0")
+            # Only if it looks like a vector (list of length 2)
+            if isinstance(value, list) and len(value) == 2:
+                value.append("0")
+        
         is_symbolic = any(isinstance(v, str) for v in value) if isinstance(value, (list, tuple, np.ndarray)) else isinstance(value, str)
         if is_symbolic:
             import sympy as sp
-            # Wrap in list if scalar
+            # Wrap in list if scalar, handling the processed value
             mat_input = value if isinstance(value, (list, tuple, np.ndarray)) else [value]
-            val_vec = sp.Matrix(mat_input)
+            try:
+                val_vec = sp.Matrix(mat_input)
+            except Exception:
+                # Fallback: try sympifying limits or handle flat lists for matrix
+                formatted_input = []
+                for v in mat_input:
+                    if isinstance(v, str):
+                         formatted_input.append(sp.sympify(v) if v.strip() and v.strip() != "-" else 0)
+                    else:
+                         formatted_input.append(v)
+                val_vec = sp.Matrix(formatted_input)
         else:
             val_vec = np.array(value, dtype=float)
         
@@ -318,6 +342,34 @@ class MagCalcConfigBuilder:
                      # Symmetric
                      self._add_anisotropic_entry(atom_l['label'], atom_k['label'], -offset_final, val_p_list, final_dist)
                  
+             elif type == "interaction_matrix":
+                 # Full 3x3 interaction tensor J' = R J R^T
+                 R_cart = self._lattice_rotation(R)
+                 
+                 if is_symbolic:
+                     import sympy as sp
+                     R_cart_sym = sp.Matrix(R_cart)
+                     J_mat = sp.Matrix(val_vec) # Assuming val is passed as list of lists
+                     J_prime = R_cart_sym * J_mat * R_cart_sym.T
+                     val_p_list = J_prime.tolist()
+                     val_p_list_T = J_prime.T.tolist()
+                 else:
+                     J_mat = np.array(value) 
+                     J_prime = R_cart @ J_mat @ R_cart.T
+                     val_p_list = J_prime.tolist()
+                     val_p_list_T = J_prime.T.tolist()
+                 
+                 bond_key = (atom_k['label'], atom_l['label'], tuple(offset_final))
+                 rev_bond_key = (atom_l['label'], atom_k['label'], tuple(-offset_final))
+                 
+                 if bond_key not in added_bonds_keys and rev_bond_key not in added_bonds_keys:
+                     self._add_interaction_matrix_entry(atom_k['label'], atom_l['label'], offset_final, val_p_list, final_dist)
+                     added_bonds_keys.add(bond_key)
+                     added_bonds_keys.add(rev_bond_key)
+                     
+                     # Reverse bond: J_ji = J_ij^T
+                     self._add_interaction_matrix_entry(atom_l['label'], atom_k['label'], -offset_final, val_p_list_T, final_dist)
+                     
     def _add_dm_entry(self, lbl_i, lbl_j, offset, val, distance=None):
         # Ensure val is a list of strings or floats (not sympy objects)
         clean_val = [str(v) if not isinstance(v, (float, int)) else v for v in val]
@@ -373,6 +425,28 @@ class MagCalcConfigBuilder:
         if distance:
             entry["distance"] = distance
         self.config["interactions"]["anisotropic_exchange"].append(entry)
+
+    def _add_interaction_matrix_entry(self, lbl_i, lbl_j, offset, val, distance=None):
+        # val is 3x3 matrix (list of lists)
+        clean_val = []
+        for row in val:
+            clean_row = [str(v) if not isinstance(v, (float, int)) else v for v in row]
+            clean_val.append(clean_row)
+            
+        # Deduplicate
+        for entry in self.config["interactions"]["interaction_matrix"]:
+             if entry["pair"] == [lbl_i, lbl_j] and entry.get("rij_offset") == list(map(int, offset)):
+                 return
+
+        entry = {
+            "type": "interaction_matrix",
+            "pair": [lbl_i, lbl_j],
+            "rij_offset": list(map(int, offset)),
+            "value": clean_val
+        }
+        if distance:
+            entry["distance"] = distance
+        self.config["interactions"]["interaction_matrix"].append(entry)
 
     def _find_atom_at_pos(self, pos, tol=1e-3):
         for a in self.atoms_uc:
@@ -713,6 +787,176 @@ class MagCalcConfigBuilder:
         self.config["interactions"]["heisenberg"] = explicit_rules + expanded_rules
         logger.info(f"Expanded {len(generic_rules)} generic rules into {len(expanded_rules)} explicit Heisenberg pairs.")
 
+    def analyze_bond_symmetry(self, max_distance: float = 8.0, verbose: bool = False) -> List[Dict]:
+        """
+        Analyze crystal structure to find all unique bond orbits up to max_distance.
+        Returns a list of 'orbits', where each orbit contains:
+        - representative: {atom_i, atom_j, offset_j, distance} (The System-Recommended Reference)
+        - members: List of all equivalent bonds in the orbit
+        - distance: bond length
+        
+        This solves the ambiguity of distance-based rules by providing explicit reference bonds.
+        """
+        if not self.atoms_uc:
+            logger.warning("No atoms defined. Cannot analyze bonds.")
+            return []
+
+        # 1. Generate ALL pairs up to max_distance
+        positions = [np.array(a["pos"]) for a in self.atoms_uc]
+        labels = [a["label"] for a in self.atoms_uc]
+        
+        # Determine search range for offsets
+        # Estimate from max_distance and lattice vectors? 
+        # For now, use fixed robust range or simple heuristic.
+        # If lattice is 5A and max_dist is 8A, range 2 is enough.
+        # Safe bet: [-2, 2] for typical inputs.
+        search_range = 2 
+        from itertools import product
+        
+        if self.dimensionality == "2D":
+            offsets = [ (u, v, 0) for u, v in product(range(-search_range, search_range+1), repeat=2) ]
+        else:
+            offsets = list(product(range(-search_range, search_range+1), repeat=3))
+
+        # Store all bonds as (idx_i, idx_j, tuple(offset))
+        all_bonds = []
+        
+        for i, pos_i in enumerate(positions):
+            for j, pos_j in enumerate(positions):
+                for off in offsets:
+                    off_vec = np.array(off)
+                    pos_j_img = pos_j + off_vec
+                    
+                    # Distance check
+                    d_vec_cart = (pos_j_img - pos_i) @ self.lattice_vectors
+                    dist = np.linalg.norm(d_vec_cart)
+                    
+                    if 0.01 < dist <= max_distance:
+                        all_bonds.append({
+                            "indices": (i, j),
+                            "offset": off,
+                            "distance": dist,
+                            "vector_frac": (pos_j + off_vec) - pos_i
+                        })
+        
+        # 2. Group into Orbits
+        # We need to apply symmetry to each bond and see which ones map to each other.
+        # Bond B1 is equivalent to B2 if there exists (R, t) such that:
+        # B1_start -> B2_start AND B1_end -> B2_end (modulo lattice)
+        
+        orbits = []
+        processed_bonds = set() # Store unique IDs of processed bonds
+        
+        # Helper to get unique ID for a bond (i, j, offset)
+        def get_bond_id(i, j, off):
+            return (i, j, tuple(off))
+
+        # Sort bonds by distance first to keep orbits ordered efficiently
+        all_bonds.sort(key=lambda x: x["distance"])
+
+        for bond in all_bonds:
+            bid = get_bond_id(*bond["indices"], bond["offset"])
+            if bid in processed_bonds:
+                continue
+                
+            # New Orbit found!
+            orbit_members = []
+            
+            # Start atom and bond vector
+            # (Note: we need robust mapping. The simplest way is to apply ALL symops to this bond
+            # and collect the generated bonds. This ensures we find the FULL orbit.)
+            
+            p_i = positions[bond["indices"][0]]
+            offset_initial = np.array(bond["offset"])
+            # p_j_full = positions[bond["indices"][1]] + offset_initial
+            
+            # The bond vector in fractional coords attached to p_i
+            # We want to map: Start -> Start', End -> End'
+            
+            for R, t in zip(self.symmetry_ops['rotations'], self.symmetry_ops['translations']):
+                 # Transform Start
+                 p_start_map = R @ p_i + t
+                 p_start_wrap = self._wrap_pos(p_start_map)
+                 atom_k, _ = self._find_atom_at_pos(p_start_wrap)
+                 if not atom_k: continue
+                 idx_k = self._atom_label_to_idx[atom_k['label']]
+                 
+                 # Transform Bond Vector (vector part only rotates)
+                 # vec = (p_j + off) - p_i
+                 # vec' = R vec
+                 vec_initial = (positions[bond["indices"][1]] + offset_initial) - p_i
+                 vec_prime = R @ vec_initial
+                 
+                 # New End Pos (absolute) = New Start (absolute) + vec'
+                 # But we need New Start (absolute) = p_start_map
+                 p_end_prime = p_start_map + vec_prime
+                 
+                 # Identify Atom L at End
+                 p_end_wrap = self._wrap_pos(p_end_prime)
+                 atom_l, _ = self._find_atom_at_pos(p_end_wrap)
+                 if not atom_l: continue
+                 idx_l = self._atom_label_to_idx[atom_l['label']]
+                 
+                 # Calculate Offset L
+                 # p_end_prime = pos_l + off_l
+                 off_l = np.round(p_end_prime - positions[idx_l]).astype(int)
+                 
+                 # Calculate Offset K (mapped start)
+                 # p_start_map = pos_k + off_k
+                 off_k = np.round(p_start_map - positions[idx_k]).astype(int)
+                 
+                 # Relative offset for the bond (k -> l) in the config convention
+                 # The config stores "offset_j" relative to i. 
+                 # Here, the bond connects k (at pos_k_uc) to l (at pos_l_uc + relative_offset)
+                 # Absolute: P_start -> P_end
+                 # P_start = pos_k + off_k
+                 # P_end = pos_l + off_l
+                 # vector = P_end - P_start = (pos_l - pos_k) + (off_l - off_k)
+                 # So relative offset = off_l - off_k
+                 
+                 final_offset = off_l - off_k
+                 
+                 # Add to orbit
+                 member_id = (idx_k, idx_l, tuple(final_offset))
+                 
+                 # Avoid duplicates within loop if symops are redundant or map to same
+                 if member_id not in [m["id"] for m in orbit_members]:
+                     orbit_members.append({
+                         "id": member_id,
+                         "atom_i": labels[idx_k],
+                         "atom_j": labels[idx_l],
+                         "offset": list(final_offset),
+                         "ref_id": bid # Link back to generator
+                     })
+                     processed_bonds.add(member_id)
+
+            if not orbit_members:
+                continue
+
+            # 3. Select Representative
+            # Criterion 1: Offset Magnitude (Smallest L1 norm)
+            # Criterion 2: Atom Indicies (i then j)
+            # Criterion 3: Lexicographical offset (to be deterministic)
+            
+            def sort_key(m):
+                off = m["offset"]
+                idx_i = self._atom_label_to_idx[m["atom_i"]]
+                idx_j = self._atom_label_to_idx[m["atom_j"]]
+                mag = sum(abs(x) for x in off)
+                return (mag, idx_i, idx_j, off[0], off[1], off[2])
+            
+            orbit_members.sort(key=sort_key)
+            representative = orbit_members[0]
+            
+            orbits.append({
+                "representative": representative,
+                "members": orbit_members,
+                "distance": bond["distance"], # Approx, from the seed bond
+                "multiplicity": len(orbit_members)
+            })
+
+        return orbits
+
     def _expand_anisotropic_exchange_rules(self):
         """
         Expand distance-based anisotropic exchange rules into explicit pair interactions.
@@ -872,8 +1116,220 @@ class MagCalcConfigBuilder:
 
         # WRITE
 
+    def save(self, filename: str):
+        """Export configuration to YAML file."""
+        # 1. Ensure atoms are in config
+        config_atoms = []
+        for a in self.atoms_uc:
+            config_atoms.append({
+                "label": a["label"],
+                "pos": [float(x) for x in a["pos"]],
+                "spin_S": a["spin_S"]
+            })
+        self.config["crystal_structure"]["atoms_uc"] = config_atoms
+        
+        # 2. Derive magnetic_elements list (unique species)
+        species = sorted(list(set(a["species"] for a in self.atoms_uc if a.get("species"))))
+        if not species: 
+            # Fallback to labels if species not set, or first 1-2 chars
+            species = [] # Logic refinement needed if user doesn't provide
+            
+        self.config["crystal_structure"]["magnetic_elements"] = species
+        self.config["crystal_structure"]["dimensionality"] = self.dimensionality
+
+        # 3. Expand Interaction Rules
+        self._expand_heisenberg_rules()
+        self._expand_anisotropic_exchange_rules()
+        self._expand_dm_rules()
+
         # WRITE
         with open(filename, 'w') as f:
             yaml.dump(self.config, f, sort_keys=False)
         logger.info(f"Configuration saved to {filename}")
+
+    def get_bond_constraints(self, bond: Dict) -> Dict:
+        """
+        Determine the allowed Exchange Matrix form for a given bond based on its Little Group.
+        Returns:
+            - allowed_matrix: 3x3 array (strings/0)
+            - independent_vars: list of free parameters (e.g. ['J1', 'D', 'K1'])
+            - little_group_ops: list of ops that preserve the bond
+        """
+        import sympy as sp
+        
+        # 1. Reconstruct Bond Geometery
+        # Bond is defined by representative: atom_i, atom_j, offset_j
+        lbl_i = bond["representative"]["atom_i"]
+        lbl_j = bond["representative"]["atom_j"]
+        offset = np.array(bond["representative"]["offset"])
+        
+        idx_i = self._atom_label_to_idx[lbl_i]
+        idx_j = self._atom_label_to_idx[lbl_j]
+        
+        pos_i = np.array(self.atoms_uc[idx_i]["pos"])
+        pos_j_uc = np.array(self.atoms_uc[idx_j]["pos"])
+        
+        # Fractional bond vector V = P_end - P_start
+        # P_start = pos_i
+        # P_end = pos_j_uc + offset
+        vec_frac = (pos_j_uc + offset) - pos_i
+        midpoint = pos_i + 0.5 * vec_frac
+        
+        # 2. Find Little Group
+        # Op R, t is in Little Group if:
+        # A) Maps bond to itself: R(V) = V  AND  Maps i->i (or j->j)
+        # B) Maps bond to reverse: R(V) = -V AND Maps i->j (or j->i)
+        
+        little_group_ops = []
+        is_bond_symmetric = False # If we have operations that swap i and j
+        
+        for i_op, (R, t) in enumerate(zip(self.symmetry_ops['rotations'], self.symmetry_ops['translations'])):
+            # Apply R to vector
+            vec_prime = R @ vec_frac
+            
+            # Case A: Does it preserve direction?
+            if np.allclose(vec_prime, vec_frac, atol=1e-3):
+                # Must also map start point to start point (modulo lattice)
+                # p_i_map = R @ pos_i + t
+                # diff = p_i_map - pos_i
+                # is_integer = np.allclose(diff - np.round(diff), 0, atol=1e-3)
+                
+                # Check mapping of atom i -> atom i
+                # (pos_i is fractional position of atom in Unit Cell)
+                p_i_map = R @ pos_i + t
+                # does this land on pos_i?
+                # Check if p_i_map - pos_i is integer
+                diff = p_i_map - pos_i
+                map_i_i = np.allclose(diff - np.round(diff), 0, atol=1e-3)
+                
+                if map_i_i:
+                    little_group_ops.append({"op": (R, t), "swap": False})
+                continue
+                
+            # Case B: Does it reverse direction?
+            if np.allclose(vec_prime, -vec_frac, atol=1e-3):
+                # Must map start point (i) to end point (j)
+                # p_i_map = R @ pos_i + t
+                # Goal: p_i_map == pos_j_uc + offset (modulo lattice?? No, pos_j_uc + offset IS the absolute position)
+                # Actually, p_i is mapped to p_j_absolute?
+                # Let's check diff = p_i_map - (pos_j_uc + offset)
+                
+                # Wait. p_i maps to SOME equivalent of j.
+                # If V' = -V, it means bond flips.
+                # Start -> End.
+                # i -> j.
+                
+                p_i_map = R @ pos_i + t
+                p_end_abs = pos_j_uc + offset
+                
+                diff = p_i_map - p_end_abs
+                map_i_j = np.allclose(diff - np.round(diff), 0, atol=1e-3)
+                
+                if map_i_j:
+                     little_group_ops.append({"op": (R, t), "swap": True})
+                     is_bond_symmetric = True
+
+        # 3. Solve for Allowed Matrix J
+        # J is 3x3 matrix. Elements J_ab.
+        # We construct a linear system for the 9 elements.
+        
+        J_vars = sp.Matrix(sp.symbols('j0:9')).reshape(3, 3) # j0..j8
+        # Flattened for solver: [j0, ..., j8]
+        # Constraints: Coeffs * vars = 0
+        
+        constraints = [] # List of equations (expressions that must equal 0)
+        
+        for item in little_group_ops:
+            R_frac = item["op"][0]
+            swap = item["swap"]
+            
+            # Convert R to Cartesian for spin interactions
+            R_cart = self._lattice_rotation(R_frac)
+            
+            # SANITIZE R_cart to help sympy
+            # 1. Round
+            R_cart_clean = np.round(R_cart, decimals=10)
+            # 2. Sympy nsimplify (handles 0.5 -> 1/2, 1.0 -> 1)
+            R_sym = sp.Matrix(R_cart_clean).applyfunc(sp.nsimplify)
+            
+            # Constraint Eq: J = R J R^T (if no swap)
+            #               J = R J^T R^T (if swap)
+            
+            term1 = J_vars
+            if swap:
+                 term2 = R_sym * J_vars.T * R_sym.T
+            else:
+                 term2 = R_sym * J_vars * R_sym.T
+                 
+            diff = term1 - term2
+            for elem in diff:
+                constraints.append(elem)
+                
+        # Solve
+        # We need to find the basis of the null space of these linear equations
+        # But sympy solve can handle it directly if we pass the system
+        
+        # Collect all equations
+        # Solves for j0..j8 in terms of free parameters
+        sol = sp.solve(constraints, list(J_vars))
+        
+        # Reconstruct matrix from solution
+        J_solved = J_vars.subs(sol)
+        
+        # 4. Extract free parameters and clean up
+        free_symbols = sorted(list(J_solved.free_symbols), key=lambda x: x.name)
+        
+        # Map weird sympy symbols (j0, j5...) to nice names (J1, J2, D...)?
+        # For user display, we want a clean string matrix
+        return {
+            "symbolic_matrix": [[str(e) for e in row] for row in J_solved.tolist()],
+            "free_parameters": [str(s) for s in free_symbols],
+            "little_group_size": len(little_group_ops),
+            "is_centrosymmetric": is_bond_symmetric # Roughly
+        }
+
+    def calc_interaction_matrix(self, ref_bond: Dict, params: Dict[str, float]) -> np.ndarray:
+        """
+        Calculate numeric 3x3 interaction matrix from free parameters and symmetry constraints.
+        """
+        import sympy as sp
+        
+        # Get symbolic form (or re-compute? caching better)
+        # For robustness, recompute or pass in constraints.
+        # Assuming we just call get_bond_constraints again for now or use cached logic.
+        constraints = self.get_bond_constraints({"representative": ref_bond})
+        # Note: ref_bond dict format must match whatever get_bond_constraints expects.
+        # Ideally get_bond_constraints should cache based on bond ID.
+        
+        sym_matrix = sp.Matrix(constraints["symbolic_matrix"]) # Str to Sympy
+        
+        # Substitute params
+        # params dict keys must match the free_parameters (j0, j1...)
+        # WARN: If get_bond_constraints generates new symbols each time, keys won't match!
+        # Symbols are static 'j0:9' so they should be consistent IF structure is same.
+        # But sympy solve output depends on algorithm.
+        
+        # Better approach: Pass 'constraints' object which contains the solved matrix expression if possible.
+        # But since we return strings, we re-parse.
+        
+        subs_dict = {}
+        for k, v in params.items():
+            subs_dict[sp.Symbol(k)] = float(v)
+            
+        # J_numeric = sym_matrix.subs(subs_dict) # This might leave symbols if params missing
+        
+        # Evaluate to numpy
+        # Use lambdify or eval
+        J_num = np.zeros((3, 3))
+        for r in range(3):
+            for c in range(3):
+                expr = sym_matrix[r, c]
+                val = expr.subs(subs_dict)
+                try:
+                    J_num[r, c] = float(val)
+                except TypeError:
+                    # Still symbolic?
+                    logger.error(f"Parameter missing for interaction matrix element {r},{c}: {expr}")
+                    
+        return J_num
 

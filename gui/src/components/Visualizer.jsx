@@ -209,8 +209,8 @@ export default function Visualizer({ atoms, lattice, isDark, dimensionality, zFi
                         if (bond.type === 'dm' && bond.dm_vector) {
                             // DM vector at midpoint
                             const mid = [(start[0] + end[0]) / 2, (start[1] + end[1]) / 2, (start[2] + end[2]) / 2]
-                            const dmVecRaw = transformPos(bond.dm_vector, matrix)
-                            const dmVec = [dmVecRaw[0], dmVecRaw[1], dmVecRaw[2]]
+                            // DM Vector is already Cartesian from server. DO NOT transform with lattice matrix.
+                            const dmVec = bond.dm_vector
 
                             dmArrow = (
                                 <SpinArrow

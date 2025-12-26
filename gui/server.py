@@ -482,6 +482,161 @@ async def get_neighbors(config: Dict[str, Any]):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.post("/analyze-bonds")
+async def analyze_bonds(config: Dict[str, Any]):
+    """
+    Analyze bond symmetry and return orbits.
+    Input: { "data": full_config_json, "max_distance": float }
+    """
+    if MagCalcConfigBuilder is None:
+        raise HTTPException(status_code=500, detail="MagCalcConfigBuilder not found on server.")
+        
+    try:
+        builder = MagCalcConfigBuilder()
+        data = config.get("data", {})
+        max_dist = config.get("max_distance", 6.0)
+        
+        # Hydrate Builder (Lattice + Atoms)
+        # 1. Lattice
+        lattice = data.get("crystal_structure", {}).get("lattice_parameters", {})
+        builder.set_lattice(
+            a=lattice.get("a", 1.0),
+            b=lattice.get("b", 1.0),
+            c=lattice.get("c", 1.0),
+            alpha=lattice.get("alpha", 90),
+            beta=lattice.get("beta", 90),
+            gamma=lattice.get("gamma", 90),
+            space_group=int(lattice.get("space_group")) if lattice.get("space_group") else None
+        )
+        
+        # 2. Atoms
+        struct_data = data.get("crystal_structure", {})
+        wyckoff_atoms = struct_data.get("wyckoff_atoms", [])
+        atom_mode = struct_data.get("atom_mode", "symmetry")
+        builder.dimensionality = struct_data.get("dimensionality", "3D")
+
+        if atom_mode == "explicit":
+            config_atoms = []
+            for a in wyckoff_atoms:
+                config_atoms.append({
+                    "label": a.get("label", "Atom"),
+                    "pos": [float(x) for x in a.get("pos", [0, 0, 0])],
+                    "spin_S": a.get("spin_S", 0.5),
+                    "species": a.get("label", "Atom")
+                })
+            builder.config["crystal_structure"]["atoms_uc"] = config_atoms
+            builder.atoms_uc = config_atoms
+        else:
+            for atom in wyckoff_atoms:
+                builder.add_wyckoff_atom(
+                    label=atom.get("label", "Atom"),
+                    pos=atom.get("pos", [0, 0, 0]),
+                    spin=atom.get("spin_S", 0.5)
+                )
+
+        # 3. Detect Symmetry (Robustness)
+        try:
+            if len(builder.atoms_uc) > 0 and atom_mode != "explicit":
+                positions = [a["pos"] for a in builder.atoms_uc]
+                numbers = [atomic_numbers.get(a.get("species", "H"), 1) for a in builder.atoms_uc]
+                cell = (builder.lattice_vectors, positions, numbers)
+                dataset = spglib.get_symmetry_dataset(cell, symprec=1e-3)
+                if dataset:
+                     builder.set_symmetry_ops(dataset['rotations'], dataset['translations'])
+        except Exception:
+            pass
+
+        # 4. Analyze
+        orbits = builder.analyze_bond_symmetry(max_distance=max_dist)
+        
+        # 5. Clean for JSON serialization (numpy types)
+        def clean_orbit(orb):
+            return {
+                "distance": float(orb["distance"]),
+                "multiplicity": int(orb["multiplicity"]),
+                "representative": {
+                    "atom_i": int(orb["representative"]["atom_i"]) if isinstance(orb["representative"]["atom_i"], (int, np.integer)) else orb["representative"]["atom_i"],
+                    "atom_j": int(orb["representative"]["atom_j"]) if isinstance(orb["representative"]["atom_j"], (int, np.integer)) else orb["representative"]["atom_j"],
+                    "offset": [int(x) for x in orb["representative"]["offset"]]
+                },
+                "members": [
+                    {
+                        "atom_i": m["atom_i"],
+                        "atom_j": m["atom_j"],
+                        "offset": [int(x) for x in m["offset"]],
+                        "id": str(m["id"])
+                    } for m in orb["members"]
+                ]
+            }
+            
+        return [clean_orbit(o) for o in orbits]
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/bond-constraints")
+async def bond_constraints(payload: Dict[str, Any]):
+    """
+    Get allowed matrix form for a bond.
+    Input: { "data": config, "bond": bond_representative_obj }
+    """
+    if MagCalcConfigBuilder is None:
+        raise HTTPException(status_code=500, detail="MagCalcConfigBuilder not found.")
+        
+    try:
+        builder = MagCalcConfigBuilder()
+        data = payload.get("data", {})
+        bond_rep = payload.get("bond", {})
+        
+        # Hydrate Builder (Same boilerplate - maybe refactor later)
+        lattice = data.get("crystal_structure", {}).get("lattice_parameters", {})
+        builder.set_lattice(
+            a=lattice.get("a", 1.0),
+            b=lattice.get("b", 1.0),
+            c=lattice.get("c", 1.0),
+            alpha=lattice.get("alpha", 90),
+            beta=lattice.get("beta", 90),
+            gamma=lattice.get("gamma", 90),
+            space_group=int(lattice.get("space_group")) if lattice.get("space_group") else None
+        )
+        struct_data = data.get("crystal_structure", {})
+        wyckoff_atoms = struct_data.get("wyckoff_atoms", [])
+        atom_mode = struct_data.get("atom_mode", "symmetry")
+        if atom_mode == "explicit":
+             config_atoms = [{"label": a.get("label"), "pos": a.get("pos"), "spin_S": a.get("spin_S")} for a in wyckoff_atoms]
+             builder.atoms_uc = config_atoms
+        else:
+            for atom in wyckoff_atoms:
+                builder.add_wyckoff_atom(atom.get("label"), atom.get("pos"), atom.get("spin_S", 0.5))
+        
+        # Symmetry Detect
+        try:
+            if builder.atoms_uc:
+                positions = [a["pos"] for a in builder.atoms_uc]
+                # Dummy species logic if missing
+                numbers = [1] * len(positions) 
+                cell = (builder.lattice_vectors, positions, numbers)
+                dataset = spglib.get_symmetry_dataset(cell, symprec=1e-3)
+                if dataset: builder.set_symmetry_ops(dataset['rotations'], dataset['translations'])
+        except: pass
+
+        # Config must match bond logic
+        # Bond rep should have { "atom_i": "Cu1", "atom_j": "Cu2", "offset": [0,0,0] }
+        # The get_bond_constraints expects a dict with "representative" key
+        # We wrap it to match the signature
+        bond_wrapper = { "representative": bond_rep }
+        
+        constraints = builder.get_bond_constraints(bond_wrapper)
+        return constraints
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/expand-config")
 async def expand_config(config: Dict[str, Any]):
     """

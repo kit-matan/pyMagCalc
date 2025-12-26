@@ -638,6 +638,123 @@ function App() {
   }
 
 
+  // Symmetry Analysis State
+  const [showSymmetryModal, setShowSymmetryModal] = useState(false)
+  const [bondOrbits, setBondOrbits] = useState([])
+  const [selectedOrbit, setSelectedOrbit] = useState(null)
+  const [orbitConstraints, setOrbitConstraints] = useState(null)
+
+  const fetchBondOrbits = async () => {
+    try {
+      showNotify("Analyzing bond symmetry...", "info")
+      const response = await fetch('/api/analyze-bonds', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          max_distance: 10.0,
+          data: {
+            crystal_structure: {
+              lattice_parameters: config.lattice,
+              wyckoff_atoms: config.wyckoff_atoms,
+              dimensionality: config.lattice.dimensionality,
+              atom_mode: atomMode
+            }
+          }
+        }),
+      })
+      if (!response.ok) throw new Error('Failed to analyze bonds')
+      const data = await response.json()
+      setBondOrbits(data)
+      setShowSymmetryModal(true)
+      showNotify(`Found ${data.length} bond orbits.`, "success")
+    } catch (err) {
+      console.error('Error analyzing bonds:', err)
+      showNotify("Failed to analyze symmetry. Check server logs.", "error")
+    }
+  }
+
+  const fetchConstraints = async (orbit) => {
+    try {
+      const response = await fetch('/api/bond-constraints', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bond: orbit.representative,
+          data: {
+            crystal_structure: {
+              lattice_parameters: config.lattice,
+              wyckoff_atoms: config.wyckoff_atoms,
+              atom_mode: atomMode
+            }
+          }
+        }),
+      })
+      if (!response.ok) throw new Error('Failed to get constraints')
+      const data = await response.json()
+      setOrbitConstraints(data)
+      setSelectedOrbit(orbit)
+    } catch (err) {
+      console.error('Error fetching constraints:', err)
+      showNotify("Failed to fetch bond constraints.", "error")
+    }
+  }
+
+  const handleAddSymmetryInteraction = (orbit, constraints, params) => {
+    // params is a dict of { "J1": 1.5, "D": 0.1 } etc.
+    // We need to map this to the config.
+    // Actually, for "interaction_matrix", we store the matrix components OR the free parameters?
+    // The current backend for 'interaction_matrix' expects a 3x3 matrix in 'value'.
+    // BUT, to keep it editable, maybe we should store the symbolic map?
+    // Complexity: The backend 'add_symmetry_interaction' takes a numeric matrix or symbolic list-of-lists?
+    // It supports 'interaction_matrix' type.
+
+    // Let's construct the numeric matrix here for simplicity, OR pass the params if backend supported it.
+    // The backend 'calc_interaction_matrix' is available but not exposed as endpoint yet.
+    // Let's do a client-side substitution for the initial value.
+
+    // better: The User inputs J1, D... we save them in 'value' as a special object?
+    // No, let's stick to the schema: value is 3x3 array of strings/numbers.
+    // unique strings for params.
+
+    // 1. Construct the matrix string/value from constraints + params
+    const matrix = constraints.symbolic_matrix.map(row => row.map(cell => {
+      // If cell is '0' or '0.0', keep it.
+      // If cell is a symbol (e.g. 'j0'), check if we have a mapped param name?
+      // We need a mapping from symbolic vars (j0, j1) to User Params (J1, D...).
+      // Creating this mapping is tricky without user input.
+      // Let's just use the user-provided params directly if they match the symbolic slots.
+      return cell; // Placeholder
+    }));
+
+    // Actually, simpler approach for V1:
+    // Just add a "interaction_matrix" entry with the representative bond.
+    // And initializes the 'value' with the symbolic matrix from constraints.
+    // The user can then edit the values in the main UI (which needs update for matrix support).
+
+    const newRule = {
+      type: 'interaction_matrix',
+      ref_pair: [orbit.representative.atom_i, orbit.representative.atom_j],
+      offset: orbit.representative.offset,
+      distance: orbit.distance,
+      value: constraints.symbolic_matrix, // 3x3 array of strings
+      constraints: constraints // Store for reference/UI helpers?
+    };
+
+    // Update global parameters with free symbols (init to 0)
+    const newParams = { ...config.parameters };
+    constraints.free_parameters.forEach(p => {
+      if (newParams[p] === undefined) newParams[p] = 0.0;
+    });
+
+    setConfig({
+      ...config,
+      symmetry_interactions: [...config.symmetry_interactions, newRule],
+      parameters: newParams
+    });
+    setShowSymmetryModal(false);
+    showNotify("Added Symmetry Matrix Interaction", "success");
+  }
+
   const fetchNeighbors = async () => {
     try {
       const response = await fetch('/api/get-neighbors', {
@@ -1020,10 +1137,31 @@ function App() {
                               }} />
                             </div>
                             <div className="input-group">
-                              <label>Value (Symbol)</label>
-                              <input type="text" className="minimal-input accent-text" value={inter.value} onChange={(e) => {
-                                const next = [...config.symmetry_interactions]; next[idx].value = e.target.value; setConfig({ ...config, symmetry_interactions: next })
-                              }} />
+                              <label>Value</label>
+                              {inter.type === 'interaction_matrix' && Array.isArray(inter.value) ? (
+                                <div className="grid grid-cols-3 gap-1 bg-black/20 p-xs rounded border border-color/30">
+                                  {inter.value.map((row, r) => row.map((cell, c) => (
+                                    <input
+                                      key={`${r}-${c}`}
+                                      type="text"
+                                      className={`text-center text-xs p-1 bg-transparent border-none outline-none w-full ${cell === '0' || cell === '0.0' ? 'opacity-30' : 'text-accent font-bold'}`}
+                                      value={cell}
+                                      onChange={(e) => {
+                                        const next = [...config.symmetry_interactions];
+                                        // Deep copy matrix
+                                        const newMatrix = next[idx].value.map(row => [...row]);
+                                        newMatrix[r][c] = e.target.value;
+                                        next[idx].value = newMatrix;
+                                        setConfig({ ...config, symmetry_interactions: next });
+                                      }}
+                                    />
+                                  )))}
+                                </div>
+                              ) : (
+                                <input type="text" className="minimal-input accent-text" value={inter.value} onChange={(e) => {
+                                  const next = [...config.symmetry_interactions]; next[idx].value = e.target.value; setConfig({ ...config, symmetry_interactions: next })
+                                }} />
+                              )}
                             </div>
                             <div className="input-group">
                               <label>Type</label>
@@ -1047,13 +1185,90 @@ function App() {
                     </div>
 
                     <div className="mt-md">
-                      <h3 className="section-title text-sm mb-sm">Neighbor Shell Suggestions</h3>
+                      <h3 className="section-title text-sm mb-sm">Symmetry Analysis</h3>
                       <div className="flex gap-2 mb-sm items-center">
-                        <button className="btn btn-secondary btn-sm" onClick={fetchNeighbors}>
+                        <button className="btn btn-secondary btn-sm" onClick={fetchBondOrbits}>
                           <Activity size={14} className="mr-xs" />
-                          Re-calculate Neighbors
+                          Analyze Symmetry Orbits
                         </button>
                       </div>
+
+                      {/* Symmetry Modal Overlay */}
+                      {showSymmetryModal && (
+                        <div className="fixed inset-0 bg-black/50 z-50 flex center animate-fade-in" onClick={() => setShowSymmetryModal(false)}>
+                          <div className="bg-surface border border-color rounded-xl p-lg shadow-glow max-w-2xl w-full max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                            <h3 className="text-xl font-bold mb-md flex-between">
+                              <span>Bond Orbits</span>
+                              <button className="icon-btn" onClick={() => setShowSymmetryModal(false)}><Crosshair size={20} /></button>
+                            </h3>
+
+                            {!selectedOrbit ? (
+                              <div className="grid gap-sm">
+                                {bondOrbits.map((orb, i) => (
+                                  <div key={i} className="card hover-glow cursor-pointer flex-between" onClick={() => fetchConstraints(orb)}>
+                                    <div>
+                                      <div className="text-lg font-mono text-accent">{orb.distance.toFixed(4)} Å</div>
+                                      <div className="text-xs text-muted">Multiplicity: {orb.multiplicity}</div>
+                                    </div>
+                                    <div className="text-right">
+                                      <div className="text-sm font-bold">{orb.representative.atom_i} → {orb.representative.atom_j}</div>
+                                      <div className="text-xs text-muted font-mono">Offset: [{orb.representative.offset.join(',')}]</div>
+                                    </div>
+                                    <ChevronRight className="opacity-50" />
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="animate-slide-in">
+                                <button className="btn btn-xs btn-secondary mb-md" onClick={() => { setSelectedOrbit(null); setOrbitConstraints(null); }}>
+                                  ← Back to Orbits
+                                </button>
+
+                                <div className="card mb-md bg-surface-hover">
+                                  <div className="flex-between mb-sm">
+                                    <span className="font-bold text-accent">Selected Bond: {selectedOrbit.representative.atom_i} → {selectedOrbit.representative.atom_j}</span>
+                                    <span className="font-mono text-xs">[{selectedOrbit.representative.offset.join(',')}]</span>
+                                  </div>
+                                  {orbitConstraints && (
+                                    <div className="grid gap-md">
+                                      <div>
+                                        <div className="text-xs uppercase font-bold opacity-60 mb-xs">Allowed Matrix Form</div>
+                                        <div className="grid grid-cols-3 gap-1 bg-black/20 p-sm rounded border border-color/30 font-mono text-center">
+                                          {orbitConstraints.symbolic_matrix.flat().map((cell, c) => (
+                                            <div key={c} className={`p-xs rounded ${cell === '0' || cell === '0.0' ? 'opacity-20' : 'bg-accent/10 text-accent'}`}>
+                                              {cell}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                      <div>
+                                        <div className="text-xs uppercase font-bold opacity-60 mb-xs">Free Parameters</div>
+                                        <div className="flex gap-sm flex-wrap">
+                                          {orbitConstraints.free_parameters.length > 0 ? orbitConstraints.free_parameters.map(p => (
+                                            <span key={p} className="badge badge-primary">{p}</span>
+                                          )) : <span className="text-xs italic opacity-50">None (Fixed by symmetry)</span>}
+                                        </div>
+                                      </div>
+
+                                      {orbitConstraints.is_centrosymmetric && (
+                                        <div className="alert alert-info py-xs px-sm text-xs">
+                                          Bond has inversion symmetry (No DM allowed).
+                                        </div>
+                                      )}
+
+                                      <button className="btn btn-primary w-full mt-sm" onClick={() => handleAddSymmetryInteraction(selectedOrbit, orbitConstraints)}>
+                                        add Interaction Rule (Matrix)
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Legacy Neighbor Suggestions (Optional keep or remove, keeping for fallback) */}
                       {neighborDistances && neighborDistances.length > 0 ? (
                         <div className="suggestion-grid">
                           {neighborDistances.map((n, i) => (

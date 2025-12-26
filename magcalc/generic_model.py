@@ -575,6 +575,57 @@ class GenericSpinModel:
                         elif offset is not None and la.norm(apos_ouc[j] - target_pos) <= 0.001:
                              # Offset matched but distance failed!
                              print(f"DEBUG: Offset matched for {target_pair} but distance mismatch! d={d:.4f}, target={target_dist:.4f}")
+
+            elif itype == 'interaction_matrix':
+                target_dist = interaction.get('distance')
+                val = interaction.get('value') # 3x3 list of lists
+                
+                # Parse 3x3
+                mat_vals = []
+                # Handle flattened or nested
+                if isinstance(val, list) and len(val) == 3 and isinstance(val[0], list):
+                    for r in range(3):
+                        row_vals = []
+                        for c in range(3):
+                            v = val[r][c]
+                            if isinstance(v, str) and param_map:
+                                 row_vals.append(safe_eval(v, param_map))
+                            else:
+                                 row_vals.append(v)
+                        mat_vals.append(row_vals)
+                else:
+                    raise ValueError(f"interaction_matrix value must be 3x3 list of lists. Got: {val}")
+
+                J_mat = sp.Matrix(mat_vals)
+                
+                atom_labels = [a.get('label') for a in self.config.get('crystal_structure').get('atoms_uc')]
+                target_pair = interaction.get('pair') 
+                offset = interaction.get('rij_offset')
+
+                for i in range(N_atom):
+                    if target_pair and atom_labels[i] != target_pair[0]:
+                        continue
+                        
+                    for j in range(N_atom_ouc):
+                        j_uc = j % N_atom
+                        if target_pair:
+                            if atom_labels[j_uc] != target_pair[1]:
+                                continue
+                                
+                        if offset is not None:
+                            target_pos = apos[j_uc] + offset[0]*self.unit_cell()[0] + \
+                                         offset[1]*self.unit_cell()[1] + offset[2]*self.unit_cell()[2]
+                            if la.norm(apos_ouc[j] - target_pos) > 0.001:
+                                continue
+
+                        d = la.norm(apos[i] - apos_ouc[j])
+                        if abs(d - target_dist) < dist_tol:
+                             if Kex[i][j] is None:
+                                 Kex[i][j] = J_mat
+                             else:
+                                 Kex[i][j] += J_mat
+                        elif offset is not None and la.norm(apos_ouc[j] - target_pos) <= 0.001:
+                             print(f"DEBUG: Offset matched for {target_pair} but distance mismatch! d={d:.4f}, target={target_dist:.4f}")
                      
         # Fill None with zeros
         dnull = sp.Matrix([0, 0, 0])
@@ -696,12 +747,20 @@ class GenericSpinModel:
                          
                      if not is_zero:
                          # K_vec = [Kxx, Kyy, Kzz]
-                         HM += 0.5 * (
-                             K_vec[0] * Sxyz[i][0] * Sxyz[j][0] +
-                             K_vec[1] * Sxyz[i][1] * Sxyz[j][1] +
-                             K_vec[2] * Sxyz[i][2] * Sxyz[j][2]
-                         )
-                         terms_added += 1
+                         if K_vec.shape == (3, 3):
+                             # Full Interaction Matrix
+                             Si = sp.Matrix(Sxyz[i])
+                             Sj = sp.Matrix(Sxyz[j])
+                             term_mat = Si.T * K_vec * Sj
+                             HM += 0.5 * term_mat[0]
+                             terms_added += 1
+                         else:
+                             HM += 0.5 * (
+                                 K_vec[0] * Sxyz[i][0] * Sxyz[j][0] +
+                                 K_vec[1] * Sxyz[i][1] * Sxyz[j][1] +
+                                 K_vec[2] * Sxyz[i][2] * Sxyz[j][2]
+                             )
+                             terms_added += 1
         return HM
 
     def _compute_sia_terms(self, Sxyz: List[Any], p_rest: List[Any]) -> sp.Expr:
