@@ -589,6 +589,14 @@ class MagCalcConfigBuilder:
         if not found:
             logger.error(f"FAILED to find Hall number for Space Group {space_group}")
 
+    def set_symmetry_ops(self, rotations, translations):
+        """Manually set symmetry operations."""
+        self.symmetry_ops = {
+            'rotations': rotations,
+            'translations': translations
+        }
+        logger.info(f"Manually set {len(list(rotations))} symmetry operations.")
+
     def set_minimization(self, enabled: bool = True, method: str = "L-BFGS-B", maxiter: int = 500, initial_configuration: List[Dict] = None):
         """Set minimization parameters."""
         self.config["minimization"] = {

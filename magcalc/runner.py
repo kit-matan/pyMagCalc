@@ -267,13 +267,21 @@ def run_calculation(config_file: str):
         logger.error(f"Failed to initialize MagCalc: {e}")
         calculator = None
     
+    # Store calculated data for plotting if not saved to file
+    memory_cache = {
+        'dispersion': None,
+        'sqw': None
+    }
+    
+    save_data_flag = final_config.get('output', {}).get('save_data', True)
+
     # 1. Dispersion
     q_vectors = None
     if tasks.get('run_dispersion', False):
         disp_file = final_config.get('output', {}).get('disp_data_filename', 'disp_data.npz')
         if not os.path.isabs(disp_file): disp_file = os.path.join(config_dir, disp_file)
         
-        need_recalc = tasks.get('calculate_dispersion_new', True) or not os.path.exists(disp_file)
+        need_recalc = tasks.get('calculate_dispersion_new', True) or (not os.path.exists(disp_file) and save_data_flag)
         
         if need_recalc:
             if q_vectors is None:
@@ -303,9 +311,15 @@ def run_calculation(config_file: str):
                     except:
                         energies_arr = np.array(energies, dtype=object)
 
-                    os.makedirs(os.path.dirname(disp_file), exist_ok=True)
-                    np.savez(disp_file, q_vectors=q_vectors_cart, energies=energies_arr)
-                    logger.info(f"Dispersion saved to {disp_file}")
+                    memory_cache['dispersion'] = {
+                        'q_vectors': q_vectors_cart,
+                        'energies': energies_arr
+                    }
+
+                    if save_data_flag:
+                        os.makedirs(os.path.dirname(disp_file), exist_ok=True)
+                        np.savez(disp_file, q_vectors=q_vectors_cart, energies=energies_arr)
+                        logger.info(f"Dispersion saved to {disp_file}")
 
                     if tasks.get('export_csv', False):
                         disp_csv = final_config.get('output', {}).get('disp_csv_filename', 'disp_data.csv')
@@ -330,7 +344,7 @@ def run_calculation(config_file: str):
         sqw_file = final_config.get('output', {}).get('sqw_data_filename', 'sqw_data.npz')
         if not os.path.isabs(sqw_file): sqw_file = os.path.join(config_dir, sqw_file)
         
-        need_recalc = tasks.get('calculate_sqw_map_new', True) or not os.path.exists(sqw_file)
+        need_recalc = tasks.get('calculate_sqw_map_new', True) or (not os.path.exists(sqw_file) and save_data_flag)
         
         if need_recalc:
             if q_vectors is None:
@@ -353,9 +367,16 @@ def run_calculation(config_file: str):
                 en_out = sqw_res.energies
                 int_out = sqw_res.intensities
                 
-                os.makedirs(os.path.dirname(sqw_file), exist_ok=True)
-                np.savez(sqw_file, q_vectors=q_out, energies=en_out, intensities=int_out)
-                logger.info(f"S(Q,w) saved to {sqw_file}")
+                memory_cache['sqw'] = {
+                    'q_vectors': q_out,
+                    'energies': en_out,
+                    'intensities': int_out
+                }
+
+                if save_data_flag:
+                    os.makedirs(os.path.dirname(sqw_file), exist_ok=True)
+                    np.savez(sqw_file, q_vectors=q_out, energies=en_out, intensities=int_out)
+                    logger.info(f"S(Q,w) saved to {sqw_file}")
 
                 if tasks.get('export_csv', False):
                     sqw_csv = final_config.get('output', {}).get('sqw_csv_filename', 'sqw_data.csv')
@@ -377,29 +398,42 @@ def run_calculation(config_file: str):
     plot_config = final_config.get('plotting', {})
     
     if tasks.get('plot_dispersion', False) and plot_config.get('save_plot', True):
-        disp_file = final_config.get('output', {}).get('disp_data_filename', 'disp_data.npz')
-        if not os.path.isabs(disp_file): disp_file = os.path.join(config_dir, disp_file)
-        
-        if os.path.exists(disp_file):
-            data = np.load(disp_file, allow_pickle=True)
-            plot_filename = plot_config.get('disp_plot_filename', 'disp_plot.png')
-            if not os.path.isabs(plot_filename): plot_filename = os.path.join(config_dir, plot_filename)
+        # Prefer memory cache
+        if memory_cache['dispersion'] is not None:
+             data = memory_cache['dispersion']
+             plot_filename = plot_config.get('disp_plot_filename', 'disp_plot.png')
+             if not os.path.isabs(plot_filename): plot_filename = os.path.join(config_dir, plot_filename)
+             
+             plot_dispersion(
+                 q_vectors=data['q_vectors'],
+                 energies=data['energies'],
+                 save_filename=plot_filename,
+                 title=plot_config.get('disp_title', "Dispersion"),
+                 ylim=plot_config.get('energy_limits_disp'),
+                 show_plot=plot_config.get('show_plot', False)
+             )
+        else:
+            disp_file = final_config.get('output', {}).get('disp_data_filename', 'disp_data.npz')
+            if not os.path.isabs(disp_file): disp_file = os.path.join(config_dir, disp_file)
             
-            plot_dispersion(
-                q_vectors=data['q_vectors'],
-                energies=data['energies'],
-                save_filename=plot_filename,
-                title=plot_config.get('disp_title', "Dispersion"),
-                ylim=plot_config.get('energy_limits_disp'),
-                show_plot=plot_config.get('show_plot', False)
-            )
+            if os.path.exists(disp_file):
+                data = np.load(disp_file, allow_pickle=True)
+                plot_filename = plot_config.get('disp_plot_filename', 'disp_plot.png')
+                if not os.path.isabs(plot_filename): plot_filename = os.path.join(config_dir, plot_filename)
+                
+                plot_dispersion(
+                    q_vectors=data['q_vectors'],
+                    energies=data['energies'],
+                    save_filename=plot_filename,
+                    title=plot_config.get('disp_title', "Dispersion"),
+                    ylim=plot_config.get('energy_limits_disp'),
+                    show_plot=plot_config.get('show_plot', False)
+                )
 
     if tasks.get('plot_sqw_map', False) and plot_config.get('save_plot', True):
-        sqw_file = final_config.get('output', {}).get('sqw_data_filename', 'sqw_data.npz')
-        if not os.path.isabs(sqw_file): sqw_file = os.path.join(config_dir, sqw_file)
-        
-        if os.path.exists(sqw_file):
-            data = np.load(sqw_file, allow_pickle=True)
+        # Prefer memory cache
+        if memory_cache['sqw'] is not None:
+            data = memory_cache['sqw']
             plot_filename = plot_config.get('sqw_plot_filename', 'sqw_plot.png')
             if not os.path.isabs(plot_filename): plot_filename = os.path.join(config_dir, plot_filename)
             
@@ -417,3 +451,26 @@ def run_calculation(config_file: str):
                 cmap=plot_config.get('cmap', 'PuBu_r'),
                 show_plot=plot_config.get('show_plot', False)
             )
+        else:
+            sqw_file = final_config.get('output', {}).get('sqw_data_filename', 'sqw_data.npz')
+            if not os.path.isabs(sqw_file): sqw_file = os.path.join(config_dir, sqw_file)
+            
+            if os.path.exists(sqw_file):
+                data = np.load(sqw_file, allow_pickle=True)
+                plot_filename = plot_config.get('sqw_plot_filename', 'sqw_plot.png')
+                if not os.path.isabs(plot_filename): plot_filename = os.path.join(config_dir, plot_filename)
+                
+                ints = data.get('intensities')
+                if ints is None: ints = data.get('sqw_values')
+
+                plot_sqw_map(
+                    q_vectors=data['q_vectors'],
+                    energies=data['energies'],
+                    intensities=ints,
+                    save_filename=plot_filename,
+                    title=plot_config.get('sqw_title', "S(Q,w)"),
+                    ylim=plot_config.get('energy_limits_sqw'),
+                    broadening_width=plot_config.get('broadening_width', 0.2),
+                    cmap=plot_config.get('cmap', 'PuBu_r'),
+                    show_plot=plot_config.get('show_plot', False)
+                )

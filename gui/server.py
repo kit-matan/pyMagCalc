@@ -7,6 +7,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, Response
 from ase.io import read
+from ase.data import atomic_numbers
 from typing import List, Dict, Any
 import asyncio
 import logging
@@ -141,6 +142,14 @@ async def trigger_calculation(config: Dict[str, Any]):
         project_root = os.path.dirname(gui_dir)
         run_config_path = os.path.join(project_root, "config_gui_run.yaml")
         
+        # Force standard plot filenames so we can capture and serve them reliably
+        if "plotting" not in expanded_data:
+            expanded_data["plotting"] = {}
+        
+        expanded_data["plotting"]["save_plot"] = True
+        expanded_data["plotting"]["disp_plot_filename"] = "disp_plot.png"
+        expanded_data["plotting"]["sqw_plot_filename"] = "sqw_plot.png"
+        
         with open(run_config_path, 'w') as f:
             yaml.dump(expanded_data, f, sort_keys=False)
             
@@ -165,6 +174,98 @@ async def trigger_calculation(config: Dict[str, Any]):
             results["plots"].append("/files/sqw_plot.png")
             
         return results
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {
+        "status": status,
+        "logs": logs
+    }
+
+@app.post("/parse-cif")
+async def parse_cif(file: UploadFile = File(...)):
+    """
+    Parse a CIF file and return the crystal structure.
+    """
+    try:
+        content = await file.read()
+        filename = file.filename
+        
+        # Save to temporary file for ASE to read
+        temp_filename = f"temp_{uuid.uuid4()}.cif"
+        with open(temp_filename, "wb") as f:
+            f.write(content)
+            
+        try:
+            atoms = read(temp_filename)
+        finally:
+            if os.path.exists(temp_filename):
+                os.remove(temp_filename)
+                
+        # Extract data
+        cell = atoms.get_cell_lengths_and_angles()
+        
+        # Get space group
+        try:
+            # ASE's get_spacegroup might return a Spacegroup object or string
+            # We want the number for simplicity if available, or just standard international symbol
+            from ase.spacegroup import get_spacegroup
+            sg = get_spacegroup(atoms)
+            sg_number = sg.no
+            sg_symbol = sg.symbol
+        except Exception:
+            # Fallback using spglib
+            try:
+                # spglib requires (cell, positions, numbers)
+                cell_matrix = atoms.get_cell()
+                positions = atoms.get_scaled_positions()
+                numbers = atoms.get_atomic_numbers()
+                dataset = spglib.get_symmetry_dataset((cell_matrix, positions, numbers))
+                sg_number = dataset['number']
+                sg_symbol = dataset['international']
+            except Exception:
+                sg_number = 1
+                sg_symbol = "P1"
+
+        # Build atoms list (unique Wyckoff positions if possible, but for now explicit from CIF)
+        # Actually, if we use spglib we can get the unique atoms.
+        # But commonly CIF loading usually just dumps all atoms unless we reduce them.
+        # Let's try to reduce to Wyckoff positions using spglib if possible, 
+        # or just return all atoms as "explicit" mode or let the builder handle unique-ing.
+        # Simplest approach for the GUI: Return all atoms, but let the user assume they are Wyckoff 
+        # (user might need to delete duplicates if the CIF is fully expanded).
+        # BETTER: Use spglib to find the primitive/standard cell? 
+        # For now, let's just return what ASE found, mapped to our format.
+        
+        cif_atoms = []
+        # Get unique labels/species. ASE usually labels atoms as "Fe", "O1", etc.
+        symbols = atoms.get_chemical_symbols()
+        pos = atoms.get_scaled_positions()
+        
+        for i, sym in enumerate(symbols):
+            cif_atoms.append({
+                "label": f"{sym}{i}",
+                "pos": pos[i].tolist(),
+                "spin_S": 0.0, # Default
+                "species": sym
+            })
+            
+        return {
+            "lattice": {
+                "a": float(cell[0]),
+                "b": float(cell[1]),
+                "c": float(cell[2]),
+                "alpha": float(cell[3]),
+                "beta": float(cell[4]),
+                "gamma": float(cell[5]),
+                "space_group": int(sg_number)
+            },
+            "international": sg_symbol,
+            "wyckoff_atoms": cif_atoms
+        }
 
     except Exception as e:
         import traceback
@@ -217,6 +318,28 @@ async def get_neighbors(config: Dict[str, Any]):
                     pos=atom.get("pos", [0, 0, 0]),
                     spin=atom.get("spin_S", 0.5)
                 )
+        
+        # 2.5 Detect Symmetry (Robustness Fix)
+        try:
+            if len(builder.atoms_uc) > 0 and atom_mode != "explicit":
+                positions = [a["pos"] for a in builder.atoms_uc]
+                numbers = []
+                import re
+                for a in builder.atoms_uc:
+                    sym = a.get("species", "")
+                    if not sym:
+                        match = re.match(r"([A-Z][a-z]?)", a["label"])
+                        sym = match.group(1) if match else "H"
+                    numbers.append(atomic_numbers.get(sym, 1))
+                
+                cell = (builder.lattice_vectors, positions, numbers)
+                dataset = spglib.get_symmetry_dataset(cell, symprec=1e-3)
+                
+                if dataset:
+                    # Override builder symmetry with consistent operations
+                    builder.set_symmetry_ops(dataset['rotations'], dataset['translations'])
+        except Exception as e:
+            print(f"Warning: Failed to detect symmetry in get_neighbors: {e}")
             
         # 3. Calculate Distances
         labels = [a['label'] for a in builder.atoms_uc]
@@ -380,7 +503,7 @@ async def expand_config(config: Dict[str, Any]):
             alpha=lattice.get("alpha", 90),
             beta=lattice.get("beta", 90),
             gamma=lattice.get("gamma", 90),
-            space_group=lattice.get("space_group")
+            space_group=int(lattice.get("space_group")) if lattice.get("space_group") is not None else None
         )
         
         # 2. Basis Atoms
@@ -416,6 +539,30 @@ async def expand_config(config: Dict[str, Any]):
         builder.config["parameters"] = data.get("parameters", {})
         builder.config["tasks"] = data.get("tasks", {})
 
+        # 2.6 Detect Symmetry from Structure (Robustness Fix)
+        # Verify that loaded operations match the actual atoms, or detect if missing.
+        try:
+            if len(builder.atoms_uc) > 0:
+                positions = [a["pos"] for a in builder.atoms_uc]
+                numbers = []
+                import re
+                for a in builder.atoms_uc:
+                    sym = a.get("species", "")
+                    if not sym:
+                        match = re.match(r"([A-Z][a-z]?)", a["label"])
+                        sym = match.group(1) if match else "H"
+                    numbers.append(atomic_numbers.get(sym, 1))
+                
+                cell = (builder.lattice_vectors, positions, numbers)
+                dataset = spglib.get_symmetry_dataset(cell, symprec=1e-3)
+                
+                if dataset:
+                    detected_sg = dataset['number']
+                    # Override builder symmetry with consistent operations
+                    builder.set_symmetry_ops(dataset['rotations'], dataset['translations'])
+        except Exception as e:
+            print(f"Warning: Failed to detect symmetry from structure: {e}")
+
         # 3. Interactions
         if "list" in data.get("interactions", {}):
             # Explicit interactions provided
@@ -425,13 +572,21 @@ async def expand_config(config: Dict[str, Any]):
             rules = data.get("interactions", {}).get("symmetry_rules", [])
             for rule in rules:
                 try:
-                    builder.add_symmetry_interaction(
-                        type=rule.get("type", "heisenberg"),
-                        ref_pair=rule.get("ref_pair"),
-                        distance=rule.get("distance"),
-                        value=rule.get("value"),
-                        offset=rule.get("offset")
-                    )
+                    # Use add_interaction_rule for simple distance-based Heisenberg
+                    if rule.get("type") == "heisenberg" and not rule.get("ref_pair"):
+                        builder.add_interaction_rule(
+                            type="heisenberg",
+                            distance=rule.get("distance"),
+                            value=rule.get("value")
+                        )
+                    else:
+                        builder.add_symmetry_interaction(
+                            type=rule.get("type", "heisenberg"),
+                            ref_pair=rule.get("ref_pair"),
+                            distance=rule.get("distance"),
+                            value=rule.get("value"),
+                            offset=rule.get("offset")
+                        )
                 except KeyError as e:
                     print(f"Warning: Skipping invalid interaction rule referencing missing atom: {e}")
                 except Exception as e:
@@ -439,6 +594,7 @@ async def expand_config(config: Dict[str, Any]):
             
             # Expand rules based on current atoms_uc (which might be explicit or symmetry-expanded)
             builder._expand_heisenberg_rules()
+            builder._expand_dm_rules()
             builder._expand_anisotropic_exchange_rules()
             
             # Filter and flatten interactions
@@ -457,19 +613,34 @@ async def expand_config(config: Dict[str, Any]):
                     "spin_S": a["spin_S"]
                 })
             builder.config["crystal_structure"]["atoms_uc"] = config_atoms
+
+        # Copy magnetic_elements if present
+        if "magnetic_elements" in struct_data:
+            builder.config["crystal_structure"]["magnetic_elements"] = struct_data["magnetic_elements"]
         
         # Remove 'S' from parameters as it is defined in atoms_uc
         if "S" in builder.config["parameters"]:
             del builder.config["parameters"]["S"]
 
-        # Reorder parameters: H_mag and H_dir should be last
+        # Restore Parameter Order: H_dir before H_mag (matches config_propagation.yaml)
         params = builder.config["parameters"]
-        ordered_params = {k: v for k, v in params.items() if k not in ["H_mag", "H_dir"]}
+        
+        # Ensure H_mag and H_dir are floats
         if "H_mag" in params:
-            ordered_params["H_mag"] = params["H_mag"]
+             try:
+                 params["H_mag"] = float(params["H_mag"])
+             except: pass
+        if "H_dir" in params and isinstance(params["H_dir"], (list, tuple)):
+             params["H_dir"] = [float(x) if not isinstance(x, str) else x for x in params["H_dir"]]
+
+        ordered_params = {k: v for k, v in params.items() if k not in ["H_mag", "H_dir"]}
         if "H_dir" in params:
             ordered_params["H_dir"] = params["H_dir"]
+        if "H_mag" in params:
+            ordered_params["H_mag"] = params["H_mag"]
         builder.config["parameters"] = ordered_params
+
+        # (Removed confusing applied_field injection)
 
         expanded_config = {
             "crystal_structure": {
@@ -607,6 +778,28 @@ async def get_visualizer_data(config: Dict[str, Any]):
                     pos=atom.get("pos", [0, 0, 0]),
                     spin=atom.get("spin_S", 0.5)
                 )
+
+        # 2.5 Detect Symmetry (Robustness Fix)
+        try:
+            if len(builder.atoms_uc) > 0 and atom_mode != "explicit":
+                positions = [a["pos"] for a in builder.atoms_uc]
+                numbers = []
+                import re
+                for a in builder.atoms_uc:
+                    sym = a.get("species", "")
+                    if not sym:
+                        match = re.match(r"([A-Z][a-z]?)", a["label"])
+                        sym = match.group(1) if match else "H"
+                    numbers.append(atomic_numbers.get(sym, 1))
+                
+                cell = (builder.lattice_vectors, positions, numbers)
+                dataset = spglib.get_symmetry_dataset(cell, symprec=1e-3)
+                
+                if dataset:
+                    # Override builder symmetry with consistent operations
+                    builder.set_symmetry_ops(dataset['rotations'], dataset['translations'])
+        except Exception as e:
+            print(f"Warning: Failed to detect symmetry in get_visualizer_data: {e}")
 
         # 3. Interactions
         # Copy interactions from input

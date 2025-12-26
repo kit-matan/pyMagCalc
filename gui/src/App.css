@@ -478,6 +478,10 @@ nav {
   gap: var(--spacing-md);
 }
 
+.gap-sm {
+  gap: var(--spacing-sm);
+}
+
 .info-box {
   display: flex;
   gap: var(--spacing-sm);

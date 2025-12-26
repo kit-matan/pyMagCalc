@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Beaker, Database, Activity, Code, Download, Plus, Trash2, Settings, Box, Eye, Share2, Info, Magnet, Wind, Check, ChevronRight, Zap, Crosshair, FileText, BarChart2, Play } from 'lucide-react'
+import { Beaker, Database, Activity, Code, Download, Plus, Trash2, Settings, Box, Eye, Share2, Info, Magnet, Wind, Check, ChevronRight, Zap, Crosshair, FileText, BarChart2, Play, Image } from 'lucide-react'
 import yaml from 'js-yaml'
 import Visualizer from './components/Visualizer'
 import './App.css'
@@ -212,7 +212,9 @@ function App() {
       broadening: 0.2,
       energy_resolution: 0.05,
       momentum_max: 4.0,
-      save_plot: true
+      save_plot: true,
+      show_plot: true,
+      plot_structure: false
     },
     output: {
       disp_csv_filename: 'disp_data.csv',
@@ -334,6 +336,64 @@ function App() {
     }
   }
 
+  const DEFAULT_CONFIG = {
+    lattice: { a: 5.0, b: 5.0, c: 5.0, alpha: 90, beta: 90, gamma: 90, space_group: 1, dimensionality: '3D' },
+    wyckoff_atoms: [],
+    magnetic_elements: ["Cu"],
+    symmetry_interactions: [],
+    explicit_interactions: [],
+    parameters: { S: 1.0, H_mag: 0.0, H_dir: [0, 0, 1] },
+    tasks: {
+      run_minimization: true,
+      run_dispersion: true,
+      calculate_dispersion_new: true,
+      plot_dispersion: true,
+      run_sqw_map: true,
+      calculate_sqw_map_new: true,
+      plot_sqw_map: true,
+      export_csv: false
+    },
+    q_path: {
+      points: { Gamma: [0, 0, 0] },
+      path: ['Gamma'],
+      points_per_segment: 100
+    },
+    plotting: {
+      energy_min: 0,
+      energy_max: 20,
+      broadening: 0.2,
+      energy_resolution: 0.05,
+      momentum_max: 4.0,
+      save_plot: true,
+      disp_plot_filename: 'disp_plot.png',
+      sqw_plot_filename: 'sqw_plot.png',
+      show_plot: true,
+      plot_structure: false
+    },
+    output: {
+      disp_data_filename: 'disp_data.npz',
+      sqw_data_filename: 'sqw_data.npz',
+      disp_csv_filename: 'disp_data.csv',
+      sqw_csv_filename: 'sqw_data.csv',
+      save_data: true
+    },
+    magnetic_structure: {
+      enabled: false,
+      type: 'pattern',
+      pattern_type: 'antiferromagnetic',
+      directions: []
+    },
+    minimization: {
+      num_starts: 1000,
+      n_workers: 8,
+      early_stopping: 10,
+      method: "L-BFGS-B"
+    },
+    calculation: {
+      cache_mode: 'none'
+    }
+  }
+
   const handleImport = (e) => {
     const file = e.target.files[0]
     if (!file) return
@@ -341,28 +401,89 @@ function App() {
     reader.onload = (event) => {
       try {
         const doc = yaml.load(event.target.result)
-        const newConfig = { ...config }
+        // RESET: Start with default clean config
+        const newConfig = JSON.parse(JSON.stringify(DEFAULT_CONFIG))
 
-        // Pure Model check (symmetry_rules)
-        if (doc.interactions && doc.interactions.symmetry_rules) {
-          newConfig.symmetry_interactions = doc.interactions.symmetry_rules
-        }
+        // RESET derived states
+        setNeighborDistances([])
+        setBonds([])
+        setPreviewAtoms([])
+        setSelectedBondIdxs({})
+        setCalcResults(null)
+        setCalcError(null)
+        setLogs([])
 
+        // 1. Crystal Structure & Atoms (Process first to build label map)
+        let labelMap = {}
         if (doc.crystal_structure) {
           if (doc.crystal_structure.lattice_parameters) {
             newConfig.lattice = { ...newConfig.lattice, ...doc.crystal_structure.lattice_parameters }
           }
+
+          let atomsSource = null
           if (doc.crystal_structure.wyckoff_atoms) {
-            newConfig.wyckoff_atoms = doc.crystal_structure.wyckoff_atoms.map(a => ({
+            atomsSource = doc.crystal_structure.wyckoff_atoms
+            setAtomMode('symmetry')
+            atomsSource.forEach((a, i) => labelMap[a.label || 'Atom'] = i)
+          } else if (doc.crystal_structure.atoms_uc) {
+            atomsSource = doc.crystal_structure.atoms_uc
+            setAtomMode('explicit')
+            atomsSource.forEach((a, i) => labelMap[a.label || 'Atom'] = i)
+          }
+
+          if (atomsSource) {
+            newConfig.wyckoff_atoms = atomsSource.map(a => ({
               label: a.label || 'Atom',
               pos: a.pos || [0, 0, 0],
-              spin_S: a.spin_S || 0.5
+              spin_S: a.spin_S !== undefined ? a.spin_S : 0.5
             }))
           }
+          if (doc.crystal_structure.magnetic_elements) {
+            newConfig.magnetic_elements = doc.crystal_structure.magnetic_elements
+          }
         }
-        if (doc.parameters) newConfig.parameters = { ...newConfig.parameters, ...doc.parameters }
+
+        // 2. Interactions (Normalize pair -> atom_i/j)
+        if (Array.isArray(doc.interactions)) {
+          newConfig.explicit_interactions = doc.interactions.map(inter => {
+            if (inter.pair && inter.atom_i === undefined) {
+              const idxI = labelMap[inter.pair[0]]
+              const idxJ = labelMap[inter.pair[1]]
+              if (idxI !== undefined && idxJ !== undefined) {
+                return { ...inter, atom_i: idxI, atom_j: idxJ }
+              }
+            }
+            return inter
+          })
+          setInteractionMode('explicit')
+        } else if (doc.interactions && doc.interactions.list) {
+          newConfig.explicit_interactions = doc.interactions.list.map(inter => {
+            if (inter.pair && inter.atom_i === undefined) {
+              const idxI = labelMap[inter.pair[0]]
+              const idxJ = labelMap[inter.pair[1]]
+              if (idxI !== undefined && idxJ !== undefined) {
+                return { ...inter, atom_i: idxI, atom_j: idxJ }
+              }
+            }
+            return inter
+          })
+          setInteractionMode('explicit')
+        } else if (doc.interactions && doc.interactions.symmetry_rules) {
+          newConfig.symmetry_interactions = doc.interactions.symmetry_rules
+          setInteractionMode('symmetry')
+        }
+
+        // 3. Other sections
+        if (doc.parameters) {
+          console.log("Importing parameters:", doc.parameters)
+          // alert(JSON.stringify(doc.parameters)) 
+          newConfig.parameters = { ...newConfig.parameters, ...doc.parameters }
+        }
         if (doc.tasks) newConfig.tasks = { ...newConfig.tasks, ...doc.tasks }
         if (doc.plotting) newConfig.plotting = { ...newConfig.plotting, ...doc.plotting }
+        if (doc.minimization) newConfig.minimization = { ...newConfig.minimization, ...doc.minimization }
+        if (doc.calculation) newConfig.calculation = { ...newConfig.calculation, ...doc.calculation }
+        if (doc.magnetic_structure) newConfig.magnetic_structure = { ...newConfig.magnetic_structure, ...doc.magnetic_structure }
         if (doc.q_path) {
           const { path, points_per_segment, ...points } = doc.q_path
           newConfig.q_path = {
@@ -372,12 +493,13 @@ function App() {
           }
         }
         setConfig(newConfig)
-        alert('Configuration imported successfully! Note: Symmetry rules may need manual adjustment.')
+        alert('Configuration imported successfully! Previous state cleared.')
       } catch (err) {
         alert('Error parsing YAML: ' + err.message)
       }
     }
     reader.readAsText(file)
+    e.target.value = ''
   }
 
   const handleExportYaml = async () => {
@@ -387,6 +509,7 @@ function App() {
         lattice_parameters: config.lattice,
         wyckoff_atoms: config.wyckoff_atoms,
         atom_mode: atomMode,
+        magnetic_elements: config.magnetic_elements || ["Cu"],
         dimensionality: config.lattice.dimensionality === '2D' ? 2 : (config.lattice.dimensionality === '3D' ? 3 : config.lattice.dimensionality)
       },
       interactions: interactionMode === 'explicit' ? { list: config.explicit_interactions || [] } : {
@@ -394,7 +517,11 @@ function App() {
       },
       magnetic_structure: config.magnetic_structure,
       parameters: config.parameters,
-      tasks: config.tasks,
+      tasks: {
+        ...config.tasks,
+        calculate_dispersion_new: config.tasks.run_dispersion,
+        calculate_sqw_map_new: config.tasks.run_sqw_map
+      },
       q_path: {
         ...config.q_path.points,
         path: config.q_path.path,
@@ -408,7 +535,8 @@ function App() {
       minimization: {
         enabled: config.tasks.run_minimization,
         ...config.minimization
-      }
+      },
+      output: config.output
     }
 
     try {
@@ -564,14 +692,19 @@ function App() {
         lattice_parameters: config.lattice,
         wyckoff_atoms: config.wyckoff_atoms,
         atom_mode: atomMode,
-        dimensionality: config.lattice.dimensionality
+        dimensionality: config.lattice.dimensionality === '2D' ? 2 : (config.lattice.dimensionality === '3D' ? 3 : config.lattice.dimensionality),
+        magnetic_elements: config.magnetic_elements || ["Cu"]
       },
       interactions: interactionMode === 'explicit' ? { list: config.explicit_interactions || [] } : {
         symmetry_rules: config.symmetry_interactions
       },
       magnetic_structure: config.magnetic_structure,
       parameters: config.parameters,
-      tasks: config.tasks,
+      tasks: {
+        ...config.tasks,
+        calculate_dispersion_new: config.tasks.run_dispersion,
+        calculate_sqw_map_new: config.tasks.run_sqw_map
+      },
       q_path: {
         ...config.q_path.points,
         path: config.q_path.path,
@@ -1021,10 +1154,12 @@ function App() {
                           <div className="interaction-header">
                             <div className="interaction-info">
                               <div className="interaction-icon-box">
-                                {inter.type === 'heisenberg' ? <Zap size={16} /> : <Wind size={16} />}
+                                {inter.type === 'heisenberg' ? <Zap size={16} /> : (inter.type.includes('anisotropic') ? <Crosshair size={16} /> : <Wind size={16} />)}
                               </div>
                               <div>
-                                <span className="interaction-type">{inter.type === 'heisenberg' ? 'Heisenberg' : 'DM Manual'}</span>
+                                <span className="interaction-type">
+                                  {inter.type === 'heisenberg' ? 'Heisenberg' : (inter.type.includes('anisotropic') ? 'Anisotropic' : 'DM Interaction')}
+                                </span>
                                 <span className="interaction-subtitle">Atoms: {inter.atom_i} → {inter.atom_j}</span>
                               </div>
                             </div>
@@ -1040,15 +1175,17 @@ function App() {
                               <select className="minimal-select" value={inter.type} onChange={(e) => {
                                 const next = [...(config.explicit_interactions || [])];
                                 next[idx].type = e.target.value;
-                                if (e.target.value.startsWith('dm')) {
-                                  next[idx].value = ["0", "0", "0"];
-                                } else {
+                                if (e.target.value === 'heisenberg') {
                                   next[idx].value = "J1";
+                                } else {
+                                  // Both DM and Anisotropic use vector/array values
+                                  next[idx].value = ["0", "0", "0"];
                                 }
                                 setConfig({ ...config, explicit_interactions: next });
                               }}>
                                 <option value="heisenberg">Heisenberg</option>
                                 <option value="dm_manual">DM Manual</option>
+                                <option value="anisotropic_exchange">Anisotropic</option>
                               </select>
                             </div>
                             <div className="input-group">
@@ -1061,7 +1198,7 @@ function App() {
                               <label>Value / Vector</label>
                               {Array.isArray(inter.value) ? (
                                 <div className="vector-input-grid">
-                                  {['Dx', 'Dy', 'Dz'].map((label, k) => (
+                                  {(inter.type.includes('anisotropic') ? ['Jx', 'Jy', 'Jz'] : ['Dx', 'Dy', 'Dz']).map((label, k) => (
                                     <input
                                       key={k}
                                       type="text"
@@ -1230,34 +1367,103 @@ function App() {
             {activeTab === 'tasks' && (
               <div className="form-section">
                 <h2 className="section-title">Tasks & Plotting</h2>
-                <div className="grid-2 mt-md">
-                  <div className="card shadow-glow">
-                    <h3>Calculation Tasks</h3>
-                    <div className="task-cards-grid">
-                      {Object.keys(config.tasks).filter(k => k !== 'export_csv').map(taskKey => {
-                        const Icon = taskKey.includes('plot') ? Eye : (taskKey.includes('minimization') ? Magnet : Activity);
-                        const label = taskKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                        const desc = taskKey.includes('run') ? 'Calculate results' : 'Generate visualization';
+                <div className="grid-2 mt-md" style={{ alignItems: 'start' }}>
+                  <div className="flex-col gap-lg">
+                    <div className="card shadow-glow">
+                      <h3>Calculation Tasks</h3>
+                      <div className="task-cards-grid">
+                        {Object.keys(config.tasks).filter(k => (k.startsWith('run_') || k.startsWith('plot_')) && !k.endsWith('_new')).map(taskKey => {
+                          const Icon = taskKey.includes('plot') ? Eye : (taskKey.includes('minimization') ? Magnet : Activity);
+                          const label = taskKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                          const desc = taskKey.includes('run') ? 'Calculate results' : 'Generate visualization';
 
-                        return (
-                          <div
-                            key={taskKey}
-                            className={`task-card ${config.tasks[taskKey] ? 'active' : ''}`}
-                            onClick={() => updateField('tasks', taskKey, !config.tasks[taskKey])}
-                          >
-                            <div className="task-icon-box">
-                              <Icon size={18} />
+                          return (
+                            <div
+                              key={taskKey}
+                              className={`task-card ${config.tasks[taskKey] ? 'active' : ''}`}
+                              onClick={() => updateField('tasks', taskKey, !config.tasks[taskKey])}
+                            >
+                              <div className="task-icon-box">
+                                <Icon size={18} />
+                              </div>
+                              <div className="task-info">
+                                <span className="task-name">{label}</span>
+                                <span className="task-desc">{desc}</span>
+                              </div>
+                              <div className="task-check">
+                                <Check size={12} strokeWidth={4} />
+                              </div>
                             </div>
-                            <div className="task-info">
-                              <span className="task-name">{label}</span>
-                              <span className="task-desc">{desc}</span>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="card shadow-glow">
+                      <h3>Display Parameters</h3>
+                      <div className="grid-form mt-md">
+                        <div className="input-group">
+                          <label>Energy Min (meV)</label>
+                          <input type="number" step="0.1" value={config.plotting.energy_min} className="minimal-input"
+                            onChange={(e) => updateField('plotting', 'energy_min', parseFloat(e.target.value))} />
+                        </div>
+                        <div className="input-group">
+                          <label>Energy Max (meV)</label>
+                          <input type="number" step="0.1" value={config.plotting.energy_max} className="minimal-input"
+                            onChange={(e) => updateField('plotting', 'energy_max', parseFloat(e.target.value))} />
+                        </div>
+                        <div className="input-group">
+                          <label>Broadening (meV)</label>
+                          <input type="number" step="0.01" value={config.plotting.broadening} className="minimal-input"
+                            onChange={(e) => updateField('plotting', 'broadening', parseFloat(e.target.value))} />
+                        </div>
+                        <div className="input-group">
+                          <label>Energy Res. (meV)</label>
+                          <input type="number" step="0.01" value={config.plotting.energy_resolution} className="minimal-input"
+                            onChange={(e) => updateField('plotting', 'energy_resolution', parseFloat(e.target.value))} />
+                        </div>
+                        <div className="input-group" style={{ gridColumn: '1 / -1' }}>
+                          <label>Momentum Max (Å⁻¹)</label>
+                          <input type="number" step="0.1" value={config.plotting.momentum_max} className="minimal-input"
+                            onChange={(e) => updateField('plotting', 'momentum_max', parseFloat(e.target.value))} />
+                        </div>
+                        <div className="input-group" style={{ gridColumn: '1 / -1' }}>
+                          <label>Visualization Targets</label>
+                          <div className="flex-col gap-sm mt-xs">
+                            <div
+                              className={`task-card ${config.plotting.show_plot !== false ? 'active' : ''}`}
+                              onClick={() => updateField('plotting', 'show_plot', !(config.plotting.show_plot !== false))}
+                            >
+                              <div className="task-icon-box">
+                                <Eye size={18} />
+                              </div>
+                              <div className="task-info">
+                                <span className="task-name">Show Plot</span>
+                                <span className="task-desc">Energy dispersion / Sq(w)</span>
+                              </div>
+                              <div className="task-check">
+                                <Check size={12} strokeWidth={4} />
+                              </div>
                             </div>
-                            <div className="task-check">
-                              <Check size={12} strokeWidth={4} />
+
+                            <div
+                              className={`task-card ${config.plotting.plot_structure || false ? 'active' : ''}`}
+                              onClick={() => updateField('plotting', 'plot_structure', !config.plotting.plot_structure)}
+                            >
+                              <div className="task-icon-box">
+                                <Box size={18} />
+                              </div>
+                              <div className="task-info">
+                                <span className="task-name">Show Structure</span>
+                                <span className="task-desc">3D Crystal View</span>
+                              </div>
+                              <div className="task-check">
+                                <Check size={12} strokeWidth={4} />
+                              </div>
                             </div>
                           </div>
-                        );
-                      })}
+                        </div>
+                      </div>
                     </div>
                   </div>
 
@@ -1293,7 +1499,7 @@ function App() {
                       </div>
                     </div>
 
-                    <h3 className="mt-xl">Calculation Settings</h3>
+                    <h3 className="mt-lg">Calculation Settings</h3>
                     <div className="grid-form mt-md">
                       <div className="input-group">
                         <label>Cache Mode</label>
@@ -1308,13 +1514,99 @@ function App() {
                           <option value="w">Write (Force Regeneration)</option>
                         </select>
                         <p className="text-xs opacity-50 mt-xs">
-                          'None' is recommended for small systems or when debugging symmetry.
+                          'None' is recommended for small systems or when debugging.
                         </p>
                       </div>
                     </div>
 
-                    <h3 className="mt-xl">Data Export</h3>
+                    <h3 className="mt-lg">Data Export</h3>
                     <div className="mt-md">
+                      <label className="flex-between align-center glass rounded-lg border-light mb-md modern-switch-container pointer" style={{ padding: '8px 12px', display: 'flex' }}>
+                        <div className="flex align-center gap-md">
+                          <Download size={18} className="text-accent" />
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                            <span className="block font-bold">Export Numeric Results (.npz)</span>
+                            <span className="text-xxs opacity-60 mt-xs" style={{ fontSize: '10px' }}>Save raw eigenvalues and intensities to binary files.</span>
+                          </div>
+                        </div>
+                        <label className="modern-switch" style={{ marginBottom: 0 }}>
+                          <input
+                            type="checkbox"
+                            checked={config.output.save_data}
+                            onChange={(e) => updateField('output', 'save_data', e.target.checked)}
+                          />
+                          <span className="switch-slider"></span>
+                        </label>
+                      </label>
+
+                      {config.output.save_data && (
+                        <div className="grid-form animate-fade-in mb-md">
+                          <div className="input-group">
+                            <label>Dispersion NPZ</label>
+                            <input
+                              type="text"
+                              value={config.output.disp_data_filename}
+                              className="minimal-input"
+                              placeholder="disp_data.npz"
+                              onChange={(e) => updateField('output', 'disp_data_filename', e.target.value)}
+                            />
+                          </div>
+                          <div className="input-group">
+                            <label>S(Q,w) NPZ</label>
+                            <input
+                              type="text"
+                              value={config.output.sqw_data_filename}
+                              className="minimal-input"
+                              placeholder="sqw_data.npz"
+                              onChange={(e) => updateField('output', 'sqw_data_filename', e.target.value)}
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      <label className="flex-between align-center glass rounded-lg border-light mb-md modern-switch-container pointer" style={{ padding: '12px 16px', display: 'flex' }}>
+                        <div className="flex align-center gap-md">
+                          <Image size={18} className="text-accent" />
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                            <span className="block font-bold">Export Visual Plots (.png)</span>
+                            <span className="text-xxs opacity-60 mt-xs" style={{ fontSize: '10px' }}>Save dispersion and S(Q,w) maps as image files.</span>
+                          </div>
+                        </div>
+                        <label className="modern-switch" style={{ marginBottom: 0 }}>
+                          <input
+                            type="checkbox"
+                            checked={config.plotting.save_plot}
+                            onChange={(e) => updateField('plotting', 'save_plot', e.target.checked)}
+                          />
+                          <span className="switch-slider"></span>
+                        </label>
+                      </label>
+
+                      {config.plotting.save_plot && (
+                        <div className="grid-form animate-fade-in mb-md">
+                          <div className="input-group">
+                            <label>Dispersion Plot</label>
+                            <input
+                              type="text"
+                              value={config.plotting.disp_plot_filename}
+                              className="minimal-input"
+                              placeholder="disp_plot.png"
+                              onChange={(e) => updateField('plotting', 'disp_plot_filename', e.target.value)}
+                            />
+                          </div>
+                          <div className="input-group">
+                            <label>S(Q,w) Plot</label>
+                            <input
+                              type="text"
+                              value={config.plotting.sqw_plot_filename}
+                              className="minimal-input"
+                              placeholder="sqw_plot.png"
+                              onChange={(e) => updateField('plotting', 'sqw_plot_filename', e.target.value)}
+                            />
+                          </div>
+                        </div>
+                      )}
+
                       <label className="flex-between align-center glass rounded-lg border-light mb-md modern-switch-container pointer" style={{ padding: '12px 16px', display: 'flex' }}>
                         <div className="flex align-center gap-md">
                           <FileText size={18} className="vibrant-text" />
@@ -1356,40 +1648,9 @@ function App() {
                   </div>
                 </div>
 
-                <div className="grid-2 mt-md">
-                  <div className="card shadow-glow">
-                    <h3>Display Parameters</h3>
-                    <div className="grid-form mt-md">
-                      <div className="input-group">
-                        <label>Energy Min (meV)</label>
-                        <input type="number" step="0.1" value={config.plotting.energy_min} className="minimal-input"
-                          onChange={(e) => updateField('plotting', 'energy_min', parseFloat(e.target.value))} />
-                      </div>
-                      <div className="input-group">
-                        <label>Energy Max (meV)</label>
-                        <input type="number" step="0.1" value={config.plotting.energy_max} className="minimal-input"
-                          onChange={(e) => updateField('plotting', 'energy_max', parseFloat(e.target.value))} />
-                      </div>
-                      <div className="input-group">
-                        <label>Broadening (meV)</label>
-                        <input type="number" step="0.01" value={config.plotting.broadening} className="minimal-input"
-                          onChange={(e) => updateField('plotting', 'broadening', parseFloat(e.target.value))} />
-                      </div>
-                      <div className="input-group">
-                        <label>Energy Res. (meV)</label>
-                        <input type="number" step="0.01" value={config.plotting.energy_resolution} className="minimal-input"
-                          onChange={(e) => updateField('plotting', 'energy_resolution', parseFloat(e.target.value))} />
-                      </div>
-                      <div className="input-group">
-                        <label>Momentum Max (Å⁻¹)</label>
-                        <input type="number" step="0.1" value={config.plotting.momentum_max} className="minimal-input"
-                          onChange={(e) => updateField('plotting', 'momentum_max', parseFloat(e.target.value))} />
-                      </div>
-                    </div>
-                  </div>
-                </div>
 
-                <div className="card mt-xl">
+
+                <div className="card mt-lg">
                   <div className="flex-between mb-md">
                     <h3>High Symmetry Points</h3>
                     <button className="btn btn-secondary btn-sm" onClick={() => {
@@ -1736,7 +1997,7 @@ function App() {
           </div>
         )
       }
-    </div>
+    </div >
   )
 }
 
