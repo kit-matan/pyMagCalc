@@ -87,18 +87,19 @@ The **pyMagCalc Studio** is a modern web application designed to simplify the cr
 - **Real-time Feedback**: Export to YAML or save expanded configurations directly to your workspace.
 
 ### Starting the Designer
+The easiest way to start the application is using the **One-Click Launcher**:
 
-1.  **Start the Backend**:
-    ```bash
-    python3 gui/server.py
-    ```
-2.  **Start the Frontend**:
-    ```bash
-    cd gui
-    npm install  # (First time only)
-    npm run dev
-    ```
-3.  **Access**: Open [http://localhost:5173/](http://localhost:5173/) in your browser.
+```bash
+./start_magcalc.sh
+```
+
+This script will:
+1.  Kill any existing processes on ports 8000/5173.
+2.  Start the Python backend and React frontend.
+3.  Automatically open your browser to [http://localhost:5173/](http://localhost:5173/).
+4.  Stop all services cleanly when you press `Ctrl+C`.
+
+> **Note**: Symmetry-generated interactions are currently in active development and may not fully propagate as expected. Please double-check your expanded configuration.
 
 The designer facilitates a seamless **Design -> Save -> Run** workflow, where the generated `config_designer.yaml` can be executed immediately using `magcalc run`.
 

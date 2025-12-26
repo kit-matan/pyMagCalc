@@ -26,10 +26,13 @@ The fastest way to get results is using the **pyMagCalc Studio** GUI followed by
 The Designer allows you to generate robust, symmetry-consistent configurations without manual scripting.
 
 1.  **Start Services**:
+    Run the one-click launcher from the project root:
     ```bash
-    python3 gui/server.py &
-    npm --prefix gui run dev
+    ./start_magcalc.sh
     ```
+    This handles everything (ports, backend, frontend, browser).
+
+    > **Caution**: The automatic symmetry generation for interactions is experimental. Verify your "Explicit Interactions" list carefully.
 2.  **Design**:
     -   Open [http://localhost:5173/](http://localhost:5173/).
     -   **Load CIF**: Import your crystal structure.
@@ -62,7 +65,7 @@ Open `config.yaml` and define your physics.
     -   `show_plot`: Set to `true` to see plots on screen, `false` to save only.
     -   `plot_structure`: Visualize the minimized magnetic state.
 -   `parameters`: Values for variables used in interactions (e.g., `J1: 3.23`).
--   `tasks`: Toggle `run_dispersion`, `run_sqw_map`, `export_csv`, and `plot_*` flags.
+-   `tasks`: Toggle `minimization`, `dispersion`, `sqw_map`, and `export_csv`.
 -   `output`: Define output filenames for data (e.g., `disp_csv_filename: "my_data.csv"`).
 
 ### Step 3: Validate
