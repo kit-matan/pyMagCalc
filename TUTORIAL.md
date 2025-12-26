@@ -32,11 +32,10 @@ The Designer allows you to generate robust, symmetry-consistent configurations w
     ```
     This handles everything (ports, backend, frontend, browser).
 
-    > **Caution**: The automatic symmetry generation for interactions is experimental. Verify your "Explicit Interactions" list carefully.
+    > **Note**: The system now uses robust symmetry analysis (Pymatgen/Spglib). CIF imports will automatically be reduced to their unique Wyckoff positions (asymmetric unit).
 2.  **Design**:
-    -   Open [http://localhost:5173/](http://localhost:5173/).
-    -   **Load CIF**: Import your crystal structure.
-    -   **Define Rules**: Add Bonding Rules (e.g., "Heisenberg" or "DM"). The system automatically expands these based on the structure's space group.
+    -   **Load CIF**: Import your crystal structure. The app will automatically detect the space group and populate only the unique basis atoms.
+    -   **Define Rules**: Add Bonding Rules (e.g., "Heisenberg" or "DM"). The system automatically expands these based on the structure's space group checking against symmetry constraints.
     -   **Configure Tasks**: Enable "Run Dispersion" or "Run S(Q,w)" in the Tasks tab.
 3.  **Save**: Click **"Save to Disk"**. This creates an expanded `config_designer.yaml` in your workspace root.
 

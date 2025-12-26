@@ -188,85 +188,125 @@ async def trigger_calculation(config: Dict[str, Any]):
 @app.post("/parse-cif")
 async def parse_cif(file: UploadFile = File(...)):
     """
-    Parse a CIF file and return the crystal structure.
+    Parse a CIF file and return the crystal structure using Pymatgen.
+    Returns the unique Wyckoff positions (asymmetric unit).
     """
     try:
         content = await file.read()
         filename = file.filename
         
-        # Save to temporary file for ASE to read
+        # Save to temporary file
         temp_filename = f"temp_{uuid.uuid4()}.cif"
         with open(temp_filename, "wb") as f:
             f.write(content)
             
         try:
-            atoms = read(temp_filename)
+            # Import Pymatgen
+            from pymatgen.core import Structure
+            from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
+            
+            # Load Structure
+            struct = Structure.from_file(temp_filename)
+            
+            # Analyze Symmetry
+            # symprec=0.1 is robust for experimental data
+            sga = SpacegroupAnalyzer(struct, symprec=0.1) 
+            
+            # Get Symmetrized Structure (groups equivalent atoms)
+            symmetrized = sga.get_symmetrized_structure()
+            
+            # Get Lattice Parameters from the standardized structure or original?
+            # Usually better to use the refined structure from SGA
+            refined_struct = sga.get_refined_structure()
+            lat = refined_struct.lattice
+            
+            # Get Space Group info
+            sg_symbol = sga.get_space_group_symbol()
+            sg_number = sga.get_space_group_number()
+            
+            # Build unique atoms list
+            cif_atoms = []
+            
+            # equivalent_indices is a list of lists: [[0, 1, ...], [4, 5, ...]]
+            # Each sublist contains indices of equivalent atoms.
+            # We take the first index of each sublist as the representative.
+            
+            # We need to map these back to the refined structure positions
+            # Actually, symmetrized structure preserves the sites of the input (or refined).
+            # Let's iterate over the unique sites directly.
+            
+            for i, group in enumerate(symmetrized.equivalent_indices):
+                # Representative index
+                rep_idx = group[0]
+                site = symmetrized[rep_idx]
+                
+                # Get Wyckoff symbol for this group
+                wyckoff_label = ""
+                try:
+                    symbols = symmetrized.wyckoff_symbols
+                    if rep_idx < len(symbols):
+                        wyckoff_label = symbols[rep_idx]
+                    else:
+                        print(f"DEBUG: rep_idx {rep_idx} out of range for symbols length {len(symbols)}")
+                        wyckoff_label = "?"
+                except Exception as ex:
+                     print(f"DEBUG: Error getting wyckoff: {ex}")
+                     wyckoff_label = "?"
+                
+                # Species
+                try:
+                    # Try accessing .specie (Element) - older pymatgen or ordered sites
+                    species_str = site.specie.symbol
+                except AttributeError:
+                    # Fallback to .species (Composition) - newer pymatgen or disordered sites
+                    # Take the majority element or first element
+                    s = site.species
+                    if hasattr(s, "elements") and s.elements:
+                        species_str = s.elements[0].symbol
+                    else:
+                        species_str = str(s)
+                
+                # Label
+                if wyckoff_label and wyckoff_label != "?":
+                    label = f"{species_str}_{wyckoff_label}"
+                else:
+                    label = f"{species_str}_{i+1}" # Fallback
+                
+                # Position (fractional)
+                pos = site.frac_coords.tolist()
+                
+                cif_atoms.append({
+                    "label": label,
+                    "pos": pos,
+                    "spin_S": 0.0,
+                    "species": species_str
+                })
+
+            return {
+                "lattice": {
+                    "a": float(lat.a),
+                    "b": float(lat.b),
+                    "c": float(lat.c),
+                    "alpha": float(lat.alpha),
+                    "beta": float(lat.beta),
+                    "gamma": float(lat.gamma),
+                    "space_group": int(sg_number)
+                },
+                "international": sg_symbol,
+                "wyckoff_atoms": cif_atoms
+            }
+
+        except ImportError:
+             raise HTTPException(status_code=500, detail="Pymatgen not installed. Please install pymatgen.")
+        except Exception as e:
+             # Fallback or detailed error
+             import traceback
+             traceback.print_exc()
+             raise HTTPException(status_code=500, detail=f"Pymatgen parsing failed: {str(e)}")
         finally:
             if os.path.exists(temp_filename):
                 os.remove(temp_filename)
                 
-        # Extract data
-        cell = atoms.get_cell_lengths_and_angles()
-        
-        # Get space group
-        try:
-            # ASE's get_spacegroup might return a Spacegroup object or string
-            # We want the number for simplicity if available, or just standard international symbol
-            from ase.spacegroup import get_spacegroup
-            sg = get_spacegroup(atoms)
-            sg_number = sg.no
-            sg_symbol = sg.symbol
-        except Exception:
-            # Fallback using spglib
-            try:
-                # spglib requires (cell, positions, numbers)
-                cell_matrix = atoms.get_cell()
-                positions = atoms.get_scaled_positions()
-                numbers = atoms.get_atomic_numbers()
-                dataset = spglib.get_symmetry_dataset((cell_matrix, positions, numbers))
-                sg_number = dataset['number']
-                sg_symbol = dataset['international']
-            except Exception:
-                sg_number = 1
-                sg_symbol = "P1"
-
-        # Build atoms list (unique Wyckoff positions if possible, but for now explicit from CIF)
-        # Actually, if we use spglib we can get the unique atoms.
-        # But commonly CIF loading usually just dumps all atoms unless we reduce them.
-        # Let's try to reduce to Wyckoff positions using spglib if possible, 
-        # or just return all atoms as "explicit" mode or let the builder handle unique-ing.
-        # Simplest approach for the GUI: Return all atoms, but let the user assume they are Wyckoff 
-        # (user might need to delete duplicates if the CIF is fully expanded).
-        # BETTER: Use spglib to find the primitive/standard cell? 
-        # For now, let's just return what ASE found, mapped to our format.
-        
-        cif_atoms = []
-        # Get unique labels/species. ASE usually labels atoms as "Fe", "O1", etc.
-        symbols = atoms.get_chemical_symbols()
-        pos = atoms.get_scaled_positions()
-        
-        for i, sym in enumerate(symbols):
-            cif_atoms.append({
-                "label": f"{sym}{i}",
-                "pos": pos[i].tolist(),
-                "spin_S": 0.0, # Default
-                "species": sym
-            })
-            
-        return {
-            "lattice": {
-                "a": float(cell[0]),
-                "b": float(cell[1]),
-                "c": float(cell[2]),
-                "alpha": float(cell[3]),
-                "beta": float(cell[4]),
-                "gamma": float(cell[5]),
-                "space_group": int(sg_number)
-            },
-            "international": sg_symbol,
-            "wyckoff_atoms": cif_atoms
-        }
-
     except Exception as e:
         import traceback
         traceback.print_exc()

@@ -10,7 +10,8 @@
 ## Key Features
 
 *   **pyMagCalc Studio:** Interactive web GUI for designing models from CIF files and symmetry-based bonding rules.
-*   **Symmetry-Aware Mechanics:** Automatically propagates Heisenberg ($J$), DM ($D$), and Anisotropic Exchange ($T$) rules across the crystal using space-group symmetry operators.
+*   **Symmetry-Aware Mechanics:** Automatically propagates Heisenberg ($J$), DM ($D$), and Anisotropic Exchange ($T$) rules across the crystal using space-group symmetry operators (via `pymatgen` and `spglib`).
+*   **Robust CIF Import:** Imports crystal structures from CIF files, automatically detecting symmetry and reducing to unique Wyckoff positions for a clean workflow.
 *   **Diffraction Physics:** Calculates spin-wave dispersion and dynamic structure factors $S(Q,\omega)$ with magnetic form factor and polarization factor corrections.
 *   **Energy Minimization:** Numerically finds the classical magnetic ground state by minimizing the Hamiltonian energy, supporting **parallel multistart** and **early stopping** for robust convergence.
 *   **3D Visualization:** Visualizes the magnetic structure in 3D with scaled spins, DM vectors (arrows), and orientation guides.
