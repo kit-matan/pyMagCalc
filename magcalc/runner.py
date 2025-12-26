@@ -112,7 +112,20 @@ def run_calculation(config_file: str):
     
     # Parameters Logic
     parameters_dict = final_config.get('parameters', {}) or final_config.get('model_params', {})
-    S_val = float(parameters_dict.get('S', 1.0))
+    
+    # Try to get S from parameters, otherwise check first atom's spin_S
+    if 'S' in parameters_dict:
+        S_val = float(parameters_dict['S'])
+    else:
+        # Fallback to first atom's spin
+        try:
+            atoms = final_config.get('crystal_structure', {}).get('atoms_uc', [])
+            if atoms:
+                S_val = float(atoms[0].get('spin_S', 1.0))
+            else:
+                S_val = 1.0
+        except (ValueError, TypeError, IndexError):
+            S_val = 1.0
     
     params_val = []
     param_order = final_config.get('parameter_order')

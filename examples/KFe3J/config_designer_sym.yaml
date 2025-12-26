@@ -1,0 +1,583 @@
+crystal_structure:
+  lattice_vectors:
+    - - 7.33
+      - 0
+      - 0
+    - - -3.6649999999999987
+      - 6.347966209739936
+      - 0
+    - - 1.0493631027853925e-15
+      - 1.8175502096124213e-15
+      - 17.1374
+  atoms_uc:
+    - label: Fe0
+      pos:
+        - 0.5
+        - 0
+        - 0
+      spin_S: 2.5
+    - label: Fe1
+      pos:
+        - 0
+        - 0.5
+        - 0
+      spin_S: 2.5
+    - label: Fe2
+      pos:
+        - 0.5
+        - 0.5
+        - 0
+      spin_S: 2.5
+    - label: Fe3
+      pos:
+        - 0
+        - 0.5
+        - 0.5
+      spin_S: 2.5
+    - label: Fe4
+      pos:
+        - 0.5
+        - 0
+        - 0.5
+      spin_S: 2.5
+    - label: Fe5
+      pos:
+        - 0.5
+        - 0.5
+        - 0.5
+      spin_S: 2.5
+  dimensionality: 2
+interactions:
+  - type: heisenberg
+    pair:
+      - Fe0
+      - Fe1
+    rij_offset:
+      - 0
+      - 0
+      - 0
+    value: J2
+    distance: 6.348
+  - type: heisenberg
+    pair:
+      - Fe1
+      - Fe0
+    rij_offset:
+      - 0
+      - 0
+      - 0
+    value: J2
+    distance: 6.348
+  - type: heisenberg
+    pair:
+      - Fe0
+      - Fe1
+    rij_offset:
+      - 1
+      - -1
+      - 0
+    value: J2
+    distance: 6.348
+  - type: heisenberg
+    pair:
+      - Fe1
+      - Fe0
+    rij_offset:
+      - -1
+      - 1
+      - 0
+    value: J2
+    distance: 6.348
+  - type: heisenberg
+    pair:
+      - Fe1
+      - Fe2
+    rij_offset:
+      - -1
+      - -1
+      - 0
+    value: J2
+    distance: 6.348
+  - type: heisenberg
+    pair:
+      - Fe2
+      - Fe1
+    rij_offset:
+      - 1
+      - 1
+      - 0
+    value: J2
+    distance: 6.348
+  - type: heisenberg
+    pair:
+      - Fe1
+      - Fe2
+    rij_offset:
+      - 0
+      - 1
+      - 0
+    value: J2
+    distance: 6.348
+  - type: heisenberg
+    pair:
+      - Fe2
+      - Fe1
+    rij_offset:
+      - 0
+      - -1
+      - 0
+    value: J2
+    distance: 6.348
+  - type: heisenberg
+    pair:
+      - Fe2
+      - Fe0
+    rij_offset:
+      - 1
+      - 1
+      - 0
+    value: J2
+    distance: 6.348
+  - type: heisenberg
+    pair:
+      - Fe0
+      - Fe2
+    rij_offset:
+      - -1
+      - -1
+      - 0
+    value: J2
+    distance: 6.348
+  - type: heisenberg
+    pair:
+      - Fe2
+      - Fe0
+    rij_offset:
+      - -1
+      - 0
+      - 0
+    value: J2
+    distance: 6.348
+  - type: heisenberg
+    pair:
+      - Fe0
+      - Fe2
+    rij_offset:
+      - 1
+      - 0
+      - 0
+    value: J2
+    distance: 6.348
+  - type: heisenberg
+    pair:
+      - Fe3
+      - Fe4
+    rij_offset:
+      - -1
+      - 1
+      - 0
+    value: J2
+    distance: 6.348
+  - type: heisenberg
+    pair:
+      - Fe4
+      - Fe3
+    rij_offset:
+      - 1
+      - -1
+      - 0
+    value: J2
+    distance: 6.348
+  - type: heisenberg
+    pair:
+      - Fe3
+      - Fe4
+    rij_offset:
+      - 0
+      - 0
+      - 0
+    value: J2
+    distance: 6.348
+  - type: heisenberg
+    pair:
+      - Fe4
+      - Fe3
+    rij_offset:
+      - 0
+      - 0
+      - 0
+    value: J2
+    distance: 6.348
+  - type: heisenberg
+    pair:
+      - Fe4
+      - Fe5
+    rij_offset:
+      - 1
+      - 0
+      - 0
+    value: J2
+    distance: 6.348
+  - type: heisenberg
+    pair:
+      - Fe5
+      - Fe4
+    rij_offset:
+      - -1
+      - 0
+      - 0
+    value: J2
+    distance: 6.348
+  - type: heisenberg
+    pair:
+      - Fe4
+      - Fe5
+    rij_offset:
+      - -1
+      - -1
+      - 0
+    value: J2
+    distance: 6.348
+  - type: heisenberg
+    pair:
+      - Fe5
+      - Fe4
+    rij_offset:
+      - 1
+      - 1
+      - 0
+    value: J2
+    distance: 6.348
+  - type: heisenberg
+    pair:
+      - Fe5
+      - Fe3
+    rij_offset:
+      - 0
+      - -1
+      - 0
+    value: J2
+    distance: 6.348
+  - type: heisenberg
+    pair:
+      - Fe3
+      - Fe5
+    rij_offset:
+      - 0
+      - 1
+      - 0
+    value: J2
+    distance: 6.348
+  - type: heisenberg
+    pair:
+      - Fe5
+      - Fe3
+    rij_offset:
+      - 1
+      - 1
+      - 0
+    value: J2
+    distance: 6.348
+  - type: heisenberg
+    pair:
+      - Fe3
+      - Fe5
+    rij_offset:
+      - -1
+      - -1
+      - 0
+    value: J2
+    distance: 6.348
+  - type: heisenberg
+    pair:
+      - Fe1
+      - Fe2
+    rij_offset:
+      - 0
+      - 0
+      - 0
+    value: J1
+    distance: 3.665
+  - type: heisenberg
+    pair:
+      - Fe2
+      - Fe1
+    rij_offset:
+      - 0
+      - 0
+      - 0
+    value: J1
+    distance: 3.665
+  - type: heisenberg
+    pair:
+      - Fe1
+      - Fe2
+    rij_offset:
+      - -1
+      - 0
+      - 0
+    value: J1
+    distance: 3.665
+  - type: heisenberg
+    pair:
+      - Fe2
+      - Fe1
+    rij_offset:
+      - 1
+      - 0
+      - 0
+    value: J1
+    distance: 3.665
+  - type: heisenberg
+    pair:
+      - Fe2
+      - Fe0
+    rij_offset:
+      - 0
+      - 1
+      - 0
+    value: J1
+    distance: 3.665
+  - type: heisenberg
+    pair:
+      - Fe0
+      - Fe2
+    rij_offset:
+      - 0
+      - -1
+      - 0
+    value: J1
+    distance: 3.665
+  - type: heisenberg
+    pair:
+      - Fe2
+      - Fe0
+    rij_offset:
+      - 0
+      - 0
+      - 0
+    value: J1
+    distance: 3.665
+  - type: heisenberg
+    pair:
+      - Fe0
+      - Fe2
+    rij_offset:
+      - 0
+      - 0
+      - 0
+    value: J1
+    distance: 3.665
+  - type: heisenberg
+    pair:
+      - Fe0
+      - Fe1
+    rij_offset:
+      - 0
+      - -1
+      - 0
+    value: J1
+    distance: 3.665
+  - type: heisenberg
+    pair:
+      - Fe1
+      - Fe0
+    rij_offset:
+      - 0
+      - 1
+      - 0
+    value: J1
+    distance: 3.665
+  - type: heisenberg
+    pair:
+      - Fe0
+      - Fe1
+    rij_offset:
+      - 1
+      - 0
+      - 0
+    value: J1
+    distance: 3.665
+  - type: heisenberg
+    pair:
+      - Fe1
+      - Fe0
+    rij_offset:
+      - -1
+      - 0
+      - 0
+    value: J1
+    distance: 3.665
+  - type: heisenberg
+    pair:
+      - Fe4
+      - Fe5
+    rij_offset:
+      - 0
+      - -1
+      - 0
+    value: J1
+    distance: 3.665
+  - type: heisenberg
+    pair:
+      - Fe5
+      - Fe4
+    rij_offset:
+      - 0
+      - 1
+      - 0
+    value: J1
+    distance: 3.665
+  - type: heisenberg
+    pair:
+      - Fe4
+      - Fe5
+    rij_offset:
+      - 0
+      - 0
+      - 0
+    value: J1
+    distance: 3.665
+  - type: heisenberg
+    pair:
+      - Fe5
+      - Fe4
+    rij_offset:
+      - 0
+      - 0
+      - 0
+    value: J1
+    distance: 3.665
+  - type: heisenberg
+    pair:
+      - Fe5
+      - Fe3
+    rij_offset:
+      - 0
+      - 0
+      - 0
+    value: J1
+    distance: 3.665
+  - type: heisenberg
+    pair:
+      - Fe3
+      - Fe5
+    rij_offset:
+      - 0
+      - 0
+      - 0
+    value: J1
+    distance: 3.665
+  - type: heisenberg
+    pair:
+      - Fe5
+      - Fe3
+    rij_offset:
+      - 1
+      - 0
+      - 0
+    value: J1
+    distance: 3.665
+  - type: heisenberg
+    pair:
+      - Fe3
+      - Fe5
+    rij_offset:
+      - -1
+      - 0
+      - 0
+    value: J1
+    distance: 3.665
+  - type: heisenberg
+    pair:
+      - Fe3
+      - Fe4
+    rij_offset:
+      - 0
+      - 1
+      - 0
+    value: J1
+    distance: 3.665
+  - type: heisenberg
+    pair:
+      - Fe4
+      - Fe3
+    rij_offset:
+      - 0
+      - -1
+      - 0
+    value: J1
+    distance: 3.665
+  - type: heisenberg
+    pair:
+      - Fe3
+      - Fe4
+    rij_offset:
+      - -1
+      - 0
+      - 0
+    value: J1
+    distance: 3.665
+  - type: heisenberg
+    pair:
+      - Fe4
+      - Fe3
+    rij_offset:
+      - 1
+      - 0
+      - 0
+    value: J1
+    distance: 3.665
+parameters:
+  S: 2.5
+  H_mag: 0
+  H_dir:
+    - 0
+    - 0
+    - 1
+  J1: 3.23
+  J2: 0.11
+  Dy: 0.218
+  Dz: -0.195
+tasks:
+  run_minimization: true
+  run_dispersion: true
+  plot_dispersion: true
+  run_sqw_map: true
+  plot_sqw_map: true
+q_path:
+  Gamma:
+    - 0
+    - 0
+    - 0
+  M:
+    - 0.5
+    - 0
+    - 0
+  K:
+    - 0.333
+    - 0.333
+    - 0
+  path:
+    - Gamma
+    - M
+    - K
+    - Gamma
+  points_per_segment: 100
+minimization:
+  enabled: true
+  num_starts: 1000
+  n_workers: 8
+  early_stopping: 10
+  method: L-BFGS-B
+plotting:
+  energy_min: 0
+  energy_max: 20
+  broadening: 0.2
+  energy_resolution: 0.05
+  momentum_max: 4
+  save_plot: true
+  energy_limits_disp:
+    - 0
+    - 20
+  broadening_width: 0.2

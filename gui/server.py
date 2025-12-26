@@ -458,10 +458,23 @@ async def expand_config(config: Dict[str, Any]):
                 })
             builder.config["crystal_structure"]["atoms_uc"] = config_atoms
         
+        # Remove 'S' from parameters as it is defined in atoms_uc
+        if "S" in builder.config["parameters"]:
+            del builder.config["parameters"]["S"]
+
+        # Reorder parameters: H_mag and H_dir should be last
+        params = builder.config["parameters"]
+        ordered_params = {k: v for k, v in params.items() if k not in ["H_mag", "H_dir"]}
+        if "H_mag" in params:
+            ordered_params["H_mag"] = params["H_mag"]
+        if "H_dir" in params:
+            ordered_params["H_dir"] = params["H_dir"]
+        builder.config["parameters"] = ordered_params
+
         expanded_config = {
             "crystal_structure": {
-                **builder.config["crystal_structure"],
-                "dimensionality": builder.dimensionality
+                 **{k: v for k, v in builder.config["crystal_structure"].items() if k != "lattice_vectors"},
+                 "dimensionality": builder.dimensionality
             },
             "interactions": final_inters,
             "magnetic_structure": data.get("magnetic_structure", {}),

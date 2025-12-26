@@ -69,6 +69,7 @@ class MagCalcConfigBuilder:
         # Calculate lattice vectors
         self.lattice_vectors = self._params_to_vectors(a, b, c, alpha, beta, gamma)
         self.config["crystal_structure"]["lattice_vectors"] = self.lattice_vectors.tolist()
+        self.config["crystal_structure"]["lattice_parameters"] = self.lattice_parameters
 
     def _params_to_vectors(self, a, b, c, alpha_deg, beta_deg, gamma_deg):
         """Convert lattice parameters to Cartesian vectors (a || x)."""

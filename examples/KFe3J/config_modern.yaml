@@ -170,3 +170,7 @@ minimization:
   early_stopping: 10 # Stop if the same minimum is found 20 times
   method: "L-BFGS-B"
 
+calculation:
+  cache_mode: none
+output:
+  export_csv: false

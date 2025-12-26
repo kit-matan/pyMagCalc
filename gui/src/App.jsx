@@ -428,7 +428,58 @@ function App() {
       }
 
       console.log('Expansion successful, generating file...')
-      const data = yaml.dump(expanded)
+      let yamlStr = yaml.dump(expanded)
+
+      // Post-process to make vectors inline [x, y, z] via simple regex
+      // Matches key followed by indented list of items
+      const collapseVectors = (str) => {
+        // Regex to match a key and a list of 2-8 items
+        // Note: JS regex multiline mode.
+        // We iterate through the string or use a robust pattern.
+        // Pattern: (indent)(key):\n(indent+2)- val\n...
+
+        const lines = str.split('\n');
+        const newLines = [];
+        let i = 0;
+
+        while (i < lines.length) {
+          const line = lines[i];
+          const keyMatch = line.match(/^(\s*)([\w\d_]+):\s*$/);
+          if (keyMatch) {
+            const indent = keyMatch[1];
+            const key = keyMatch[2];
+            const items = [];
+            let j = i + 1;
+            let valid = true;
+
+            // Collect list items
+            while (j < lines.length) {
+              const next = lines[j];
+              const itemMatch = next.match(new RegExp(`^${indent}  - (.+)$`));
+              if (!itemMatch) break;
+
+              const val = itemMatch[1].trim();
+              // Avoid nested objects
+              if (val.includes(':') && !val.match(/^['"].*['"]$/)) {
+                valid = false; break;
+              }
+              items.push(val);
+              j++;
+            }
+
+            if (valid && items.length >= 2 && items.length <= 8) {
+              newLines.push(`${indent}${key}: [${items.join(', ')}]`);
+              i = j;
+              continue;
+            }
+          }
+          newLines.push(line);
+          i++;
+        }
+        return newLines.join('\n');
+      }
+
+      const data = collapseVectors(yamlStr)
 
       if ('showSaveFilePicker' in window) {
         try {
@@ -1081,10 +1132,7 @@ function App() {
                         ))}
                       </div>
                     </div>
-                    <div className="input-group">
-                      <label>Default Spin (S)</label>
-                      <input type="number" step="0.5" value={config.parameters.S} className="minimal-input" onChange={(e) => updateField('parameters', 'S', parseFloat(e.target.value))} />
-                    </div>
+
                   </div>
                 </div>
 
