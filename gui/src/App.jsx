@@ -344,13 +344,9 @@ function App() {
     explicit_interactions: [],
     parameters: { S: 1.0, H_mag: 0.0, H_dir: [0, 0, 1] },
     tasks: {
-      run_minimization: true,
-      run_dispersion: true,
-      calculate_dispersion_new: true,
-      plot_dispersion: true,
-      run_sqw_map: true,
-      calculate_sqw_map_new: true,
-      plot_sqw_map: true,
+      minimization: true,
+      dispersion: true,
+      sqw_map: true,
       export_csv: false
     },
     q_path: {
@@ -1373,8 +1369,8 @@ function App() {
                       <h3>Calculation Tasks</h3>
                       <div className="task-cards-grid">
                         <div
-                          className={`task-card ${config.tasks.run_minimization ? 'active' : ''}`}
-                          onClick={() => updateField('tasks', 'run_minimization', !config.tasks.run_minimization)}
+                          className={`task-card ${config.tasks.minimization ? 'active' : ''}`}
+                          onClick={() => updateField('tasks', 'minimization', !config.tasks.minimization)}
                         >
                           <div className="task-icon-box">
                             <Magnet size={18} />
@@ -1389,14 +1385,8 @@ function App() {
                         </div>
 
                         <div
-                          className={`task-card ${config.tasks.run_dispersion && config.tasks.plot_dispersion ? 'active' : ''}`}
-                          onClick={() => {
-                            const val = !(config.tasks.run_dispersion && config.tasks.plot_dispersion);
-                            setConfig(prev => ({
-                              ...prev,
-                              tasks: { ...prev.tasks, run_dispersion: val, plot_dispersion: val }
-                            }));
-                          }}
+                          className={`task-card ${config.tasks.dispersion ? 'active' : ''}`}
+                          onClick={() => updateField('tasks', 'dispersion', !config.tasks.dispersion)}
                         >
                           <div className="task-icon-box">
                             <Activity size={18} />
@@ -1411,14 +1401,8 @@ function App() {
                         </div>
 
                         <div
-                          className={`task-card ${config.tasks.run_sqw_map && config.tasks.plot_sqw_map ? 'active' : ''}`}
-                          onClick={() => {
-                            const val = !(config.tasks.run_sqw_map && config.tasks.plot_sqw_map);
-                            setConfig(prev => ({
-                              ...prev,
-                              tasks: { ...prev.tasks, run_sqw_map: val, plot_sqw_map: val }
-                            }));
-                          }}
+                          className={`task-card ${config.tasks.sqw_map ? 'active' : ''}`}
+                          onClick={() => updateField('tasks', 'sqw_map', !config.tasks.sqw_map)}
                         >
                           <div className="task-icon-box">
                             <Eye size={18} />

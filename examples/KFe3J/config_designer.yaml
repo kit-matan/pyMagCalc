@@ -195,11 +195,9 @@ parameters:
   Dy: 0.218
   Dz: -0.195
 tasks:
-  run_minimization: true
-  run_dispersion: true
-  plot_dispersion: true
-  run_sqw_map: true
-  plot_sqw_map: true
+  minimization: true
+  dispersion: true
+  sqw_map: true
 q_path:
   Gamma:
     - 0

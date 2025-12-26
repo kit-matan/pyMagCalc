@@ -39,10 +39,6 @@ plotting: # Added section
   screen_height_fraction: 0.85   # Optional: Fraction of screen height to use (default 0.85 if not specified)
 
 tasks:
-  run_dispersion: true             # Master switch for dispersion calculation and plotting
-  calculate_dispersion_new: true   # If true, forces recalculation even if file exists
-  run_minimization: true
-  plot_dispersion: true            # Switch for plotting dispersion
-  run_sqw_map: true                # Master switch for S(q,w) map calculation and plotting
-  calculate_sqw_map_new: true      # true: run calculation; false: load from sqw_data_filename for plotting
-  plot_sqw_map: true               # Switch for plotting S(q,w) map
+  dispersion: true             # Master switch for dispersion calculation and plotting
+  minimization: true
+  sqw_map: true                # Master switch for S(q,w) map calculation and plotting

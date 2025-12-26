@@ -855,8 +855,6 @@ plotting:
   - 10
   disp_title: ZnCVO Dispersion
 tasks:
-  run_minimization: true
-  run_dispersion: true
-  run_sqw_map: true
-  plot_dispersion: true
-  plot_sqw_map: true
+  minimization: true
+  dispersion: true
+  sqw_map: true

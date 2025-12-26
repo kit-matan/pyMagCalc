@@ -41,14 +41,10 @@ cvo_model:
     adjust_height_to_screen: true  # Set to true to enable dynamic height
     screen_height_fraction: 0.85   # Optional: Fraction of screen height to use (default 0.85)
   tasks:
-    run_dispersion: true             # Master switch for dispersion calculation and plotting
-    calculate_dispersion_new: false   # true: run calculation; false: load from disp_data_filename for plotting
-    run_minimization: true # Toggle energy minimization
-    plot_dispersion: true            # Switch for plotting dispersion
+    dispersion: true             # Master switch for dispersion calculation and plotting
+    minimization: true # Toggle energy minimization
 
-    run_sqw_map: true                # Master switch for S(q,w) map calculation and plotting
-    calculate_sqw_map_new: true      # true: run calculation; false: load from sqw_data_filename for plotting
-    plot_sqw_map: true               # Switch for plotting S(q,w) map
+    sqw_map: true                # Master switch for S(q,w) map calculation and plotting
     sqw_energy_step: 0.03            # Energy step for S(Q,w) map convolution
     sqw_q_step: 0.01                 # Q step for S(Q,w) map calculation (in r.l.u.)
     sqw_resolution_width: 0.1        # Resolution width for S(Q,w) map convolution

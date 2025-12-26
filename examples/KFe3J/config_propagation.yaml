@@ -152,16 +152,11 @@ plotting:
 
 # 7. Tasks
 tasks:
-    # run_dispersion: true
+    # dispersion: true
     # run_sqw: false
-    # calculate_dispersion_new: true
-  run_minimization: true
-  run_dispersion: true
-  run_sqw_map: true
-  calculate_dispersion_new: true
-  calculate_sqw_map_new: true
-  plot_dispersion: true 
-  plot_sqw_map: true
+  minimization: true
+  dispersion: true
+  sqw_map: true
 
 # 9. Minimization Settings
 minimization:

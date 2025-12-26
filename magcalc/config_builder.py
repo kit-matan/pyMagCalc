@@ -620,11 +620,10 @@ class MagCalcConfigBuilder:
         """Set task flags (e.g. run_minimization=True)."""
         # Default keys usually needed
         default_tasks = {
-            "run_minimization": True,
-            "run_dispersion": False,
-            "plot_dispersion": False,
-            "run_sqw_map": False,
-            "plot_sqw_map": False
+            "minimization": True,
+            "dispersion": False,
+            "sqw_map": False,
+            "export_csv": False
         }
         default_tasks.update(kwargs)
         self.config["tasks"] = default_tasks

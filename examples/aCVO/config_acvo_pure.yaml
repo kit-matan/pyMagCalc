@@ -2021,11 +2021,9 @@ plotting:
   disp_plot_filename: "../plots/acvo_pure_disp.png"
   show_plot: false
 tasks:
-  run_minimization: true
-  run_dispersion: true
-  plot_dispersion: true
-  run_sqw_map: false
-  plot_sqw_map: false
+  minimization: true
+  dispersion: true
+  sqw_map: false
 parameter_order:
 - J1
 - J2

@@ -560,11 +560,9 @@ plotting:
   - 20
   plot_structure: false
 tasks:
-  run_minimization: true
-  run_dispersion: true
-  plot_dispersion: true
-  run_sqw_map: true
-  plot_sqw_map: true
+  minimization: true
+  dispersion: true
+  sqw_map: true
 parameter_order:
 - J1
 - J2

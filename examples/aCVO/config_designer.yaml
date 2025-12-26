@@ -820,15 +820,10 @@ parameters:
   H_dir: [1, 0, 0]
   H_mag: 6
 tasks:
-  run_minimization: true
-  run_dispersion: true
-  calculate_dispersion_new: true
-  plot_dispersion: true
-  run_sqw_map: true
-  calculate_sqw_map_new: true
-  plot_sqw_map: true
+  minimization: true
+  dispersion: true
+  sqw_map: true
   export_csv: false
-  maxiter: 0
 q_path:
   Start: [0, 1, 0]
   End: [0, 3, 0]

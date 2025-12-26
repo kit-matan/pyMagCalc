@@ -107,13 +107,9 @@ parameters:
   H_mag: 0
   H_dir: [0, 0, 1]
 tasks:
-  run_minimization: true
-  run_dispersion: true
-  calculate_dispersion_new: true
-  plot_dispersion: true
-  run_sqw_map: true
-  calculate_sqw_map_new: true
-  plot_sqw_map: true
+  minimization: true
+  dispersion: true
+  sqw_map: true
   export_csv: false
 q_path:
   Gamma: [0, 0, 0]

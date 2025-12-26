@@ -153,105 +153,124 @@ def run_calculation(config_file: str):
     logger.info(f"Model Parameters: {params_val}, S={S_val}")
 
     tasks = final_config.get('tasks', {})
-    should_minimize = tasks.get('run_minimization', True)
+    # 1. Minimization
+    do_minimization = tasks.get('minimization', False)
+    # Check legacy
+    if 'run_minimization' in tasks: do_minimization = tasks['run_minimization']
     
-    if should_minimize:
-        logger.info("Minimization enabled using MagCalc.minimize_energy...")
-        x0 = None
-        if hasattr(spin_model, 'generate_magnetic_structure'):
+    if do_minimization:
+        # Check if python model provides minimization
+        if spin_model and hasattr(spin_model, 'minimize'):
+            logger.info("Minimization handled by custom spin model 'minimize' method.")
             try:
-                thetas, phis = spin_model.generate_magnetic_structure()
-                if thetas is not None and phis is not None:
-                    nspins = len(thetas)
-                    x0 = np.zeros(2 * nspins)
-                    x0[0::2] = thetas
-                    x0[1::2] = phis
-                    logger.info("Generated initial magnetic structure from 'magnetic_structure' config.")
+                min_res = spin_model.minimize(config) # Pass full config for flexibility
+                if min_res.success:
+                    logger.info(f"Custom minimization converged. Energy: {min_res.fun:.6f}")
+                    # Assume custom minimize sets the magnetic structure internally or returns it
+                    # If it returns x, we can set it here:
+                    if hasattr(spin_model, 'set_magnetic_structure') and hasattr(min_res, 'x'):
+                        spin_model.set_magnetic_structure(min_res.x[0::2], min_res.x[1::2])
+                else:
+                    logger.warning(f"Custom minimization failed: {min_res.message}")
             except Exception as e:
-                logger.error(f"Failed to generate magnetic structure: {e}")
-
-        if x0 is None:
-            min_config_section = final_config.get('minimization', {})
-            initial_conf = min_config_section.get('initial_configuration')
-            
-            if initial_conf:
+                logger.error(f"Custom spin model minimization failed: {e}")
+        else:
+            logger.info("Minimization enabled using MagCalc.minimize_energy...")
+            x0 = None
+            if hasattr(spin_model, 'generate_magnetic_structure'):
                 try:
-                    if hasattr(spin_model, 'atom_pos'):
-                        atoms = spin_model.atom_pos()
-                        nspins = len(atoms)
-                        x0 = np.random.uniform(0, 0.1, 2*nspins) 
-                        
-                        for item in initial_conf:
-                            idx = item.get('atom_index')
-                            if idx is None: continue
-                            if idx >= nspins: continue
-                            th = item.get('theta')
-                            ph = item.get('phi')
-                            if th is not None: x0[2*idx] = float(th)
-                            if ph is not None: x0[2*idx+1] = float(ph)
-                        logger.info("Using provided initial_configuration for minimization.")
-                except Exception as ex:
-                    logger.error(f"Failed to parse initial_configuration: {ex}")
-                    x0 = None
+                    thetas, phis = spin_model.generate_magnetic_structure()
+                    if thetas is not None and phis is not None:
+                        nspins = len(thetas)
+                        x0 = np.zeros(2 * nspins)
+                        x0[0::2] = thetas
+                        x0[1::2] = phis
+                        logger.info("Generated initial magnetic structure from 'magnetic_structure' config.")
+                except Exception as e:
+                    logger.error(f"Failed to generate magnetic structure: {e}")
 
-        try:
-            calc_min = mc.MagCalc(
-                spin_model_module=spin_model,
-                spin_magnitude=S_val,
-                hamiltonian_params=params_val,
-                cache_file_base=f"{cache_base}_min",
-                cache_mode="none",
-                initialize=False
-            )
-            
-            min_config_section = final_config.get('minimization', {})
-            num_starts = min_config_section.get('num_starts', 1)
-            n_workers = min_config_section.get('n_workers', 1)
-            early_stopping = min_config_section.get('early_stopping', 0)
-            
-            min_res = calc_min.minimize_energy(
-                method="L-BFGS-B", 
-                x0=x0, 
-                num_starts=num_starts, 
-                n_workers=n_workers, 
-                early_stopping=early_stopping
-            )
-            
-            if min_res.success:
-                logger.info(f"Minimization converged. Energy: {min_res.fun:.6f}")
-                if hasattr(spin_model, 'set_magnetic_structure'):
-                    spin_model.set_magnetic_structure(min_res.x[0::2], min_res.x[1::2])
+            if x0 is None:
+                min_config_section = final_config.get('minimization', {})
+                initial_conf = min_config_section.get('initial_configuration')
                 
-                plot_config = final_config.get('plotting', {})
-                if plot_config.get('plot_structure', False):
-                    logger.info("Plotting minimized magnetic structure...")
+                if initial_conf:
                     try:
                         if hasattr(spin_model, 'atom_pos'):
                             atoms = spin_model.atom_pos()
-                            plot_dir = os.path.join(os.path.dirname(config_file), plot_config.get('plot_dir', '../plots')) 
-                            struct_plot_filename = plot_config.get('structure_plot_filename')
-                            if not struct_plot_filename:
-                                base_name = os.path.splitext(os.path.basename(config_file))[0]
-                                struct_plot_filename = os.path.join(plot_dir, f"{base_name}_structure.png")
-                            else:
-                                if not os.path.isabs(struct_plot_filename):
-                                    struct_plot_filename = os.path.join(os.path.dirname(config_file), struct_plot_filename)
+                            nspins = len(atoms)
+                            x0 = np.random.uniform(0, 0.1, 2*nspins) 
                             
-                            os.makedirs(os.path.dirname(struct_plot_filename), exist_ok=True)
-                            
-                            mc.plot_magnetic_structure(
-                                atom_positions=atoms,
-                                spin_angles=min_res.x,
-                                title=f"Minimized Structure ({os.path.basename(config_file)})",
-                                save_filename=struct_plot_filename,
-                                show_plot=plot_config.get('show_plot', False)
-                            )
-                    except Exception as e_plot:
-                        logger.error(f"Failed to plot magnetic structure: {e_plot}")
-            else:
-                logger.warning(f"Minimization failed: {min_res.message}")
-        except Exception as e:
-            logger.warning(f"Optimization attempt using MagCalc failed: {e}")
+                            for item in initial_conf:
+                                idx = item.get('atom_index')
+                                if idx is None: continue
+                                if idx >= nspins: continue
+                                th = item.get('theta')
+                                ph = item.get('phi')
+                                if th is not None: x0[2*idx] = float(th)
+                                if ph is not None: x0[2*idx+1] = float(ph)
+                            logger.info("Using provided initial_configuration for minimization.")
+                    except Exception as ex:
+                        logger.error(f"Failed to parse initial_configuration: {ex}")
+                        x0 = None
+
+            try:
+                calc_min = mc.MagCalc(
+                    spin_model_module=spin_model,
+                    spin_magnitude=S_val,
+                    hamiltonian_params=params_val,
+                    cache_file_base=f"{cache_base}_min",
+                    cache_mode="none",
+                    initialize=False
+                )
+                
+                min_config_section = final_config.get('minimization', {})
+                num_starts = min_config_section.get('num_starts', 1)
+                n_workers = min_config_section.get('n_workers', 1)
+                early_stopping = min_config_section.get('early_stopping', 0)
+                
+                min_res = calc_min.minimize_energy(
+                    method="L-BFGS-B", 
+                    x0=x0, 
+                    num_starts=num_starts, 
+                    n_workers=n_workers, 
+                    early_stopping=early_stopping
+                )
+                
+                if min_res.success:
+                    logger.info(f"Minimization converged. Energy: {min_res.fun:.6f}")
+                    if hasattr(spin_model, 'set_magnetic_structure'):
+                        spin_model.set_magnetic_structure(min_res.x[0::2], min_res.x[1::2])
+                    
+                    plot_config = final_config.get('plotting', {})
+                    if plot_config.get('plot_structure', False):
+                        logger.info("Plotting minimized magnetic structure...")
+                        try:
+                            if hasattr(spin_model, 'atom_pos'):
+                                atoms = spin_model.atom_pos()
+                                plot_dir = os.path.join(os.path.dirname(config_file), plot_config.get('plot_dir', '../plots')) 
+                                struct_plot_filename = plot_config.get('structure_plot_filename')
+                                if not struct_plot_filename:
+                                    base_name = os.path.splitext(os.path.basename(config_file))[0]
+                                    struct_plot_filename = os.path.join(plot_dir, f"{base_name}_structure.png")
+                                else:
+                                    if not os.path.isabs(struct_plot_filename):
+                                        struct_plot_filename = os.path.join(os.path.dirname(config_file), struct_plot_filename)
+                                
+                                os.makedirs(os.path.dirname(struct_plot_filename), exist_ok=True)
+                                
+                                mc.plot_magnetic_structure(
+                                    atom_positions=atoms,
+                                    spin_angles=min_res.x,
+                                    title=f"Minimized Structure ({os.path.basename(config_file)})",
+                                    save_filename=struct_plot_filename,
+                                    show_plot=plot_config.get('show_plot', False)
+                                )
+                        except Exception as e_plot:
+                            logger.error(f"Failed to plot magnetic structure: {e_plot}")
+                else:
+                    logger.warning(f"Minimization failed: {min_res.message}")
+            except Exception as e:
+                logger.warning(f"Optimization attempt using MagCalc failed: {e}")
 
     # Initialize Main MagCalc (Heavyweight)
     logger.info("Initializing MagCalc for LSWT Calculation...")
@@ -275,13 +294,19 @@ def run_calculation(config_file: str):
     
     save_data_flag = final_config.get('output', {}).get('save_data', True)
 
-    # 1. Dispersion
+    # 2. Dispersion
     q_vectors = None
-    if tasks.get('run_dispersion', False):
+    do_dispersion = tasks.get('dispersion', False)
+    if 'run_dispersion' in tasks: do_dispersion = tasks['run_dispersion']
+    
+    if do_dispersion:
         disp_file = final_config.get('output', {}).get('disp_data_filename', 'disp_data.npz')
         if not os.path.isabs(disp_file): disp_file = os.path.join(config_dir, disp_file)
         
-        need_recalc = tasks.get('calculate_dispersion_new', True) or (not os.path.exists(disp_file) and save_data_flag)
+        need_recalc = True # If dispersion=True, we generally want to run unless cached logic is added back
+        # Legacy key check
+        if 'calculate_dispersion_new' in tasks: need_recalc = tasks['calculate_dispersion_new']
+        if not os.path.exists(disp_file) and save_data_flag: need_recalc = True
         
         if need_recalc:
             if q_vectors is None:
@@ -339,12 +364,17 @@ def run_calculation(config_file: str):
             else:
                 logger.warning("No Q-vectors.")
     
-    # 2. S(Q,w)
-    if tasks.get('run_sqw_map', False):
+    # 3. S(Q,w) Map
+    do_sqw = tasks.get('sqw_map', False)
+    if 'run_sqw_map' in tasks: do_sqw = tasks['run_sqw_map']
+    
+    if do_sqw:
         sqw_file = final_config.get('output', {}).get('sqw_data_filename', 'sqw_data.npz')
         if not os.path.isabs(sqw_file): sqw_file = os.path.join(config_dir, sqw_file)
         
-        need_recalc = tasks.get('calculate_sqw_map_new', True) or (not os.path.exists(sqw_file) and save_data_flag)
+        need_recalc = True
+        if 'calculate_sqw_map_new' in tasks: need_recalc = tasks['calculate_sqw_map_new']
+        if not os.path.exists(sqw_file) and save_data_flag: need_recalc = True
         
         if need_recalc:
             if q_vectors is None:
@@ -397,7 +427,12 @@ def run_calculation(config_file: str):
     # 3. Plotting
     plot_config = final_config.get('plotting', {})
     
-    if tasks.get('plot_dispersion', False) and plot_config.get('save_plot', True):
+    # Logic: If 'dispersion' task is ON, and 'save_plot' is ON, then plot.
+    # Also support legacy 'plot_dispersion' key if present.
+    should_plot_disp = do_dispersion and plot_config.get('save_plot', True)
+    if 'plot_dispersion' in tasks: should_plot_disp = tasks['plot_dispersion'] and plot_config.get('save_plot', True)
+
+    if should_plot_disp:
         # Prefer memory cache
         if memory_cache['dispersion'] is not None:
              data = memory_cache['dispersion']
@@ -430,7 +465,10 @@ def run_calculation(config_file: str):
                     show_plot=plot_config.get('show_plot', False)
                 )
 
-    if tasks.get('plot_sqw_map', False) and plot_config.get('save_plot', True):
+    should_plot_sqw = do_sqw and plot_config.get('save_plot', True)
+    if 'plot_sqw_map' in tasks: should_plot_sqw = tasks['plot_sqw_map'] and plot_config.get('save_plot', True)
+
+    if should_plot_sqw:
         # Prefer memory cache
         if memory_cache['sqw'] is not None:
             data = memory_cache['sqw']
