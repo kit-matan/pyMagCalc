@@ -15,7 +15,8 @@ cache/
 archive/
 tests/pckFiles/
 *.npz
-*_plot.png
+*.png
+!gui/public/*.png
 *.pkl
 
 # Project specifics
