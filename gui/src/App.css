@@ -103,6 +103,22 @@ main {
   z-index: 1;
 }
 
+.resizer {
+  width: 5px;
+  background: transparent;
+  cursor: col-resize;
+  z-index: 20;
+  transition: background 0.2s;
+  flex-shrink: 0;
+  /* Prevent resizer from vanishing */
+}
+
+.resizer:hover,
+.resizer.active {
+  background: var(--accent-color);
+  opacity: 0.5;
+}
+
 .sidebar {
   width: 280px;
   display: flex;
@@ -1076,4 +1092,54 @@ input:checked+.switch-slider:before {
 
 .object-contain {
   object-fit: contain;
+}
+
+/* Spacing Utilities */
+.mb-xs {
+  margin-bottom: var(--spacing-xs);
+}
+
+.mb-sm {
+  margin-bottom: var(--spacing-sm);
+}
+
+.mb-md {
+  margin-bottom: var(--spacing-md);
+}
+
+.mb-lg {
+  margin-bottom: var(--spacing-lg);
+}
+
+.mb-xl {
+  margin-bottom: var(--spacing-xl);
+}
+
+.mb-xxl {
+  margin-bottom: 4rem;
+}
+
+.mt-md {
+  margin-top: var(--spacing-md);
+}
+
+.mt-lg {
+  margin-top: var(--spacing-lg);
+}
+
+.mt-xl {
+  margin-top: var(--spacing-xl);
+}
+
+.mr-xs {
+  margin-right: var(--spacing-xs);
+}
+
+.mr-sm {
+  margin-right: var(--spacing-sm);
+}
+
+.mx-auto {
+  margin-left: auto;
+  margin-right: auto;
 }

@@ -34,7 +34,31 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 app.mount("/files", StaticFiles(directory=project_root), name="files")
 
 # --- Log Streaming Setup ---
+# --- Log Streaming Setup ---
 log_queue = asyncio.Queue()
+MAIN_LOOP = None # Reference to the main event loop
+
+class StreamToLogger:
+    """
+    Redirects writes to a stream (stdout/stderr) to both the original stream and the log queue.
+    """
+    def __init__(self, original_stream):
+        self.original_stream = original_stream
+
+    def write(self, buf):
+        # Write to original stream (terminal)
+        self.original_stream.write(buf)
+        self.original_stream.flush() # Ensure immediate terminal output
+        
+        # Send to WebSocket queue
+        if buf.strip() and MAIN_LOOP:
+           try:
+               MAIN_LOOP.call_soon_threadsafe(log_queue.put_nowait, buf)
+           except Exception:
+               pass
+               
+    def flush(self):
+        self.original_stream.flush()
 
 class BroadcastingLogHandler(logging.Handler):
     """
@@ -43,18 +67,20 @@ class BroadcastingLogHandler(logging.Handler):
     def emit(self, record):
         try:
             msg = self.format(record)
-            # Schedule the put operation on the event loop
-            try:
-                loop = asyncio.get_running_loop()
-                loop.call_soon_threadsafe(log_queue.put_nowait, msg)
-            except RuntimeError:
-                # Loop might not be running yet
-                pass
+            if MAIN_LOOP:
+                MAIN_LOOP.call_soon_threadsafe(log_queue.put_nowait, msg)
         except Exception:
             self.handleError(record)
 
 @app.on_event("startup")
 async def startup_event():
+    global MAIN_LOOP
+    MAIN_LOOP = asyncio.get_running_loop()
+
+    # Redirect stdout/stderr to capture all terminal output (print, tqdm, warnings)
+    sys.stdout = StreamToLogger(sys.stdout)
+    sys.stderr = StreamToLogger(sys.stderr)
+
     # Setup global logger to capture magcalc output
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)

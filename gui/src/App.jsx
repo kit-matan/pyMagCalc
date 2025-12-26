@@ -24,8 +24,7 @@ const LogConsole = ({ logs }) => {
           <div className="text-center opacity-30 mt-xl">Waiting for logs...</div>
         ) : (
           logs.map((log, i) => (
-            <div key={i} className="whitespace-pre-wrap break-all py-xxs border-b border-light border-opacity-5">
-              <span className="opacity-50 mr-sm select-none">{i + 1}</span>
+            <div key={i} className="whitespace-pre-wrap break-all py-xxs">
               {log}
             </div>
           ))
@@ -53,6 +52,53 @@ function App() {
   const [calcResults, setCalcResults] = useState(null)
 
   const [calcError, setCalcError] = useState(null)
+
+  // Resizable layout state
+  const [sidebarWidth, setSidebarWidth] = useState(280)
+  const [visualizerWidth, setVisualizerWidth] = useState(450)
+  const resizingRef = React.useRef(null) // 'left' or 'right'
+
+  const startResizing = (direction) => (e) => {
+    e.preventDefault()
+    resizingRef.current = direction
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }
+
+  const stopResizing = () => {
+    if (resizingRef.current) {
+      resizingRef.current = null
+      document.body.style.cursor = 'default'
+      document.body.style.userSelect = 'auto'
+    }
+  }
+
+  const resize = React.useCallback((e) => {
+    if (!resizingRef.current) return
+
+    if (resizingRef.current === 'left') {
+      // Limit sidebar width: min 200, max 600
+      let newWidth = e.clientX
+      if (newWidth < 200) newWidth = 200
+      if (newWidth > 600) newWidth = 600
+      setSidebarWidth(newWidth)
+    } else if (resizingRef.current === 'right') {
+      // Calculate from right edge
+      let newWidth = window.innerWidth - e.clientX
+      if (newWidth < 300) newWidth = 300
+      if (newWidth > 800) newWidth = 800
+      setVisualizerWidth(newWidth)
+    }
+  }, [])
+
+  React.useEffect(() => {
+    window.addEventListener('mousemove', resize)
+    window.addEventListener('mouseup', stopResizing)
+    return () => {
+      window.removeEventListener('mousemove', resize)
+      window.removeEventListener('mouseup', stopResizing)
+    }
+  }, [resize])
   const [logs, setLogs] = useState([])
 
   // WebSocket Log Connection
@@ -456,6 +502,7 @@ function App() {
   }
 
   const runCalculation = async () => {
+    setLogs([])
     setCalcLoading(true)
     setCalcResults(null)
     setCalcError(null)
@@ -526,10 +573,9 @@ function App() {
             <img src="/spin_vector_icon.png" alt="Spin Vector Icon" className="w-full h-full object-cover" />
           </div>
           <div>
-            <h1 className="header-title">pyMagCalc Config Designer</h1>
+            <h1 className="header-title">pyMagCalc Studio</h1>
             <div className="flex-gap-xs align-center">
-              <span className="version-tag">STABLE v2.0</span>
-              <span className="subtitle">Configuration Builder for Magnetic Simulations</span>
+              <span className="subtitle">Configure Models & Calculate Spin-Waves</span>
             </div>
           </div>
         </div>
@@ -549,7 +595,7 @@ function App() {
       </header>
 
       <main>
-        <aside className="sidebar glass">
+        <aside className="sidebar glass" style={{ width: sidebarWidth }}>
           <nav>
             <button className={`nav-item ${activeTab === 'structure' ? 'active' : ''}`} onClick={() => setActiveTab('structure')}>
               <Box size={20} /> Structure
@@ -574,6 +620,11 @@ function App() {
 
 
         </aside>
+
+        <div
+          className="resizer"
+          onMouseDown={startResizing('left')}
+        ></div>
 
         {activeTab !== 'run' && (
           <section className="content-area animate-fade-in">
@@ -887,7 +938,7 @@ function App() {
                   </>
                 ) : (
                   <>
-                    <h2 className="section-title compact">Explicit Interactions (Manual)</h2>
+                    <h2 className="section-title compact mb-xl">Explicit Interactions (Manual)</h2>
 
                     <div className="flex align-center gap-md mb-lg">
                       <div className="modern-toggle-group">
@@ -1013,7 +1064,7 @@ function App() {
 
             {activeTab === 'params' && (
               <div className="form-section">
-                <h2 className="section-title">Environment Settings</h2>
+                <h2 className="section-title mb-xl">Environment Settings</h2>
                 <div className="card mb-lg">
                   <div className="grid-form">
                     <div className="input-group">
@@ -1598,30 +1649,36 @@ function App() {
         )}
 
         {showVisualizer && (
-          <aside className="right-preview glass">
-            <div className="preview-container relative">
-              <Visualizer
-                atoms={previewAtoms}
-                lattice={config.lattice}
-                isDark={isDark}
-                dimensionality={config.lattice.dimensionality}
-                zFilter={zFilter}
-                bonds={bonds}
-              />
-              {config.lattice.dimensionality === '2D' && (
-                <div className="visualizer-overlay bottom-right">
-                  <button
-                    className={`btn btn-xs ${zFilter ? 'btn-primary' : 'btn-secondary glass'}`}
-                    onClick={() => setZFilter(!zFilter)}
-                    title="Filter to show only the Z=0 atomic plane"
-                  >
-                    <Eye size={12} className="mr-xs" />
-                    {zFilter ? "Show All Planes" : "Show Only Z=0"}
-                  </button>
-                </div>
-              )}
-            </div>
-          </aside>
+          <>
+            <div
+              className="resizer"
+              onMouseDown={startResizing('right')}
+            ></div>
+            <aside className="right-preview glass" style={{ width: visualizerWidth }}>
+              <div className="preview-container relative">
+                <Visualizer
+                  atoms={previewAtoms}
+                  lattice={config.lattice}
+                  isDark={isDark}
+                  dimensionality={config.lattice.dimensionality}
+                  zFilter={zFilter}
+                  bonds={bonds}
+                />
+                {config.lattice.dimensionality === '2D' && (
+                  <div className="visualizer-overlay bottom-right">
+                    <button
+                      className={`btn btn-xs ${zFilter ? 'btn-primary' : 'btn-secondary glass'}`}
+                      onClick={() => setZFilter(!zFilter)}
+                      title="Filter to show only the Z=0 atomic plane"
+                    >
+                      <Eye size={12} className="mr-xs" />
+                      {zFilter ? "Show All Planes" : "Show Only Z=0"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </aside>
+          </>
         )}
       </main>
       {
