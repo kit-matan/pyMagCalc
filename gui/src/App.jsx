@@ -1372,30 +1372,65 @@ function App() {
                     <div className="card shadow-glow">
                       <h3>Calculation Tasks</h3>
                       <div className="task-cards-grid">
-                        {Object.keys(config.tasks).filter(k => (k.startsWith('run_') || k.startsWith('plot_')) && !k.endsWith('_new')).map(taskKey => {
-                          const Icon = taskKey.includes('plot') ? Eye : (taskKey.includes('minimization') ? Magnet : Activity);
-                          const label = taskKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                          const desc = taskKey.includes('run') ? 'Calculate results' : 'Generate visualization';
+                        <div
+                          className={`task-card ${config.tasks.run_minimization ? 'active' : ''}`}
+                          onClick={() => updateField('tasks', 'run_minimization', !config.tasks.run_minimization)}
+                        >
+                          <div className="task-icon-box">
+                            <Magnet size={18} />
+                          </div>
+                          <div className="task-info">
+                            <span className="task-name">Run Minimization</span>
+                            <span className="task-desc">Calculate results</span>
+                          </div>
+                          <div className="task-check">
+                            <Check size={12} strokeWidth={4} />
+                          </div>
+                        </div>
 
-                          return (
-                            <div
-                              key={taskKey}
-                              className={`task-card ${config.tasks[taskKey] ? 'active' : ''}`}
-                              onClick={() => updateField('tasks', taskKey, !config.tasks[taskKey])}
-                            >
-                              <div className="task-icon-box">
-                                <Icon size={18} />
-                              </div>
-                              <div className="task-info">
-                                <span className="task-name">{label}</span>
-                                <span className="task-desc">{desc}</span>
-                              </div>
-                              <div className="task-check">
-                                <Check size={12} strokeWidth={4} />
-                              </div>
-                            </div>
-                          );
-                        })}
+                        <div
+                          className={`task-card ${config.tasks.run_dispersion && config.tasks.plot_dispersion ? 'active' : ''}`}
+                          onClick={() => {
+                            const val = !(config.tasks.run_dispersion && config.tasks.plot_dispersion);
+                            setConfig(prev => ({
+                              ...prev,
+                              tasks: { ...prev.tasks, run_dispersion: val, plot_dispersion: val }
+                            }));
+                          }}
+                        >
+                          <div className="task-icon-box">
+                            <Activity size={18} />
+                          </div>
+                          <div className="task-info">
+                            <span className="task-name">Dispersion</span>
+                            <span className="task-desc">Calculate & Plot</span>
+                          </div>
+                          <div className="task-check">
+                            <Check size={12} strokeWidth={4} />
+                          </div>
+                        </div>
+
+                        <div
+                          className={`task-card ${config.tasks.run_sqw_map && config.tasks.plot_sqw_map ? 'active' : ''}`}
+                          onClick={() => {
+                            const val = !(config.tasks.run_sqw_map && config.tasks.plot_sqw_map);
+                            setConfig(prev => ({
+                              ...prev,
+                              tasks: { ...prev.tasks, run_sqw_map: val, plot_sqw_map: val }
+                            }));
+                          }}
+                        >
+                          <div className="task-icon-box">
+                            <Eye size={18} />
+                          </div>
+                          <div className="task-info">
+                            <span className="task-name">S(Q,w) Map</span>
+                            <span className="task-desc">Calculate & Plot</span>
+                          </div>
+                          <div className="task-check">
+                            <Check size={12} strokeWidth={4} />
+                          </div>
+                        </div>
                       </div>
                     </div>
 
