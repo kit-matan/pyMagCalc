@@ -174,3 +174,8 @@ Run the test suite using `pytest` from the project root:
 ```bash
 pytest
 ```
+
+## Acknowledgments
+
+This codebase was developed with the assistance of **Google Gemini**, an advanced agentic AI coding assistant.
+
