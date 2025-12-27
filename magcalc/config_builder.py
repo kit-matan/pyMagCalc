@@ -616,6 +616,42 @@ class MagCalcConfigBuilder:
             if not self._is_duplicate(new_pos, orbit_positions):
                 orbit_positions.append(new_pos)
         
+        # 2D Reduction Logic
+        if self.dimensionality == "2D" and orbit_positions:
+            # Filter to keep only atoms in the same 'layer' as the initial position
+            # Use the input pos z as reference
+            ref_z = self._wrap_pos(pos_array)[2]
+            
+            # Group atoms by Z-level
+            # But the input pos might be transformed to something else if R changes it?
+            # However, usually we want the layer containing the original site.
+            
+            filtered_orbit = []
+            for p in orbit_positions:
+                # Check z-difference modulo 1.0 (approximating layer thickness limit)
+                # If slab is thick, this might be tricky, but for point atoms, we check close equality.
+                dz = abs(p[2] - ref_z)
+                dz = min(dz, 1.0 - dz)
+                if dz < 0.1: # Tolerance for layer thickness
+                    filtered_orbit.append(p)
+            
+            # Fallback: if input pos wasn't stable or somehow lost, just pick the largest group or the first one?
+            # Or if filtered_orbit is empty (e.g. if original pos wasn't strictly in the orbit due to floating point and we rely on R@pos)
+            # R=Identity should always preserve it though.
+            
+            if not filtered_orbit:
+                 # Fallback: Pick separate z-levels and just choose the one with most atoms? 
+                 # Or just the first one.
+                 ref_z = orbit_positions[0][2]
+                 for p in orbit_positions:
+                    dz = abs(p[2] - ref_z)
+                    dz = min(dz, 1.0 - dz)
+                    if dz < 0.1:
+                        filtered_orbit.append(p)
+            
+            logger.info(f"2D Mode: Reduced Wyckoff orbit from {len(orbit_positions)} to {len(filtered_orbit)} atoms (Layer Z~{ref_z:.3f})")
+            orbit_positions = filtered_orbit
+
         # Add all generated atoms
         if len(orbit_positions) == 1:
             # Single site? Try to preserve the label exactly as given
@@ -984,6 +1020,10 @@ class MagCalcConfigBuilder:
                  
                  final_offset = off_l - off_k
                  
+                 # Force 2D restriction
+                 if self.dimensionality == "2D" and abs(final_offset[2]) > 0.01:
+                     continue
+
                  # Add to orbit
                  member_id = (idx_k, idx_l, tuple(final_offset))
                  
