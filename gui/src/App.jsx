@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Beaker, Database, Activity, Code, Download, Plus, Trash2, Settings, Box, Eye, Share2, Info, Magnet, Wind, Check, ChevronRight, Zap, Crosshair, FileText, BarChart2, Play, Image, ArrowDown, X, XCircle, Minus, ChevronDown } from 'lucide-react'
+import { Beaker, Database, Activity, Code, Download, Plus, Trash2, Settings, Box, Eye, EyeOff, Share2, Info, Magnet, Wind, Check, ChevronRight, Zap, Crosshair, FileText, BarChart2, Play, Image, ArrowDown, X, XCircle, Minus, ChevronDown } from 'lucide-react'
 import yaml from 'js-yaml'
 import Visualizer from './components/Visualizer'
 import './App.css'
@@ -47,6 +47,7 @@ function App() {
   const [atomMode, setAtomMode] = useState('symmetry') // 'symmetry' or 'explicit'
   const [previewAtoms, setPreviewAtoms] = useState([]) // Expanded atoms for visualizer
   const [bonds, setBonds] = useState([]) // Bonds for visualizer
+  const [hiddenBondLabels, setHiddenBondLabels] = useState(new Set()) // Labels of bonds to hide
   const [zFilter, setZFilter] = useState(false) // Filter for z=0 plane in 2D
   const [isAddingParam, setIsAddingParam] = useState(false)
   const [newParamName, setNewParamName] = useState('')
@@ -145,6 +146,27 @@ function App() {
       if (ws) ws.close();
     }
   }, []);
+
+  // Helper to consistently generate keys for bond values (handling arrays and strings)
+  const getBondKey = (val) => {
+    if (Array.isArray(val)) {
+      return val.join(',');
+    }
+    return String(val);
+  }
+
+  const toggleBondVisibility = (label) => {
+    // If label is an object/array, stringify? Usually simple string for Heisenberg.
+    // Be careful with objects.
+    const key = getBondKey(label);
+    const next = new Set(hiddenBondLabels);
+    if (next.has(key)) {
+      next.delete(key);
+    } else {
+      next.add(key);
+    }
+    setHiddenBondLabels(next);
+  }
 
 
   // Theme Detection
@@ -1211,9 +1233,18 @@ function App() {
                                 </span>
                               </div>
                             </div>
-                            <button onClick={() => {
-                              const next = config.symmetry_interactions.filter((_, i) => i !== idx); setConfig({ ...config, symmetry_interactions: next })
-                            }} className="icon-btn text-error"><Trash2 size={14} /></button>
+                            <div className="flex gap-2">
+                              <button
+                                className={`icon-btn ${hiddenBondLabels.has(getBondKey(inter.value)) ? 'opacity-50' : 'text-primary'}`}
+                                onClick={() => toggleBondVisibility(inter.value)}
+                                title={hiddenBondLabels.has(getBondKey(inter.value)) ? "Show bonds" : "Hide bonds"}
+                              >
+                                {hiddenBondLabels.has(getBondKey(inter.value)) ? <EyeOff size={14} /> : <Eye size={14} />}
+                              </button>
+                              <button onClick={() => {
+                                const next = config.symmetry_interactions.filter((_, i) => i !== idx); setConfig({ ...config, symmetry_interactions: next })
+                              }} className="icon-btn text-error"><Trash2 size={14} /></button>
+                            </div>
                           </div>
 
                           <div className="interaction-params">
@@ -1558,10 +1589,19 @@ function App() {
                                 <span className="interaction-subtitle">Atoms: {inter.atom_i} → {inter.atom_j}</span>
                               </div>
                             </div>
-                            <button onClick={() => {
-                              const next = config.explicit_interactions.filter((_, i) => i !== idx);
-                              setConfig({ ...config, explicit_interactions: next });
-                            }} className="icon-btn text-error"><Trash2 size={14} /></button>
+                            <div className="flex gap-2">
+                              <button
+                                className={`icon-btn ${hiddenBondLabels.has(getBondKey(inter.value)) ? 'opacity-50' : 'text-primary'}`}
+                                onClick={() => toggleBondVisibility(inter.value)}
+                                title={hiddenBondLabels.has(getBondKey(inter.value)) ? "Show bonds" : "Hide bonds"}
+                              >
+                                {hiddenBondLabels.has(getBondKey(inter.value)) ? <EyeOff size={14} /> : <Eye size={14} />}
+                              </button>
+                              <button onClick={() => {
+                                const next = config.explicit_interactions.filter((_, i) => i !== idx);
+                                setConfig({ ...config, explicit_interactions: next });
+                              }} className="icon-btn text-error"><Trash2 size={14} /></button>
+                            </div>
                           </div>
 
                           <div className="interaction-params">
@@ -2385,11 +2425,12 @@ function App() {
               <div className="preview-container relative">
                 <Visualizer
                   atoms={previewAtoms}
+                  bonds={bonds.filter(b => !hiddenBondLabels.has(getBondKey(b.rule_value || b.value)))}
                   lattice={config.lattice}
                   isDark={isDark}
                   dimensionality={config.lattice.dimensionality}
                   zFilter={zFilter}
-                  bonds={bonds}
+
                   onBondClick={setSelectedBond}
                   selectedBond={selectedBond}
                 />

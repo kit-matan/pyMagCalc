@@ -306,7 +306,7 @@ class MagCalcConfigBuilder:
                  
                  if bond_key not in added_bonds_keys and rev_bond_key not in added_bonds_keys:
                      # Add k->l entry
-                     self._add_dm_entry(atom_k['label'], atom_l['label'], offset_final, val_p_list, final_dist)
+                     self._add_dm_entry(atom_k['label'], atom_l['label'], offset_final, val_p_list, final_dist, original_value=value)
                      added_bonds_keys.add(bond_key)
                      added_bonds_keys.add(rev_bond_key)
                      
@@ -316,7 +316,7 @@ class MagCalcConfigBuilder:
                      else:
                          val_p_inv = (-np.array(val_p_list)).tolist()
                          
-                     self._add_dm_entry(atom_l['label'], atom_k['label'], -offset_final, val_p_inv, final_dist)
+                     self._add_dm_entry(atom_l['label'], atom_k['label'], -offset_final, val_p_inv, final_dist, original_value=value)
 
              elif type == "heisenberg":
                  # Scalar: value doesn't change with rotation
@@ -351,11 +351,11 @@ class MagCalcConfigBuilder:
                  bond_key = (atom_k['label'], atom_l['label'], tuple(offset_final))
                  rev_bond_key = (atom_l['label'], atom_k['label'], tuple(-offset_final))
                  if bond_key not in added_bonds_keys and rev_bond_key not in added_bonds_keys:
-                     self._add_anisotropic_entry(atom_k['label'], atom_l['label'], offset_final, val_p_list, final_dist)
+                     self._add_anisotropic_entry(atom_k['label'], atom_l['label'], offset_final, val_p_list, final_dist, original_value=value)
                      added_bonds_keys.add(bond_key)
                      added_bonds_keys.add(rev_bond_key)
                      # Symmetric
-                     self._add_anisotropic_entry(atom_l['label'], atom_k['label'], -offset_final, val_p_list, final_dist)
+                     self._add_anisotropic_entry(atom_l['label'], atom_k['label'], -offset_final, val_p_list, final_dist, original_value=value)
                  
              elif type == "interaction_matrix":
                  # Full 3x3 interaction tensor J' = R J R^T
@@ -385,7 +385,7 @@ class MagCalcConfigBuilder:
                      # Reverse bond: J_ji = J_ij^T
                      self._add_interaction_matrix_entry(atom_l['label'], atom_k['label'], -offset_final, val_p_list_T, final_dist)
                      
-    def _add_dm_entry(self, lbl_i, lbl_j, offset, val, distance=None):
+    def _add_dm_entry(self, lbl_i, lbl_j, offset, val, distance=None, original_value=None):
         # Ensure val is a list of strings or floats (not sympy objects)
         clean_val = [str(v) if not isinstance(v, (float, int)) else v for v in val]
         
@@ -406,6 +406,8 @@ class MagCalcConfigBuilder:
         }
         if distance:
             entry["distance"] = distance
+        if original_value is not None:
+             entry["original_value"] = original_value
         self.config["interactions"]["dm_interaction"].append(entry)
 
     def _add_kitaev_entry(self, lbl_i, lbl_j, offset, val, bond_dir, distance=None):
@@ -441,7 +443,7 @@ class MagCalcConfigBuilder:
             entry["distance"] = distance
         self.config["interactions"]["heisenberg"].append(entry)
 
-    def _add_anisotropic_entry(self, lbl_i, lbl_j, offset, val, distance=None):
+    def _add_anisotropic_entry(self, lbl_i, lbl_j, offset, val, distance=None, original_value=None):
         clean_val = [str(v) if not isinstance(v, (float, int)) else v for v in val]
         # Deduplicate
         for entry in self.config["interactions"]["anisotropic_exchange"]:
@@ -456,6 +458,8 @@ class MagCalcConfigBuilder:
         }
         if distance:
             entry["distance"] = distance
+        if original_value is not None:
+             entry["original_value"] = original_value
         self.config["interactions"]["anisotropic_exchange"].append(entry)
 
     def _add_interaction_matrix_entry(self, lbl_i, lbl_j, offset, val, distance=None):

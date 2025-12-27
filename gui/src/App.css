@@ -1206,9 +1206,27 @@ input:checked+.switch-slider:before {
   font-weight: 700;
 }
 
-.exchange-matrix-cell.zero {
-  opacity: 0.4;
-  font-weight: 400;
+
+/* Icon Buttons */
+.icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
   color: var(--text-muted);
-  background: rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.icon-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.icon-btn.text-error:hover {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--error-color);
 }

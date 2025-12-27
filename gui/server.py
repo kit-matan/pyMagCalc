@@ -645,6 +645,7 @@ async def bond_constraints(payload: Dict[str, Any]):
         struct_data = data.get("crystal_structure", {})
         wyckoff_atoms = struct_data.get("wyckoff_atoms", [])
         atom_mode = struct_data.get("atom_mode", "symmetry")
+        builder.dimensionality = struct_data.get("dimensionality", "3D")
         if atom_mode == "explicit":
              config_atoms = [{"label": a.get("label"), "pos": a.get("pos"), "spin_S": a.get("spin_S")} for a in wyckoff_atoms]
              builder.atoms_uc = config_atoms
@@ -705,6 +706,7 @@ async def expand_config(config: Dict[str, Any]):
         struct_data = data.get("crystal_structure", {})
         wyckoff_atoms = struct_data.get("wyckoff_atoms", [])
         atom_mode = struct_data.get("atom_mode", "symmetry")
+        builder.dimensionality = data.get("crystal_structure", {}).get("dimensionality", "3D")
 
         if atom_mode == "explicit":
             # Treat Wyckoff atoms as the full unit cell directly
@@ -728,7 +730,7 @@ async def expand_config(config: Dict[str, Any]):
                 )
 
         # 2.5 Set Dimensionality
-        builder.dimensionality = data.get("crystal_structure", {}).get("dimensionality", "3D")
+        # builder.dimensionality = data.get("crystal_structure", {}).get("dimensionality", "3D")
         
         # 4. Global Parameters & Tasks
         builder.config["parameters"] = data.get("parameters", {})
@@ -1196,6 +1198,7 @@ async def get_visualizer_data(config: Dict[str, Any]):
                 "offset": offset,
                 "type": rule["interaction_type"],
                 "value": rule.get("value"),
+                "rule_value": rule.get("original_value", rule.get("value")),
                 "label": label_text,
                 "dm_vector": dm_vec,
                 "distance": rule.get("distance", 0),
