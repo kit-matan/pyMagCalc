@@ -62,8 +62,8 @@ crystal_structure:
     - 0.5000033333333334
     spin_S: 2.5
   magnetic_elements:
-  - Cu
-  dimensionality: 2
+  - Fe
+  dimensionality: 3
 interactions:
 - type: heisenberg
   pair:
@@ -427,26 +427,6 @@ interactions:
   distance: 3.664971699100001
 - type: heisenberg
   pair:
-  - Fe1
-  - Fe3
-  rij_offset:
-  - 1
-  - 0
-  - 0
-  value: J2
-  distance: 6.3480441520732995
-- type: heisenberg
-  pair:
-  - Fe3
-  - Fe1
-  rij_offset:
-  - -1
-  - 0
-  - 0
-  value: J2
-  distance: 6.3480441520732995
-- type: heisenberg
-  pair:
   - Fe0
   - Fe2
   rij_offset:
@@ -467,21 +447,21 @@ interactions:
   distance: 6.3480441520732995
 - type: heisenberg
   pair:
+  - Fe1
   - Fe3
-  - Fe5
   rij_offset:
-  - 0
   - 1
+  - 0
   - 0
   value: J2
   distance: 6.3480441520732995
 - type: heisenberg
   pair:
-  - Fe5
   - Fe3
+  - Fe1
   rij_offset:
-  - 0
   - -1
+  - 0
   - 0
   value: J2
   distance: 6.3480441520732995
@@ -507,21 +487,21 @@ interactions:
   distance: 6.3480441520732995
 - type: heisenberg
   pair:
+  - Fe3
   - Fe5
-  - Fe1
   rij_offset:
-  - -1
-  - -1
+  - 0
+  - 1
   - 0
   value: J2
   distance: 6.3480441520732995
 - type: heisenberg
   pair:
-  - Fe1
   - Fe5
+  - Fe3
   rij_offset:
-  - 1
-  - 1
+  - 0
+  - -1
   - 0
   value: J2
   distance: 6.3480441520732995
@@ -547,21 +527,21 @@ interactions:
   distance: 6.3480441520732995
 - type: heisenberg
   pair:
-  - Fe0
-  - Fe4
+  - Fe5
+  - Fe1
   rij_offset:
-  - 0
-  - 1
+  - -1
+  - -1
   - 0
   value: J2
   distance: 6.3480441520732995
 - type: heisenberg
   pair:
-  - Fe4
-  - Fe0
+  - Fe1
+  - Fe5
   rij_offset:
-  - 0
-  - -1
+  - 1
+  - 1
   - 0
   value: J2
   distance: 6.3480441520732995
@@ -587,21 +567,21 @@ interactions:
   distance: 6.3480441520732995
 - type: heisenberg
   pair:
+  - Fe0
   - Fe4
-  - Fe2
   rij_offset:
-  - 1
   - 0
+  - 1
   - 0
   value: J2
   distance: 6.3480441520732995
 - type: heisenberg
   pair:
-  - Fe2
   - Fe4
+  - Fe0
   rij_offset:
-  - -1
   - 0
+  - -1
   - 0
   value: J2
   distance: 6.3480441520732995
@@ -627,21 +607,21 @@ interactions:
   distance: 6.3480441520732995
 - type: heisenberg
   pair:
+  - Fe4
   - Fe2
-  - Fe0
   rij_offset:
-  - -1
-  - -1
+  - 1
+  - 0
   - 0
   value: J2
   distance: 6.3480441520732995
 - type: heisenberg
   pair:
-  - Fe0
   - Fe2
+  - Fe4
   rij_offset:
-  - 1
-  - 1
+  - -1
+  - 0
   - 0
   value: J2
   distance: 6.3480441520732995
@@ -662,6 +642,26 @@ interactions:
   rij_offset:
   - -1
   - -1
+  - 0
+  value: J2
+  distance: 6.3480441520732995
+- type: heisenberg
+  pair:
+  - Fe2
+  - Fe0
+  rij_offset:
+  - -1
+  - -1
+  - 0
+  value: J2
+  distance: 6.3480441520732995
+- type: heisenberg
+  pair:
+  - Fe0
+  - Fe2
+  rij_offset:
+  - 1
+  - 1
   - 0
   value: J2
   distance: 6.3480441520732995
@@ -800,8 +800,8 @@ interactions:
   - 0
   - 0
   value:
-  - -7.93842841409217e-17*Dy + 1.0715623901062e-32*Dz
-  - -1.0*Dy + 2.49404475353708e-33*Dz
+  - 7.93842841409217e-17*Dy + 1.0715623901062e-32*Dz
+  - 1.0*Dy + 2.49404475353708e-33*Dz
   - -1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -819,8 +819,8 @@ interactions:
   - 0
   - 0
   value:
-  - 7.93842841409217e-17*Dy - 1.0715623901062e-32*Dz
-  - 1.0*Dy - 2.49404475353708e-33*Dz
+  - -7.93842841409217e-17*Dy - 1.0715623901062e-32*Dz
+  - -1.0*Dy - 2.49404475353708e-33*Dz
   - 1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -838,8 +838,8 @@ interactions:
   - 0
   - 0
   value:
-  - -7.93842841409217e-17*Dy + 1.0715623901062e-32*Dz
-  - -1.0*Dy + 2.49404475353708e-33*Dz
+  - 7.93842841409217e-17*Dy + 1.0715623901062e-32*Dz
+  - 1.0*Dy + 2.49404475353708e-33*Dz
   - -1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -857,8 +857,8 @@ interactions:
   - 0
   - 0
   value:
-  - 7.93842841409217e-17*Dy - 1.0715623901062e-32*Dz
-  - 1.0*Dy - 2.49404475353708e-33*Dz
+  - -7.93842841409217e-17*Dy - 1.0715623901062e-32*Dz
+  - -1.0*Dy - 2.49404475353708e-33*Dz
   - 1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -876,8 +876,8 @@ interactions:
   - 0
   - 0
   value:
-  - 0.866025403784439*Dy - 1.83697019872103e-16*Dz
-  - 0.5*Dy - 1.06057523872491e-16*Dz
+  - -0.866025403784439*Dy - 1.83697019872103e-16*Dz
+  - -0.5*Dy - 1.06057523872491e-16*Dz
   - -1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -895,8 +895,8 @@ interactions:
   - 0
   - 0
   value:
-  - -0.866025403784439*Dy + 1.83697019872103e-16*Dz
-  - -0.5*Dy + 1.06057523872491e-16*Dz
+  - 0.866025403784439*Dy + 1.83697019872103e-16*Dz
+  - 0.5*Dy + 1.06057523872491e-16*Dz
   - 1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -914,8 +914,8 @@ interactions:
   - 0
   - 0
   value:
-  - 0.866025403784439*Dy - 1.83697019872103e-16*Dz
-  - 0.5*Dy - 1.06057523872491e-16*Dz
+  - -0.866025403784439*Dy - 1.83697019872103e-16*Dz
+  - -0.5*Dy - 1.06057523872491e-16*Dz
   - -1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -933,8 +933,8 @@ interactions:
   - 0
   - 0
   value:
-  - -0.866025403784439*Dy + 1.83697019872103e-16*Dz
-  - -0.5*Dy + 1.06057523872491e-16*Dz
+  - 0.866025403784439*Dy + 1.83697019872103e-16*Dz
+  - 0.5*Dy + 1.06057523872491e-16*Dz
   - 1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -952,8 +952,8 @@ interactions:
   - 0
   - 0
   value:
-  - -0.866025403784439*Dy + 3.53675271892186e-32*Dz
-  - 0.5*Dy - 2.12115047744981e-16*Dz
+  - 0.866025403784439*Dy + 3.53675271892186e-32*Dz
+  - -0.5*Dy - 2.12115047744981e-16*Dz
   - -1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -971,8 +971,8 @@ interactions:
   - 0
   - 0
   value:
-  - 0.866025403784439*Dy - 3.53675271892186e-32*Dz
-  - -0.5*Dy + 2.12115047744981e-16*Dz
+  - -0.866025403784439*Dy - 3.53675271892186e-32*Dz
+  - 0.5*Dy + 2.12115047744981e-16*Dz
   - 1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -990,8 +990,8 @@ interactions:
   - 0
   - 0
   value:
-  - -0.866025403784439*Dy + 3.53675271892186e-32*Dz
-  - 0.5*Dy - 2.12115047744981e-16*Dz
+  - 0.866025403784439*Dy + 3.53675271892186e-32*Dz
+  - -0.5*Dy - 2.12115047744981e-16*Dz
   - -1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -1009,8 +1009,8 @@ interactions:
   - 0
   - 0
   value:
-  - 0.866025403784439*Dy - 3.53675271892186e-32*Dz
-  - -0.5*Dy + 2.12115047744981e-16*Dz
+  - -0.866025403784439*Dy - 3.53675271892186e-32*Dz
+  - 0.5*Dy + 2.12115047744981e-16*Dz
   - 1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -1028,8 +1028,8 @@ interactions:
   - 0
   - 0
   value:
-  - -7.93842841409217e-17*Dy + 1.0715623901062e-32*Dz
-  - -1.0*Dy + 2.49404475353708e-33*Dz
+  - 7.93842841409217e-17*Dy + 1.0715623901062e-32*Dz
+  - 1.0*Dy + 2.49404475353708e-33*Dz
   - -1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -1047,8 +1047,8 @@ interactions:
   - 0
   - 0
   value:
-  - 7.93842841409217e-17*Dy - 1.0715623901062e-32*Dz
-  - 1.0*Dy - 2.49404475353708e-33*Dz
+  - -7.93842841409217e-17*Dy - 1.0715623901062e-32*Dz
+  - -1.0*Dy - 2.49404475353708e-33*Dz
   - 1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -1066,8 +1066,8 @@ interactions:
   - 0
   - 0
   value:
-  - -7.93842841409217e-17*Dy + 1.0715623901062e-32*Dz
-  - -1.0*Dy + 2.49404475353708e-33*Dz
+  - 7.93842841409217e-17*Dy + 1.0715623901062e-32*Dz
+  - 1.0*Dy + 2.49404475353708e-33*Dz
   - -1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -1085,8 +1085,8 @@ interactions:
   - 0
   - 0
   value:
-  - 7.93842841409217e-17*Dy - 1.0715623901062e-32*Dz
-  - 1.0*Dy - 2.49404475353708e-33*Dz
+  - -7.93842841409217e-17*Dy - 1.0715623901062e-32*Dz
+  - -1.0*Dy - 2.49404475353708e-33*Dz
   - 1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -1104,8 +1104,8 @@ interactions:
   - -1
   - 0
   value:
-  - 0.866025403784439*Dy - 1.83697019872103e-16*Dz
-  - 0.5*Dy - 1.06057523872491e-16*Dz
+  - -0.866025403784439*Dy - 1.83697019872103e-16*Dz
+  - -0.5*Dy - 1.06057523872491e-16*Dz
   - -1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -1123,8 +1123,8 @@ interactions:
   - 1
   - 0
   value:
-  - -0.866025403784439*Dy + 1.83697019872103e-16*Dz
-  - -0.5*Dy + 1.06057523872491e-16*Dz
+  - 0.866025403784439*Dy + 1.83697019872103e-16*Dz
+  - 0.5*Dy + 1.06057523872491e-16*Dz
   - 1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -1142,8 +1142,8 @@ interactions:
   - 1
   - 0
   value:
-  - 0.866025403784439*Dy - 1.83697019872103e-16*Dz
-  - 0.5*Dy - 1.06057523872491e-16*Dz
+  - -0.866025403784439*Dy - 1.83697019872103e-16*Dz
+  - -0.5*Dy - 1.06057523872491e-16*Dz
   - -1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -1161,8 +1161,8 @@ interactions:
   - -1
   - 0
   value:
-  - -0.866025403784439*Dy + 1.83697019872103e-16*Dz
-  - -0.5*Dy + 1.06057523872491e-16*Dz
+  - 0.866025403784439*Dy + 1.83697019872103e-16*Dz
+  - 0.5*Dy + 1.06057523872491e-16*Dz
   - 1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -1180,8 +1180,8 @@ interactions:
   - 1
   - 0
   value:
-  - -0.866025403784439*Dy + 3.53675271892186e-32*Dz
-  - 0.5*Dy - 2.12115047744981e-16*Dz
+  - 0.866025403784439*Dy + 3.53675271892186e-32*Dz
+  - -0.5*Dy - 2.12115047744981e-16*Dz
   - -1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -1199,8 +1199,8 @@ interactions:
   - -1
   - 0
   value:
-  - 0.866025403784439*Dy - 3.53675271892186e-32*Dz
-  - -0.5*Dy + 2.12115047744981e-16*Dz
+  - -0.866025403784439*Dy - 3.53675271892186e-32*Dz
+  - 0.5*Dy + 2.12115047744981e-16*Dz
   - 1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -1218,8 +1218,8 @@ interactions:
   - -1
   - 0
   value:
-  - -0.866025403784439*Dy + 3.53675271892186e-32*Dz
-  - 0.5*Dy - 2.12115047744981e-16*Dz
+  - 0.866025403784439*Dy + 3.53675271892186e-32*Dz
+  - -0.5*Dy - 2.12115047744981e-16*Dz
   - -1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -1237,8 +1237,8 @@ interactions:
   - 1
   - 0
   value:
-  - 0.866025403784439*Dy - 3.53675271892186e-32*Dz
-  - -0.5*Dy + 2.12115047744981e-16*Dz
+  - -0.866025403784439*Dy - 3.53675271892186e-32*Dz
+  - 0.5*Dy + 2.12115047744981e-16*Dz
   - 1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -1256,8 +1256,8 @@ interactions:
   - 0
   - 0
   value:
-  - -7.93842841409217e-17*Dy + 1.0715623901062e-32*Dz
-  - -1.0*Dy + 2.49404475353708e-33*Dz
+  - 7.93842841409217e-17*Dy + 1.0715623901062e-32*Dz
+  - 1.0*Dy + 2.49404475353708e-33*Dz
   - -1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -1275,8 +1275,8 @@ interactions:
   - 0
   - 0
   value:
-  - 7.93842841409217e-17*Dy - 1.0715623901062e-32*Dz
-  - 1.0*Dy - 2.49404475353708e-33*Dz
+  - -7.93842841409217e-17*Dy - 1.0715623901062e-32*Dz
+  - -1.0*Dy - 2.49404475353708e-33*Dz
   - 1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -1294,8 +1294,8 @@ interactions:
   - 0
   - 0
   value:
-  - -7.93842841409217e-17*Dy + 1.0715623901062e-32*Dz
-  - -1.0*Dy + 2.49404475353708e-33*Dz
+  - 7.93842841409217e-17*Dy + 1.0715623901062e-32*Dz
+  - 1.0*Dy + 2.49404475353708e-33*Dz
   - -1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -1313,8 +1313,8 @@ interactions:
   - 0
   - 0
   value:
-  - 7.93842841409217e-17*Dy - 1.0715623901062e-32*Dz
-  - 1.0*Dy - 2.49404475353708e-33*Dz
+  - -7.93842841409217e-17*Dy - 1.0715623901062e-32*Dz
+  - -1.0*Dy - 2.49404475353708e-33*Dz
   - 1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -1332,8 +1332,8 @@ interactions:
   - -1
   - 0
   value:
-  - 0.866025403784439*Dy - 1.83697019872103e-16*Dz
-  - 0.5*Dy - 1.06057523872491e-16*Dz
+  - -0.866025403784439*Dy - 1.83697019872103e-16*Dz
+  - -0.5*Dy - 1.06057523872491e-16*Dz
   - -1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -1351,8 +1351,8 @@ interactions:
   - 1
   - 0
   value:
-  - -0.866025403784439*Dy + 1.83697019872103e-16*Dz
-  - -0.5*Dy + 1.06057523872491e-16*Dz
+  - 0.866025403784439*Dy + 1.83697019872103e-16*Dz
+  - 0.5*Dy + 1.06057523872491e-16*Dz
   - 1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -1370,8 +1370,8 @@ interactions:
   - 0
   - 0
   value:
-  - 0.866025403784439*Dy - 1.83697019872103e-16*Dz
-  - 0.5*Dy - 1.06057523872491e-16*Dz
+  - -0.866025403784439*Dy - 1.83697019872103e-16*Dz
+  - -0.5*Dy - 1.06057523872491e-16*Dz
   - -1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -1389,8 +1389,8 @@ interactions:
   - 0
   - 0
   value:
-  - -0.866025403784439*Dy + 1.83697019872103e-16*Dz
-  - -0.5*Dy + 1.06057523872491e-16*Dz
+  - 0.866025403784439*Dy + 1.83697019872103e-16*Dz
+  - 0.5*Dy + 1.06057523872491e-16*Dz
   - 1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -1408,8 +1408,8 @@ interactions:
   - 1
   - 0
   value:
-  - -0.866025403784439*Dy + 3.53675271892186e-32*Dz
-  - 0.5*Dy - 2.12115047744981e-16*Dz
+  - 0.866025403784439*Dy + 3.53675271892186e-32*Dz
+  - -0.5*Dy - 2.12115047744981e-16*Dz
   - -1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -1427,8 +1427,8 @@ interactions:
   - -1
   - 0
   value:
-  - 0.866025403784439*Dy - 3.53675271892186e-32*Dz
-  - -0.5*Dy + 2.12115047744981e-16*Dz
+  - -0.866025403784439*Dy - 3.53675271892186e-32*Dz
+  - 0.5*Dy + 2.12115047744981e-16*Dz
   - 1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -1446,8 +1446,8 @@ interactions:
   - 0
   - 0
   value:
-  - -0.866025403784439*Dy + 3.53675271892186e-32*Dz
-  - 0.5*Dy - 2.12115047744981e-16*Dz
+  - 0.866025403784439*Dy + 3.53675271892186e-32*Dz
+  - -0.5*Dy - 2.12115047744981e-16*Dz
   - -1.0*Dz
   distance: 3.664971699100001
 - type: dm_manual
@@ -1465,24 +1465,15 @@ interactions:
   - 0
   - 0
   value:
-  - 0.866025403784439*Dy - 3.53675271892186e-32*Dz
-  - -0.5*Dy + 2.12115047744981e-16*Dz
+  - -0.866025403784439*Dy - 3.53675271892186e-32*Dz
+  - 0.5*Dy + 2.12115047744981e-16*Dz
   - 1.0*Dz
   distance: 3.664971699100001
 magnetic_structure:
   enabled: false
   type: pattern
   pattern_type: antiferromagnetic
-  directions:
-  - - -1
-    - 0
-    - 0
-  - - 0.5
-    - -0.86602540378
-    - 0
-  - - 0.5
-    - 0.86602540378
-    - 0
+  directions: []
 parameters:
   J1: 3.23
   J2: 0.11
@@ -1494,13 +1485,9 @@ parameters:
   - 1.0
   H_mag: 0.0
 tasks:
-  run_minimization: true
-  run_dispersion: true
-  calculate_dispersion_new: true
-  plot_dispersion: true
-  run_sqw_map: true
-  calculate_sqw_map_new: true
-  plot_sqw_map: true
+  minimization: true
+  dispersion: true
+  sqw_map: true
   export_csv: false
 q_path:
   Gamma:
@@ -1534,14 +1521,14 @@ plotting:
   energy_resolution: 0.05
   momentum_max: 4
   save_plot: true
+  disp_plot_filename: disp_plot.png
+  sqw_plot_filename: sqw_plot.png
   show_plot: false
   plot_structure: false
   energy_limits_disp:
   - 0
   - 20
   broadening_width: 0.2
-  disp_plot_filename: disp_plot.png
-  sqw_plot_filename: sqw_plot.png
 calculation:
   cache_mode: none
 output:

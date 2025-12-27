@@ -1021,13 +1021,16 @@ async def get_visualizer_data(config: Dict[str, Any]):
             # Symmetry Rules Mode
             rules = data.get("interactions", {}).get("symmetry_rules", [])
             for rule in rules:
-                 builder.add_symmetry_interaction(
-                     type=rule.get("type"),
-                     ref_pair=rule.get("ref_pair"),
-                     value=rule.get("value"),
-                     distance=rule.get("distance"),
-                     offset=rule.get("offset")
-                 )
+                 try:
+                     builder.add_symmetry_interaction(
+                         type=rule.get("type"),
+                         ref_pair=rule.get("ref_pair"),
+                         value=rule.get("value"),
+                         distance=rule.get("distance"),
+                         offset=rule.get("offset")
+                     )
+                 except Exception as e:
+                     print(f"Warning: Failed to add symmetry rule {rule}: {e}")
         
         # 3. Expand Rules (Only in symmetry mode)
         # We don't need _expand_*_rules anymore if using add_symmetry_interaction,
@@ -1054,6 +1057,25 @@ async def get_visualizer_data(config: Dict[str, Any]):
         # Helper to find index by label (assuming unique labels in atoms_uc)
         label_map = {a["label"]: i for i, a in enumerate(builder.atoms_uc)}
         
+        def resolve_idx(lbl):
+            # 1. Exact match
+            if lbl in label_map: return label_map[lbl]
+            # 2. Try appending '0' (Cu -> Cu0)
+            if f"{lbl}0" in label_map: return label_map[f"{lbl}0"]
+            
+            # 3. Try removing leading zeros from numeric part (Cu00 -> Cu0)
+            try:
+                import re
+                match = re.match(r"([A-Za-z]+)(\d+)", lbl)
+                if match:
+                    prefix, num = match.groups()
+                    normalized = f"{prefix}{int(num)}"
+                    if normalized in label_map: return label_map[normalized]
+            except Exception:
+                pass
+                
+            return None
+
         # Collect all types
         all_inters = []
         for r in builder.config["interactions"]["heisenberg"]:
@@ -1074,15 +1096,17 @@ async def get_visualizer_data(config: Dict[str, Any]):
                 lbl_i = rule["pair"][0]
                 lbl_j = rule["pair"][1]
                 
-                if lbl_i in label_map and lbl_j in label_map:
-                    idx_i = label_map[lbl_i]
-                    idx_j = label_map[lbl_j]
+                idx_i = resolve_idx(lbl_i)
+                idx_j = resolve_idx(lbl_j)
+                
+                # If resolution failed and we are in explicit mode fallback?
+                # No, builder should have consistent labels.
             elif "atom_i" in rule and "atom_j" in rule:
                 # Direct indices (explicit mode)
                 idx_i = rule["atom_i"]
                 idx_j = rule["atom_j"]
             
-            if idx_i == -1 or idx_j == -1:
+            if idx_i is None or idx_j is None or idx_i == -1 or idx_j == -1:
                 continue
             
             offset = rule.get("rij_offset", [0, 0, 0])
@@ -1091,55 +1115,91 @@ async def get_visualizer_data(config: Dict[str, Any]):
             if "offset_j" in rule:
                 offset = rule["offset_j"]
             
-            # Format value for label
+            # Format value for label and calculate matrix
             val = rule.get("value")
             label_text = ""
             dm_vec = None
+            exchange_matrix = [[0.0]*3 for _ in range(3)]
             
-            if rule["interaction_type"] == "heisenberg":
-                label_text = str(val)
-            elif rule["interaction_type"] == "dm":
-                label_text = "DM"
-                # If val is vector, store it
-                # It might be symbolic strings, e.g. ["0", "-Dy", "-Dz"]
-                # We need to evaluate them using config['parameters']
-                if isinstance(val, list) and len(val) == 3:
-                     # Get parameters dict
-                     params = config.get("data", {}).get("parameters", {})
-                     # Simple safe eval context
-                     ctx = {k: float(v) for k, v in params.items() if isinstance(v, (int, float))}
-                     
-                     eval_vec = []
-                     for comp in val:
-                         if isinstance(comp, (int, float)):
-                             eval_vec.append(float(comp))
-                         elif isinstance(comp, str):
-                             try:
-                                 # Very basic eval: simple arithmetic + params
-                                 # We use python's eval but restricted globals
-                                 # Using simple replacements or eval with restricted scope
-                                 allowed_names = ctx
-                                 # Safe enough for local tool - standard eval with restricted context
-                                 res = eval(comp, {"__builtins__": {}}, allowed_names)
-                                 eval_vec.append(float(res))
-                             except Exception:
-                                 # If eval fails (e.g. unknown param), default to 0 or keep as is?
-                                 # Visualizer needs numbers.
+            try:
+                if rule["interaction_type"] == "heisenberg":
+                    label_text = str(val)
+                    # Try to evaluate params for matrix
+                    try:
+                         # Get parameters dict
+                         params = config.get("data", {}).get("parameters", {})
+                         ctx = {k: float(v) for k, v in params.items() if isinstance(v, (int, float))}
+                         j_val = float(val) if isinstance(val, (int, float)) else float(eval(str(val), {"__builtins__": {}}, ctx))
+                         exchange_matrix = [
+                             [j_val, 0.0, 0.0],
+                             [0.0, j_val, 0.0],
+                             [0.0, 0.0, j_val]
+                         ]
+                    except:
+                        pass
+                elif rule["interaction_type"] == "dm":
+                    label_text = "DM"
+                    # If val is vector, store it
+                    if isinstance(val, list) and len(val) == 3:
+                         # Get parameters dict
+                         params = config.get("data", {}).get("parameters", {})
+                         ctx = {k: float(v) for k, v in params.items() if isinstance(v, (int, float))}
+                         
+                         eval_vec = []
+                         for comp in val:
+                             if isinstance(comp, (int, float)):
+                                 eval_vec.append(float(comp))
+                             elif isinstance(comp, str):
+                                 try:
+                                     allowed_names = ctx
+                                     res = eval(comp, {"__builtins__": {}}, allowed_names)
+                                     eval_vec.append(float(res))
+                                 except Exception:
+                                     eval_vec.append(0.0)
+                             else:
                                  eval_vec.append(0.0)
-                         else:
-                             eval_vec.append(0.0)
-                     dm_vec = eval_vec
-            elif rule["interaction_type"] == "anisotropic":
-                label_text = "Aniso"
+                         dm_vec = eval_vec
+                         
+                         # Construct DM Matrix: [[0, Dz, -Dy], [-Dz, 0, Dx], [Dy, -Dx, 0]]
+                         dx, dy, dz = dm_vec
+                         exchange_matrix = [
+                             [0.0, dz, -dy],
+                             [-dz, 0.0, dx],
+                             [dy, -dx, 0.0]
+                         ]
+
+                elif rule["interaction_type"] == "anisotropic":
+                    label_text = "Aniso"
+                    # Expecting [Jx, Jy, Jz] or full matrix? usually vector diagonal
+                    if isinstance(val, list) and len(val) == 3:
+                         params = config.get("data", {}).get("parameters", {})
+                         ctx = {k: float(v) for k, v in params.items() if isinstance(v, (int, float))}
+                         eval_vec = []
+                         for comp in val:
+                             try:
+                                 v = float(comp) if isinstance(comp, (int, float)) else float(eval(str(comp), {"__builtins__": {}}, ctx))
+                                 eval_vec.append(v)
+                             except:
+                                 eval_vec.append(0.0)
+                         
+                         exchange_matrix = [
+                             [eval_vec[0], 0.0, 0.0],
+                             [0.0, eval_vec[1], 0.0],
+                             [0.0, 0.0, eval_vec[2]]
+                         ]
+            except Exception as e:
+                print(f"Matrix Calc Error: {e}")
 
             resp_bonds.append({
                 "atom_i": idx_i,
                 "atom_j": idx_j,
                 "offset": offset,
                 "type": rule["interaction_type"],
+                "value": rule.get("value"),
                 "label": label_text,
                 "dm_vector": dm_vec,
-                "distance": rule.get("distance", 0)
+                "distance": rule.get("distance", 0),
+                "exchange_matrix": exchange_matrix
             })
 
         return {
@@ -1156,3 +1216,4 @@ if __name__ == "__main__":
     import uvicorn
     # Enable reload to pick up code changes automatically!
     uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)
+    # Reload trigger: Config builder patch applied

@@ -134,7 +134,21 @@ class MagCalcConfigBuilder:
             lbl_0 = f"{lbl}0"
             if lbl_0 in self._atom_label_to_idx:
                 return self._atom_label_to_idx[lbl_0]
-            raise KeyError(lbl)
+            
+            # Robust normalization: Match "Label" + "Index" and try to align
+            # e.g. Cu01 -> Cu1, Cu00 -> Cu0
+            try:
+                import re
+                match = re.match(r"([A-Za-z]+)(\d+)", lbl)
+                if match:
+                    prefix, num = match.groups()
+                    normalized = f"{prefix}{int(num)}"
+                    if normalized in self._atom_label_to_idx:
+                        return self._atom_label_to_idx[normalized]
+            except Exception:
+                pass
+
+            raise KeyError(f"Atom '{lbl}' not found in unit cell (keys: {list(self._atom_label_to_idx.keys())})")
 
         try:
             idx_i = _resolve_atom_idx(ref_pair[0])
@@ -1044,8 +1058,12 @@ class MagCalcConfigBuilder:
         positions = [np.array(a["pos"]) for a in self.atoms_uc]
 
         for rule in generic_rules:
-            target_dist = rule["distance"]
-            value = rule["value"]
+            # Skip invalid rules
+            if "distance" not in rule:
+                continue
+                
+            target_dist = rule.get("distance", 0.0)
+            value = rule.get("value", ["0","0","0"])
             
             # Find all potential bonds at this distance
             pool = []

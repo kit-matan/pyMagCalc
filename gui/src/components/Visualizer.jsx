@@ -1,7 +1,8 @@
-import React, { useRef } from 'react'
-import { Canvas, useFrame } from '@react-three/fiber'
+import React, { useRef, useState, useEffect } from 'react'
+import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls, Stars, PerspectiveCamera, Line, Text, GizmoHelper, GizmoViewport } from '@react-three/drei'
 import * as THREE from 'three'
+import { ArrowUp, ArrowDown, Move, RotateCcw, Maximize, Box, Eye } from 'lucide-react'
 
 function Atom({ position, color, label, isGhost = false }) {
     return (
@@ -48,30 +49,61 @@ function SpinArrow({ position, direction, length = 1.8, color = '#10b981' }) {
     )
 }
 
-function BondLine({ start, end, label, color, type, labelOffset = [0, 0, 0] }) {
+function BondLine({ start, end, label, color, type, labelOffset = [0, 0, 0], onClick, isSelected }) {
+    const [hovered, setHovered] = useState(false)
+
+    // Derived state
     const mid = [
         (start[0] + end[0]) / 2 + labelOffset[0],
         (start[1] + end[1]) / 2 + labelOffset[1],
         (start[2] + end[2]) / 2 + labelOffset[2]
     ]
+
+    // Calculate length and orientation for the hit cylinder
+    const startVec = new THREE.Vector3(...start)
+    const endVec = new THREE.Vector3(...end)
+    const distance = startVec.distanceTo(endVec)
+    const midVec = new THREE.Vector3().addVectors(startVec, endVec).multiplyScalar(0.5)
+
+    // Cylinder lookAt logic is tricky because cylinder creates along Y by default.
+    // We can use a group with lookAt.
+
+    const displayColor = isSelected ? '#fbbf24' : (hovered ? '#ffffff' : color)
+    const lineWidth = isSelected ? 4 : (hovered ? 3 : (type === 'heisenberg' ? 2 : 1))
+
     return (
         <group>
+            {/* Hit Cylinder - Transparent but raycastable */}
+            <group position={midVec} lookAt={endVec}>
+                {/* Rotate cylinder to align with Z-axis lookAt? No, lookAt aligns +Z to target. 
+                     Cylinder is along Y. We need to rotate X 90deg? 
+                     Actually simpler: Make a mesh looking at endVec?
+                 */}
+                <mesh
+                    quaternion={new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), endVec.clone().sub(startVec).normalize())}
+                    onClick={(e) => { e.stopPropagation(); onClick && onClick() }}
+                    onPointerOver={(e) => { e.stopPropagation(); setHovered(true); document.body.style.cursor = 'pointer' }}
+                    onPointerOut={(e) => { e.stopPropagation(); setHovered(false); document.body.style.cursor = 'default' }}
+                >
+                    <cylinderGeometry args={[0.2, 0.2, distance, 8]} />
+                    <meshBasicMaterial transparent opacity={0.0} color="red" />
+                </mesh>
+            </group>
+
+
             {type !== 'dm' && (
                 <Line
                     points={[start, end]}
-                    color={color}
-                    lineWidth={type === 'heisenberg' ? 2 : 1}
+                    color={displayColor}
+                    lineWidth={lineWidth}
                     dashed={type !== 'heisenberg'}
                 />
             )}
             {type === 'dm' && (
-                /* For DM, maybe draw a thinner line or no line if Heisenberg exists? 
-                   But usually we want to see the connection. 
-                   Let's draw a thin dashed line for DM to distinguish it. */
                 <Line
                     points={[start, end]}
-                    color={color}
-                    lineWidth={1}
+                    color={displayColor}
+                    lineWidth={lineWidth}
                     dashed={true}
                     dashSize={0.2}
                     gapSize={0.1}
@@ -80,8 +112,8 @@ function BondLine({ start, end, label, color, type, labelOffset = [0, 0, 0] }) {
             {label && (
                 <Text
                     position={mid}
-                    fontSize={0.3}
-                    color={color}
+                    fontSize={hovered || isSelected ? 0.5 : 0.3}
+                    color={displayColor}
                     anchorX="center"
                     anchorY="middle"
                     outlineWidth={0.02}
@@ -121,24 +153,104 @@ function transformPos(pos, matrix) {
     ]
 }
 
-export default function Visualizer({ atoms, lattice, isDark, dimensionality, zFilter, bonds = [] }) {
+// Internal component to handle programmatic camera moves
+function CameraRig({ view }) {
+    const { camera, controls } = useThree()
+
+    useEffect(() => {
+        if (!view) return;
+
+        const dist = 15;
+        const newPos = new THREE.Vector3();
+
+        switch (view) {
+            case 'TOP': // XY Plane
+                newPos.set(0, 0, dist);
+                break;
+            case 'FRONT': // XZ Plane? Or similar. usually Front is -Y looking at XZ? 
+                // In this coord system, z is up. Front could be y=-dist.
+                newPos.set(0, -dist, 2);
+                break;
+            case 'SIDE': // YZ
+                newPos.set(dist, 0, 2);
+                break;
+            case 'ISO':
+            default:
+                newPos.set(12, 12, 10);
+                break;
+        }
+
+        // Animate? simpler to just set for now, or use small interpolation if we had a loop
+        // OrbitControls makes 'set' tricky if we don't update target.
+        // Let's just set position and reset target to 0,0,0
+        camera.position.copy(newPos);
+        camera.lookAt(0, 0, 0);
+
+        if (controls) {
+            controls.target.set(0, 0, 0);
+            controls.update();
+        }
+
+    }, [view, camera, controls])
+
+    return null;
+}
+
+export default function Visualizer({ atoms, lattice, isDark, dimensionality, zFilter, bonds = [], onBondClick, selectedBond }) {
     const bgColor = isDark ? '#020617' : '#f8fafc'
     const gridMain = isDark ? '#1e293b' : '#cbd5e1'
     const gridSec = isDark ? '#0f172a' : '#f1f5f9'
-    const spinColor = isDark ? '#10b981' : '#059669' // Brighter in dark, deeper in light
+    const spinColor = isDark ? '#10b981' : '#059669'
 
     const matrix = getLatticeMatrix(lattice)
 
-    // Filter atoms if zFilter is active in 2D mode
     const filteredAtoms = (dimensionality === '2D' && zFilter)
         ? atoms.filter(a => Math.abs(a.pos[2]) < 0.01 || Math.abs(a.pos[2] - 1.0) < 0.01)
         : atoms
 
+    // Camera Actions
+    const [viewMetric, setViewMetric] = useState(0); // Just a trigger
+    const [desiredView, setDesiredView] = useState(null)
+
+    const triggerView = (v) => {
+        setDesiredView(v);
+        // Toggle metric to ensure effect fires even if view name is same (resets)
+        setViewMetric(p => p + 1);
+    }
+
     return (
-        <div style={{ width: '100%', height: '100%', borderRadius: '16px', overflow: 'hidden', background: bgColor }}>
-            <Canvas shadows>
+        <div style={{ width: '100%', height: '100%', borderRadius: '16px', overflow: 'hidden', background: bgColor, position: 'relative' }}>
+
+            {/* Camera Toolbar */}
+            <div className="absolute top-4 right-4 z-10 flex flex-col gap-2 pointer-events-none">
+                <div className="flex gap-1 bg-surface/80 p-1 rounded-lg border border-color backdrop-blur shadow-sm pointer-events-auto">
+                    <button className="icon-btn xs" title="Reset View" onClick={() => triggerView('ISO')}><RotateCcw size={14} /></button>
+                    <div className="w-px bg-color mx-1"></div>
+                    <button className="icon-btn xs font-xs font-bold w-8" title="Top View (XY)" onClick={() => triggerView('TOP')}>XY</button>
+                    <button className="icon-btn xs font-xs font-bold w-8" title="Front View" onClick={() => triggerView('FRONT')}>XZ</button>
+                    <button className="icon-btn xs font-xs font-bold w-8" title="Side View" onClick={() => triggerView('SIDE')}>YZ</button>
+                </div>
+                {/* Tips */}
+                <div className="bg-surface/50 p-2 rounded-lg border border-color backdrop-blur shadow-sm text-xxs text-muted pointer-events-auto max-w-[150px]">
+                    <div className="flex align-center gap-xs mb-1">
+                        <Move size={12} /> <span>Right-click or 2-finger to pan</span>
+                    </div>
+                </div>
+            </div>
+
+            <Canvas shadows className="cursor-move">
                 <PerspectiveCamera makeDefault position={[12, 12, 10]} up={[0, 0, 1]} />
-                <OrbitControls makeDefault />
+                <OrbitControls
+                    makeDefault
+                    enableDamping={true}
+                    dampingFactor={0.1}
+                    rotateSpeed={0.5}
+                    panSpeed={0.5}
+                    zoomSpeed={0.8}
+                />
+
+                <CameraRig view={desiredView} key={viewMetric} />
+
                 <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
                     <GizmoViewport axisColors={['#f87171', '#34d399', '#38bdf8']} labelColor="white" />
                 </GizmoHelper>
@@ -156,7 +268,6 @@ export default function Visualizer({ atoms, lattice, isDark, dimensionality, zFi
 
                         const rawCartPos = transformPos(atom.pos, matrix)
                         const cartPos = [rawCartPos[0], rawCartPos[1], rawCartPos[2]]
-
                         const rawCartDir = transformPos(atom.magmom_classical || [0, 0, 1], matrix)
                         const cartDir = [rawCartDir[0], rawCartDir[1], rawCartDir[2]]
 
@@ -177,15 +288,11 @@ export default function Visualizer({ atoms, lattice, isDark, dimensionality, zFi
                     })}
 
                     {bonds.map((bond, idx) => {
-                        // Find start/end atoms by index
                         if (bond.atom_i >= atoms.length || bond.atom_j >= atoms.length) return null
 
                         const atomI = atoms[bond.atom_i]
-                        const atomJ = atoms[bond.atom_j] // Base atom J
+                        const atomJ = atoms[bond.atom_j]
 
-                        // Calculate wrapped position for J using offset
-                        // bond.offset is usually integer offset [u, v, w]
-                        // pos_j_actual = pos_j_uc + offset
                         const posI = atomI.pos
                         const posJ = atomJ.pos
                         const offset = bond.offset || [0, 0, 0]
@@ -201,17 +308,34 @@ export default function Visualizer({ atoms, lattice, isDark, dimensionality, zFi
                         const endRaw = transformPos(posJExpanded, matrix)
                         const end = [endRaw[0], endRaw[1], endRaw[2]]
 
-                        // Colors
+                        // SAFETY: Skip zero-length bonds to prevent NaN crashes in Three.js
+                        if (Math.abs(start[0] - end[0]) < 1e-5 &&
+                            Math.abs(start[1] - end[1]) < 1e-5 &&
+                            Math.abs(start[2] - end[2]) < 1e-5) {
+                            return null
+                        }
+
                         const bondColor = bond.type === 'dm' ? '#f472b6' : (bond.type === 'anisotropic' ? '#fbbf24' : '#94a3b8')
+
+                        // Check selection
+                        // Selection matches if: atom_i, atom_j, AND offset match?
+                        // bond key in parent list could be enough, but let's check content if passed selectedBond object
+                        let isSelected = false;
+                        if (selectedBond) {
+                            // Check if this bond matches selectedBond state
+                            // Using precise match of i->j and offset
+                            if (selectedBond.atom_i === bond.atom_i &&
+                                selectedBond.atom_j === bond.atom_j &&
+                                (selectedBond.offset || []).join(',') === (bond.offset || []).join(',')) {
+                                isSelected = true;
+                            }
+                        }
 
                         // DM Vector Logic
                         let dmArrow = null
                         if (bond.type === 'dm' && bond.dm_vector) {
-                            // DM vector at midpoint
                             const mid = [(start[0] + end[0]) / 2, (start[1] + end[1]) / 2, (start[2] + end[2]) / 2]
-                            // DM Vector is already Cartesian from server. DO NOT transform with lattice matrix.
                             const dmVec = bond.dm_vector
-
                             dmArrow = (
                                 <SpinArrow
                                     position={mid}
@@ -222,26 +346,18 @@ export default function Visualizer({ atoms, lattice, isDark, dimensionality, zFi
                             )
                         }
 
-                        // Filter bonds if nodes are filtered? 
-                        // If zFilter is on, only show bonds between visible atoms?
                         if (dimensionality === '2D' && zFilter) {
                             if (Math.abs(posI[2]) > 0.01 && Math.abs(posI[2] - 1.0) > 0.01) return null
-                            // Allow bonds to other layers? Maybe restricts visualization to in-plane
                             if (Math.abs(posJExpanded[2]) > 0.01 && Math.abs(posJExpanded[2] - 1.0) > 0.01) return null
                         }
 
-                        // Offset label for DM to avoid overlap with J
                         const labelOffset = bond.type === 'dm' ? [0, 0.4, 0] : [0, 0, 0]
 
-                        // Determine if we need to render a ghost atom at 'end'
                         let ghostAtom = null
                         const isExternal = Math.abs(offset[0]) > 0.001 || Math.abs(offset[1]) > 0.001 || Math.abs(offset[2]) > 0.001
 
                         if (isExternal && bond.atom_j < atoms.length) {
-                            const atomJ = atoms[bond.atom_j]
-                            // Ghost color: desaturated and lighter/darker depending on theme
                             const ghostColor = isDark ? '#475569' : '#cbd5e1'
-
                             ghostAtom = (
                                 <Atom
                                     key={`ghost-${idx}`}
@@ -262,6 +378,8 @@ export default function Visualizer({ atoms, lattice, isDark, dimensionality, zFi
                                     color={bondColor}
                                     type={bond.type}
                                     labelOffset={labelOffset}
+                                    isSelected={isSelected}
+                                    onClick={() => onBondClick && onBondClick(bond)}
                                 />
                                 {dmArrow}
                                 {ghostAtom}

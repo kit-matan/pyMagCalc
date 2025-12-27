@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Beaker, Database, Activity, Code, Download, Plus, Trash2, Settings, Box, Eye, Share2, Info, Magnet, Wind, Check, ChevronRight, Zap, Crosshair, FileText, BarChart2, Play, Image } from 'lucide-react'
+import { Beaker, Database, Activity, Code, Download, Plus, Trash2, Settings, Box, Eye, Share2, Info, Magnet, Wind, Check, ChevronRight, Zap, Crosshair, FileText, BarChart2, Play, Image, ArrowDown, X, XCircle, Minus, ChevronDown } from 'lucide-react'
 import yaml from 'js-yaml'
 import Visualizer from './components/Visualizer'
 import './App.css'
@@ -41,8 +41,10 @@ function App() {
   const [notification, setNotification] = useState(null)
   const [neighborDistances, setNeighborDistances] = useState([])
   const [selectedBondIdxs, setSelectedBondIdxs] = useState({}) // { suggestionIdx: bondIdx }
-  const [interactionMode, setInteractionMode] = useState('explicit') // 'symmetry' or 'explicit'
-  const [atomMode, setAtomMode] = useState('explicit') // 'symmetry' or 'explicit'
+  const [selectedBond, setSelectedBond] = useState(null) // Bond clicked in Visualizer
+  const [interactionMenuOpen, setInteractionMenuOpen] = useState(false) // Dropdown menu state
+  const [interactionMode, setInteractionMode] = useState('symmetry') // 'symmetry' or 'explicit'
+  const [atomMode, setAtomMode] = useState('symmetry') // 'symmetry' or 'explicit'
   const [previewAtoms, setPreviewAtoms] = useState([]) // Expanded atoms for visualizer
   const [bonds, setBonds] = useState([]) // Bonds for visualizer
   const [zFilter, setZFilter] = useState(false) // Filter for z=0 plane in 2D
@@ -162,35 +164,22 @@ function App() {
     setTimeout(() => setNotification(null), 5000)
   }
 
-  const [config, setConfig] = useState({
-    lattice: { a: 7.33, b: 7.33, c: 17.1374, alpha: 90, beta: 90, gamma: 120, space_group: 163, dimensionality: '2D' },
+
+  const DEMO_CONFIG = {
+    lattice: { a: 20.645, b: 8.383, c: 6.442, alpha: 90, beta: 90, gamma: 90, space_group: 43, dimensionality: '3D' },
     wyckoff_atoms: [
-      { label: 'Fe0', pos: [0.0, 0.0, 0.0], spin_S: 2.5 },
-      { label: 'Fe1', pos: [0.5, 0.0, 0.0], spin_S: 2.5 },
-      { label: 'Fe2', pos: [0.0, 0.5, 0.0], spin_S: 2.5 }
+      { label: 'Cu', pos: [0.16572, 0.3646, 0.7545], spin_S: 0.5 }
     ],
+    magnetic_elements: ["Cu"],
     symmetry_interactions: [
-      { type: 'heisenberg', ref_pair: ['Fe0', 'Fe1'], distance: 3.665, value: 'J1' },
-      { type: 'heisenberg', ref_pair: ['Fe0', 'Fe1'], distance: 6.348, value: 'J2' },
-      { type: 'dm', ref_pair: ['Fe1', 'Fe2'], distance: 3.665, value: ['0', '-Dy', '-Dz'] }
+      { type: 'heisenberg', ref_pair: ['Cu0', 'Cu2'], distance: 3.1325, value: 'J1', offset: [0, 0, 0] },
+      { type: 'dm', ref_pair: ['Cu0', 'Cu2'], distance: 3.1325, value: ['Dx', '0', '0'], offset: [0, 0, 0] },
+      { type: 'anisotropic_exchange', ref_pair: ['Cu0', 'Cu2'], distance: 3.1325, value: ['G1', '-G1', '-G1'], offset: [0, 0, 0] },
+      { type: 'heisenberg', ref_pair: ['Cu0', 'Cu13'], distance: 3.9751, value: 'J2', offset: [0, 0, 0] },
+      { type: 'heisenberg', ref_pair: ['Cu0', 'Cu9'], distance: 5.2572, value: 'J3', offset: [0, 0, 0] }
     ],
-    explicit_interactions: [
-      { type: 'heisenberg', distance: 3.665, value: "J1" },
-      { type: 'heisenberg', distance: 6.348, value: "J2" },
-      { type: 'dm_manual', atom_i: 0, atom_j: 1, offset_j: [0, 0, 0], value: ["0", "-Dy", "-Dz"], distance: 3.665 },
-      { type: 'dm_manual', atom_i: 0, atom_j: 2, offset_j: [0, 0, 0], value: ["-0.86602540378*Dy", "-0.5*Dy", "Dz"], distance: 3.665 },
-      { type: 'dm_manual', atom_i: 0, atom_j: 1, offset_j: [-1, 0, 0], value: ["0", "-Dy", "-Dz"], distance: 3.665 },
-      { type: 'dm_manual', atom_i: 0, atom_j: 2, offset_j: [0, -1, 0], value: ["-0.86602540378*Dy", "-0.5*Dy", "Dz"], distance: 3.665 },
-      { type: 'dm_manual', atom_i: 1, atom_j: 0, offset_j: [0, 0, 0], value: ["0", "Dy", "Dz"], distance: 3.665 },
-      { type: 'dm_manual', atom_i: 1, atom_j: 2, offset_j: [0, -1, 0], value: ["-0.86602540378*Dy", "0.5*Dy", "-Dz"], distance: 3.665 },
-      { type: 'dm_manual', atom_i: 1, atom_j: 0, offset_j: [1, 0, 0], value: ["0", "Dy", "Dz"], distance: 3.665 },
-      { type: 'dm_manual', atom_i: 1, atom_j: 2, offset_j: [1, 0, 0], value: ["-0.86602540378*Dy", "0.5*Dy", "-Dz"], distance: 3.665 },
-      { type: 'dm_manual', atom_i: 2, atom_j: 0, offset_j: [0, 0, 0], value: ["0.86602540378*Dy", "0.5*Dy", "-Dz"], distance: 3.665 },
-      { type: 'dm_manual', atom_i: 2, atom_j: 1, offset_j: [-1, 0, 0], value: ["0.86602540378*Dy", "-0.5*Dy", "Dz"], distance: 3.665 },
-      { type: 'dm_manual', atom_i: 2, atom_j: 0, offset_j: [0, 1, 0], value: ["0.86602540378*Dy", "0.5*Dy", "-Dz"], distance: 3.665 },
-      { type: 'dm_manual', atom_i: 2, atom_j: 1, offset_j: [0, 1, 0], value: ["0.86602540378*Dy", "-0.5*Dy", "Dz"], distance: 3.665 }
-    ],
-    parameters: { S: 2.5, H_mag: 0.0, H_dir: [0, 0, 1], J1: 3.23, J2: 0.11, Dy: 0.218, Dz: -0.195 },
+    explicit_interactions: [],
+    parameters: { S: 1.0, H_mag: 20.0, H_dir: [0, 0, 1], J1: 2.49, J2: 2.79, J3: 5.05, G1: 0.28, Dx: 2.67 },
     tasks: {
       run_minimization: true,
       run_dispersion: true,
@@ -202,18 +191,18 @@ function App() {
       export_csv: false
     },
     q_path: {
-      points: { Gamma: [0, 0, 0], M: [0.5, 0, 0], K: [0.333, 0.333, 0] },
-      path: ['Gamma', 'M', 'K', 'Gamma'],
-      points_per_segment: 100
+      points: { Start: [0, 1, 0], End: [0, 3, 0] },
+      path: ['Start', 'End'],
+      points_per_segment: 200
     },
     plotting: {
       energy_min: 0,
-      energy_max: 20,
+      energy_max: 10,
       broadening: 0.2,
       energy_resolution: 0.05,
       momentum_max: 4.0,
-      save_plot: true,
-      show_plot: true,
+      save_plot: false,
+      show_plot: false,
       plot_structure: false
     },
     output: {
@@ -224,11 +213,7 @@ function App() {
       enabled: false,
       type: 'pattern',
       pattern_type: 'antiferromagnetic',
-      directions: [
-        [-1, 0, 0],
-        [0.5, -0.86602540378, 0],
-        [0.5, 0.86602540378, 0]
-      ]
+      directions: []
     },
     minimization: {
       num_starts: 1000,
@@ -239,7 +224,24 @@ function App() {
     calculation: {
       cache_mode: 'none'
     }
+  }
+
+  const [config, setConfig] = useState(() => {
+    try {
+      const saved = localStorage.getItem('magcalc_config');
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {
+      console.error("Failed to load config from localStorage", e);
+    }
+    return DEMO_CONFIG;
   })
+
+  // Persistence Effect
+  React.useEffect(() => {
+    localStorage.setItem('magcalc_config', JSON.stringify(config));
+  }, [config]);
 
   // Symmetry Expansion Effect for Visualizer
   React.useEffect(() => {
@@ -390,6 +392,15 @@ function App() {
     }
   }
 
+  const resetToDefaults = () => {
+    if (window.confirm("Are you sure you want to load the default example (aCVO)?\nCurrent changes will be lost.")) {
+      setConfig(DEMO_CONFIG);
+      setInteractionMode('symmetry');
+      setAtomMode('symmetry');
+      showNotify("Reset to defaults (aCVO)", "info");
+    }
+  }
+
   const handleImport = (e) => {
     const file = e.target.files[0]
     if (!file) return
@@ -415,6 +426,12 @@ function App() {
           if (doc.crystal_structure.lattice_parameters) {
             newConfig.lattice = { ...newConfig.lattice, ...doc.crystal_structure.lattice_parameters }
           }
+          if (doc.crystal_structure.lattice_vectors) {
+            newConfig.lattice.lattice_vectors = doc.crystal_structure.lattice_vectors
+          }
+          if (doc.crystal_structure.dimensionality) {
+            newConfig.lattice.dimensionality = doc.crystal_structure.dimensionality
+          }
 
           let atomsSource = null
           if (doc.crystal_structure.wyckoff_atoms) {
@@ -436,6 +453,9 @@ function App() {
           }
           if (doc.crystal_structure.magnetic_elements) {
             newConfig.magnetic_elements = doc.crystal_structure.magnetic_elements
+          } else if (atomsSource) {
+            const uniqueLabels = [...new Set(atomsSource.map(a => (a.label || a.species || '').replace(/[0-9]+$/, '')))].filter(x => x)
+            if (uniqueLabels.length > 0) newConfig.magnetic_elements = uniqueLabels
           }
         }
 
@@ -536,15 +556,19 @@ function App() {
     }
 
     try {
-      console.log('Fetching expanded config for export...')
-      const response = await fetch('/api/expand-config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: input }),
-      })
+      // Use the design config directly for export (cleaner YAML)
+      // instead of the expanded calculation-ready config.
+      let expanded = input;
 
-      if (!response.ok) throw new Error(`Server returned ${response.status}`)
-      const expanded = await response.json()
+      // try {
+      //   console.log('Fetching expanded config for export...')
+      //   const response = await fetch('/api/expand-config', { ... })
+      //   if (!response.ok) throw new Error(...)
+      //   expanded = await response.json()
+      // } catch (err) { ... } -> We skip this now.
+
+      // We can just proceed with 'input' as 'expanded'
+      console.log('Generating design YAML file...')
 
       // Conditionally omit magnetic structure
       if (!config.magnetic_structure.enabled) {
@@ -793,6 +817,64 @@ function App() {
     }))
   }
 
+  const addRuleFromVisualizer = (type) => {
+    if (!selectedBond) return;
+
+    // Construct new rule
+    // We need 'ref_pair', 'offset', 'distance', 'value'
+    // Visualizer bond object: { atom_i, atom_j, offset, distance, ... }
+    // Note: distance might need to be calculated if not present, but usually backend gives it? 
+    // Actually Visualizer calculates display distance. 
+    // Let's assume we can compute or it's there. 
+    // If 'distance' is missing in bond object, we can approximate it or re-fetch?
+    // Let's look at `Visualizer.jsx`: it uses start/end to get distance.
+    // The `bond` object from `get-visualizer-data` usually mimics the input interaction OR neighbor list.
+    // If it comes from 'bonds' list, it might NOT have distance.
+    // Safeguard: Use a default distance or calculate from config.lattice?
+    // Better: Just use 0.0 or prompt? Or try to find it in neighbor list?
+
+    // Simplest: Add it with a placeholder distance if missing, user can adjust.
+    // But let's try to find it in neighborDistances if available?
+
+    const newRule = {
+      type: type,
+      ref_pair: [previewAtoms[selectedBond.atom_i]?.label || "?", previewAtoms[selectedBond.atom_j]?.label || "?"],
+      offset: selectedBond.offset || [0, 0, 0],
+      distance: selectedBond.distance || 0.0,
+      value: type === 'heisenberg' ? 'J0' : (type === 'dm' ? ['D1', 'D2', 'D3'] : ['G1', 'G2', 'G3'])
+    }
+
+    // Fallback for explicit mode or if labels missing
+    // For explicit interactions, we use indices in 'atom_i', 'atom_j'
+    if (interactionMode === 'explicit') {
+      delete newRule.ref_pair;
+      newRule.atom_i = selectedBond.atom_i;
+      newRule.atom_j = selectedBond.atom_j;
+      newRule.offset_j = selectedBond.offset || [0, 0, 0];
+    }
+
+    // Add to config
+    if (interactionMode === 'symmetry') {
+      setConfig(prev => ({
+        ...prev,
+        symmetry_interactions: [...prev.symmetry_interactions, newRule]
+      }));
+    } else {
+      setConfig(prev => ({
+        ...prev,
+        explicit_interactions: [...prev.explicit_interactions, {
+          type,
+          atom_i: selectedBond.atom_i,
+          atom_j: selectedBond.atom_j,
+          offset_j: selectedBond.offset || [0, 0, 0],
+          distance: selectedBond.distance || 0.0,
+          value: type === 'heisenberg' ? 'J0' : (type === 'dm' ? ['D1', 'D2', 'D3'] : ['G1', 'G2', 'G3'])
+        }]
+      }));
+    }
+    showNotify(`Added ${type} interaction`, 'success');
+  }
+
   const runCalculation = async () => {
     setLogs([])
     setCalcLoading(true)
@@ -805,7 +887,7 @@ function App() {
         lattice_parameters: config.lattice,
         wyckoff_atoms: config.wyckoff_atoms,
         atom_mode: atomMode,
-        dimensionality: config.lattice.dimensionality === '2D' ? 2 : (config.lattice.dimensionality === '3D' ? 3 : config.lattice.dimensionality),
+        dimensionality: [2, '2D', '2'].includes(config.lattice.dimensionality) ? 2 : 3,
         magnetic_elements: config.magnetic_elements || ["Cu"]
       },
       interactions: interactionMode === 'explicit' ? { list: config.explicit_interactions || [] } : {
@@ -885,6 +967,9 @@ function App() {
             <Code size={16} /> Load YAML
             <input type="file" accept=".yaml,.yml" hidden onChange={handleImport} />
           </label>
+          <button className="btn btn-secondary glass cursor-pointer" onClick={resetToDefaults}>
+            <Trash2 size={16} /> Load Defaults
+          </button>
           <button className="btn btn-primary shadow-glow" onClick={handleExportYaml}>
             <Download size={16} /> Export YAML
           </button>
@@ -1117,7 +1202,7 @@ function App() {
                                 {inter.type === 'heisenberg' ? <Zap size={16} /> : (inter.type === 'dm' ? <Wind size={16} /> : <Crosshair size={16} />)}
                               </div>
                               <div>
-                                <span className="interaction-type">{inter.type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</span>
+                                <span className="interaction-type">{(inter.type === 'dm' || inter.type === 'dm_interaction') ? 'Dzyaloshinskii–Moriya' : inter.type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</span>
                                 <span className="interaction-subtitle">
                                   {inter.ref_pair ? `Ref: ${inter.ref_pair.join('-')}` : 'Auto-detected'}
                                   {inter.offset && (inter.offset[0] !== 0 || inter.offset[1] !== 0 || inter.offset[2] !== 0) && ` [${inter.offset.join(',')}]`}
@@ -1180,6 +1265,24 @@ function App() {
                               </select>
                             </div>
                           </div>
+
+                          {/* Review Matrix Display */}
+                          {(() => {
+                            const matrix = calculateExchangeMatrixSymbolic(inter, config.parameters);
+                            if (!matrix) return null;
+                            return (
+                              <div className="exchange-matrix-panel">
+                                <div className="exchange-matrix-label">Exchange Tensor (J<sub>ij</sub>)</div>
+                                <div className="exchange-matrix-grid">
+                                  {matrix.flat().map((val, i) => (
+                                    <div key={i} className={`exchange-matrix-cell ${val === 0 ? 'zero' : ''}`}>
+                                      {typeof val === 'number' ? val.toFixed(3) : val}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </div>
                       ))}
                     </div>
@@ -1233,9 +1336,9 @@ function App() {
                                     <div className="grid gap-md">
                                       <div>
                                         <div className="text-xs uppercase font-bold opacity-60 mb-xs">Allowed Matrix Form</div>
-                                        <div className="grid grid-cols-3 gap-1 bg-black/20 p-sm rounded border border-color/30 font-mono text-center">
+                                        <div className="exchange-matrix-grid">
                                           {orbitConstraints.symbolic_matrix.flat().map((cell, c) => (
-                                            <div key={c} className={`p-xs rounded ${cell === '0' || cell === '0.0' ? 'opacity-20' : 'bg-accent/10 text-accent'}`}>
+                                            <div key={c} className={`exchange-matrix-cell ${cell === '0' || cell === '0.0' ? 'zero' : ''}`}>
                                               {cell}
                                             </div>
                                           ))}
@@ -2206,7 +2309,117 @@ function App() {
                   dimensionality={config.lattice.dimensionality}
                   zFilter={zFilter}
                   bonds={bonds}
+                  onBondClick={setSelectedBond}
+                  selectedBond={selectedBond}
                 />
+
+                {/* Visualizer Interaction Overlay Panel */}
+                {/* Visualizer Interaction Overlay Panel */}
+                {selectedBond && (
+                  <div className="visualizer-overlay top-left animate-slide-in p-md card glass border-accent shadow-glow flex-col gap-sm" style={{ pointerEvents: 'auto', zIndex: 100, marginTop: '40px', maxWidth: '280px' }}>
+
+                    {/* Header */}
+                    <div className="flex-between align-center border-b border-color/20 pb-sm mb-xs">
+                      <h4 className="font-bold text-accent m-0 text-sm">Selected Bond</h4>
+                      <div
+                        className="cursor-pointer text-muted hover:text-red-400 transition-colors opacity-50 hover:opacity-100"
+                        onClick={() => setSelectedBond(null)}
+                        title="Close"
+                      >
+                        <XCircle size={18} />
+                      </div>
+                    </div>
+
+                    {/* Bond Info */}
+                    <div className="bg-black/20 rounded p-xs flex-between align-center text-xs font-mono border border-color/10">
+                      <div className="flex align-center gap-xs">
+                        <span className="text-secondary font-bold">{previewAtoms[selectedBond.atom_i]?.label || selectedBond.atom_i}</span>
+                        <ArrowDown size={10} className="rotate-[-90deg] opacity-50" />
+                        <span className="text-secondary font-bold">{previewAtoms[selectedBond.atom_j]?.label || selectedBond.atom_j}</span>
+                      </div>
+                      <div className="opacity-60 text-xxs">
+                        Offset: [{selectedBond.offset ? selectedBond.offset.join(',') : '0,0,0'}]
+                      </div>
+                    </div>
+
+                    {/* Interactions List */}
+                    <div className="flex-col gap-sm overflow-y-auto custom-scrollbar pr-xs" style={{ maxHeight: '250px' }}>
+                      {(() => {
+                        const matchingBonds = bonds.filter(b =>
+                          b.atom_i === selectedBond.atom_i &&
+                          b.atom_j === selectedBond.atom_j &&
+                          (b.offset || []).join(',') === (selectedBond.offset || []).join(',')
+                        );
+
+                        if (matchingBonds.length === 0) {
+                          return <div className="text-xs text-muted text-center italic py-2">No interactions</div>;
+                        }
+
+                        return matchingBonds.map((bond, idx) => {
+                          const matrix = calculateExchangeMatrixSymbolic(bond, config.parameters);
+                          return (
+                            <div key={idx} className="p-xs bg-black/10 rounded border border-color/10">
+                              <div className="flex align-center gap-xs mb-xs text-xs font-bold opacity-80">
+                                {bond.type === 'heisenberg' && <Zap size={10} className="text-yellow-400" />}
+                                {bond.type.includes('dm') && <Wind size={10} className="text-cyan-400" />}
+                                {bond.type.includes('anisotropic') && <Crosshair size={10} className="text-purple-400" />}
+                                <span className="capitalize">{bond.type.replace(/_/g, ' ')}</span>
+                              </div>
+
+                              {/* Matrix */}
+                              {matrix ? (
+                                <div className="exchange-matrix-grid" style={{ transform: 'scale(0.95)', transformOrigin: 'top left', width: '100%' }}>
+                                  {matrix.flat().map((val, i) => (
+                                    <div key={i} className={`exchange-matrix-cell ${val === 0 || val === '0' || val === '0.0' ? 'zero' : ''}`} style={{ fontSize: '9px', padding: '2px' }}>
+                                      {val}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="text-xs font-mono break-all opacity-70">{JSON.stringify(bond.value)}</div>
+                              )}
+                            </div>
+                          );
+                        });
+                      })()}
+                    </div>
+
+                    {/* Footer Actions */}
+                    <div className="relative pt-sm border-t border-color/20 mt-auto">
+                      {interactionMenuOpen && (
+                        <div className="absolute bottom-full left-0 right-0 mb-2 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl overflow-hidden flex flex-col p-1 z-50 animate-in fade-in zoom-in-95 duration-200">
+                          <button
+                            className="btn btn-ghost btn-xs justify-start gap-2 hover:bg-black/5 dark:hover:bg-white/10"
+                            onClick={() => { addRuleFromVisualizer('heisenberg'); setInteractionMenuOpen(false); }}
+                          >
+                            <Zap size={14} className="text-amber-500" /> Heisenberg
+                          </button>
+                          <button
+                            className="btn btn-ghost btn-xs justify-start gap-2 hover:bg-black/5 dark:hover:bg-white/10"
+                            onClick={() => { addRuleFromVisualizer('dm'); setInteractionMenuOpen(false); }}
+                          >
+                            <Wind size={14} className="text-cyan-500" /> DM Interaction
+                          </button>
+                          <button
+                            className="btn btn-ghost btn-xs justify-start gap-2 hover:bg-black/5 dark:hover:bg-white/10"
+                            onClick={() => { addRuleFromVisualizer('anisotropic_exchange'); setInteractionMenuOpen(false); }}
+                          >
+                            <Crosshair size={14} className="text-purple-500" /> Anisotropic Exchange
+                          </button>
+                        </div>
+                      )}
+                      <button
+                        className="btn btn-xs btn-primary w-full justify-between items-center group"
+                        onClick={() => setInteractionMenuOpen(!interactionMenuOpen)}
+                      >
+                        <span className="flex items-center gap-2">
+                          <Plus size={14} /> Add Interaction
+                        </span>
+                        <ChevronDown size={14} className={`transition-transform duration-200 ${interactionMenuOpen ? 'rotate-180' : ''}`} />
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {config.lattice.dimensionality === '2D' && (
                   <div className="visualizer-overlay bottom-right">
                     <button
@@ -2234,5 +2447,154 @@ function App() {
     </div >
   )
 }
+
+const calculateExchangeMatrix = (inter, numericParams = {}) => {
+  const type = inter.type;
+  const value = inter.value;
+
+  // Helper to safely evaluate parameter string
+  const evalParam = (val) => {
+    if (typeof val === 'number') return val;
+    if (!val) return 0.0;
+    if (numericParams[val] !== undefined) return numericParams[val];
+    // Try simple eval if string is number
+    const f = parseFloat(val);
+    if (!isNaN(f)) return f;
+    return 0.0;
+  };
+
+  try {
+    if (type === 'heisenberg') {
+      const j = evalParam(value);
+      return [
+        [j, 0, 0],
+        [0, j, 0],
+        [0, 0, j]
+      ];
+    } else if (type === 'dm' || type === 'dm_interaction') {
+      // DM value should be array [Dx, Dy, Dz] or string "Dx,Dy,Dz"
+      let vec = [0, 0, 0];
+      if (Array.isArray(value)) {
+        vec = value.map(evalParam);
+      } else if (typeof value === 'string') {
+        vec = value.split(',').map(s => evalParam(s.trim()));
+      }
+
+      const [dx, dy, dz] = vec;
+      // Skew symmetric
+      return [
+        [0, dz, -dy],
+        [-dz, 0, dx],
+        [dy, -dx, 0]
+      ];
+    } else if (type === 'anisotropic' || type === 'anisotropic_exchange') {
+      // Anisotropic value should be array [Jx, Jy, Jz] or string
+      let vec = [0, 0, 0];
+      if (Array.isArray(value)) {
+        vec = value.map(evalParam);
+      } else if (typeof value === 'string') {
+        vec = value.split(',').map(s => evalParam(s.trim()));
+      }
+      const [jx, jy, jz] = vec;
+      return [
+        [jx, 0, 0],
+        [0, jy, 0],
+        [0, 0, jz]
+      ];
+    }
+  } catch (e) {
+    console.error("Matrix Calc Error", e);
+    return null;
+  }
+  return null;
+};
+
+const calculateExchangeMatrixSymbolic = (inter, numericParams = {}) => {
+  const type = inter.type;
+  const value = inter.value;
+
+  // Helper to get symbol or value
+  const getSymbol = (val) => {
+    if (val === undefined || val === null) return 0;
+    if (typeof val === 'number') return val;
+    let s = String(val).trim();
+
+    // Clean up symbolic math artifacts from backend
+    // Remove leading "1.0*" or "1*"
+    if (s.startsWith('1.0*')) s = s.substring(4);
+    else if (s.startsWith('1*')) s = s.substring(2);
+
+    // Replace leading "-1.0*" or "-1*" with "-"
+    if (s.startsWith('-1.0*')) s = '-' + s.substring(5);
+    else if (s.startsWith('-1*')) s = '-' + s.substring(3);
+
+    if (s === '0' || s === '0.0') return 0;
+
+    // If it looks like a pure number, parse it but keep 0.0 as 0
+    // But be careful not to parse "J1" as NaN -> string
+    if (!isNaN(parseFloat(s)) && isFinite(s)) {
+      if (parseFloat(s) === 0) return 0;
+      // If it became a simple number like "2.0", maybe return number?
+      // But user wants symbols. If it is "1.5", return "1.5".
+      return s;
+    }
+    return s;
+  };
+
+  try {
+    if (type === 'heisenberg') {
+      const j = getSymbol(value);
+      return [
+        [j, 0, 0],
+        [0, j, 0],
+        [0, 0, j]
+      ];
+    } else if (type === 'dm' || type === 'dm_interaction') {
+      // DM value should be array or string
+      let vec = [0, 0, 0];
+      if (Array.isArray(value)) {
+        vec = value.map(getSymbol);
+      } else if (typeof value === 'string') {
+        vec = value.split(',').map(getSymbol);
+      }
+
+      const [dx, dy, dz] = vec;
+
+      // Handle negation for symbols
+      const neg = (v) => {
+        if (v === 0) return 0;
+        if (typeof v === 'string') {
+          // Handle double negatives
+          if (v.startsWith('-')) return v.substring(1);
+          return `-${v}`;
+        }
+        return -v;
+      }
+
+      return [
+        [0, dz, neg(dy)],
+        [neg(dz), 0, dx],
+        [dy, neg(dx), 0]
+      ];
+    } else if (type === 'anisotropic' || type === 'anisotropic_exchange') {
+      let vec = [0, 0, 0];
+      if (Array.isArray(value)) {
+        vec = value.map(getSymbol);
+      } else if (typeof value === 'string') {
+        vec = value.split(',').map(getSymbol);
+      }
+      const [jx, jy, jz] = vec;
+      return [
+        [jx, 0, 0],
+        [0, jy, 0],
+        [0, 0, jz]
+      ];
+    }
+  } catch (e) {
+    console.error("Matrix Calc Error", e);
+    return null;
+  }
+  return null;
+};
 
 export default App
