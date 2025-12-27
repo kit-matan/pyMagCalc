@@ -23,6 +23,7 @@ class MagCalcConfigBuilder:
                 "single_ion_anisotropy": [],
                 "anisotropic_exchange": [],
                 "interaction_matrix": [],
+                "kitaev": [],
                 "applied_field": {}
             },
             "parameters": {},
@@ -407,6 +408,23 @@ class MagCalcConfigBuilder:
             entry["distance"] = distance
         self.config["interactions"]["dm_interaction"].append(entry)
 
+    def _add_kitaev_entry(self, lbl_i, lbl_j, offset, val, bond_dir, distance=None):
+        # Deduplicate
+        for entry in self.config["interactions"]["kitaev"]:
+            if entry["pair"] == [lbl_i, lbl_j] and entry["rij_offset"] == list(map(int, offset)):
+                return
+        
+        entry = {
+            "type": "kitaev",
+            "pair": [lbl_i, lbl_j],
+            "rij_offset": list(map(int, offset)),
+            "K": val,
+            "bond_direction": bond_dir
+        }
+        if distance:
+            entry["distance"] = distance
+        self.config["interactions"]["kitaev"].append(entry)
+
     def _add_heisenberg_entry(self, lbl_i, lbl_j, offset, val, distance=None):
         # Deduplicate
         for entry in self.config["interactions"]["heisenberg"]:
@@ -495,15 +513,11 @@ class MagCalcConfigBuilder:
         self.config["calculation_settings"].update(kwargs)
 
 
-    def add_single_ion_anisotropy(self, label: str, value: Any, axis: str = "z"):
+    def add_single_ion_anisotropy(self, label: str, value: Any, axis: List[float] = None):
         """
-        Add Uniaxial SIA: D(Sz)^2.
+        Add Uniaxial SIA: D(S . n)^2.
         Propagated to all equivalent atoms (same label prefix).
-        Current magcalc limitation: Only global Z axis or simple scalar D.
         """
-        # Find all atoms with this label prefix/match?
-        # If we use add_wyckoff_atom, atoms are "Cu0", "Cu1".
-        # If user says label="Cu", applies to all "CuX".
         base_label = label
         
         interactions = []
@@ -512,10 +526,49 @@ class MagCalcConfigBuilder:
                 interactions.append({
                     "type": "sia",
                     "atom_label": a['label'],
-                    "K_global": value # Assuming value is string "D" or float
+                    "K": value,
+                    "axis": axis if axis is not None else [0,0,1]
                 })
         
         self.config["interactions"]["single_ion_anisotropy"].extend(interactions)
+
+    def add_kitaev_interaction(self, ref_pair: Tuple[str, str], K: Any, bond_direction: str, 
+                               distance: float = None, offset: List[int] = None):
+        """
+        Add Kitaev interaction and propagate it by symmetry.
+        """
+        if not self.symmetry_ops:
+             logger.warning("No symmetry operations loaded. Cannot propagate.")
+             return
+
+        # Simple manual entry for now (similar to others)
+        # We might want to use full symmetry propagation eventually,
+        # but for Kitaev it's often better to specify them by bond type.
+        # However, for consistency, let's treat it like Heisenberg/DM.
+        
+        # 1. Resolve atoms and find best offset
+        idx_i = self._atom_label_to_idx[ref_pair[0]]
+        idx_j = self._atom_label_to_idx[ref_pair[1]]
+        pos_i = np.array(self.atoms_uc[idx_i]["pos"])
+        pos_j_uc = np.array(self.atoms_uc[idx_j]["pos"])
+        
+        if offset is not None:
+            best_offset = np.array(offset)
+        else:
+            # Simple nearest image search
+            best_offset = [0,0,0]
+            best_d = 1e9
+            from itertools import product
+            rng = [-1, 0, 1]
+            for u, v, w in product(rng, repeat=3):
+                p_j = pos_j_uc + np.array([u, v, w])
+                d = np.linalg.norm((p_j - pos_i) @ self.lattice_vectors)
+                if 0.01 < d < best_d:
+                    best_d = d
+                    best_offset = [u, v, w]
+            if distance is None: distance = best_d
+
+        self._add_kitaev_entry(ref_pair[0], ref_pair[1], best_offset, K, bond_direction, distance)
 
     def set_field(self, magnitude: Any, direction: Union[List[float], str, List[str]]):
         """Set external magnetic field."""
@@ -593,6 +646,7 @@ class MagCalcConfigBuilder:
             "pos": pos,
             "spin_S": spin
         })
+        self.config["crystal_structure"]["atoms_uc"] = self.atoms_uc
         self._atom_label_to_idx[label] = len(self.atoms_uc) - 1
 
     def _wrap_pos(self, pos, tol=1e-5):

@@ -10,7 +10,7 @@
 ## Key Features
 
 *   **pyMagCalc Studio:** Interactive web GUI for designing models from CIF files and symmetry-based bonding rules.
-*   **Symmetry-Aware Mechanics:** Automatically propagates Heisenberg ($J$), DM ($D$), and Anisotropic Exchange ($T$) rules across the crystal using space-group symmetry operators (via `pymatgen` and `spglib`).
+*   **Symmetry-Aware Mechanics:** Automatically propagates Heisenberg ($J$), DM ($D$), Anisotropic Exchange ($T$), and **Kitaev ($K$)** rules across the crystal using space-group symmetry operators (via `pymatgen` and `spglib`).
 *   **Robust CIF Import:** Imports crystal structures from CIF files, automatically detecting symmetry and reducing to unique Wyckoff positions for a clean workflow.
 *   **Diffraction Physics:** Calculates spin-wave dispersion and dynamic structure factors $S(Q,\omega)$ with magnetic form factor and polarization factor corrections.
 *   **Energy Minimization:** Numerically finds the classical magnetic ground state by minimizing the Hamiltonian energy, supporting **parallel multistart** and **early stopping** for robust convergence.
@@ -155,7 +155,7 @@ mc.plot_magnetic_structure(calc.sm.atom_pos(), min_res.x, show_plot=True)
 The core of `pyMagCalc` is the declarative YAML configuration (e.g., `config_modern.yaml`). It defines:
 
 *   **Structure**: Lattice vectors and atoms.
-*   **Interactions**: Heisenberg ($J$), DM ($D$), Single-Ion Anisotropy, etc.
+*   **Interactions**: Heisenberg ($J$), DM ($D$), Anisotropic Exchange ($K, \Gamma, \Gamma'$), Kitaev, and Single-Ion Anisotropy (SIA) with arbitrary axes.
 *   **Minimization**: Initial guess (`initial_configuration`) and method.
 *   **Plotting**: Options like `show_plot`, `plot_structure`, and axis limits.
 

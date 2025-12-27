@@ -84,8 +84,16 @@ class SIAInteraction(InteractionBase):
     type: Literal['sia']
     atom_label: Optional[str] = None
     K: Optional[ParamValue] = None
-    K: Optional[ParamValue] = None
     axis: Optional[Vector3] = None
+    sia_type: Literal['uniaxial', 'easy_plane'] = 'uniaxial'
+
+class KitaevInteraction(InteractionBase):
+    type: Literal['kitaev']
+    pair: List[str]
+    K: ParamValue
+    bond_direction: Literal['x', 'y', 'z']
+    rij_offset: Vector3 = [0.0, 0.0, 0.0]
+    distance: Optional[float] = None
 
 class AnisotropicExchangeInteraction(InteractionBase):
     type: Literal['anisotropic_exchange']
@@ -95,7 +103,15 @@ class AnisotropicExchangeInteraction(InteractionBase):
     
 
 # Union for validation
-InteractionType = Union[HeisenbergInteraction, DMInteraction, DMManualInteraction, SIAInteraction, AnisotropicExchangeInteraction, InteractionBase]
+InteractionType = Union[
+    HeisenbergInteraction, 
+    DMInteraction, 
+    DMManualInteraction, 
+    SIAInteraction, 
+    AnisotropicExchangeInteraction, 
+    KitaevInteraction,
+    InteractionBase
+]
 
 # --- Transformations ---
 class TransformationFrame(BaseModel):

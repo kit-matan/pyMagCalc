@@ -10,6 +10,7 @@ import logging
 from typing import Dict, List, Tuple, Any, Union
 from itertools import product
 
+import os, sys
 logger = logging.getLogger(__name__)
 if not logger.hasHandlers():
     handler = logging.StreamHandler()
@@ -216,7 +217,7 @@ def mpr_from_config(
 
 def spin_interactions_from_config(
     symbolic_params_map: Dict[str, sp.Symbol],
-    config_interactions: Union[Dict[str, Any], List[Dict[str, Any]]],
+    config_interactions: List[Dict[str, Any]],
     atom_pos_uc_cartesian: np.ndarray,
     atom_pos_ouc_cartesian: np.ndarray,
     unit_cell_vectors_cartesian: np.ndarray,
@@ -314,8 +315,9 @@ def spin_interactions_from_config(
         else:
             logger.error(f"DM expansion skip: {label_i}-{label_j} offset {offset_frac}")
 
-    # Anisotropic Exchange
-    for kex_inter_def in config_interactions.get("anisotropic_exchange", []):
+    # Anisotropic Exchange / Interaction Matrix
+    kex_list = config_interactions.get("anisotropic_exchange", []) + config_interactions.get("interaction_matrix", [])
+    for kex_inter_def in kex_list:
         if "pair" not in kex_inter_def: continue
         label_i, label_j = kex_inter_def["pair"]
         offset_frac = kex_inter_def.get("rij_offset", [0, 0, 0])
@@ -324,11 +326,40 @@ def spin_interactions_from_config(
 
         if idx_i_uc is not None and idx_j_ouc is not None:
             K_vals = kex_inter_def.get("value")
-            K_vec_sym = sp.Matrix([
-                sp.sympify(c, locals=sympify_locals) if isinstance(c, str) else sp.S(c)
-                for c in K_vals
-            ])
-            _kex_matrix_python_list[idx_i_uc][idx_j_ouc] = K_vec_sym
+            if isinstance(K_vals, list) and len(K_vals) > 0 and isinstance(K_vals[0], list):
+                 # Full 3x3 matrix
+                 K_mat_sym = sp.Matrix([
+                    [sp.sympify(c, locals=sympify_locals) if isinstance(c, str) else sp.S(c) for c in row]
+                    for row in K_vals
+                 ])
+                 _kex_matrix_python_list[idx_i_uc][idx_j_ouc] = K_mat_sym
+            else:
+                # Vector [Jxx, Jyy, Jzz]
+                K_vec_sym = sp.Matrix([
+                    sp.sympify(c, locals=sympify_locals) if isinstance(c, str) else sp.S(c)
+                    for c in K_vals
+                ])
+                _kex_matrix_python_list[idx_i_uc][idx_j_ouc] = K_vec_sym
+
+    # Kitaev Interaction
+    for kitaev_def in config_interactions.get("kitaev", []):
+        if "pair" not in kitaev_def: continue
+        label_i, label_j = kitaev_def["pair"]
+        offset_frac = kitaev_def.get("rij_offset", [0, 0, 0])
+        idx_i_uc = _atom_label_to_index_uc.get(label_i)
+        idx_j_ouc = find_j_ouc(label_j, offset_frac)
+
+        if idx_i_uc is not None and idx_j_ouc is not None:
+            K_val = kitaev_def.get("K") or kitaev_def.get("value")
+            bond_dir = kitaev_def.get("bond_direction", "x").lower()
+            K_sym = symbolic_params_map.get(K_val, sp.Symbol(K_val)) if isinstance(K_val, str) else sp.S(K_val)
+            
+            K_vec = [sp.S(0)] * 3
+            if bond_dir == 'x': K_vec[0] = K_sym
+            elif bond_dir == 'y': K_vec[1] = K_sym
+            elif bond_dir == 'z': K_vec[2] = K_sym
+            
+            _kex_matrix_python_list[idx_i_uc][idx_j_ouc] = sp.Matrix(K_vec)
 
     DM_matrix_sym = sp.Matrix(N_atom_uc, N_atom_ouc, lambda r, c: _dm_matrix_python_list[r][c])
     Kex_matrix_sym = sp.Matrix(N_atom_uc, N_atom_ouc, lambda r, c: _kex_matrix_python_list[r][c])
@@ -351,7 +382,7 @@ def Hamiltonian_from_config(
             f"Sxyz_operators_ouc len {len(Sxyz_operators_ouc)} != atom_pos_ouc len {len(atom_pos_ouc)}."
         )
     
-    interactions_config = config_data["interactions"]
+    interactions_config = config_data.get("interactions", {})
     if isinstance(interactions_config, list):
         grouped = {}
         for inter in interactions_config:
@@ -371,7 +402,6 @@ def Hamiltonian_from_config(
     )
     HM_expr = sp.S(0)
     phys_consts = config_data.get("physical_constants", {})
-    # Use sp.Float to match spin_model.py if it uses Python floats
     gamma_val = float(phys_consts.get("g_factor", 2.0))
     mu_B_val = float(phys_consts.get("bohr_magneton_meV_T", 5.7883818066e-2))
 
@@ -390,7 +420,7 @@ def Hamiltonian_from_config(
 
             # DM Interaction
             DM_vec_ij = DM_matrix_sym[i, j_ouc]
-            if isinstance(DM_vec_ij, sp.Matrix) and not DM_vec_ij.is_zero_matrix:
+            if hasattr(DM_vec_ij, "is_zero_matrix") and DM_vec_ij.is_zero_matrix is not True:
                 Dx_ij, Dy_ij, Dz_ij = DM_vec_ij[0], DM_vec_ij[1], DM_vec_ij[2]
                 term_DM = (
                     Dx_ij * (S_i[1] * S_j_ouc[2] - S_i[2] * S_j_ouc[1])
@@ -399,26 +429,44 @@ def Hamiltonian_from_config(
                 )
                 HM_expr += 0.5 * term_DM
 
-            # Anisotropic Exchange
-            K_vec_ij = Kex_matrix_sym[i, j_ouc]
-            if isinstance(K_vec_ij, sp.Matrix) and not K_vec_ij.is_zero_matrix:
-                HM_expr += 0.5 * (
-                    K_vec_ij[0] * S_i[0] * S_j_ouc[0] +
-                    K_vec_ij[1] * S_i[1] * S_j_ouc[1] +
-                    K_vec_ij[2] * S_i[2] * S_j_ouc[2]
-                )
+            # Anisotropic Exchange / Kitaev
+            K_mat_ij = Kex_matrix_sym[i, j_ouc]
+            if hasattr(K_mat_ij, "is_zero_matrix") and K_mat_ij.is_zero_matrix is not True:
+                if K_mat_ij.shape == (3, 3):
+                    term = 0.5 * (S_i.T * K_mat_ij * S_j_ouc)[0, 0]
+                    HM_expr += term
+                else:
+                    term = 0.5 * (
+                        K_mat_ij[0] * S_i[0] * S_j_ouc[0] +
+                        K_mat_ij[1] * S_i[1] * S_j_ouc[1] +
+                        K_mat_ij[2] * S_i[2] * S_j_ouc[2]
+                    )
+                    HM_expr += term
+                print(f"DEBUG: HM_from_config - Added K term, cumulative count: {len(HM_expr.as_ordered_terms())}")
 
         atom_i_label = _atom_index_to_label_uc.get(i)
         if atom_i_label:
-            for sia_def in interactions_config.get("single_ion_anisotropy", []):
+            sia_list = interactions_config.get("single_ion_anisotropy", []) + interactions_config.get("sia", [])
+            for sia_def in sia_list:
                 if sia_def.get("atom_label") == atom_i_label:
-                    if sia_def.get("type") == "uniaxial_K_Sz_sq_global":
-                        K_val_str = sia_def.get("K_global")
+                    stype = sia_def.get("type", "sia")
+                    if stype == "uniaxial_K_Sz_sq_global":
+                        K_val_str = sia_def.get("K") or sia_def.get("K_global") or sia_def.get("value")
                         if K_val_str:
-                            HM_expr += (
-                                symbolic_parameters.get(K_val_str, sp.Symbol(K_val_str))
-                                * S_i[2, 0] ** 2
-                            )
+                            K_sym = symbolic_parameters.get(K_val_str, sp.Symbol(K_val_str)) if isinstance(K_val_str, str) else sp.S(K_val_str)
+                            HM_expr += K_sym * S_i[2, 0] ** 2
+                    elif stype == "sia":
+                        K_val = sia_def.get("K") or sia_def.get("value")
+                        if K_val is not None:
+                            K_sym = symbolic_parameters.get(K_val, sp.Symbol(K_val)) if isinstance(K_val, str) else sp.S(K_val)
+                            axis = sia_def.get("axis", [0, 0, 1])
+                            axis_vec = np.array(axis, dtype=float)
+                            norm = np.linalg.norm(axis_vec)
+                            if norm > 1e-9: axis_vec /= norm
+                            axis_sym = sp.Matrix(axis_vec)
+                            
+                            S_dot_n = (S_i.T * axis_sym)[0, 0]
+                            HM_expr += K_sym * S_dot_n ** 2
 
         H_field_config = interactions_config.get("applied_field", {})
         if H_field_config:
@@ -437,8 +485,6 @@ def Hamiltonian_from_config(
                     if isinstance(h_dir_val, (list, tuple, np.ndarray, sp.Matrix)):
                         for k_ax in range(3):
                             actual_H_vector_sympy_comps[k_ax] = h_dir_val[k_ax] * H_mag_val_sym
-                    else:
-                        pass
                 elif isinstance(H_vec_config, (list, tuple)):
                     direction_H_numeric = np.array(H_vec_config, dtype=float)
                     norm_dir = np.linalg.norm(direction_H_numeric)
@@ -448,10 +494,6 @@ def Hamiltonian_from_config(
                             actual_H_vector_sympy_comps[k_ax] = (
                                 unit_dir_H[k_ax] * H_mag_val_sym
                             )
-                    elif not H_mag_val_sym.is_zero:
-                        logger.warning(
-                            f"Field symbol '{H_mag_symbol_name}' has zero direction. Field term is zero."
-                        )
             else:
                 if isinstance(H_vec_config, str):
                     h_vec_val = symbolic_parameters.get(H_vec_config, sp.Symbol(H_vec_config))
@@ -472,22 +514,19 @@ def Hamiltonian_from_config(
                 HM_expr += gamma_val * mu_B_val * Zeeman_dot_product
     return HM_expr.expand()
 
+
 # --- Standard Interface Wrappers for Runner/Core Compatibility ---
 config: Dict[str, Any] = {}
+
 
 def _params_list_to_dict(params_list):
     if isinstance(params_list, dict):
         return params_list
-    # Try model_params or parameters to get keys and their shapes
-    # Try model_params or parameters to get keys and their shapes
     p_dict = config.get("model_params") or config.get("parameters") or {}
     
-    # Use explicit parameter_order if available to ensure alignment with MagCalc passed list
     if config.get("parameter_order"):
         keys = config.get("parameter_order")
-        # Ensure we only use keys that exist in p_dict (though runner.py enforces this)
         keys = [k for k in keys if k in p_dict]
-        # Append any remaining keys from p_dict that are not in order list (just in case)
         remaining_keys = [k for k in p_dict.keys() if k not in keys]
         keys.extend(remaining_keys)
     else:
@@ -501,15 +540,11 @@ def _params_list_to_dict(params_list):
             
         val = p_dict[k]
         if isinstance(val, (list, tuple, np.ndarray)):
-            # It's a vector/list parameter
             ndim = len(val)
-            # Robust Check: if the current element is already a sequence, use it directly.
-            # This handles cases where params_list is already nested (legacy behavior or core.py params_sym).
             if isinstance(params_list[p_idx], (list, tuple, np.ndarray, sp.Matrix)):
                 result[k] = params_list[p_idx]
                 p_idx += 1
             else:
-                # Flat list: take ndim elements
                 result[k] = params_list[p_idx : p_idx + ndim]
                 p_idx += ndim
         else:
@@ -518,16 +553,19 @@ def _params_list_to_dict(params_list):
             
     return result
 
+
 def unit_cell():
     if not config:
         raise RuntimeError("generic_spin_model: config not injected.")
     return unit_cell_from_config(config.get("crystal_structure", {}))
+
 
 def atom_pos():
     if not config:
         raise RuntimeError("generic_spin_model: config not injected.")
     uc = unit_cell()
     return atom_pos_from_config(config.get("crystal_structure", {}), uc)
+
 
 def atom_pos_ouc():
     if not config:
@@ -536,19 +574,18 @@ def atom_pos_ouc():
     pos_uc = atom_pos()
     return atom_pos_ouc_from_config(pos_uc, uc, config.get("calculation_settings", {}))
 
+
 def mpr(symbolic_params):
     if not config:
         raise RuntimeError("generic_spin_model: config not injected.")
     return mpr_from_config(config, _params_list_to_dict(symbolic_params))
 
+
 def Hamiltonian(Sxyz_operators_ouc: List[sp.Matrix], symbolic_parameters: Union[List[sp.Symbol], Dict[str, sp.Symbol]]) -> sp.Expr:
     if not config:
         raise RuntimeError("generic_spin_model: config not injected.")
-    param_map = _params_list_to_dict(symbolic_parameters)
-    logger.debug(f"DEBUG: Hamiltonian called with param_map keys: {list(param_map.keys())}")
-    for k, v in param_map.items():
-        logger.debug(f"DEBUG: param_map[{k}] type: {type(v)}, value: {v}")
-    return Hamiltonian_from_config(Sxyz_operators_ouc, param_map, config)
+    return Hamiltonian_from_config(Sxyz_operators_ouc, _params_list_to_dict(symbolic_parameters), config)
+
 
 def spin_interactions(symbolic_params):
     if not config:
@@ -558,17 +595,13 @@ def spin_interactions(symbolic_params):
     pos_ouc = atom_pos_ouc()
     return spin_interactions_from_config(_params_list_to_dict(symbolic_params), config.get("interactions", {}), pos_uc, pos_ouc, uc)
 
+
 def set_magnetic_structure(thetas, phis):
-    # Update the config dictionary in-memory so subsequent mpr() calls use optimized structure
     if not config:
         return
-    
     nspins = len(thetas)
-    # Ensure initialization section exists
     if "minimization" not in config:
         config["minimization"] = {}
-    
-    # Rebuild intial_configuration list
     new_conf = []
     for i in range(nspins):
         new_conf.append({
@@ -577,7 +610,3 @@ def set_magnetic_structure(thetas, phis):
             "phi": float(phis[i])
         })
     config["minimization"]["initial_configuration"] = new_conf
-    # Also clear any cache relating to Ud if possible?
-    # generic_spin_model is stateless, but if core.py caches Ud, it might need refresh.
-    # But runner.py runs minimization BEFORE initializing main MagCalc.
-    # So Main MagCalc will see updated config. Correct.

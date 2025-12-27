@@ -179,7 +179,8 @@ function App() {
       { type: 'heisenberg', ref_pair: ['Cu0', 'Cu9'], distance: 5.2572, value: 'J3', offset: [0, 0, 0] }
     ],
     explicit_interactions: [],
-    parameters: { S: 1.0, H_mag: 20.0, H_dir: [0, 0, 1], J1: 2.49, J2: 2.79, J3: 5.05, G1: 0.28, Dx: 2.67 },
+    single_ion_anisotropy: [],
+    parameters: { S: 1.0, H_mag: 20.0, H_dir: [0, 0, 1], J1: 2.49, J2: 2.79, J3: 5.05, G1: 0.28, Dx: 2.67, D: 0.0 },
     tasks: {
       run_minimization: true,
       run_dispersion: true,
@@ -257,7 +258,8 @@ function App() {
             },
             interactions: {
               symmetry_rules: config.symmetry_interactions,
-              list: interactionMode === 'explicit' ? config.explicit_interactions : undefined
+              list: interactionMode === 'explicit' ? config.explicit_interactions : undefined,
+              single_ion_anisotropy: config.single_ion_anisotropy || []
             },
             parameters: config.parameters
           }
@@ -1222,8 +1224,21 @@ function App() {
                               }} />
                             </div>
                             <div className="input-group">
-                              <label>Value</label>
-                              {inter.type === 'interaction_matrix' && Array.isArray(inter.value) ? (
+                              <label>{inter.type === 'kitaev' ? 'Coupling (K)' : 'Value'}</label>
+                              {inter.type === 'kitaev' ? (
+                                <div className="flex gap-2">
+                                  <input type="text" className="minimal-input accent-text flex-1" value={inter.value || inter.K} onChange={(e) => {
+                                    const next = [...config.symmetry_interactions]; next[idx].value = e.target.value; setConfig({ ...config, symmetry_interactions: next })
+                                  }} />
+                                  <select className="minimal-select w-16" value={inter.bond_direction || 'x'} onChange={(e) => {
+                                    const next = [...config.symmetry_interactions]; next[idx].bond_direction = e.target.value; setConfig({ ...config, symmetry_interactions: next })
+                                  }}>
+                                    <option value="x">X</option>
+                                    <option value="y">Y</option>
+                                    <option value="z">Z</option>
+                                  </select>
+                                </div>
+                              ) : (inter.type === 'interaction_matrix' && Array.isArray(inter.value)) ? (
                                 <div className="grid grid-cols-3 gap-1 bg-black/20 p-xs rounded border border-color/30">
                                   {inter.value.map((row, r) => row.map((cell, c) => (
                                     <input
@@ -1262,6 +1277,7 @@ function App() {
                                 <option value="heisenberg">Heisenberg</option>
                                 <option value="dm">DM Interaction</option>
                                 <option value="anisotropic_exchange">Anisotropic</option>
+                                <option value="kitaev">Kitaev</option>
                               </select>
                             </div>
                           </div>
@@ -1287,7 +1303,72 @@ function App() {
                       ))}
                     </div>
 
-                    <div className="mt-md">
+                    <div className="mt-xl border-t border-color/30 pt-xl">
+                      <div className="flex-between mb-lg">
+                        <h2 className="section-title compact mb-0">Single-Ion Anisotropy</h2>
+                        <button className="btn btn-secondary btn-sm" onClick={() => {
+                          const next = [...(config.single_ion_anisotropy || []), { type: 'sia', atom_label: config.wyckoff_atoms[0]?.label || 'Cu', value: 'D', axis: [0, 0, 1] }];
+                          const nextParams = { ...config.parameters };
+                          if (!nextParams.D) nextParams.D = 0.0;
+                          setConfig({ ...config, single_ion_anisotropy: next, parameters: nextParams });
+                        }}><Plus size={14} /> Add SIA</button>
+                      </div>
+
+                      <div className="interaction-grid">
+                        {(config.single_ion_anisotropy || []).map((sia, idx) => (
+                          <div key={idx} className="interaction-card animate-fade-in">
+                            <div className="interaction-header">
+                              <div className="interaction-info">
+                                <div className="interaction-icon-box">
+                                  <Zap size={16} />
+                                </div>
+                                <div>
+                                  <span className="interaction-type">Single-Ion Anisotropy</span>
+                                  <span className="interaction-subtitle">Atom: {sia.atom_label}</span>
+                                </div>
+                              </div>
+                              <button onClick={() => {
+                                const next = config.single_ion_anisotropy.filter((_, i) => i !== idx);
+                                setConfig({ ...config, single_ion_anisotropy: next })
+                              }} className="icon-btn text-error"><Trash2 size={14} /></button>
+                            </div>
+
+                            <div className="interaction-params">
+                              <div className="input-group">
+                                <label>Atom Label</label>
+                                <select className="minimal-select" value={sia.atom_label} onChange={(e) => {
+                                  const next = [...config.single_ion_anisotropy]; next[idx].atom_label = e.target.value; setConfig({ ...config, single_ion_anisotropy: next })
+                                }}>
+                                  {config.wyckoff_atoms.map(a => <option key={a.label} value={a.label}>{a.label}</option>)}
+                                </select>
+                              </div>
+                              <div className="input-group">
+                                <label>K / D Constant</label>
+                                <input type="text" className="minimal-input accent-text" value={sia.value} onChange={(e) => {
+                                  const next = [...config.single_ion_anisotropy]; next[idx].value = e.target.value; setConfig({ ...config, single_ion_anisotropy: next })
+                                }} />
+                              </div>
+                              <div className="input-group">
+                                <label>Anisotropy Axis</label>
+                                <div className="vector-input-grid">
+                                  {[0, 1, 2].map(k => (
+                                    <input key={k} type="number" step="0.1" className="table-input center" value={sia.axis[k]} onChange={(e) => {
+                                      const next = [...config.single_ion_anisotropy];
+                                      const nextAxis = [...next[idx].axis];
+                                      nextAxis[k] = parseFloat(e.target.value);
+                                      next[idx].axis = nextAxis;
+                                      setConfig({ ...config, single_ion_anisotropy: next })
+                                    }} />
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="mt-md border-t border-color/30 pt-xl">
                       <h3 className="section-title text-sm mb-sm">Symmetry Analysis</h3>
                       <div className="flex gap-2 mb-sm items-center">
                         <button className="btn btn-secondary btn-sm" onClick={fetchBondOrbits}>

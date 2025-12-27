@@ -57,7 +57,7 @@ Open `config.yaml` and define your physics.
 
 **Key Sections:**
 -   `crystal_structure`: Lattice parameters and atom positions.
--   `interactions`: Heisenberg ($J$), Dzyaloshinskii-Moriya ($D$), and Single-Ion Anisotropy ($K$).
+-   `interactions`: Heisenberg ($J$), Dzyaloshinskii-Moriya ($D$), Anisotropic Exchange, Kitaev, and Single-Ion Anisotropy ($K$).
 -   `minimization`: Settings for finding the ground state.
     -   `initial_configuration`: **Crucial** for complex systems to avoid local minima. define `theta` and `phi` for each atom.
     -   `n_workers`: Number of CPU cores for parallel minimization (default: 1).
@@ -109,7 +109,7 @@ crystal_structure:
 ```
 
 ### Interactions
-Support for Heisenberg exchange and Dzyaloshinskii-Moriya (DM) interactions.
+Support for Heisenberg, DM, Kitaev, and Single-Ion Anisotropy (SIA) interactions.
 
 ```yaml
 interactions:
@@ -117,6 +117,18 @@ interactions:
     - pair: ["Fe1", "Fe1"]
       J: "J1"
       rij_offset: [0.5, 0.0, 0.0]
+  kitaev:
+    - pair: ["Fe1", "Fe1"]
+      K: "K_kit"
+      rij_offset: [0.5, 0.5, 0.0]
+  single_ion_anisotropy:
+    - atom_label: "Fe1"
+      value: "D_sia"
+      axis: [0, 0, 1]
+    - atom_label: "Fe1"
+      value: "E_sia"
+      axis: [1, 1, 0]
+```
 
 ### Data Export (CSV)
 To export your results to a readable CSV format (compatible with Excel/Origin):

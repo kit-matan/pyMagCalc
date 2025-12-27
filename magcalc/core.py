@@ -498,8 +498,20 @@ class MagCalc:
                 else: flat.append(item)
             return flat
 
-        self.hamiltonian_params = _flatten(self._params_val_raw)
-        self.params_sym_flat = _flatten(self._params_sym_raw)
+        temp_val_flat = _flatten(self._params_val_raw)
+        temp_sym_flat = _flatten(self._params_sym_raw)
+        
+        self.hamiltonian_params = []
+        self.params_sym_flat = []
+        
+        # Avoid duplicate symbols by filtering out special symbols handled separately
+        special_names = {"kx", "ky", "kz", "S"}
+        for val, sym in zip(temp_val_flat, temp_sym_flat):
+            if sym.name not in special_names:
+                self.hamiltonian_params.append(val)
+                self.params_sym_flat.append(sym)
+            else:
+                logger.debug(f"Filtering out special parameter '{sym.name}' from generic parameter list to avoid duplicates.")
 
         self.kx, self.ky, self.kz = sp.symbols("kx ky kz", real=True)
         self.k_sym: List[sp.Symbol] = [self.kx, self.ky, self.kz]
@@ -1025,9 +1037,6 @@ class MagCalc:
         # Hamiltonian_from_config already calls .expand()
         raw_hamiltonian_from_config = hamiltonian_sym_config  # Rename for clarity
         logger.debug(
-            f"Config-driven: Raw Hamiltonian from config (first 1000 chars): {str(raw_hamiltonian_from_config)[:1000]}"
-        )
-        logger.debug(
             f"Config-driven: Raw Hamiltonian from config has {len(raw_hamiltonian_from_config.as_ordered_terms())} terms."
         )
 
@@ -1073,17 +1082,15 @@ class MagCalc:
 
         for term in terms_to_process:
             boson_ops_in_term = term.free_symbols.intersection(all_boson_ops_set)
-            # Heuristic: if a term has exactly one boson operator symbol among its free symbols,
-            # consider it a linear term to be removed. This is an approximation.
-            if len(boson_ops_in_term) == 1 and not term.has_only_symbol(
-                *boson_ops_in_term,
-                count_ops=True,
-                exact_powers=[(op, 1) for op in boson_ops_in_term],
-            ):  # A more refined check might be needed
-                logger.debug(f"Removing potential linear term: {term}")
-                linear_terms_removed_count += 1
-            else:
-                final_H2_terms.append(term)
+            if len(boson_ops_in_term) == 1:
+                # Heuristic: if a term has exactly one boson operator symbol, we check its degree
+                op = list(boson_ops_in_term)[0]
+                if term.count(op) == 1:
+                    logger.debug(f"Removing linear term: {term}")
+                    linear_terms_removed_count += 1
+                    continue
+            
+            final_H2_terms.append(term)
 
         if linear_terms_removed_count > 0:
             logger.info(
