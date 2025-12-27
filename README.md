@@ -38,14 +38,14 @@
 ## Dependencies
 
 *   Python (3.8+)
-*   NumPy
-*   SciPy
-*   SymPy
-*   Matplotlib
-*   tqdm
-*   PyYAML
-*   ASE (Atomistic Simulation Environment, used for CIF file reading)
-*   pytest (for testing)
+*   NumPy (>=1.20)
+*   SciPy (>=1.7.0)
+*   SymPy (>=1.9)
+*   Matplotlib (>=3.4.0)
+*   tqdm (>=4.60.0)
+*   PyYAML (>=5.4)
+*   ASE (>=3.22.0, for CIF file reading)
+*   pytest (>=7.0.0, for testing)
 
 ## Installation
 

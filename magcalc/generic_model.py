@@ -85,6 +85,13 @@ class GenericSpinModel:
     """
     A generic spin model that implements the required interface (unit_cell, atom_pos, Hamiltonian)
     by reading from a configuration dictionary.
+    
+    This class acts as a bridge between the declarative YAML configuration and the 
+    MagCalc calculation engine.
+    
+    Attributes:
+        config (Dict): The configuration dictionary.
+        atoms (Optional[ase.Atoms]): ASE atoms object if loaded from CIF.
     """
     def __init__(self, config, base_path="."):
         self.config = config
@@ -132,8 +139,16 @@ class GenericSpinModel:
         
     def _load_structure(self):
         """
-        Load crystal structure from config (Explicit or CIF).
-        Sets self._uc_vectors and self._r_pos (Cartesian).
+        Loads the crystal structure from the configuration.
+
+        This method handles two modes:
+        1. CIF File: Loads structure using ASE from a .cif file.
+        2. Explicit Definition: constructing unit cell vectors from lattice parameters
+           and atom positions from fractional or Cartesian coordinates.
+
+        Raises:
+            ValueError: If structure definition is missing or invalid.
+            ImportError: If ASE is required for CIF loading but not installed.
         """
         crystal_struct = self.config.get('crystal_structure', {})
         
@@ -366,7 +381,19 @@ class GenericSpinModel:
 
     def spin_interactions(self, p):
         """
-        Generate Jex and DM matrices based on interactions config.
+        Generates interaction matrices (Heisenberg, DM, Anisotropic) based on the configuration.
+
+        This method iterates through the `interactions` list in the configuration
+        and populates the interaction matrices/tensors for the Hamiltonian construction.
+
+        Args:
+            p (List[float]): List of numerical parameter values.
+
+        Returns:
+            Tuple[sp.Matrix, List[List[sp.Matrix]], List[List[sp.Matrix]]]:
+                - Jex: Heisenberg exchange matrix (N_atom x N_atom_ouc).
+                - DM: Dzyaloshinskii-Moriya vector matrix (N_atom x N_atom_ouc).
+                - Kex: Anisotropic exchange tensor matrix (N_atom x N_atom_ouc).
         """
         apos = self.atom_pos()
         N_atom = len(apos)
@@ -640,7 +667,18 @@ class GenericSpinModel:
 
     def Hamiltonian(self, Sxyz: List[Any], pr: List[Any]) -> sp.Expr:
         """
-        Define Hamiltonian using config logic.
+        Constructs the symbolic Hamiltonian expression.
+
+        This is the core method called by the MagCalc engine to build the Hamiltonian.
+        It aggregates Heisenberg, DM, Anisotropic Exchange, Single-Ion Anisotropy,
+        and Zeeman terms.
+
+        Args:
+            Sxyz (List[List[sp.Symbol]]): List of spin vector symbols [[Sx0, Sy0, Sz0], ...].
+            pr (List[Any]): List of symbolic parameters.
+
+        Returns:
+            sp.Expr: The full symbolic Hamiltonian expression.
         """
         # Parse params
         Jex, DM, Kex, p_rest, param_map = self._parse_hamiltonian_params(pr)

@@ -234,3 +234,8 @@ plotting:
     - 0
     - 10
   broadening_width: 0.2
+
+calculation:
+  cache_mode: none
+output:
+  export_csv: false

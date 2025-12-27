@@ -200,8 +200,8 @@ class MagCalc:
         spin_magnitude (float): Numerical value of the spin magnitude S.
         hamiltonian_params (List[float]): Numerical Hamiltonian parameters.
         cache_file_base (str): Base name for cache files.
-        cache_mode (str): Cache mode ('r' or 'w').
-        sm: The imported spin model module.
+        cache_mode (str): Cache mode ('r', 'w', 'auto', 'none').
+        sm: The imported spin model module or object.
         nspins (int): Number of spins in the magnetic unit cell.
         k_sym (List[sp.Symbol]): List of momentum symbols [kx, ky, kz].
         S_sym (sp.Symbol): Symbolic spin magnitude 'S'.
@@ -210,6 +210,11 @@ class MagCalc:
         HMat_sym (Optional[sp.Matrix]): Symbolic Hamiltonian matrix (2gH).
         Ud_sym (Optional[sp.Matrix]): Symbolic rotation matrix Ud.
         Ud_numeric (Optional[npt.NDArray[np.complex128]]): Numerical rotation matrix Ud.
+
+    Methods:
+        calculate_dispersion(q_list): Computes spin-wave energies for a list of Q-points.
+        calculate_sqw(q_list, omega_grids, ...): Computes S(Q,w) with convolution.
+        minimize_energy(x0, ...): Numerically finds the classical magnetic ground state.
     """
 
     def __init__(

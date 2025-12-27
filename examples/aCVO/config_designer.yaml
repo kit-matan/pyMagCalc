@@ -844,12 +844,12 @@ plotting:
   save_plot: true
   show_plot: false
   plot_structure: false
-  disp_plot_filename: CVO_propagation_disp.png
-  sqw_plot_filename: CVO_propagation_sqw.png
+  disp_plot_filename: CVO_designer_disp.png
+  sqw_plot_filename: CVO_designer_sqw.png
   energy_limits_disp: [0, 10]
   energy_limits_sqw: [0, 10]
-  disp_title: aCVO Dispersion (Propagation Config)
-  sqw_title: aCVO S(Q,w) (Propagatioin Config)
+  disp_title: aCVO Dispersion (Designer Config)
+  sqw_title: aCVO S(Q,w) (Designer Config)
   broadening_width: 0.2
 calculation:
   cache_mode: none

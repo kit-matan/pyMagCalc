@@ -662,3 +662,8 @@ tasks:
   minimization: true
   dispersion: true
   sqw_map: true
+
+calculation:
+  cache_mode: none
+output:
+  export_csv: false

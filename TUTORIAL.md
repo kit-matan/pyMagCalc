@@ -39,6 +39,8 @@ The Designer allows you to generate robust, symmetry-consistent configurations w
     -   **Configure Tasks**: Enable "Run Dispersion" or "Run S(Q,w)" in the Tasks tab.
 3.  **Save**: Click **"Save to Disk"**. This creates an expanded `config_designer.yaml` in your workspace root.
 
+    The app supports a seamless **Design -> Save -> Run** workflow. After saving, you can immediately run the configuration.
+
 ### Step 1: Initialize a Project (Legacy / Manual)
 If you prefer manual configuration, create a new template:
 
