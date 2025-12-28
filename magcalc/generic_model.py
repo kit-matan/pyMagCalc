@@ -956,7 +956,7 @@ class GenericSpinModel:
             # We keep them symbolic for the LSWT engine.
             pass
             
-            # print(f"DEBUG: subs_map={subs_map}")
+
             
             free_syms = list(HM.free_symbols)
             for sym in free_syms:
