@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
-import { Beaker, Database, Activity, Code, Download, Plus, Trash2, Settings, Box, Eye, EyeOff, Share2, Info, Magnet, Wind, Check, ChevronRight, Zap, Crosshair, FileText, BarChart2, Play, Image, ArrowDown, X, XCircle, Minus, ChevronDown } from 'lucide-react'
+import { Beaker, Database, Activity, Code, Download, Plus, Trash2, Settings, Box, Eye, EyeOff, Share2, Info, Magnet, Wind, Check, ChevronRight, Zap, Crosshair, FileText, BarChart2, Play, Image, ArrowDown, X, XCircle, Minus, ChevronDown, Search } from 'lucide-react'
+import spaceGroupsList from './data/space_groups.json';
 import yaml from 'js-yaml'
 import Visualizer from './components/Visualizer'
 import './App.css'
@@ -52,6 +53,11 @@ function App() {
   const [newParamName, setNewParamName] = useState('')
   const [calcLoading, setCalcLoading] = useState(false)
   const [calcResults, setCalcResults] = useState(null)
+
+  /* Space Group Search State */
+  const [sgSearch, setSgSearch] = useState("");
+  const [isSgDropdownOpen, setIsSgDropdownOpen] = useState(false);
+  const sgDropdownRef = React.useRef(null);
 
   const [calcError, setCalcError] = useState(null)
 
@@ -1091,9 +1097,67 @@ function App() {
 
                   <div className="grid-form border-t border-light pt-lg mt-md">
                     <div className="input-group">
-                      <label>Space Group (#)</label>
-                      <input type="number" value={config.lattice.space_group} className="minimal-input"
-                        onChange={(e) => updateField('lattice', 'space_group', parseInt(e.target.value))} />
+                      <label>SPACE GROUP</label>
+                      <div className="relative" ref={sgDropdownRef}>
+                        <div
+                          className="minimal-input flex-between cursor-pointer"
+                          onClick={() => setIsSgDropdownOpen(!isSgDropdownOpen)}
+                        >
+                          <span>
+                            {config.lattice.space_group ? (
+                              <>
+                                <span className="text-muted mr-xs">No. {config.lattice.space_group}</span>
+                                <span className="font-medium text-text">
+                                  {spaceGroupsList.find(s => s.number === config.lattice.space_group)?.symbol || ""}
+                                </span>
+                              </>
+                            ) : <span className="text-muted">Select Space Group...</span>}
+                          </span>
+                          <ChevronDown size={14} className={`transition-transform ${isSgDropdownOpen ? 'rotate-180' : ''}`} />
+                        </div>
+
+                        {isSgDropdownOpen && (
+                          <div className="absolute top-full left-0 w-full mt-1 bg-surface-2 border border-border rounded-lg shadow-xl z-50 max-h-60 flex flex-col animate-fade-in-up">
+                            <div className="p-2 border-b border-border sticky top-0 bg-surface-2">
+                              <div className="relative">
+                                <Search size={14} className="absolute left-2 top-2.5 text-muted" />
+                                <input
+                                  type="text"
+                                  className="sg-search-input"
+                                  placeholder="Search (e.g. 227 or Fd-3m)..."
+                                  value={sgSearch}
+                                  onChange={(e) => setSgSearch(e.target.value)}
+                                  autoFocus
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                              </div>
+                            </div>
+                            <div className="overflow-y-auto flex-1 p-1 custom-scrollbar">
+                              {spaceGroupsList.filter(sg =>
+                                sg.number.toString().includes(sgSearch) ||
+                                sg.symbol.toLowerCase().includes(sgSearch.toLowerCase())
+                              ).map(sg => (
+                                <div
+                                  key={sg.number}
+                                  className={`sg-dropdown-item ${config.lattice.space_group === sg.number ? 'selected' : ''}`}
+                                  onClick={() => {
+                                    updateField('lattice', 'space_group', sg.number);
+                                    setIsSgDropdownOpen(false);
+                                    setSgSearch("");
+                                  }}
+                                >
+                                  <span className="sg-number">{sg.number}</span>
+                                  <span className="sg-symbol">{sg.symbol}</span>
+                                  {config.lattice.space_group === sg.number && <Check size={14} className="text-accent" />}
+                                </div>
+                              ))}
+                              {spaceGroupsList.filter(sg => sg.number.toString().includes(sgSearch) || sg.symbol.toLowerCase().includes(sgSearch.toLowerCase())).length === 0 && (
+                                <div className="p-4 text-center text-xs text-muted">No space groups found.</div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
 

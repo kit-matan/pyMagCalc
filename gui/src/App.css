@@ -1230,3 +1230,52 @@ input:checked+.switch-slider:before {
   background: rgba(239, 68, 68, 0.1);
   color: var(--error-color);
 }
+
+/* Space Group Dropdown */
+.sg-dropdown-item {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.2s;
+  color: var(--text-primary);
+}
+
+.sg-dropdown-item:hover {
+  background: var(--surface-hover);
+}
+
+.sg-dropdown-item.selected {
+  background: rgba(14, 165, 233, 0.15);
+  color: var(--accent-color);
+}
+
+.sg-number {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  opacity: 0.6;
+  width: 40px;
+  /* Fixed width for alignment */
+}
+
+.sg-symbol {
+  font-weight: 500;
+  flex: 1;
+}
+
+.sg-search-input {
+  width: 100%;
+  background: var(--surface-1);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 8px 12px 8px 32px;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.sg-search-input:focus {
+  border-color: var(--accent-color);
+}
