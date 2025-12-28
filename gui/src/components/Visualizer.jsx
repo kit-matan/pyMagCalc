@@ -196,7 +196,7 @@ function CameraRig({ view }) {
     return null;
 }
 
-export default function Visualizer({ atoms, lattice, isDark, dimensionality, zFilter, bonds = [], onBondClick, selectedBond }) {
+export default function Visualizer({ atoms, lattice, isDark, bonds = [], onBondClick, selectedBond }) {
     const bgColor = isDark ? '#020617' : '#f8fafc'
     const gridMain = isDark ? '#1e293b' : '#cbd5e1'
     const gridSec = isDark ? '#0f172a' : '#f1f5f9'
@@ -204,9 +204,7 @@ export default function Visualizer({ atoms, lattice, isDark, dimensionality, zFi
 
     const matrix = getLatticeMatrix(lattice)
 
-    const filteredAtoms = (dimensionality === '2D' && zFilter)
-        ? atoms.filter(a => Math.abs(a.pos[2]) < 0.01 || Math.abs(a.pos[2] - 1.0) < 0.01)
-        : atoms
+    const filteredAtoms = atoms
 
     // Camera Actions
     const [viewMetric, setViewMetric] = useState(0); // Just a trigger
@@ -346,10 +344,7 @@ export default function Visualizer({ atoms, lattice, isDark, dimensionality, zFi
                             )
                         }
 
-                        if (dimensionality === '2D' && zFilter) {
-                            if (Math.abs(posI[2]) > 0.01 && Math.abs(posI[2] - 1.0) > 0.01) return null
-                            if (Math.abs(posJExpanded[2]) > 0.01 && Math.abs(posJExpanded[2] - 1.0) > 0.01) return null
-                        }
+
 
                         const labelOffset = bond.type === 'dm' ? [0, 0.4, 0] : [0, 0, 0]
 
@@ -388,11 +383,7 @@ export default function Visualizer({ atoms, lattice, isDark, dimensionality, zFi
                     })}
                 </group>
 
-                {dimensionality === '2D' ? (
-                    <gridHelper args={[20, 20, gridMain, gridSec]} rotation={[Math.PI / 2, 0, 0]} position={[0, 0, -0.1]} />
-                ) : (
-                    <gridHelper args={[20, 20, gridMain, gridSec]} rotation={[Math.PI / 2, 0, 0]} />
-                )}
+                <gridHelper args={[20, 20, gridMain, gridSec]} rotation={[Math.PI / 2, 0, 0]} />
             </Canvas>
         </div>
     )

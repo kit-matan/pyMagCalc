@@ -12,6 +12,7 @@ from typing import List, Dict, Any
 import asyncio
 import logging
 import uuid
+from itertools import product
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 import sys
@@ -342,7 +343,7 @@ async def get_neighbors(config: Dict[str, Any]):
         atom_mode = struct_data.get("atom_mode", "symmetry")
         
         # IMPORTANT: Set dimensionality BEFORE adding atoms so reduction logic triggers
-        builder.dimensionality = struct_data.get("dimensionality", "3D")
+
 
         if atom_mode == "explicit":
             # Treat Wyckoff atoms as the full unit cell directly
@@ -384,22 +385,15 @@ async def get_neighbors(config: Dict[str, Any]):
         except Exception as e:
             logging.getLogger().warning(f"Warning: Failed to detect symmetry in get_neighbors: {e}")
             
+        max_dist = config.get("max_distance", 10.0)
+        candidate_bonds = []
+
         # 3. Calculate Distances
         labels = [a['label'] for a in builder.atoms_uc]
         positions = [np.array(a['pos']) for a in builder.atoms_uc]
         lattice_vecs = builder.lattice_vectors
         
-        dimensionality = data.get("crystal_structure", {}).get("dimensionality", "3D")
-        
-        max_dist = 10.0
-        candidate_bonds = []
-        
-        from itertools import product
-        # Search a slightly larger cube of cells
-        if str(dimensionality).upper() in ["2D", "2"]:
-            offsets = [ (u, v, 0) for u, v in product([-1, 0, 1], repeat=2) ]
-        else:
-            offsets = list(product([-1, 0, 1], repeat=3))
+        offsets = list(product([-1, 0, 1], repeat=3))
         
         for i in range(len(positions)):
             for j in range(len(positions)):
@@ -571,7 +565,7 @@ async def analyze_bonds(config: Dict[str, Any]):
         struct_data = data.get("crystal_structure", {})
         wyckoff_atoms = struct_data.get("wyckoff_atoms", [])
         atom_mode = struct_data.get("atom_mode", "symmetry")
-        builder.dimensionality = struct_data.get("dimensionality", "3D")
+
 
         if atom_mode == "explicit":
             config_atoms = []
@@ -662,7 +656,7 @@ async def bond_constraints(payload: Dict[str, Any]):
         struct_data = data.get("crystal_structure", {})
         wyckoff_atoms = struct_data.get("wyckoff_atoms", [])
         atom_mode = struct_data.get("atom_mode", "symmetry")
-        builder.dimensionality = struct_data.get("dimensionality", "3D")
+
         if atom_mode == "explicit":
              config_atoms = [{"label": a.get("label"), "pos": a.get("pos"), "spin_S": a.get("spin_S")} for a in wyckoff_atoms]
              builder.atoms_uc = config_atoms
@@ -723,7 +717,7 @@ async def expand_config(config: Dict[str, Any]):
         struct_data = data.get("crystal_structure", {})
         wyckoff_atoms = struct_data.get("wyckoff_atoms", [])
         atom_mode = struct_data.get("atom_mode", "symmetry")
-        builder.dimensionality = data.get("crystal_structure", {}).get("dimensionality", "3D")
+
 
         if atom_mode == "explicit":
             # Treat Wyckoff atoms as the full unit cell directly
@@ -747,7 +741,7 @@ async def expand_config(config: Dict[str, Any]):
                 )
 
         # 2.5 Set Dimensionality
-        # builder.dimensionality = data.get("crystal_structure", {}).get("dimensionality", "3D")
+
         
         # 4. Global Parameters & Tasks
         builder.config["parameters"] = data.get("parameters", {})
@@ -859,7 +853,7 @@ async def expand_config(config: Dict[str, Any]):
         expanded_config = {
             "crystal_structure": {
                  **{k: v for k, v in builder.config["crystal_structure"].items() if k != "lattice_vectors"},
-                 "dimensionality": builder.dimensionality
+                 "dimensionality": 3
             },
             "interactions": final_inters,
             "magnetic_structure": data.get("magnetic_structure", {}),
@@ -907,7 +901,7 @@ async def get_unit_cell_atoms(config: Dict[str, Any]):
         struct_data = data.get("crystal_structure", {})
         wyckoff_atoms = struct_data.get("wyckoff_atoms", [])
         atom_mode = struct_data.get("atom_mode", "symmetry")
-        builder.dimensionality = struct_data.get("dimensionality", "3D")
+
 
         if atom_mode == "explicit":
             # Treat Wyckoff atoms as the full unit cell directly
@@ -960,7 +954,7 @@ async def get_visualizer_data(config: Dict[str, Any]):
         struct_data = data.get("crystal_structure", {})
         wyckoff_atoms = struct_data.get("wyckoff_atoms", [])
         atom_mode = struct_data.get("atom_mode", "symmetry")
-        builder.dimensionality = struct_data.get("dimensionality", "3D")
+
 
         # 1. Lattice
         lattice = data.get("crystal_structure", {}).get("lattice_parameters", {})

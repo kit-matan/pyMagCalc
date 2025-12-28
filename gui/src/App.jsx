@@ -48,7 +48,6 @@ function App() {
   const [previewAtoms, setPreviewAtoms] = useState([]) // Expanded atoms for visualizer
   const [bonds, setBonds] = useState([]) // Bonds for visualizer
   const [hiddenBondLabels, setHiddenBondLabels] = useState(new Set()) // Labels of bonds to hide
-  const [zFilter, setZFilter] = useState(false) // Filter for z=0 plane in 2D
   const [isAddingParam, setIsAddingParam] = useState(false)
   const [newParamName, setNewParamName] = useState('')
   const [calcLoading, setCalcLoading] = useState(false)
@@ -188,7 +187,7 @@ function App() {
 
 
   const DEMO_CONFIG = {
-    lattice: { a: 20.645, b: 8.383, c: 6.442, alpha: 90, beta: 90, gamma: 90, space_group: 43, dimensionality: '3D' },
+    lattice: { a: 20.645, b: 8.383, c: 6.442, alpha: 90, beta: 90, gamma: 90, space_group: 43 },
     wyckoff_atoms: [
       { label: 'Cu', pos: [0.16572, 0.3646, 0.7545], spin_S: 0.5 }
     ],
@@ -276,7 +275,7 @@ function App() {
               lattice_parameters: config.lattice,
               wyckoff_atoms: config.wyckoff_atoms,
               atom_mode: atomMode,
-              dimensionality: config.lattice.dimensionality
+              atom_mode: atomMode
             },
             interactions: {
               symmetry_rules: config.symmetry_interactions,
@@ -308,7 +307,7 @@ function App() {
     // Debounce slightly
     const timer = setTimeout(updatePreview, 500)
     return () => clearTimeout(timer)
-  }, [config.lattice, config.wyckoff_atoms, atomMode, config.lattice.dimensionality, config.symmetry_interactions, config.explicit_interactions, config.parameters, interactionMode])
+  }, [config.lattice, config.wyckoff_atoms, atomMode, config.symmetry_interactions, config.explicit_interactions, config.parameters, interactionMode])
 
   const exportPython = () => {
     let script = `from magcalc.config_builder import MagCalcConfigBuilder\n\n`
@@ -363,7 +362,7 @@ function App() {
   }
 
   const DEFAULT_CONFIG = {
-    lattice: { a: 5.0, b: 5.0, c: 5.0, alpha: 90, beta: 90, gamma: 90, space_group: 1, dimensionality: '3D' },
+    lattice: { a: 5.0, b: 5.0, c: 5.0, alpha: 90, beta: 90, gamma: 90, space_group: 1 },
     wyckoff_atoms: [],
     magnetic_elements: ["Cu"],
     symmetry_interactions: [],
@@ -453,9 +452,7 @@ function App() {
           if (doc.crystal_structure.lattice_vectors) {
             newConfig.lattice.lattice_vectors = doc.crystal_structure.lattice_vectors
           }
-          if (doc.crystal_structure.dimensionality) {
-            newConfig.lattice.dimensionality = doc.crystal_structure.dimensionality
-          }
+
 
           let atomsSource = null
           if (doc.crystal_structure.wyckoff_atoms) {
@@ -581,7 +578,7 @@ function App() {
         wyckoff_atoms: cleanAtoms,
         atom_mode: atomMode,
         magnetic_elements: config.magnetic_elements || ["Cu"],
-        dimensionality: config.lattice.dimensionality === '2D' ? 2 : (config.lattice.dimensionality === '3D' ? 3 : config.lattice.dimensionality)
+        dimensionality: 3
       },
       interactions: interactionMode === 'explicit' ? { list: config.explicit_interactions || [] } : {
         symmetry_rules: config.symmetry_interactions
@@ -719,7 +716,6 @@ function App() {
             crystal_structure: {
               lattice_parameters: config.lattice,
               wyckoff_atoms: config.wyckoff_atoms,
-              dimensionality: config.lattice.dimensionality,
               atom_mode: atomMode
             }
           }
@@ -1099,38 +1095,8 @@ function App() {
                       <input type="number" value={config.lattice.space_group} className="minimal-input"
                         onChange={(e) => updateField('lattice', 'space_group', parseInt(e.target.value))} />
                     </div>
-                    <div className="input-group">
-                      <label>Dimensionality</label>
-                      <select
-                        className="minimal-select"
-                        value={config.lattice.dimensionality || '3D'}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          updateField('lattice', 'dimensionality', val);
-                          if (val === '2D') {
-                            updateField('lattice', 'alpha', 90);
-                            updateField('lattice', 'beta', 90);
-                          }
-                        }}
-                      >
-                        <option value="3D">3D (Bulk)</option>
-                        <option value="2D">2D (Monolayer/Layered)</option>
-                      </select>
-                    </div>
                   </div>
 
-                  {config.lattice.dimensionality === '2D' && (
-                    <div className="mt-md p-md glass shadow-sm rounded-xl border border-blue-500/20 animate-fade-in">
-                      <div className="flex align-center gap-xs text-xs font-bold text-blue-400 mb-xs">
-                        <Info size={14} />
-                        <span>Note on 2D Symmetry</span>
-                      </div>
-                      <p className="text-xxs opacity-70 leading-relaxed">
-                        Symmetry operations (like the glide in SG 163) may generate multiple planes in a single unit cell.
-                        If processing a monolayer, consider using a non-glide space group or <strong>Explicit Unit Cell</strong> mode.
-                      </p>
-                    </div>
-                  )}
                 </div>
 
                 <div className="card mt-xl">
@@ -2462,9 +2428,6 @@ function App() {
                   bonds={bonds.filter(b => !hiddenBondLabels.has(getBondKey(b.rule_value || b.value)))}
                   lattice={config.lattice}
                   isDark={isDark}
-                  dimensionality={config.lattice.dimensionality}
-                  zFilter={zFilter}
-
                   onBondClick={setSelectedBond}
                   selectedBond={selectedBond}
                 />
@@ -2586,18 +2549,6 @@ function App() {
                         <ChevronDown size={14} className={`transition-transform duration-200 ${interactionMenuOpen ? 'rotate-180' : ''}`} />
                       </button>
                     </div>
-                  </div>
-                )}
-                {config.lattice.dimensionality === '2D' && (
-                  <div className="visualizer-overlay bottom-right">
-                    <button
-                      className={`btn btn-xs ${zFilter ? 'btn-primary' : 'btn-secondary glass'}`}
-                      onClick={() => setZFilter(!zFilter)}
-                      title="Filter to show only the Z=0 atomic plane"
-                    >
-                      <Eye size={12} className="mr-xs" />
-                      {zFilter ? "Show All Planes" : "Show Only Z=0"}
-                    </button>
                   </div>
                 )}
               </div>

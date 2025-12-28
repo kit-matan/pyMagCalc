@@ -43,7 +43,8 @@ class MagCalcConfigBuilder:
         # Atom Storage: List of dicts {label, species, pos (frac), spin_S, wyckoff_label}
         # We store the *full expanded* unit cell here.
         self.atoms_uc = [] 
-        self.dimensionality = "3D" 
+        # No dimensionality state needed anymore, everything is 3D
+
         
         # Validation mapping
         self._atom_label_to_idx = {}
@@ -208,10 +209,7 @@ class MagCalcConfigBuilder:
             best_dist = 1e9
             
             from itertools import product
-            if self.dimensionality == "2D":
-                offsets_to_check = [ (u, v, 0) for u, v in product([-1, 0, 1], repeat=2) ]
-            else:
-                offsets_to_check = list(product([-1, 0, 1], repeat=3))
+            offsets_to_check = list(product([-1, 0, 1], repeat=3))
 
             for off in offsets_to_check:
                 off_vec = np.array(off)
@@ -317,10 +315,7 @@ class MagCalcConfigBuilder:
              off_l = np.round(p_end_prime - pos_l_uc).astype(int)
              offset_final = off_l - off_k
              
-             # SANITY CHECK: distance & Dimensionality
-             dim_str = str(self.dimensionality).upper()
-             if (dim_str == "2D" or dim_str == "2") and abs(offset_final[2]) > 0.01:
-                 continue
+
 
              d_final_vec = (pos_l_uc + offset_final - pos_k_uc) @ self.lattice_vectors
              d_final = np.linalg.norm(d_final_vec)
@@ -667,42 +662,7 @@ class MagCalcConfigBuilder:
             if not self._is_duplicate(new_pos, orbit_positions):
                 orbit_positions.append(new_pos)
         
-        # 2D Reduction Logic
-        dim_str = str(self.dimensionality).upper()
-        if (dim_str == "2D" or dim_str == "2") and orbit_positions:
-            # Filter to keep only atoms in the same 'layer' as the initial position
-            # Use the input pos z as reference
-            ref_z = self._wrap_pos(pos_array)[2]
-            
-            # Group atoms by Z-level
-            # But the input pos might be transformed to something else if R changes it?
-            # However, usually we want the layer containing the original site.
-            
-            filtered_orbit = []
-            for p in orbit_positions:
-                # Check z-difference modulo 1.0 (approximating layer thickness limit)
-                # If slab is thick, this might be tricky, but for point atoms, we check close equality.
-                dz = abs(p[2] - ref_z)
-                dz = min(dz, 1.0 - dz)
-                if dz < 0.1: # Tolerance for layer thickness
-                    filtered_orbit.append(p)
-            
-            # Fallback: if input pos wasn't stable or somehow lost, just pick the largest group or the first one?
-            # Or if filtered_orbit is empty (e.g. if original pos wasn't strictly in the orbit due to floating point and we rely on R@pos)
-            # R=Identity should always preserve it though.
-            
-            if not filtered_orbit:
-                 # Fallback: Pick separate z-levels and just choose the one with most atoms? 
-                 # Or just the first one.
-                 ref_z = orbit_positions[0][2]
-                 for p in orbit_positions:
-                    dz = abs(p[2] - ref_z)
-                    dz = min(dz, 1.0 - dz)
-                    if dz < 0.1:
-                        filtered_orbit.append(p)
-            
-            logger.info(f"2D Mode: Reduced Wyckoff orbit from {len(orbit_positions)} to {len(filtered_orbit)} atoms (Layer Z~{ref_z:.3f})")
-            orbit_positions = filtered_orbit
+
 
         # Add all generated atoms
         if len(orbit_positions) == 1:
@@ -892,10 +852,7 @@ class MagCalcConfigBuilder:
         
         # Neighbor offsets to check
         from itertools import product
-        if self.dimensionality == "2D":
-            offsets = [ (u, v, 0) for u, v in product([-1, 0, 1], repeat=2) ]
-        else:
-            offsets = list(product([-1, 0, 1], repeat=3))
+        offsets = list(product([-1, 0, 1], repeat=3))
         
         expanded_rules = []
         
@@ -969,10 +926,7 @@ class MagCalcConfigBuilder:
         search_range = 2 
         from itertools import product
         
-        if str(self.dimensionality).upper() in ["2D", "2"]:
-            offsets = [ (u, v, 0) for u, v in product(range(-search_range, search_range+1), repeat=2) ]
-        else:
-            offsets = list(product(range(-search_range, search_range+1), repeat=3))
+        offsets = list(product(range(-search_range, search_range+1), repeat=3))
 
         # Store all bonds as (idx_i, idx_j, tuple(offset))
         all_bonds = []
@@ -1076,11 +1030,6 @@ class MagCalcConfigBuilder:
                  d_vec_p = (positions[idx_l] + final_offset - positions[idx_k]) @ self.lattice_vectors
                  if abs(bond["distance"] - np.linalg.norm(d_vec_p)) > 0.1:
                      continue
- 
-                 # Force 2D restriction
-                 dim_str = str(self.dimensionality).upper()
-                 if (dim_str == "2D" or dim_str == "2") and abs(final_offset[2]) > 0.01:
-                     continue
 
                  # Add to orbit
                  member_id = (idx_k, idx_l, tuple(final_offset))
@@ -1143,10 +1092,7 @@ class MagCalcConfigBuilder:
         
         # Neighbor offsets
         from itertools import product
-        if self.dimensionality == "2D":
-            offsets = [ (u, v, 0) for u, v in product([-1, 0, 1], repeat=2) ]
-        else:
-            offsets = list(product([-1, 0, 1], repeat=3))
+        offsets = list(product([-1, 0, 1], repeat=3))
             
         labels = [a["label"] for a in self.atoms_uc]
         positions = [np.array(a["pos"]) for a in self.atoms_uc]
@@ -1200,10 +1146,7 @@ class MagCalcConfigBuilder:
         
         # Neighbor offsets
         from itertools import product
-        if self.dimensionality == "2D":
-            offsets = [ (u, v, 0) for u, v in product([-1, 0, 1], repeat=2) ]
-        else:
-            offsets = list(product([-1, 0, 1], repeat=3))
+        offsets = list(product([-1, 0, 1], repeat=3))
             
         labels = [a["label"] for a in self.atoms_uc]
         positions = [np.array(a["pos"]) for a in self.atoms_uc]
@@ -1268,10 +1211,7 @@ class MagCalcConfigBuilder:
         
         # Neighbor offsets
         from itertools import product
-        if self.dimensionality == "2D":
-            offsets = [ (u, v, 0) for u, v in product([-1, 0, 1], repeat=2) ]
-        else:
-            offsets = list(product([-1, 0, 1], repeat=3))
+        offsets = list(product([-1, 0, 1], repeat=3))
             
         labels = [a["label"] for a in self.atoms_uc]
         positions = [np.array(a["pos"]) for a in self.atoms_uc]
@@ -1344,7 +1284,8 @@ class MagCalcConfigBuilder:
             species = [] # Logic refinement needed if user doesn't provide
             
         self.config["crystal_structure"]["magnetic_elements"] = species
-        self.config["crystal_structure"]["dimensionality"] = self.dimensionality
+        # Dimensionality removed
+
 
         # 3. Expand Interaction Rules
         self._expand_heisenberg_rules()
@@ -1373,7 +1314,8 @@ class MagCalcConfigBuilder:
             species = [] # Logic refinement needed if user doesn't provide
             
         self.config["crystal_structure"]["magnetic_elements"] = species
-        self.config["crystal_structure"]["dimensionality"] = self.dimensionality
+        # Dimensionality removed
+
 
         # 3. Expand Interaction Rules
         self._expand_heisenberg_rules()
