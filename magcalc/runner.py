@@ -103,7 +103,7 @@ def run_calculation(config_file: str):
             logger.error(f"Failed to initialize Spin Model: {e}")
             raise e
     
-    final_config = config
+    final_config = spin_model.config
     
     # Initialize MagCalc
     calc_config = final_config.get('calculation', {})
@@ -124,8 +124,13 @@ def run_calculation(config_file: str):
                 S_val = float(atoms[0].get('spin_S', 1.0))
             else:
                 S_val = 1.0
+
         except (ValueError, TypeError, IndexError):
             S_val = 1.0
+    
+    if S_val <= 0:
+        logger.error(f"Invalid spin magnitude S={S_val}. S must be positive.")
+        raise ValueError(f"Spin magnitude must be positive (S={S_val}). Please check your configuration.")
     
     params_val = []
     param_order = final_config.get('parameter_order')
@@ -154,9 +159,7 @@ def run_calculation(config_file: str):
 
     tasks = final_config.get('tasks', {})
     # 1. Minimization
-    do_minimization = tasks.get('minimization', False)
-    # Check legacy
-    if 'run_minimization' in tasks: do_minimization = tasks['run_minimization']
+    do_minimization = tasks.get('minimization', False) or tasks.get('run_minimization', False)
     
     if do_minimization:
         # Check if python model provides minimization
@@ -242,7 +245,14 @@ def run_calculation(config_file: str):
                         spin_model.set_magnetic_structure(min_res.x[0::2], min_res.x[1::2])
                     
                     plot_config = final_config.get('plotting', {})
-                    if plot_config.get('plot_structure', False):
+                    # Priority: tasks['plot_structure'] -> tasks['run_plotting'] -> plot_config['plot_structure']
+                    should_plot_struct = tasks.get('plot_structure')
+                    if should_plot_struct is None:
+                        should_plot_struct = tasks.get('run_plotting')
+                    if should_plot_struct is None:
+                        should_plot_struct = plot_config.get('plot_structure', False)
+                    
+                    if should_plot_struct:
                         logger.info("Plotting minimized magnetic structure...")
                         try:
                             if hasattr(spin_model, 'atom_pos'):
@@ -284,7 +294,8 @@ def run_calculation(config_file: str):
         )
     except Exception as e:
         logger.error(f"Failed to initialize MagCalc: {e}")
-        calculator = None
+        # Explicitly re-raise to stop execution and show error in UI
+        raise e
     
     # Store calculated data for plotting if not saved to file
     memory_cache = {
@@ -296,8 +307,7 @@ def run_calculation(config_file: str):
 
     # 2. Dispersion
     q_vectors = None
-    do_dispersion = tasks.get('dispersion', False)
-    if 'run_dispersion' in tasks: do_dispersion = tasks['run_dispersion']
+    do_dispersion = tasks.get('dispersion', False) or tasks.get('run_dispersion', False)
     
     if do_dispersion:
         disp_file = final_config.get('output', {}).get('disp_data_filename', 'disp_data.npz')
@@ -365,8 +375,7 @@ def run_calculation(config_file: str):
                 logger.warning("No Q-vectors.")
     
     # 3. S(Q,w) Map
-    do_sqw = tasks.get('sqw_map', False)
-    if 'run_sqw_map' in tasks: do_sqw = tasks['run_sqw_map']
+    do_sqw = tasks.get('sqw_map', False) or tasks.get('run_sqw_map', False)
     
     if do_sqw:
         sqw_file = final_config.get('output', {}).get('sqw_data_filename', 'sqw_data.npz')
@@ -425,12 +434,22 @@ def run_calculation(config_file: str):
                                 f.write(line + "\n")
 
     # 3. Plotting
+    tasks = final_config.get('tasks', {})
     plot_config = final_config.get('plotting', {})
     
-    # Logic: If 'dispersion' task is ON, and 'save_plot' is ON, then plot.
-    # Also support legacy 'plot_dispersion' key if present.
-    should_plot_disp = do_dispersion and plot_config.get('save_plot', True)
-    if 'plot_dispersion' in tasks: should_plot_disp = tasks['plot_dispersion'] and plot_config.get('save_plot', True)
+    # Priority: tasks['plot_dispersion'] -> tasks['run_plotting'] -> (do_dispersion and save_plot)
+    should_plot_disp = tasks.get('plot_dispersion')
+    if should_plot_disp is None:
+        should_plot_disp = tasks.get('run_plotting')
+    if should_plot_disp is None:
+        should_plot_disp = do_dispersion and plot_config.get('save_plot', True)
+    
+    # Priority: tasks['plot_sqw_map'] -> tasks['run_plotting'] -> (do_sqw and save_plot)
+    should_plot_sqw = tasks.get('plot_sqw_map')
+    if should_plot_sqw is None:
+        should_plot_sqw = tasks.get('run_plotting')
+    if should_plot_sqw is None:
+        should_plot_sqw = do_sqw and plot_config.get('save_plot', True)
 
     if should_plot_disp:
         # Prefer memory cache
@@ -464,9 +483,6 @@ def run_calculation(config_file: str):
                     ylim=plot_config.get('energy_limits_disp'),
                     show_plot=plot_config.get('show_plot', False)
                 )
-
-    should_plot_sqw = do_sqw and plot_config.get('save_plot', True)
-    if 'plot_sqw_map' in tasks: should_plot_sqw = tasks['plot_sqw_map'] and plot_config.get('save_plot', True)
 
     if should_plot_sqw:
         # Prefer memory cache

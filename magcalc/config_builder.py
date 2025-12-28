@@ -87,6 +87,43 @@ class MagCalcConfigBuilder:
         vc = np.array([cx, cy, cz])
         return np.array([va, vb, vc])
 
+    def detect_symmetry_from_structure(self, symprec: float = 1e-3):
+        """
+        Detect symmetry operations from the current structure using spglib.
+        Useful when lattice_vectors are provided but space_group is not.
+        """
+        if not self.atoms_uc:
+             logger.warning("No atoms defined. Cannot detect symmetry.")
+             return
+
+        # Prepare spglib cell input: (lattice, positions, numbers)
+        positions = np.array([a['pos'] for a in self.atoms_uc], dtype=float)
+        
+        # Numbers: assign dummy atomic numbers based on species/label
+        # Map unique species to integers
+        species_list = [a.get('species', a.get('element', a.get('label', 'X'))) for a in self.atoms_uc]
+        unique_species = sorted(list(set(species_list)))
+        species_map = {s: i+1 for i, s in enumerate(unique_species)}
+        numbers = np.array([species_map[s] for s in species_list], dtype=int)
+        
+        lattice = self.lattice_vectors
+        
+        cell = (lattice, positions, numbers)
+        
+        # Get symmetry
+        dataset = spglib.get_symmetry_dataset(cell, symprec=symprec)
+        
+        if dataset:
+             self.space_group_number = dataset.number
+             # Extract rotations and translations
+             rotations = dataset.rotations
+             translations = dataset.translations
+             self.symmetry_ops = {'rotations': rotations, 'translations': translations}
+             logger.info(f"Detected Space Group: {dataset.number} ({dataset.international})")
+             logger.info(f"Loaded {len(rotations)} symmetry operations.")
+        else:
+             logger.warning("Spglib failed to detect symmetry.")
+
     def add_interaction_rule(self, type: str, distance: float, value: Any, 
                              pair: Tuple[str, str] = None, name: str = None):
         """
@@ -224,7 +261,12 @@ class MagCalcConfigBuilder:
             if isinstance(value, list) and len(value) == 2:
                 value.append("0")
         
-        is_symbolic = any(isinstance(v, str) for v in value) if isinstance(value, (list, tuple, np.ndarray)) else isinstance(value, str)
+        if isinstance(value, (list, tuple, np.ndarray)):
+            # Flatten to check for strings
+            flat_val = np.array(value).flatten()
+            is_symbolic = any(isinstance(v, str) for v in flat_val)
+        else:
+            is_symbolic = isinstance(value, str)
         if is_symbolic:
             import sympy as sp
             # Wrap in list if scalar, handling the processed value
@@ -276,12 +318,15 @@ class MagCalcConfigBuilder:
              offset_final = off_l - off_k
              
              # SANITY CHECK: distance & Dimensionality
-             if self.dimensionality == "2D" and abs(offset_final[2]) > 0.01:
+             dim_str = str(self.dimensionality).upper()
+             if (dim_str == "2D" or dim_str == "2") and abs(offset_final[2]) > 0.01:
                  continue
 
              d_final_vec = (pos_l_uc + offset_final - pos_k_uc) @ self.lattice_vectors
              d_final = np.linalg.norm(d_final_vec)
              if abs(d_final - final_dist) > 0.1:
+                 # If we have a distance mismatch, it's a configuration error (e.g. wrong reference bond).
+                 # We log a warning so the user can correct their input.
                  logger.warning(f"Symmetry propagation distance mismatch: {atom_k['label']}->{atom_l['label']} dist={d_final:.4f} (target {final_dist:.4f})")
                  continue
              
@@ -369,7 +414,7 @@ class MagCalcConfigBuilder:
                      val_p_list = J_prime.tolist()
                      val_p_list_T = J_prime.T.tolist()
                  else:
-                     J_mat = np.array(value) 
+                     J_mat = val_vec # Already numeric float array 
                      J_prime = R_cart @ J_mat @ R_cart.T
                      val_p_list = J_prime.tolist()
                      val_p_list_T = J_prime.T.tolist()
@@ -378,12 +423,12 @@ class MagCalcConfigBuilder:
                  rev_bond_key = (atom_l['label'], atom_k['label'], tuple(-offset_final))
                  
                  if bond_key not in added_bonds_keys and rev_bond_key not in added_bonds_keys:
-                     self._add_interaction_matrix_entry(atom_k['label'], atom_l['label'], offset_final, val_p_list, final_dist)
+                     self._add_interaction_matrix_entry(atom_k['label'], atom_l['label'], offset_final, val_p_list, final_dist, original_value=value)
                      added_bonds_keys.add(bond_key)
                      added_bonds_keys.add(rev_bond_key)
                      
                      # Reverse bond: J_ji = J_ij^T
-                     self._add_interaction_matrix_entry(atom_l['label'], atom_k['label'], -offset_final, val_p_list_T, final_dist)
+                     self._add_interaction_matrix_entry(atom_l['label'], atom_k['label'], -offset_final, val_p_list_T, final_dist, original_value=value)
                      
     def _add_dm_entry(self, lbl_i, lbl_j, offset, val, distance=None, original_value=None):
         # Ensure val is a list of strings or floats (not sympy objects)
@@ -462,7 +507,7 @@ class MagCalcConfigBuilder:
              entry["original_value"] = original_value
         self.config["interactions"]["anisotropic_exchange"].append(entry)
 
-    def _add_interaction_matrix_entry(self, lbl_i, lbl_j, offset, val, distance=None):
+    def _add_interaction_matrix_entry(self, lbl_i, lbl_j, offset, val, distance=None, original_value=None):
         # val is 3x3 matrix (list of lists)
         clean_val = []
         for row in val:
@@ -482,6 +527,8 @@ class MagCalcConfigBuilder:
         }
         if distance:
             entry["distance"] = distance
+        if original_value is not None:
+             entry["original_value"] = original_value
         self.config["interactions"]["interaction_matrix"].append(entry)
 
     def _find_atom_at_pos(self, pos, tol=1e-3):
@@ -621,7 +668,8 @@ class MagCalcConfigBuilder:
                 orbit_positions.append(new_pos)
         
         # 2D Reduction Logic
-        if self.dimensionality == "2D" and orbit_positions:
+        dim_str = str(self.dimensionality).upper()
+        if (dim_str == "2D" or dim_str == "2") and orbit_positions:
             # Filter to keep only atoms in the same 'layer' as the initial position
             # Use the input pos z as reference
             ref_z = self._wrap_pos(pos_array)[2]
@@ -757,15 +805,15 @@ class MagCalcConfigBuilder:
         found = False
         for hall in range(1, 531):
             sg_info = spglib.get_spacegroup_type(hall)
-            # sg_info['number'] is integer
-            if sg_info['number'] == space_group:
+            # sg_info.number is integer
+            if sg_info.number == space_group:
                 # Prefer "standard" setting? Usually the first one or specific choice.
                 # Just take the first one found for now.
                 # Actually, for Fdd2 (43), we want standard setting.
                 self.symmetry_ops = spglib.get_symmetry_from_database(hall)
                 if self.symmetry_ops:
                     found = True
-                    logger.info(f"Loaded symmetry for SG {space_group}: Hall {hall} ({sg_info['international_short']})")
+                    logger.info(f"Loaded symmetry for SG {space_group}: Hall {hall} ({sg_info.international_short})")
                     break 
         
         if not found:
@@ -921,7 +969,7 @@ class MagCalcConfigBuilder:
         search_range = 2 
         from itertools import product
         
-        if self.dimensionality == "2D":
+        if str(self.dimensionality).upper() in ["2D", "2"]:
             offsets = [ (u, v, 0) for u, v in product(range(-search_range, search_range+1), repeat=2) ]
         else:
             offsets = list(product(range(-search_range, search_range+1), repeat=3))
@@ -1024,8 +1072,14 @@ class MagCalcConfigBuilder:
                  
                  final_offset = off_l - off_k
                  
+                 # Validation: Distance must be preserved (within tolerance)
+                 d_vec_p = (positions[idx_l] + final_offset - positions[idx_k]) @ self.lattice_vectors
+                 if abs(bond["distance"] - np.linalg.norm(d_vec_p)) > 0.1:
+                     continue
+ 
                  # Force 2D restriction
-                 if self.dimensionality == "2D" and abs(final_offset[2]) > 0.01:
+                 dim_str = str(self.dimensionality).upper()
+                 if (dim_str == "2D" or dim_str == "2") and abs(final_offset[2]) > 0.01:
                      continue
 
                  # Add to orbit
@@ -1126,6 +1180,73 @@ class MagCalcConfigBuilder:
                     (e["pair"] == [b[0], b[1]] and e.get("rij_offset") == list(b[2]))
                     for e in expanded
                 )]
+
+    def _expand_interaction_matrix_rules(self):
+        """
+        Expand generic interaction matrix rules.
+        """
+        rules = self.config["interactions"]["interaction_matrix"]
+        if not rules:
+            return
+
+        explicit_rules = [r for r in rules if "pair" in r]
+        generic_rules = [r for r in rules if "pair" not in r]
+
+        if not generic_rules:
+            return
+
+        # Start fresh
+        self.config["interactions"]["interaction_matrix"] = explicit_rules
+        
+        # Neighbor offsets
+        from itertools import product
+        if self.dimensionality == "2D":
+            offsets = [ (u, v, 0) for u, v in product([-1, 0, 1], repeat=2) ]
+        else:
+            offsets = list(product([-1, 0, 1], repeat=3))
+            
+        labels = [a["label"] for a in self.atoms_uc]
+        positions = [np.array(a["pos"]) for a in self.atoms_uc]
+
+        for rule in generic_rules:
+            target_dist = rule.get("distance", 0.0)
+            value = rule.get("value") # Expecting 3x3 list of lists
+            
+            # Find all potential bonds at this distance
+            pool = []
+            for i, pos_i in enumerate(positions):
+                for j, pos_j in enumerate(positions):
+                    for off in offsets:
+                        off_vec = np.array(off)
+                        pos_j_img = pos_j + off_vec
+                        d_cart = (pos_j_img - pos_i) @ self.lattice_vectors
+                        dist = np.linalg.norm(d_cart)
+                        if abs(dist - target_dist) < 0.05:
+                            pool.append((labels[i], labels[j], tuple(off)))
+            
+            # Group into orbits via symmetry
+            while pool:
+                ref_i, ref_j, ref_off = pool[0]
+                
+                initial_pool_size = len(pool)
+                try:
+                    self.add_symmetry_interaction("interaction_matrix", (ref_i, ref_j), value, 
+                                                 distance=target_dist, offset=list(ref_off))
+                except Exception as e:
+                    logger.error(f"Error propagating Matrix interaction: {e}")
+                
+                # Remove added bonds from pool
+                expanded = self.config["interactions"]["interaction_matrix"]
+                pool_after = [b for b in pool if not any(
+                    (e["pair"] == [b[0], b[1]] and e.get("rij_offset") == list(b[2]))
+                    for e in expanded
+                )]
+                
+                # Loop breaker
+                if len(pool_after) >= initial_pool_size and pool_after:
+                     pool_after.pop(0)
+                     
+                pool = pool_after
 
     def _expand_dm_rules(self):
         """
@@ -1228,6 +1349,7 @@ class MagCalcConfigBuilder:
         # 3. Expand Interaction Rules
         self._expand_heisenberg_rules()
         self._expand_anisotropic_exchange_rules()
+        self._expand_interaction_matrix_rules()
         self._expand_dm_rules()
 
         # WRITE

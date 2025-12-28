@@ -19,6 +19,7 @@ computationally expensive symbolic results.
 Refactored by AI Assistant
 """
 # import spin_model as sm # REMOVED: User-defined spin model will be passed explicitly
+from .generic_model import GenericSpinModel
 import sympy as sp
 from sympy import I, lambdify, Add
 import numpy as np
@@ -68,7 +69,6 @@ from .numerical import (
 try:
     # This works when magcalc.py is imported as part of the pyMagCalc package
     from .config_loader import load_spin_model_config
-    from . import generic_spin_model
 except ImportError:
     # This block executes if the relative import fails.
     # This can happen when run as a script or by multiprocessing spawns.
@@ -78,11 +78,10 @@ except ImportError:
         sys.path.insert(0, current_dir)
     try:
         from config_loader import load_spin_model_config
-        import generic_spin_model
     except ImportError as e:
         # If direct import also fails, then there's a more fundamental issue.
         raise ImportError(
-            f"Failed to import local modules config_loader or generic_spin_model. Original error: {e}"
+            f"Failed to import local modules config_loader. Original error: {e}"
         ) from e
 import numpy.typing as npt
 
@@ -354,7 +353,9 @@ class MagCalc:
             else:
                 self.cache_file_base = cache_file_base
 
-            self.sm = generic_spin_model  # Use the generic spin model module
+            # Instantiate GenericSpinModel with config
+            base_path = os.path.dirname(os.path.abspath(config_filepath))
+            self.sm = GenericSpinModel(self.model_config_data, base_path=base_path)
 
             # Extract spin_magnitude from config
             crystal_structure_data = self.model_config_data.get("crystal_structure")
@@ -564,8 +565,8 @@ class MagCalc:
 
     def _validate_spin_model_module(self):
         """Checks if the provided spin_model_module has required functions."""
-        if self.config_data:  # Skip if using config file
-            return
+        # if self.config_data:  # Skip if using config file (Legacy check, now we validate self.sm regardless)
+        #     return
 
         if self.sm is None: # Should not happen if logic is correct
             raise RuntimeError(
@@ -691,27 +692,16 @@ class MagCalc:
         logger.info(
             f"Generating symbolic matrices (HMat, Ud) for {self.cache_file_base}..."
         )
-        if self.config_data:
-            try:
-                self.HMat_sym, self.Ud_sym = self._generate_matrices_from_config()
-            except Exception as e:
-                logger.exception(
-                    "Failed to generate symbolic matrices from configuration."
-                )
-                raise RuntimeError(
-                    "Symbolic matrix generation from config failed."
-                ) from e
-        else:  # Old path
-            try:
-                self.HMat_sym, self.Ud_sym = gen_HM(
-                    self.sm,  # type: ignore
-                    self.k_sym,
-                    self.S_sym,
-                    list(self.params_sym),
-                )
-            except Exception as e:
-                logger.exception("Failed to generate symbolic matrices in gen_HM.")
-                raise RuntimeError("Symbolic matrix generation failed.") from e
+        try:
+            self.HMat_sym, self.Ud_sym = gen_HM(
+                self.sm,  # type: ignore
+                self.k_sym,
+                self.S_sym,
+                list(self.params_sym),
+            )
+        except Exception as e:
+            logger.exception("Failed to generate symbolic matrices in gen_HM.")
+            raise RuntimeError("Symbolic matrix generation failed.") from e
 
         if not isinstance(self.HMat_sym, sp.Matrix) or not isinstance(
             self.Ud_sym, sp.Matrix
@@ -799,15 +789,12 @@ class MagCalc:
 
         elif self.cache_mode == "none":
             logger.info("Cache mode is 'none'. Generating symbolic matrices in memory without saving to disk.")
-            if self.config_data:
-                self.HMat_sym, self.Ud_sym = self._generate_matrices_from_config()
-            else:
-                self.HMat_sym, self.Ud_sym = gen_HM(
-                    self.sm,
-                    self.k_sym,
-                    self.S_sym,
-                    list(self.params_sym),
-                )
+            self.HMat_sym, self.Ud_sym = gen_HM(
+                self.sm,
+                self.k_sym,
+                self.S_sym,
+                list(self.params_sym),
+            )
         elif self.cache_mode == "r":
             logger.info(
                 f"Importing symbolic matrices from cache files ({hm_cache_file}, {ud_cache_file})..."
@@ -980,233 +967,7 @@ class MagCalc:
             f"External Ud_numeric matrix has been set. Shape: {self.Ud_numeric.shape}"
         )
 
-    def _generate_matrices_from_config(self) -> Tuple[sp.Matrix, sp.Matrix]:
-        """
-        Generate symbolic HMat (2gH) and Ud matrices using the loaded configuration.
-        """
-        logger.info("Starting symbolic matrix generation from configuration...")
-        start_time_total = timeit.default_timer()
-
-        if not self.model_config_data or self.sm is not generic_spin_model:
-            raise RuntimeError(
-                "Configuration data not loaded or incorrect spin model module for _generate_matrices_from_config."
-            )
-
-        # 1. Get Model Info from Config
-        uc_vecs_cart = self.sm.unit_cell_from_config(
-            self.config_data["crystal_structure"]
-        )  # In generic_spin_model, this takes the crystal_structure dict directly
-        atom_pos_uc_cart = self.sm.atom_pos_from_config(
-            self.model_config_data["crystal_structure"], uc_vecs_cart
-        )
-        # self.nspins is already set from config in __init__
-
-        atom_pos_ouc_cart = self.sm.atom_pos_ouc_from_config(
-            atom_pos_uc_cart,
-            uc_vecs_cart,
-            self.model_config_data.get("calculation_settings", {}),
-        )
-        nspins_ouc = len(atom_pos_ouc_cart)
-
-        _parameter_names_ordered = list(self.p_numerical.keys())
-        symbolic_params_map_for_gsm = {
-            name: sym for name, sym in zip(_parameter_names_ordered, self.params_sym)
-        }
-
-        rotation_matrices_sym_list = self.sm.mpr_from_config(
-            self.model_config_data,  # Pass entire config to access minimization
-            symbolic_params_map_for_gsm,  # Pass parameters as positional argument
-        )
-
-        # 2. Setup Holstein-Primakoff Operators (for OUC)
-        c_ops_ouc, cd_ops_ouc, spin_ops_local_ouc = _setup_hp_operators(
-            nspins_ouc, self.S_sym
-        )
-
-        # 3. Rotate Spin Operators (OUC spins, UC rotations applied cyclically)
-        spin_ops_global_ouc = _rotate_spin_operators(
-            spin_ops_local_ouc, rotation_matrices_sym_list, self.nspins, nspins_ouc
-        )
-
-        # 4. Prepare Hamiltonian from Config
-        hamiltonian_sym_config = self.sm.Hamiltonian_from_config(
-            spin_ops_global_ouc, symbolic_params_map_for_gsm, self.model_config_data
-        )
-        # logger.debug(f"Config-driven: Hamiltonian_sym_config (first 500 chars): {str(hamiltonian_sym_config)[:500]}")
-
-        # Hamiltonian_from_config already calls .expand()
-        raw_hamiltonian_from_config = hamiltonian_sym_config  # Rename for clarity
-        logger.debug(
-            f"Config-driven: Raw Hamiltonian from config has {len(raw_hamiltonian_from_config.as_ordered_terms())} terms."
-        )
-
-        # --- Filter Hamiltonian terms (Keep only up to quadratic in boson ops) ---
-        # For LSWT (H2), we need terms quadratic in boson operators.
-        # These typically arise from:
-        # 1. S*S type interactions: quadratic boson part is ~ S_sym^1
-        # 2. H*S_z type interactions (Zeeman): quadratic boson part is ~ S_sym^0 (no S_sym factor from HP of Sz)
-        # We must exclude S_sym^2 terms (quartic bosons) and linear boson terms.
-
-        filtered_terms_config = []
-        # Coefficient of S^0 (e.g., Zeeman term H_field*(-cd*c))
-        hamiltonian_S0_conf = raw_hamiltonian_from_config.coeff(self.S_sym, 0)
-        if hamiltonian_S0_conf != 0:
-            filtered_terms_config.append(hamiltonian_S0_conf)
-
-        # Coefficient of S^1 (e.g., J*S_sym*(cd*c + c*c + cd*cd))
-        hamiltonian_S1_conf = raw_hamiltonian_from_config.coeff(self.S_sym, 1)
-        if hamiltonian_S1_conf != 0:
-            filtered_terms_config.append(hamiltonian_S1_conf * self.S_sym)
-
-        # DO NOT include S_sym^2 terms for H2 (LSWT) as they lead to quartic boson terms.
-
-        if not filtered_terms_config:
-            logger.warning(
-                "Config-driven S-based Hamiltonian filtering resulted in zero terms. Using original raw Hamiltonian."
-            )
-            hamiltonian_after_S_filter = raw_hamiltonian_from_config
-        else:
-            hamiltonian_after_S_filter = Add(*filtered_terms_config)
-
-        hamiltonian_after_S_filter = sp.expand(hamiltonian_after_S_filter)
-        # --- End Filtering ---
-
-        # --- Explicitly remove terms linear in c_ops_ouc and cd_ops_ouc ---
-        logger.debug(
-            f"Hamiltonian before explicit linear term removal (first 500): {str(hamiltonian_after_S_filter)[:500]}"
-        )
-        terms_to_process = hamiltonian_after_S_filter.as_ordered_terms()
-        final_H2_terms = []
-        linear_terms_removed_count = 0
-        all_boson_ops_set = set(c_ops_ouc + cd_ops_ouc)
-
-        for term in terms_to_process:
-            boson_ops_in_term = term.free_symbols.intersection(all_boson_ops_set)
-            if len(boson_ops_in_term) == 1:
-                # Heuristic: if a term has exactly one boson operator symbol, we check its degree
-                op = list(boson_ops_in_term)[0]
-                if term.count(op) == 1:
-                    logger.debug(f"Removing linear term: {term}")
-                    linear_terms_removed_count += 1
-                    continue
-            
-            final_H2_terms.append(term)
-
-        if linear_terms_removed_count > 0:
-            logger.info(
-                f"Explicitly removed {linear_terms_removed_count} terms identified as linear in boson operators."
-            )
-            hamiltonian_sym_config = Add(*final_H2_terms)
-            hamiltonian_sym_config = sp.expand(hamiltonian_sym_config)
-        else:
-            hamiltonian_sym_config = (
-                hamiltonian_after_S_filter  # No linear terms removed by this heuristic
-            )
-
-        logger.debug(
-            f"Config-driven: Hamiltonian_sym_config AFTER filtering (first 1000 chars): {str(hamiltonian_sym_config)[:1000]}"
-        )
-        logger.debug(
-            f"Config-driven: Hamiltonian_sym_config AFTER filtering has {len(hamiltonian_sym_config.as_ordered_terms())} terms."
-        )
-
-        logger.debug(
-            f"Config-driven: Initial symbolic Hamiltonian has {len(hamiltonian_sym_config.as_ordered_terms())} terms."
-        )
-
-        # 5. Define k-space operators (UC scope)
-        ck_ops_uc = [sp.Symbol(f"ck{j}", commutative=False) for j in range(self.nspins)]
-        ckd_ops_uc = [
-            sp.Symbol(f"ckd{j}", commutative=False) for j in range(self.nspins)
-        ]
-        cmk_ops_uc = [
-            sp.Symbol(f"cmk{j}", commutative=False) for j in range(self.nspins)
-        ]
-        cmkd_ops_uc = [
-            sp.Symbol(f"cmkd{j}", commutative=False) for j in range(self.nspins)
-        ]
-
-        # 6. Define Fourier Substitutions
-        Jex_sym_matrix, DM_sym_matrix, Kex_sym_matrix = (
-            self.sm.spin_interactions_from_config(
-                symbolic_params_map_for_gsm,  # This is a dict of {name: symbol}
-                self.model_config_data["interactions"],  # Pass interactions dict
-                atom_pos_uc_cart,
-                atom_pos_ouc_cart,
-                uc_vecs_cart,
-            )
-        )
-        logger.debug(f"Config-driven: Jex_sym_matrix for FT rules:\n{Jex_sym_matrix}")
-
-        fourier_substitutions_list = _define_fourier_substitutions_generic(
-            self.k_sym,
-            self.nspins,
-            c_ops_ouc,
-            cd_ops_ouc,
-            ck_ops_uc,
-            ckd_ops_uc,
-            cmk_ops_uc,
-            cmkd_ops_uc,
-            atom_pos_uc_cart,
-            atom_pos_ouc_cart,
-            Jex_sym_matrix,
-            DM_sym_matrix,
-            Kex_sym_matrix,
-        )
-        
-        # Convert list to lookup dict for _process_hamiltonian_terms
-        fourier_lookup = {}
-        for pair in fourier_substitutions_list:
-            lhs = pair[0]
-            rhs = pair[1]
-            non_comm = [s for s in lhs.atoms(sp.Symbol) if not s.is_commutative]
-            if len(non_comm) == 2:
-                 args = lhs.args
-                 if len(args) == 2:
-                     op1, op2 = args
-                     fourier_lookup[(op1.name, op2.name)] = rhs
-                 elif len(args) == 1 and args[0].is_Pow:
-                     base, exp = args[0].as_base_exp()
-                     if exp == 2:
-                         fourier_lookup[(base.name, base.name)] = rhs
-            elif len(non_comm) == 1:
-                if lhs.is_Pow:
-                     base, exp = lhs.as_base_exp()
-                     if exp==2:
-                         fourier_lookup[(base.name, base.name)] = rhs
-
-        # Import _process_hamiltonian_terms locally
-        from .symbolic import _process_hamiltonian_terms, _build_TwogH2_matrix
-
-        # Apply Substitutions & Normal Ordering
-        try:
-            hamiltonian_normal_ordered = _process_hamiltonian_terms(
-                hamiltonian_sym_config,
-                fourier_lookup,
-                self.nspins,
-                ck_ops_uc,
-                ckd_ops_uc,
-                cmk_ops_uc,
-                cmkd_ops_uc,
-            )
-        except Exception as e:
-            logger.exception("Error during symbolic substitution in _generate_matrices_from_config.")
-            raise RuntimeError("Symbolic substitution failed.") from e
-
-        # Build TwogH2 Matrix directly
-        self.HMat_sym = _build_TwogH2_matrix(
-            hamiltonian_normal_ordered, 
-            self.nspins, 
-            ck_ops_uc, 
-            ckd_ops_uc, 
-            cmk_ops_uc, 
-            cmkd_ops_uc
-        )
-        
-        # Build Ud - generic model returns blocks, we need block diagonal
-        self.Ud_sym = _build_ud_matrix(rotation_matrices_sym_list, self.nspins)
-
-        return self.HMat_sym, self.Ud_sym
+    # Removed _generate_matrices_from_config
 
     def _generate_numerical_cache_key(
         self, q_vectors_list: List[npt.NDArray[np.float64]], calculation_type: str

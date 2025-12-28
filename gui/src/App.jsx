@@ -202,7 +202,7 @@ function App() {
     ],
     explicit_interactions: [],
     single_ion_anisotropy: [],
-    parameters: { S: 1.0, H_mag: 20.0, H_dir: [0, 0, 1], J1: 2.49, J2: 2.79, J3: 5.05, G1: 0.28, Dx: 2.67, D: 0.0 },
+    parameters: { J1: 2.49, J2: 2.79, J3: 5.05, G1: 0.28, Dx: 2.67, D: 0.0, H_mag: 20.0, H_dir: [0, 0, 1] },
     tasks: {
       run_minimization: true,
       run_dispersion: true,
@@ -368,7 +368,7 @@ function App() {
     magnetic_elements: ["Cu"],
     symmetry_interactions: [],
     explicit_interactions: [],
-    parameters: { S: 1.0, H_mag: 0.0, H_dir: [0, 0, 1] },
+    parameters: { H_mag: 0.0, H_dir: [0, 0, 1] },
     tasks: {
       minimization: true,
       dispersion: true,
@@ -543,11 +543,42 @@ function App() {
   }
 
   const handleExportYaml = async () => {
-    // Structure the input for the Expansion Backend
-    const input = {
+    // 1. Clean up and Re-order parameters for export
+    const rawParams = JSON.parse(JSON.stringify(config.parameters));
+    delete rawParams.S; // Remove misleading global S
+
+    // Separate interactions from field parameters
+    const fieldKeys = ['H_mag', 'H_dir'];
+    const interactionKeys = Object.keys(rawParams).filter(k => !fieldKeys.includes(k)).sort();
+    const sortedParamKeys = [...interactionKeys, ...fieldKeys].filter(k => rawParams[k] !== undefined);
+
+    const cleanParams = {};
+    sortedParamKeys.forEach(key => {
+      let val = rawParams[key];
+      if (typeof val === 'number') val = Number(val.toFixed(5));
+      else if (Array.isArray(val)) val = val.map(v => typeof v === 'number' ? Number(v.toFixed(5)) : v);
+      cleanParams[key] = val;
+    });
+
+    // 2. Clean up lattice and atoms
+    const cleanLattice = { ...config.lattice };
+    ['a', 'b', 'c', 'alpha', 'beta', 'gamma'].forEach(k => {
+      if (typeof cleanLattice[k] === 'number') cleanLattice[k] = Number(cleanLattice[k].toFixed(5));
+    });
+
+    const cleanAtoms = config.wyckoff_atoms.map(a => ({
+      ...a,
+      pos: a.pos.map(v => Number(v.toFixed(5))),
+      spin_S: typeof a.spin_S === 'number' ? Number(a.spin_S.toFixed(5)) : a.spin_S
+    }));
+
+    // 3. Structure the input for Export
+    let expanded = {
+      parameter_order: sortedParamKeys,
+      parameters: cleanParams,
       crystal_structure: {
-        lattice_parameters: config.lattice,
-        wyckoff_atoms: config.wyckoff_atoms,
+        lattice_parameters: cleanLattice,
+        wyckoff_atoms: cleanAtoms,
         atom_mode: atomMode,
         magnetic_elements: config.magnetic_elements || ["Cu"],
         dimensionality: config.lattice.dimensionality === '2D' ? 2 : (config.lattice.dimensionality === '3D' ? 3 : config.lattice.dimensionality)
@@ -556,7 +587,6 @@ function App() {
         symmetry_rules: config.symmetry_interactions
       },
       magnetic_structure: config.magnetic_structure,
-      parameters: config.parameters,
       tasks: {
         ...config.tasks,
         calculate_dispersion_new: config.tasks.run_dispersion,
@@ -580,21 +610,6 @@ function App() {
     }
 
     try {
-      // Use the design config directly for export (cleaner YAML)
-      // instead of the expanded calculation-ready config.
-      let expanded = input;
-
-      // try {
-      //   console.log('Fetching expanded config for export...')
-      //   const response = await fetch('/api/expand-config', { ... })
-      //   if (!response.ok) throw new Error(...)
-      //   expanded = await response.json()
-      // } catch (err) { ... } -> We skip this now.
-
-      // We can just proceed with 'input' as 'expanded'
-      console.log('Generating design YAML file...')
-
-      // Conditionally omit magnetic structure
       if (!config.magnetic_structure.enabled) {
         delete expanded.magnetic_structure;
       }
@@ -783,7 +798,7 @@ function App() {
       type: 'interaction_matrix',
       ref_pair: [orbit.representative.atom_i, orbit.representative.atom_j],
       offset: orbit.representative.offset,
-      distance: orbit.distance,
+      distance: Number(orbit.distance.toFixed(5)),
       value: constraints.symbolic_matrix, // 3x3 array of strings
       constraints: constraints // Store for reference/UI helpers?
     };
@@ -860,12 +875,20 @@ function App() {
     // Simplest: Add it with a placeholder distance if missing, user can adjust.
     // But let's try to find it in neighborDistances if available?
 
+    const getInitValue = (t) => {
+      if (t === 'heisenberg') return 'J0';
+      if (t === 'kitaev') return 'K1';
+      if (t === 'interaction_matrix') return [['0', '0', '0'], ['0', '0', '0'], ['0', '0', '0']];
+      if (t === 'dm') return ['D1', 'D2', 'D3'];
+      return ['G1', 'G2', 'G3']; // anisotropic_exchange
+    };
+
     const newRule = {
       type: type,
       ref_pair: [previewAtoms[selectedBond.atom_i]?.label || "?", previewAtoms[selectedBond.atom_j]?.label || "?"],
       offset: selectedBond.offset || [0, 0, 0],
-      distance: selectedBond.distance || 0.0,
-      value: type === 'heisenberg' ? 'J0' : (type === 'dm' ? ['D1', 'D2', 'D3'] : ['G1', 'G2', 'G3'])
+      distance: Number((selectedBond.distance || 0.0).toFixed(5)),
+      value: getInitValue(type)
     }
 
     // Fallback for explicit mode or if labels missing
@@ -892,7 +915,7 @@ function App() {
           atom_j: selectedBond.atom_j,
           offset_j: selectedBond.offset || [0, 0, 0],
           distance: selectedBond.distance || 0.0,
-          value: type === 'heisenberg' ? 'J0' : (type === 'dm' ? ['D1', 'D2', 'D3'] : ['G1', 'G2', 'G3'])
+          value: getInitValue(type)
         }]
       }));
     }
@@ -1250,7 +1273,7 @@ function App() {
                           <div className="interaction-params">
                             <div className="input-group">
                               <label>Distance (Å)</label>
-                              <input type="number" step="0.01" className="minimal-input" value={inter.distance} onChange={(e) => {
+                              <input type="number" step="0.01" className="minimal-input" value={typeof inter.distance === 'number' ? Number(inter.distance.toFixed(5)) : inter.distance} onChange={(e) => {
                                 const next = [...config.symmetry_interactions]; next[idx].distance = parseFloat(e.target.value); setConfig({ ...config, symmetry_interactions: next })
                               }} />
                             </div>
@@ -1270,12 +1293,16 @@ function App() {
                                   </select>
                                 </div>
                               ) : (inter.type === 'interaction_matrix' && Array.isArray(inter.value)) ? (
-                                <div className="grid grid-cols-3 gap-1 bg-black/20 p-xs rounded border border-color/30">
+                                <div
+                                  className="bg-black/20 p-xs rounded border border-color/30"
+                                  style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '4px' }}
+                                >
                                   {inter.value.map((row, r) => row.map((cell, c) => (
                                     <input
                                       key={`${r}-${c}`}
                                       type="text"
                                       className={`text-center text-xs p-1 bg-transparent border-none outline-none w-full ${cell === '0' || cell === '0.0' ? 'opacity-30' : 'text-accent font-bold'}`}
+                                      style={{ border: '1px solid rgba(255,255,255,0.05)', borderRadius: '4px' }}
                                       value={cell}
                                       onChange={(e) => {
                                         const next = [...config.symmetry_interactions];
@@ -1302,12 +1329,19 @@ function App() {
                                 onChange={(e) => {
                                   const next = [...config.symmetry_interactions];
                                   next[idx].type = e.target.value;
+                                  if (e.target.value === 'interaction_matrix') {
+                                    next[idx].value = [['0', '0', '0'], ['0', '0', '0'], ['0', '0', '0']];
+                                  } else if (e.target.value === 'heisenberg') {
+                                    // Reset to scalar if switching back, to avoid confusion
+                                    if (Array.isArray(next[idx].value)) next[idx].value = 'J1';
+                                  }
                                   setConfig({ ...config, symmetry_interactions: next })
                                 }}
                               >
                                 <option value="heisenberg">Heisenberg</option>
                                 <option value="dm">DM Interaction</option>
                                 <option value="anisotropic_exchange">Anisotropic</option>
+                                <option value="interaction_matrix">Interaction Matrix</option>
                                 <option value="kitaev">Kitaev</option>
                               </select>
                             </div>
@@ -1322,8 +1356,8 @@ function App() {
                                 <div className="exchange-matrix-label">Exchange Tensor (J<sub>ij</sub>)</div>
                                 <div className="exchange-matrix-grid">
                                   {matrix.flat().map((val, i) => (
-                                    <div key={i} className={`exchange-matrix-cell ${val === 0 ? 'zero' : ''}`}>
-                                      {typeof val === 'number' ? val.toFixed(3) : val}
+                                    <div key={i} className={`exchange-matrix-cell ${val === 0 || val === '0' || val === '0.0' ? 'zero' : ''}`}>
+                                      {typeof val === 'number' ? Number(val.toFixed(5)) : val}
                                     </div>
                                   ))}
                                 </div>
@@ -1520,7 +1554,7 @@ function App() {
 
                                   const nextRules = [...config.symmetry_interactions, {
                                     type: 'heisenberg',
-                                    distance: n.distance,
+                                    distance: Number(n.distance.toFixed(5)),
                                     value: `J${i + 1}`,
                                     ref_pair: chosenBond.pair,
                                     offset: chosenBond.offset
@@ -1625,7 +1659,7 @@ function App() {
                             </div>
                             <div className="input-group">
                               <label>Distance</label>
-                              <input type="number" step="0.01" className="minimal-input" value={inter.distance} onChange={(e) => {
+                              <input type="number" step="0.01" className="minimal-input" value={typeof inter.distance === 'number' ? Number(inter.distance.toFixed(5)) : inter.distance} onChange={(e) => {
                                 const next = [...config.explicit_interactions]; next[idx].distance = parseFloat(e.target.value); setConfig({ ...config, explicit_interactions: next })
                               }} />
                             </div>
@@ -2493,7 +2527,7 @@ function App() {
                                 <div className="exchange-matrix-grid" style={{ transform: 'scale(0.95)', transformOrigin: 'top left', width: '100%' }}>
                                   {matrix.flat().map((val, i) => (
                                     <div key={i} className={`exchange-matrix-cell ${val === 0 || val === '0' || val === '0.0' ? 'zero' : ''}`} style={{ fontSize: '9px', padding: '2px' }}>
-                                      {val}
+                                      {typeof val === 'number' ? Number(val.toFixed(5)) : val}
                                     </div>
                                   ))}
                                 </div>
@@ -2527,6 +2561,18 @@ function App() {
                             onClick={() => { addRuleFromVisualizer('anisotropic_exchange'); setInteractionMenuOpen(false); }}
                           >
                             <Crosshair size={14} className="text-purple-500" /> Anisotropic Exchange
+                          </button>
+                          <button
+                            className="btn btn-ghost btn-xs justify-start gap-2 hover:bg-black/5 dark:hover:bg-white/10"
+                            onClick={() => { addRuleFromVisualizer('interaction_matrix'); setInteractionMenuOpen(false); }}
+                          >
+                            <Box size={14} className="text-blue-500" /> Interaction Matrix
+                          </button>
+                          <button
+                            className="btn btn-ghost btn-xs justify-start gap-2 hover:bg-black/5 dark:hover:bg-white/10"
+                            onClick={() => { addRuleFromVisualizer('kitaev'); setInteractionMenuOpen(false); }}
+                          >
+                            <Box size={14} className="text-pink-500" /> Kitaev
                           </button>
                         </div>
                       )}
@@ -2638,10 +2684,49 @@ const calculateExchangeMatrixSymbolic = (inter, numericParams = {}) => {
   // Helper to get symbol or value
   const getSymbol = (val) => {
     if (val === undefined || val === null) return 0;
-    if (typeof val === 'number') return val;
+    if (typeof val === 'number') {
+      if (Math.abs(val) < 1e-10) return 0;
+      return val;
+    }
+
     let s = String(val).trim();
 
-    // Clean up symbolic math artifacts from backend
+    // 1. Clean up numeric artifacts (rounding, scientific notation, leading zeros)
+    // First, convert scientific notation to zero if tiny
+    const smallFloatRegex = /[+-]?\d+\.?\d*[eE]-[1-9]\d+/g;
+    s = s.replace(smallFloatRegex, (match) => {
+      if (Math.abs(parseFloat(match)) < 1e-10) return "0";
+      return match;
+    });
+
+    // Then handle all decimal numbers: round to 5 digits and fix leading dots (.5 -> 0.5)
+    // We use a regex that captures numbers like .5, 0.5, -0.5, -.5 (including scientific)
+    const floatRegex = /[+-]?\d*\.\d+(?:[eE][+-]?\d+)?/g;
+    s = s.replace(floatRegex, (match) => {
+      let f = parseFloat(match);
+      if (Math.abs(f) < 1e-10) return "0";
+
+      let rounded = Number(f.toFixed(5));
+      let str = String(rounded);
+
+      // Ensure leading zero if it starts with . or -.
+      if (str.startsWith('.')) return '0' + str;
+      if (str.startsWith('-.')) return '-0' + str.substring(1);
+      return str;
+    });
+
+    // 2. Clean up resulting expressions (e.g. "0*Dz" -> "0", "A + 0" -> "A")
+    // Simple algebraic simplifications for display
+    s = s.replace(/\b0\s*\*\s*[a-zA-Z0-9_]+/g, '0'); // 0 * Var
+    s = s.replace(/[a-zA-Z0-9_]+\s*\*\s*0\b/g, '0'); // Var * 0
+    s = s.replace(/\+\s*0\b/g, ''); // X + 0
+    s = s.replace(/\b0\s*\+\s*/g, ''); // 0 + X
+    s = s.replace(/\-\s*0\b/g, ''); // X - 0
+    s = s.replace(/\b0\s*\-\s*/g, '-'); // 0 - X -> -X
+
+    if (s.trim() === '' || s === '-0' || s === '-0.0') s = '0';
+
+    // 3. Clean up symbolic math artifacts from backend
     // Remove leading "1.0*" or "1*"
     if (s.startsWith('1.0*')) s = s.substring(4);
     else if (s.startsWith('1*')) s = s.substring(2);
@@ -2652,12 +2737,9 @@ const calculateExchangeMatrixSymbolic = (inter, numericParams = {}) => {
 
     if (s === '0' || s === '0.0') return 0;
 
-    // If it looks like a pure number, parse it but keep 0.0 as 0
-    // But be careful not to parse "J1" as NaN -> string
+    // If it looks like a pure number, parse it
     if (!isNaN(parseFloat(s)) && isFinite(s)) {
-      if (parseFloat(s) === 0) return 0;
-      // If it became a simple number like "2.0", maybe return number?
-      // But user wants symbols. If it is "1.5", return "1.5".
+      if (Math.abs(parseFloat(s)) < 1e-10) return 0;
       return s;
     }
     return s;

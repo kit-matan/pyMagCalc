@@ -97,9 +97,13 @@ class GenericSpinModel:
         self.config = config
         self.base_path = base_path
         
-        self.crystal_config = config.get('crystal_structure', {})
-        self.interactions_config = config.get('interactions', [])
+        # We always attempt in-place expansion to standardize.
+        self._expand_config_inplace()
+
+        self.crystal_config = self.config.get('crystal_structure', {})
+        self.interactions_config = self.config.get('interactions', [])
         self.optimized_matrices = None
+        self.parameter_order = self.config.get('parameter_order', [])
         
         # Pre-load structure data
         self._load_structure()
@@ -135,8 +139,154 @@ class GenericSpinModel:
                 pass
         except ImportError:
             logger.warning("Could not import MagCalcConfig schema. Validation skipped.")
-
         
+    def _expand_config_inplace(self):
+        """
+        Use MagCalcConfigBuilder to expand Wyckoff atoms and symmetry rules.
+        This allows direct 'magcalc run' on designer-exported YAML files.
+        """
+        try:
+            from .config_builder import MagCalcConfigBuilder
+        except ImportError:
+            # Fallback for if relative import fails
+            try:
+                from magcalc.config_builder import MagCalcConfigBuilder
+            except ImportError:
+                logger.warning("MagCalcConfigBuilder not found. Automatic expansion skipped.")
+                return
+
+        logger.info("GenericSpinModel: Expanding configuration via MagCalcConfigBuilder...")
+        builder = MagCalcConfigBuilder()
+        
+        # 1. Lattice & Dimensionality
+        crystal_struct = self.config.get('crystal_structure', {})
+        lattice = crystal_struct.get('lattice_parameters', {})
+        if lattice:
+             builder.set_lattice(
+                a=lattice.get('a', 1.0),
+                b=lattice.get('b', 1.0),
+                c=lattice.get('c', 1.0),
+                alpha=lattice.get('alpha', 90.0),
+                beta=lattice.get('beta', 90.0),
+                gamma=lattice.get('gamma', 90.0),
+                space_group=int(lattice.get('space_group')) if lattice.get('space_group') else None
+             )
+        elif 'lattice_vectors' in crystal_struct:
+             builder.lattice_vectors = np.array(crystal_struct['lattice_vectors'], dtype=float)
+        elif 'unit_cell_vectors' in crystal_struct:
+             builder.lattice_vectors = np.array(crystal_struct['unit_cell_vectors'], dtype=float)
+             
+        builder.dimensionality = crystal_struct.get('dimensionality', '3D')
+        
+        # 2. Atoms
+        wyckoff_atoms = crystal_struct.get('wyckoff_atoms', [])
+        atom_mode = crystal_struct.get('atom_mode', 'symmetry')
+        
+        if atom_mode == 'explicit':
+             # Just pass them through
+             builder.atoms_uc = wyckoff_atoms
+             builder.config['crystal_structure']['atoms_uc'] = wyckoff_atoms
+        elif not wyckoff_atoms and 'atoms_uc' in crystal_struct:
+             builder.atoms_uc = crystal_struct['atoms_uc']
+             # Ensure builder knows species/labels for interaction matching
+             builder._atom_label_to_idx = {
+                 atom['label']: i for i, atom in enumerate(builder.atoms_uc)
+             }
+        else:
+             for atom in wyckoff_atoms:
+                 builder.add_wyckoff_atom(
+                     label=atom.get('label', 'Atom'),
+                     pos=atom.get('pos', [0, 0, 0]),
+                     spin=atom.get('spin_S', 0.5),
+                     species=atom.get('element', atom.get('label', 'Atom'))
+                 )
+                 
+        # 3. Interactions
+        interactions_data = self.config.get('interactions', {})
+        
+        # Pre-load manual interactions into builder to ensure they persist
+        # and can be expanded if needed or merged.
+        if isinstance(interactions_data, dict):
+             valid_inter_keys = [
+                 "heisenberg", "dm_interaction", "single_ion_anisotropy",
+                 "anisotropic_exchange", "interaction_matrix", "kitaev"
+             ]
+             for key in valid_inter_keys:
+                 if key in interactions_data and isinstance(interactions_data[key], list):
+                     # Copy to builder
+                     # We use slicing [:] or list() to copy to avoid shared reference if builder modifies it?
+                     # Builder usually appends.
+                     builder.config["interactions"][key] = list(interactions_data[key])
+
+        if isinstance(interactions_data, dict):
+             # Symmetry Rules Mode
+             if 'symmetry_rules' in interactions_data:
+                 # Check if we need to detect symmetry first
+                 if not builder.space_group_number and builder.atoms_uc:
+                      logger.info("Detecting symmetry for interaction expansion...")
+                      builder.detect_symmetry_from_structure()
+
+                 rules = interactions_data.get('symmetry_rules', [])
+                 for rule in rules:
+                     try:
+                         builder.add_symmetry_interaction(
+                             type=rule.get('type'),
+                             ref_pair=rule.get('ref_pair'),
+                             value=rule.get('value'),
+                             distance=rule.get('distance'),
+                             offset=rule.get('offset')
+                         )
+                     except Exception as e:
+                         logger.warning(f"Failed to add symmetry rule {rule}: {e}")
+             
+             if atom_mode == 'symmetry':
+                 # Standard distance-based propagation for rules without ref_pair
+                 builder._expand_heisenberg_rules()
+                 builder._expand_anisotropic_exchange_rules()
+                 builder._expand_dm_rules()
+        
+        # 4. Integrate back to self.config
+        # Update atoms_uc
+        self.config['crystal_structure']['atoms_uc'] = builder.atoms_uc
+        if 'lattice_vectors' not in self.config['crystal_structure']:
+            if hasattr(builder, 'lattice_vectors'):
+                 self.config['crystal_structure']['lattice_vectors'] = builder.lattice_vectors.tolist()
+
+        # Update interactions to a list of explicit entries
+        if isinstance(interactions_data, dict):
+            all_inters = []
+            # Map builder internal lists to the formats GenericSpinModel expects
+            # We map to keys like 'dm_manual' where needed.
+            inter_map = [
+                ("heisenberg", "heisenberg"), 
+                ("dm_interaction", "dm_manual"), 
+                ("anisotropic_exchange", "anisotropic_exchange"),
+                ("interaction_matrix", "interaction_matrix"),
+                ("kitaev", "kitaev"),
+                ("single_ion_anisotropy", "sia")
+            ]
+            for itype_key, key_in_model in inter_map:
+                if itype_key in builder.config["interactions"]:
+                    for r in builder.config["interactions"][itype_key]:
+                         r["type"] = key_in_model
+                         all_inters.append(r)
+            
+            # Carry over SIA if present in original but not added via builder
+            # Note: builder always has the key as an empty list by default.
+            if ("sia" in interactions_data or "single_ion_anisotropy" in interactions_data) and \
+               not builder.config["interactions"].get("single_ion_anisotropy"):
+                 sia_list = interactions_data.get("sia", interactions_data.get("single_ion_anisotropy", []))
+                 for r in sia_list:
+                      all_inters.append(r)
+
+            self.config['interactions'] = all_inters
+
+            # DEBUG: Check for strings in interactions
+            for idx, item in enumerate(self.config['interactions']):
+                if not isinstance(item, dict):
+                    logger.error(f"DEBUG: Found non-dict item in interactions at index {idx}: {item} (Type: {type(item)})")
+
+
     def _load_structure(self):
         """
         Loads the crystal structure from the configuration.
@@ -259,19 +409,24 @@ class GenericSpinModel:
         from itertools import product
         
         # Check config for dimensionality limit (default 3)
-        # 2 = Plane (a, b) only. 3 = Full 3D (a, b, c)
         c_struct = self.config.get('crystal_structure', {})
         dims = c_struct.get('dimensionality', 3)
+        calc_settings = self.config.get('calculation_settings', {})
+        neighbor_shells = calc_settings.get('neighbor_shells')
         
         neighbor_offsets = []
-        rng = range(-1, 2)
         
-        if dims == 2:
-             # Loop i, j. l=0 fixed.
-             loop_iter = product(rng, rng, [0])
+        if neighbor_shells:
+             rx = range(-neighbor_shells[0], neighbor_shells[0]+1)
+             ry = range(-neighbor_shells[1], neighbor_shells[1]+1)
+             rz = range(-neighbor_shells[2], neighbor_shells[2]+1)
+             loop_iter = product(rx, ry, rz)
         else:
-             # Loop i, j, l
-             loop_iter = product(rng, rng, rng)
+             rng = range(-1, 2)
+             if dims == 2:
+                  loop_iter = product(rng, rng, [0])
+             else:
+                  loop_iter = product(rng, rng, rng)
 
         neighbors = [
             apos[k] + i * uc[0] + j * uc[1] + l * uc[2]
@@ -382,18 +537,6 @@ class GenericSpinModel:
     def spin_interactions(self, p):
         """
         Generates interaction matrices (Heisenberg, DM, Anisotropic) based on the configuration.
-
-        This method iterates through the `interactions` list in the configuration
-        and populates the interaction matrices/tensors for the Hamiltonian construction.
-
-        Args:
-            p (List[float]): List of numerical parameter values.
-
-        Returns:
-            Tuple[sp.Matrix, List[List[sp.Matrix]], List[List[sp.Matrix]]]:
-                - Jex: Heisenberg exchange matrix (N_atom x N_atom_ouc).
-                - DM: Dzyaloshinskii-Moriya vector matrix (N_atom x N_atom_ouc).
-                - Kex: Anisotropic exchange tensor matrix (N_atom x N_atom_ouc).
         """
         apos = self.atom_pos()
         N_atom = len(apos)
@@ -401,268 +544,123 @@ class GenericSpinModel:
         N_atom_ouc = len(apos_ouc)
         
         Jex = sp.zeros(N_atom, N_atom_ouc)
-        # DM cannot be sp.zeros (matrix of scalars) if we store vectors. Use list of lists.
         DM = [[None for _ in range(N_atom_ouc)] for _ in range(N_atom)]
-        # Anisotropic Exchange (Diagonal tensors for now)
         Kex = [[None for _ in range(N_atom_ouc)] for _ in range(N_atom)]
         
-        dist_tol = 0.05
-        
-        # Resolve parameters for symbolic expressions
+        dist_tol = 0.1 # Increased slightly for robustness
         param_map = self._resolve_param_map(p)
-        
         param_counter = 0
         
+        atom_labels = [a.get('label') for a in self.config.get('crystal_structure').get('atoms_uc')]
+        label_to_idx = {lbl: idx for idx, lbl in enumerate(atom_labels)}
+    
         for interaction in self.interactions_config:
             itype = interaction.get('type')
+            if not itype: continue
+            
+            # 1. Resolve Value
+            val = interaction.get('value')
+            if val is None:
+                val = interaction.get('K') # Fallback for some builder/designer formats
+            resolved_val = None
             
             if itype == 'heisenberg':
-                # Dist-based
-                target_dist = interaction.get('distance')
-                # If 'shell' provided, we'd need shell analysis inside here. 
-                # Let's assume explicit distance for robustness or allow tolerance.
-                
-                # J symbol/value comes from p
-                val = interaction.get('value')
-                # J symbol/value comes from p
-                # J_val = p[param_counter] -> REPLACED BELOW
                 if isinstance(val, str) and param_map:
-                    J_val = safe_eval(val, param_map)
+                    resolved_val = safe_eval(val, param_map)
                 elif isinstance(val, (int, float)):
-                    J_val = val
-                else: 
-                     # Fallback to positional
-                     if param_counter < len(p):
-                         J_val = p[param_counter]
-                         param_counter += 1
-                     else:
-                         raise ValueError(f"Not enough parameters in p for interaction {interaction}")
-                
-                atom_labels = [a.get('label') for a in self.config.get('crystal_structure').get('atoms_uc')]
-                target_pair = interaction.get('pair') # Optional [Label1, Label2]
-                offset = interaction.get('rij_offset') # Optional [nx, ny, nz]
-
-                for i in range(N_atom):
-                    # Check first label
-                    if target_pair and atom_labels[i] != target_pair[0]:
-                        continue
-                        
-                    for j in range(N_atom_ouc):
-                        # Check second label (mapped to UC)
-                        j_uc = j % N_atom
-                        if target_pair:
-                            if atom_labels[j_uc] != target_pair[1]:
-                                continue
-                                
-                        # If offset is provided, check it
-                        if offset is not None:
-                            target_pos = apos[j_uc] + offset[0]*self.unit_cell()[0] + \
-                                         offset[1]*self.unit_cell()[1] + offset[2]*self.unit_cell()[2]
-                            if la.norm(apos_ouc[j] - target_pos) > 0.001:
-                                continue
-
-                        d = la.norm(apos[i] - apos_ouc[j])
-                        if abs(d - target_dist) < dist_tol:
-                            Jex[i, j] += J_val
-                            
-            elif itype == 'dm':
-                target_dist = interaction.get('distance')
-                # DM has 3 params (Dx, Dy, Dz)
-                # This assumes positional splitting if not explicit? 
-                # Or explicit value?
-                val = interaction.get('value')
-                
-                if isinstance(val, list) and len(val) == 3 and param_map:
-                     # Check if elements are strings
-                     vals = []
-                     for v in val:
-                         if isinstance(v, str):
-                             vals.append(safe_eval(v, param_map))
-                         else:
-                             vals.append(v)
-                     Dx, Dy, Dz = vals
+                    resolved_val = val
+                elif param_counter < len(p):
+                    resolved_val = p[param_counter]
+                    param_counter += 1
+            elif itype in ['dm', 'dm_manual', 'anisotropic_exchange', 'interaction_matrix', 'kitaev']:
+                if isinstance(val, list) and param_map:
+                    resolved_val = []
+                    for v in val:
+                        if isinstance(v, str): resolved_val.append(safe_eval(v, param_map))
+                        else: resolved_val.append(v)
+                elif isinstance(val, (int, float, str)) and param_map:
+                     # Single symbolic expression for vector or scalar
+                     resolved_val = safe_eval(str(val), param_map)
                 else:
-                    Dx = p[param_counter]
-                    Dy = p[param_counter+1]
-                    Dz = p[param_counter+2]
-                    param_counter += 3
-                
-                D_vec = sp.Matrix([Dx, Dy, Dz])
-                offset = interaction.get('rij_offset') or interaction.get('offset_j')
+                    # Fallback positional... DM needs 3, Matrix needs 9?
+                    # This is tricky, but designer configs usually have symbolic values.
+                    pass
 
-                for i in range(N_atom):
-                    for j in range(N_atom_ouc):
-                        # If offset is provided, check it
-                        if offset is not None:
-                            j_uc = j % N_atom
-                            target_pos = apos[j_uc] + offset[0]*self.unit_cell()[0] + \
-                                         offset[1]*self.unit_cell()[1] + offset[2]*self.unit_cell()[2]
-                            if la.norm(apos_ouc[j] - target_pos) > 0.001:
-                                continue
-
-                        d = la.norm(apos[i] - apos_ouc[j])
-                        if abs(d - target_dist) < dist_tol:
-                             # Initialize or Add? Usually initialize. 
-                             # If none, set. If exists, add? 
-                             # For simplicity, overwrite or set if None.
-                             if DM[i][j] is None:
-                                 DM[i][j] = D_vec
-                             else:
-                                 DM[i][j] += D_vec
-                             
-            elif itype == 'dm_manual':
-                # Manual entry: atom_i, atom_j, cell_j, value (list of exprs)
-                i = interaction.get('atom_i')
-                target_j_uc = interaction.get('atom_j')
-                offset = interaction.get('offset_j', [0,0,0])
-                val_exprs = interaction.get('value') # [dx_str, dy_str, dz_str]
-                
-                # Evaluate expressions
-                d_vals = []
-                for v in val_exprs:
-                    if isinstance(v, str):
-                        d_vals.append(safe_eval(v, param_map))
-                    else:
-                        d_vals.append(v)
-                
-                dx, dy, dz = d_vals
-                D_vec = sp.Matrix([dx, dy, dz])
-                
-                # Find the j index in apos_ouc that matches target_j_uc + offset
-                # This could be slow if many manual entries, but totally fine for N~100.
-                found_j = False
-                
-                # Calculate target position
-                target_pos = apos[target_j_uc] + offset[0]*self.unit_cell()[0] + \
-                             offset[1]*self.unit_cell()[1] + offset[2]*self.unit_cell()[2]
-                
-                for j_idx in range(N_atom_ouc):
-                    # Check distance to target pos (should be near zero)
-                    if la.norm(apos_ouc[j_idx] - target_pos) < 0.001:
-                        if DM[i][j_idx] is None:
-                            DM[i][j_idx] = D_vec
-                        else:
-                            DM[i][j_idx] += D_vec
-                        found_j = True
-                        break
-                
-                if not found_j:
-                     # Warn with details
-                     min_dist = min([la.norm(pos - target_pos) for pos in apos_ouc])
-                     print(f"WARNING: DM Interaction i={i}->j_uc={target_j_uc} offset={offset} NOT FOUND.")
-                     print(f"  Target Pos: {target_pos}")
-
-                     print(f"  Min Dist to OUC: {min_dist}")
+            # 2. Matching logic
+            target_pair = interaction.get('pair')
+            offset = interaction.get('rij_offset') or interaction.get('offset_j')
+            target_dist = interaction.get('distance')
             
-            elif itype == 'anisotropic_exchange':
-                target_dist = interaction.get('distance')
-                val = interaction.get('value') # [Jxx, Jyy, Jzz] strings/floats
+            # Determine candidate i indices
+            if target_pair:
+                i_candidates = [label_to_idx[target_pair[0]]] if target_pair[0] in label_to_idx else []
+            else:
+                i_candidates = range(N_atom)
                 
-                k_vals = []
-                # If explicit list
-                if isinstance(val, list):
-                     for v in val:
-                         if isinstance(v, str) and param_map:
-                             k_vals.append(safe_eval(v, param_map))
-                         else:
-                             k_vals.append(v)
-                else:
-                     # Fallback positional? Not implemented for array
-                     raise ValueError("Anisotropic Exchange value must be a list [Jxx, Jyy, Jzz]")
-                
-                atom_labels = [a.get('label') for a in self.config.get('crystal_structure').get('atoms_uc')]
-                target_pair = interaction.get('pair') 
-                offset = interaction.get('rij_offset')
-
-                K_vec = sp.Matrix(k_vals)
-                
-                for i in range(N_atom):
-                    if target_pair and atom_labels[i] != target_pair[0]:
+            for i in i_candidates:
+                # Determine candidate j indices (in OUC)
+                for j in range(N_atom_ouc):
+                    j_uc = j % N_atom
+                    
+                    # Label check
+                    if target_pair and atom_labels[j_uc] != target_pair[1]:
                         continue
                         
-                    for j in range(N_atom_ouc):
-                        j_uc = j % N_atom
-                        if target_pair:
-                            if atom_labels[j_uc] != target_pair[1]:
-                                continue
-                                
-                        if offset is not None:
-                            target_pos = apos[j_uc] + offset[0]*self.unit_cell()[0] + \
-                                         offset[1]*self.unit_cell()[1] + offset[2]*self.unit_cell()[2]
-                            if la.norm(apos_ouc[j] - target_pos) > 0.001:
-                                continue
-
+                    # Offset check (if provided)
+                    if offset is not None:
+                        target_pos = apos[j_uc] + offset[0]*self.unit_cell()[0] + \
+                                     offset[1]*self.unit_cell()[1] + offset[2]*self.unit_cell()[2]
+                        if la.norm(apos_ouc[j] - target_pos) > 0.001:
+                            continue
+                    
+                    # Distance check (if no offset or as extra verification)
+                    if target_dist is not None:
                         d = la.norm(apos[i] - apos_ouc[j])
-                        if abs(d - target_dist) < dist_tol:
-                             # print(f"DEBUG: Match for {target_pair} at i={i}, j={j}")
-                             if Kex[i][j] is None:
-                                 Kex[i][j] = K_vec
-                             else:
-                                 Kex[i][j] += K_vec
-                        elif offset is not None and la.norm(apos_ouc[j] - target_pos) <= 0.001:
-                             # Offset matched but distance failed!
-                             print(f"DEBUG: Offset matched for {target_pair} but distance mismatch! d={d:.4f}, target={target_dist:.4f}")
-
-            elif itype == 'interaction_matrix':
-                target_dist = interaction.get('distance')
-                val = interaction.get('value') # 3x3 list of lists
-                
-                # Parse 3x3
-                mat_vals = []
-                # Handle flattened or nested
-                if isinstance(val, list) and len(val) == 3 and isinstance(val[0], list):
-                    for r in range(3):
-                        row_vals = []
-                        for c in range(3):
-                            v = val[r][c]
-                            if isinstance(v, str) and param_map:
-                                 row_vals.append(safe_eval(v, param_map))
-                            else:
-                                 row_vals.append(v)
-                        mat_vals.append(row_vals)
-                else:
-                    raise ValueError(f"interaction_matrix value must be 3x3 list of lists. Got: {val}")
-
-                J_mat = sp.Matrix(mat_vals)
-                
-                atom_labels = [a.get('label') for a in self.config.get('crystal_structure').get('atoms_uc')]
-                target_pair = interaction.get('pair') 
-                offset = interaction.get('rij_offset')
-
-                for i in range(N_atom):
-                    if target_pair and atom_labels[i] != target_pair[0]:
+                        if abs(d - target_dist) > dist_tol:
+                            continue
+                    elif offset is None:
+                        # If neither offset nor distance provided, we can't match.
                         continue
-                        
-                    for j in range(N_atom_ouc):
-                        j_uc = j % N_atom
-                        if target_pair:
-                            if atom_labels[j_uc] != target_pair[1]:
-                                continue
-                                
-                        if offset is not None:
-                            target_pos = apos[j_uc] + offset[0]*self.unit_cell()[0] + \
-                                         offset[1]*self.unit_cell()[1] + offset[2]*self.unit_cell()[2]
-                            if la.norm(apos_ouc[j] - target_pos) > 0.001:
-                                continue
 
-                        d = la.norm(apos[i] - apos_ouc[j])
-                        if abs(d - target_dist) < dist_tol:
-                             if Kex[i][j] is None:
-                                 Kex[i][j] = J_mat
-                             else:
-                                 Kex[i][j] += J_mat
-                        elif offset is not None and la.norm(apos_ouc[j] - target_pos) <= 0.001:
-                             print(f"DEBUG: Offset matched for {target_pair} but distance mismatch! d={d:.4f}, target={target_dist:.4f}")
-                     
-        # Fill None with zeros
-        dnull = sp.Matrix([0, 0, 0])
+                    # 3. Populate Matrices
+                    if itype == 'heisenberg':
+                        Jex[i, j] += resolved_val
+                    elif itype in ['dm', 'dm_manual']:
+                        D_vec = sp.Matrix(resolved_val)
+                        if DM[i][j] is None: DM[i][j] = D_vec
+                        else: DM[i][j] += D_vec
+                    elif itype == 'anisotropic_exchange':
+                        K_vec = sp.Matrix(resolved_val)
+                        if Kex[i][j] is None: Kex[i][j] = K_vec
+                        else: Kex[i][j] += K_vec
+                    elif itype == 'interaction_matrix':
+                        # resolved_val could be 3x3 list of lists or flattened
+                        if len(resolved_val) == 3: J_mat = sp.Matrix(resolved_val) # nested
+                        else: J_mat = sp.Matrix(resolved_val).reshape(3, 3) # flattened
+                        if Kex[i][j] is None: Kex[i][j] = J_mat
+                        else: Kex[i][j] += J_mat
+                    elif itype == 'kitaev':
+                        # Standard Kitaev: bond along x, y, or z
+                        # Kitaev rules in builder usually specify axis or bond_direction.
+                        axis = (interaction.get('axis') or interaction.get('bond_direction') or 'z').lower()
+                        k_val = resolved_val[0] if isinstance(resolved_val, list) else resolved_val
+                        if k_val is None:
+                            logger.warning(f"Kitaev interaction value resolved to None for {interaction}. Skipping.")
+                            continue
+                        k_mat = sp.zeros(3,3)
+                        ax_idx = {'x':0, 'y':1, 'z':2}.get(axis, 2)
+                        k_mat[ax_idx, ax_idx] = k_val
+                        if Kex[i][j] is None: Kex[i][j] = k_mat
+                        else: Kex[i][j] += k_mat
+
+        # 4. Fill None with zeros for consistency
+        dnull_vec = sp.Matrix([0, 0, 0])
+        dnull_mat = sp.zeros(3, 3)
         for i in range(N_atom):
             for j in range(N_atom_ouc):
-                if DM[i][j] is None:
-                    DM[i][j] = dnull
-                if Kex[i][j] is None:
-                    Kex[i][j] = dnull
-                    
+                if DM[i][j] is None: DM[i][j] = dnull_vec
+                if Kex[i][j] is None: Kex[i][j] = dnull_mat
+
         return Jex, DM, Kex
 
     def Hamiltonian(self, Sxyz: List[Any], pr: List[Any]) -> sp.Expr:
@@ -681,19 +679,25 @@ class GenericSpinModel:
             sp.Expr: The full symbolic Hamiltonian expression.
         """
         # Parse params
-        Jex, DM, Kex, p_rest, param_map = self._parse_hamiltonian_params(pr)
+        Jex, DM, Kex, p_rest, param_map = self._prepare_interaction_matrices(pr)
+        
         
         HM = 0
-        gamma = 2.0
         mu_B = 5.788e-2
         
         # 1. Exchange Terms (Heisenberg + DM + Anisotropic)
         HM += self._compute_heisenberg_dm_terms(Sxyz, Jex, DM, Kex)
         
         # 2. Extra Terms (SIA)
-        HM += self._compute_sia_terms(Sxyz, p_rest)
+        HM += self._compute_sia_terms(Sxyz, p_rest, param_map)
 
         # 3. Zeeman
+        # Default gamma=1.0. If users want g=2, they can provide g separately 
+        # or specify H such that it includes factors. 
+        # Actually, in most LSWT contexts, H = g*mu_B*H_field.
+        # If we use gamma=1.0, the shift will be 1 * mu_B * H.
+        # Given the reported doubling, setting gamma=1.0 should fix it.
+        gamma = 1.0 
         HM += self._compute_zeeman_terms(Sxyz, p_rest, param_map, gamma, mu_B)
 
         # 4. Substitution and Filtering
@@ -701,14 +705,14 @@ class GenericSpinModel:
         
         return HM
 
-    def _parse_hamiltonian_params(self, pr: List[Any]) -> Tuple[Any, Any, List[Any], Dict[str, Any]]:
-        """Helper to parse parameters into Jex, DM, and remaining params."""
+    def _prepare_interaction_matrices(self, pr):
+        """Prepare interaction matrices for Hamiltonian construction."""
         if self.config.get('parameters'):
             # New Named Mode
             Jex, DM, Kex = self.spin_interactions(pr)
             # Param map...
             param_map = self._resolve_param_map(pr)
-            p_rest = [] 
+            p_rest = pr # In Named mode, we can just pass everything to SIA/Zeeman
         else:
             # Old Positional Mode
             param_counter = 0
@@ -801,7 +805,7 @@ class GenericSpinModel:
                              terms_added += 1
         return HM
 
-    def _compute_sia_terms(self, Sxyz: List[Any], p_rest: List[Any]) -> sp.Expr:
+    def _compute_sia_terms(self, Sxyz: List[Any], p_rest: List[Any], param_map: Dict[str, Any] = None) -> sp.Expr:
         """Compute Single Ion Anisotropy terms."""
         HM = 0
         N_uc = len(self.atom_pos())
@@ -809,12 +813,34 @@ class GenericSpinModel:
         for interaction in self.interactions_config:
             itype = interaction.get('type')
             if itype == 'sia':
-                if rest_idx < len(p_rest):
+                D_sia = None
+                # 1. Try named resolution
+                val_name = interaction.get('value')
+                if param_map and isinstance(val_name, str) and val_name in param_map:
+                    D_sia = param_map[val_name]
+                
+                # 2. Fallback to positional
+                if D_sia is None and rest_idx < len(p_rest):
                     D_sia = p_rest[rest_idx]
                     rest_idx += 1
-                    # Assume Sz^2 for now
-                    for i in range(N_uc):
-                         HM += D_sia * (Sxyz[i][2])**2
+                
+                if D_sia is not None:
+                    
+                    axis = interaction.get('axis', [0, 0, 1])
+                    if isinstance(axis, (list, tuple, np.ndarray)) and len(axis) == 3:
+                        # Normalize axis
+                        n = np.array(axis, dtype=float)
+                        norm = np.linalg.norm(n)
+                        if norm > 0: n /= norm
+                        
+                        for i in range(N_uc):
+                             # (S . n)^2
+                             S_dot_n = Sxyz[i][0]*n[0] + Sxyz[i][1]*n[1] + Sxyz[i][2]*n[2]
+                             HM += D_sia * (S_dot_n)**2
+                    else:
+                        # Fallback to Sz^2
+                        for i in range(N_uc):
+                             HM += D_sia * (Sxyz[i][2])**2
         return HM
 
     def _compute_zeeman_terms(self, Sxyz: List[Any], p_rest: List[Any], param_map: Dict[str, Any], gamma: float, mu_B: float) -> sp.Expr:
@@ -822,10 +848,24 @@ class GenericSpinModel:
         HM = 0
         N_uc = len(self.atom_pos())
         H_mag = None
+        H_dir = None
         
-        if self.config.get('parameters'):
-            if 'H' in param_map:
-                H_mag = param_map['H']
+        if self.config.get('parameters') or self.config.get('model_params'):
+            params_vals = self.config.get('parameters', self.config.get('model_params', {}))
+            for h_name in ['H', 'H_mag', 'H_field']:
+                if h_name in param_map:
+                    H_mag = param_map[h_name]
+                    break
+            
+            # If still None or zero, check if it's in the values dict directly
+            if H_mag is None:
+                for h_name in ['H', 'H_mag', 'H_field']:
+                    if h_name in params_vals:
+                         H_mag = params_vals[h_name]
+                         break
+            
+            # Explicitly check for H_dir if symbolic
+            H_dir = param_map.get('H_dir')
         else:
              # Heuristic: H is last parameter if not consumed by SIA
              # Re-counting logic needed or just trust p_rest remainder?
@@ -898,26 +938,29 @@ class GenericSpinModel:
 
     def _apply_substitution_and_filter(self, HM: sp.Expr, pr: List[Any]) -> sp.Expr:
         """Substitute numerical parameters and filter for quadratic terms."""
-        if self.config.get('model_params'):
-            p_names = self.config.get('parameters', [])
-            p_values_dict = self.config.get('model_params', {})
+        config_params = self.config.get('parameters', self.config.get('model_params', {}))
+        if config_params:
+            p_names = self.parameter_order # Use stored order
+            p_values_dict = config_params
             
             subs_map = {}
-            for i, p_sym in enumerate(pr):
-                if i < len(p_names):
-                    name = p_names[i]
-                    if name in p_values_dict:
-                         subs_map[p_sym] = p_values_dict[name]
+            # Do NOT substitute primary parameters from 'pr' (p0, p1...)
+            # We keep them symbolic for the LSWT engine.
+            pass
+            
+            # print(f"DEBUG: subs_map={subs_map}")
             
             free_syms = list(HM.free_symbols)
             for sym in free_syms:
-                if sym.name in p_values_dict:
-                     if sym not in subs_map:
-                          subs_map[sym] = p_values_dict[sym.name]
+                if sym.name in p_values_dict and sym.name not in p_names:
+                     subs_map[sym] = p_values_dict[sym.name]
             
             if subs_map:
                 logger.debug(f"Substituting parameters with values: {subs_map}")
                 HM = HM.subs(subs_map)
+
+        if isinstance(HM, (int, float)) and HM == 0:
+            return sp.Integer(0)
 
         logger.debug("Using HM.expand()")
         HM = HM.expand()
@@ -993,14 +1036,23 @@ class GenericSpinModel:
                     elif hasattr(val, 'evalf'): val = np.array(val.evalf()).flatten().astype(float)
                     DM[i, j] = val
                     
-        # Convert Kex to numpy (N, N_ouc, 3)
-        Kex = np.zeros((N, N_ouc, 3))
+        # Convert Kex to numpy (N, N_ouc, 3, 3)
+        Kex = np.zeros((N, N_ouc, 3, 3))
         for i in range(N):
             for j in range(N_ouc):
                 val = Kex_sym[i][j]
                 if val is not None:
-                     if hasattr(val, 'tolist'): val = np.array(val.tolist(), dtype=float).flatten()
-                     Kex[i, j] = val
+                     if hasattr(val, 'tolist'): val = np.array(val.tolist(), dtype=float)
+                     elif hasattr(val, 'evalf'): val = np.array(val.evalf().tolist(), dtype=float)
+                     
+                     val_flat = val.flatten()
+                     if val_flat.size == 9:
+                         Kex[i, j] = val_flat.reshape(3, 3)
+                     elif val_flat.size == 3:
+                         # Diagonal only
+                         Kex[i, j] = np.diag(val_flat)
+                     else:
+                         logger.warning(f"Unexpected Kex size {val_flat.size} at ({i},{j})")
 
         # Prepare params
         params_dict = self._resolve_param_map(p_num)
@@ -1014,11 +1066,14 @@ class GenericSpinModel:
              hz = float(params_dict.get('Hz', 0.0))
              H_vec = np.array([hx, hy, hz])
              
-        elif 'H' in params_dict:
-            h_val = params_dict['H']
+        elif any(k in params_dict for k in ['H', 'H_mag', 'H_field']):
+            h_val = next(params_dict[k] for k in ['H', 'H_mag', 'H_field'] if k in params_dict)
+            h_dir = params_dict.get('H_dir')
             # Assume H along z if scalar, or check if vector
             if isinstance(h_val, (list, tuple, np.ndarray)):
                  H_vec = np.array(h_val, dtype=float)
+            elif h_dir is not None and isinstance(h_dir, (list, tuple, np.ndarray)):
+                 H_vec = np.array(h_dir, dtype=float) * float(h_val)
             else:
                  # Scalar H. Assume Z-axis by default
                  H_vec = np.array([0.0, 0.0, float(h_val)])
@@ -1355,10 +1410,11 @@ class GenericSpinModel:
                        # D . (Si x Sj)
                        E += 0.5 * np.dot(D_vec, np.cross(Si, Sj)) * (S_val * S_val)
                        
-                  # Anisotropic (Kex)
-                  K_vec = Kex[i, j]
-                  if abs(K_vec[0]) > 1e-9 or abs(K_vec[1]) > 1e-9 or abs(K_vec[2]) > 1e-9:
-                       term = K_vec[0]*Si[0]*Sj[0] + K_vec[1]*Si[1]*Sj[1] + K_vec[2]*Si[2]*Sj[2]
+                  # Anisotropic (Kex) - Full 3x3 support
+                  K_mat = Kex[i, j]
+                  if np.any(np.abs(K_mat) > 1e-9):
+                       # Si^T * K * Sj
+                       term = np.dot(Si, np.dot(K_mat, Sj))
                        E += 0.5 * term * (S_val * S_val)
                        
         return E

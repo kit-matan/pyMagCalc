@@ -121,9 +121,9 @@ async def websocket_logs(websocket: WebSocket):
             await websocket.send_text(log_entry)
             log_queue.task_done()
     except WebSocketDisconnect:
-        print("Log client disconnected")
+        logging.getLogger().info("Log client disconnected")
     except Exception as e:
-        print(f"WebSocket error: {e}")
+        logging.getLogger().error(f"WebSocket error: {e}")
 
 # ... (rest of code)
 
@@ -247,10 +247,10 @@ async def parse_cif(file: UploadFile = File(...)):
                     if rep_idx < len(symbols):
                         wyckoff_label = symbols[rep_idx]
                     else:
-                        print(f"DEBUG: rep_idx {rep_idx} out of range for symbols length {len(symbols)}")
+                        logging.getLogger().debug(f"DEBUG: rep_idx {rep_idx} out of range for symbols length {len(symbols)}")
                         wyckoff_label = "?"
                 except Exception as ex:
-                     print(f"DEBUG: Error getting wyckoff: {ex}")
+                     logging.getLogger().debug(f"DEBUG: Error getting wyckoff: {ex}")
                      wyckoff_label = "?"
                 
                 # Species
@@ -278,7 +278,7 @@ async def parse_cif(file: UploadFile = File(...)):
                 cif_atoms.append({
                     "label": label,
                     "pos": pos,
-                    "spin_S": 0.0,
+                    "spin_S": 0.5,
                     "species": species_str
                 })
 
@@ -340,6 +340,9 @@ async def get_neighbors(config: Dict[str, Any]):
         struct_data = data.get("crystal_structure", {})
         wyckoff_atoms = struct_data.get("wyckoff_atoms", [])
         atom_mode = struct_data.get("atom_mode", "symmetry")
+        
+        # IMPORTANT: Set dimensionality BEFORE adding atoms so reduction logic triggers
+        builder.dimensionality = struct_data.get("dimensionality", "3D")
 
         if atom_mode == "explicit":
             # Treat Wyckoff atoms as the full unit cell directly
@@ -377,9 +380,9 @@ async def get_neighbors(config: Dict[str, Any]):
                 
                 if dataset:
                     # Override builder symmetry with consistent operations
-                    builder.set_symmetry_ops(dataset['rotations'], dataset['translations'])
+                    builder.set_symmetry_ops(dataset.rotations, dataset.translations)
         except Exception as e:
-            print(f"Warning: Failed to detect symmetry in get_neighbors: {e}")
+            logging.getLogger().warning(f"Warning: Failed to detect symmetry in get_neighbors: {e}")
             
         # 3. Calculate Distances
         labels = [a['label'] for a in builder.atoms_uc]
@@ -393,7 +396,7 @@ async def get_neighbors(config: Dict[str, Any]):
         
         from itertools import product
         # Search a slightly larger cube of cells
-        if dimensionality == "2D":
+        if str(dimensionality).upper() in ["2D", "2"]:
             offsets = [ (u, v, 0) for u, v in product([-1, 0, 1], repeat=2) ]
         else:
             offsets = list(product([-1, 0, 1], repeat=3))
@@ -473,6 +476,9 @@ async def get_neighbors(config: Dict[str, Any]):
                 p_i = positions[i]
                 p_j_off = positions[j] + np.array(off)
                 
+                # Validation: orbit seed distance
+                seed_dist = dist
+                
                 for R, t in zip(rots, trans):
                     p_i_p = R @ p_i + t
                     p_j_o_p = R @ p_j_off + t
@@ -483,8 +489,19 @@ async def get_neighbors(config: Dict[str, Any]):
                         off_i_p = np.round(p_i_p - positions[idx_i_p]).astype(int)
                         off_j_p = np.round(p_j_o_p - positions[idx_j_p]).astype(int)
                         final_off = tuple(off_j_p - off_i_p)
-                        current_orbit.add((idx_i_p, idx_j_p, final_off))
-                        current_orbit.add((idx_j_p, idx_i_p, tuple(-np.array(final_off))))
+                        
+                        # VALIDATION: Check that this generated bond effectively matches the distance
+                        # This prevents mismatched 3D ops from polluting 2D orbits
+                        d_vec_p = (positions[idx_j_p] + np.array(final_off) - positions[idx_i_p]) @ lattice_vecs
+                        d_p = np.linalg.norm(d_vec_p)
+                        
+                        if abs(d_p - seed_dist) < 0.1:
+                            current_orbit.add((idx_i_p, idx_j_p, final_off))
+                            # Add reverse too? Handled by symmetry if group includes inversion/-1, but safe to add logically
+                            # Wait, reverse bond might not be explicitly in symmetry group ops if no inversion?
+                            # Standard neighbor finding usually lists i->j and j->i
+                            # We can leave it to symmetry ops to find the inverse if it exists.
+                            # current_orbit.add((idx_j_p, idx_i_p, tuple(-np.array(final_off))))
                 
                 processed_bonds.update(current_orbit)
                 orbits.append({
@@ -583,7 +600,7 @@ async def analyze_bonds(config: Dict[str, Any]):
                 cell = (builder.lattice_vectors, positions, numbers)
                 dataset = spglib.get_symmetry_dataset(cell, symprec=1e-3)
                 if dataset:
-                     builder.set_symmetry_ops(dataset['rotations'], dataset['translations'])
+                     builder.set_symmetry_ops(dataset.rotations, dataset.translations)
         except Exception:
             pass
 
@@ -661,7 +678,7 @@ async def bond_constraints(payload: Dict[str, Any]):
                 numbers = [1] * len(positions) 
                 cell = (builder.lattice_vectors, positions, numbers)
                 dataset = spglib.get_symmetry_dataset(cell, symprec=1e-3)
-                if dataset: builder.set_symmetry_ops(dataset['rotations'], dataset['translations'])
+                if dataset: builder.set_symmetry_ops(dataset.rotations, dataset.translations)
         except: pass
 
         # Config must match bond logic
@@ -754,11 +771,11 @@ async def expand_config(config: Dict[str, Any]):
                 dataset = spglib.get_symmetry_dataset(cell, symprec=1e-3)
                 
                 if dataset:
-                    detected_sg = dataset['number']
+                    detected_sg = dataset.number
                     # Override builder symmetry with consistent operations
-                    builder.set_symmetry_ops(dataset['rotations'], dataset['translations'])
+                    builder.set_symmetry_ops(dataset.rotations, dataset.translations)
         except Exception as e:
-            print(f"Warning: Failed to detect symmetry from structure: {e}")
+            logging.getLogger().warning(f"Warning: Failed to detect symmetry from structure: {e}")
 
         # 3. Interactions
         if "list" in data.get("interactions", {}):
@@ -994,7 +1011,7 @@ async def get_visualizer_data(config: Dict[str, Any]):
                 
                 if dataset:
                     # Override builder symmetry with consistent operations
-                    builder.set_symmetry_ops(dataset['rotations'], dataset['translations'])
+                    builder.set_symmetry_ops(dataset.rotations, dataset.translations)
         except Exception as e:
             print(f"Warning: Failed to detect symmetry in get_visualizer_data: {e}")
 

@@ -45,7 +45,6 @@ def test_kitaev_interaction():
         tmp_name = f.name
     try:
         mc = MagCalc(config_filepath=tmp_name, cache_mode='none')
-        print(f"DEBUG: mc.sm file: {mc.sm.__file__}")
         hm = mc.HMat_sym
         print(f"HMat_sym shape: {hm.shape}")
         print(f"Free symbols: {hm.free_symbols}")

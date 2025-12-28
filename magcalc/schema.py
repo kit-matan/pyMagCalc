@@ -126,6 +126,9 @@ class TransformationsConfig(BaseModel):
 class CalculationConfig(BaseModel):
     cache_mode: str = 'none'
     cache_file_base: str = 'magcalc_cache'
+    neighbor_shells: Optional[List[int]] = None
+    
+    model_config = ConfigDict(extra='allow')
 
 class QPathConfig(BaseModel):
     points_per_segment: int = 50
@@ -138,6 +141,9 @@ class OutputConfig(BaseModel):
     sqw_data_filename: str = 'sqw_data.npz'
     disp_csv_filename: str = 'disp_data.csv'
     sqw_csv_filename: str = 'sqw_data.csv'
+    save_data: bool = True
+
+    model_config = ConfigDict(extra='allow')
 
 class PlottingConfig(BaseModel):
     save_plot: bool = True
@@ -156,20 +162,32 @@ class PlottingConfig(BaseModel):
 
 class TasksConfig(BaseModel):
     run_minimization: bool = False
+    minimization: bool = False # Alias
     run_dispersion: bool = False
+    dispersion: bool = False # Alias
     calculate_dispersion_new: bool = True
-    plot_dispersion: bool = False
+    plot_dispersion: Optional[bool] = None
     run_sqw_map: bool = False
+    sqw_map: bool = False # Alias
     calculate_sqw_map_new: bool = True
-    plot_sqw_map: bool = False
+    plot_sqw_map: Optional[bool] = None
+    plot_structure: Optional[bool] = None
+    run_plotting: Optional[bool] = None
     export_csv: bool = False
+
+    model_config = ConfigDict(extra='allow')
     
 class MinimizationConfig(BaseModel):
     enabled: bool = False
     method: str = "L-BFGS-B"
+    num_starts: int = 1
+    n_workers: int = 1
+    early_stopping: int = 0
     ftol: float = 1e-9
     gtol: float = 1e-7
     maxiter: int = 5000
+
+    model_config = ConfigDict(extra='allow')
 
 class MagneticStructureConfig(BaseModel):
     type: str # 'pattern' or 'explicit'
@@ -197,10 +215,13 @@ class MagCalcConfig(BaseModel):
     magnetic_structure: Optional[MagneticStructureConfig] = None
     
     calculation: CalculationConfig = Field(default_factory=CalculationConfig)
+    calculation_settings: Optional[CalculationConfig] = None # Legacy support
     q_path: Optional[QPathConfig] = None
     output: OutputConfig = Field(default_factory=OutputConfig)
     plotting: PlottingConfig = Field(default_factory=PlottingConfig)
     tasks: TasksConfig = Field(default_factory=TasksConfig)
+    
+    model_config = ConfigDict(extra='allow')
 
     @model_validator(mode='before')
     def normalize_parameters(cls, values):

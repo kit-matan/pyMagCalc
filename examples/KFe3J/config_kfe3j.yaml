@@ -1,3 +1,11 @@
+parameter_order: [Dy, Dz, J1, J2, H_mag, H_dir]
+parameters:
+  Dy: 0.218
+  Dz: 0.195
+  J1: 3.23
+  J2: 0.11
+  H_mag: 0
+  H_dir: [0, 0, 1]
 crystal_structure:
   lattice_parameters:
     a: 7.33009
@@ -5,8 +13,9 @@ crystal_structure:
     c: 17.1374
     alpha: 90
     beta: 90
-    gamma: 120.00000000000001
+    gamma: 120
     space_group: 166
+    dimensionality: 3D
   wyckoff_atoms:
     - label: Fe
       pos: [0.16667, 0.83333, 0.83333]
@@ -15,36 +24,24 @@ crystal_structure:
   atom_mode: symmetry
   magnetic_elements:
     - Fe
+  dimensionality: 3
 interactions:
   symmetry_rules:
     - type: heisenberg
-      distance: 3.664971699100001
+      distance: 3.66497
       value: J1
-      ref_pair: &ref_0
-        - Fe1
-        - Fe5
-      offset: &ref_1
-        - 0
-        - 0
-        - 0
+      ref_pair: [Fe0, Fe2]
+      offset: [0, 0, 0]
     - type: dm
-      distance: 3.664971699100001
-      value: 0,Dy,-Dz
-      ref_pair: *ref_0
-      offset: *ref_1
+      distance: 3.66497
+      value: 0,Dy,Dz
+      ref_pair: [Fe0, Fe4]
+      offset: [-1, 0, 0]
     - type: heisenberg
-      distance: 6.3480441520732995
+      distance: 6.34804
       value: J2
       ref_pair: [Fe0, Fe2]
       offset: [-1, 0, 0]
-parameters:
-  S: 1
-  H_mag: 0
-  H_dir: [0, 0, 1]
-  J1: 3.23
-  J2: 0.11
-  Dy: 0.218
-  Dz: -0.195
 tasks:
   minimization: true
   dispersion: true
@@ -62,11 +59,11 @@ plotting:
   broadening: 0.2
   energy_resolution: 0.05
   momentum_max: 4
-  save_plot: false
+  save_plot: true
   disp_plot_filename: disp_plot.png
   sqw_plot_filename: sqw_plot.png
-  show_plot: false
-  plot_structure: false
+  show_plot: true
+  plot_structure: true
   energy_limits_disp: [0, 20]
   broadening_width: 0.2
 minimization:
