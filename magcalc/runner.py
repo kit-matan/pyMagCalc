@@ -111,7 +111,9 @@ def run_calculation(config_file: str):
     cache_base = calc_config.get('cache_file_base', 'magcalc_cache')
     
     # Parameters Logic
-    parameters_dict = final_config.get('parameters', {}) or final_config.get('model_params', {})
+    parameters_dict = final_config.get('parameters')
+    if parameters_dict is None:
+        parameters_dict = final_config.get('model_params', {})
     
     # Try to get S from parameters, otherwise check first atom's spin_S
     if 'S' in parameters_dict:

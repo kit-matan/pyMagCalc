@@ -572,19 +572,27 @@ class GenericSpinModel:
                 elif param_counter < len(p):
                     resolved_val = p[param_counter]
                     param_counter += 1
-            elif itype in ['dm', 'dm_manual', 'anisotropic_exchange', 'interaction_matrix', 'kitaev']:
-                if isinstance(val, list) and param_map:
+            if itype in ['dm', 'dm_manual', 'anisotropic_exchange', 'interaction_matrix', 'kitaev']:
+                if isinstance(val, list):
                     resolved_val = []
                     for v in val:
-                        if isinstance(v, str): resolved_val.append(safe_eval(v, param_map))
-                        else: resolved_val.append(v)
+                        if isinstance(v, str) and param_map: 
+                            resolved_val.append(safe_eval(v, param_map))
+                        elif isinstance(v, (list, tuple)):
+                            nested_res = []
+                            for sub_v in v:
+                                if isinstance(sub_v, str) and param_map:
+                                    nested_res.append(safe_eval(sub_v, param_map))
+                                else:
+                                    nested_res.append(sub_v)
+                            resolved_val.append(nested_res)
+                        else: 
+                            resolved_val.append(v)
                 elif isinstance(val, (int, float, str)) and param_map:
-                     # Single symbolic expression for vector or scalar
-                     resolved_val = safe_eval(str(val), param_map)
-                else:
-                    # Fallback positional... DM needs 3, Matrix needs 9?
-                    # This is tricky, but designer configs usually have symbolic values.
-                    pass
+                    # Single symbolic expression for vector or scalar
+                    resolved_val = safe_eval(str(val), param_map)
+                elif isinstance(val, (int, float)):
+                    resolved_val = val
 
             # 2. Matching logic
             target_pair = interaction.get('pair')
