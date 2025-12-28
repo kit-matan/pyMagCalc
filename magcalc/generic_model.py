@@ -661,7 +661,7 @@ class GenericSpinModel:
                         if Kex[i][j] is None: Kex[i][j] = k_mat
                         else: Kex[i][j] += k_mat
 
-        # 4. Fill None with zeros for consistency
+        # 4. Fill None with zeros
         dnull_vec = sp.Matrix([0, 0, 0])
         dnull_mat = sp.zeros(3, 3)
         for i in range(N_atom):
@@ -669,6 +669,126 @@ class GenericSpinModel:
                 if DM[i][j] is None: DM[i][j] = dnull_vec
                 if Kex[i][j] is None: Kex[i][j] = dnull_mat
 
+        # 5. Incommensurate/Spiral Mode Check
+        # If magnetic_structure type is 'spiral', we perform the effective interaction rotation here.
+        mag_struct = self.config.get('magnetic_structure', {})
+        if mag_struct.get('type') == 'spiral':
+            logger.info("Spiral Magnetic Structure detected. Computing Effective Rotated Interactions...")
+            Jex, DM, Kex = self._compute_rotated_interactions(Jex, DM, Kex, mag_struct)
+
+        return Jex, DM, Kex
+
+    def _compute_rotated_interactions(self, Jex, DM, Kex, mag_struct):
+        """
+        Compute effective interactions in the local rotating frame for a spiral.
+        R_i^T * J_{ij} * R_j  =>  Effective J_{ij}
+        """
+        k_vec = np.array(mag_struct.get('k', [0, 0, 0]), dtype=float)
+        axis = np.array(mag_struct.get('axis', [0, 0, 1]), dtype=float) # Normal to spiral plane
+        # Normalize axis
+        if la.norm(axis) > 1e-9: axis /= la.norm(axis)
+        
+        # We assume R_i is identity (or fixed reference).
+        # We model the relative rotation R_{ij} = R(Q . r_{ij}) around 'axis'.
+        
+        dnull_vec = sp.Matrix([0, 0, 0]) # Fix: Define dnull_vec here
+        
+        apos = self.atom_pos()
+        apos_ouc = self.atom_pos_ouc()
+        
+        N_atom = len(apos)
+        N_ouc = len(apos_ouc)
+        
+        # Sympy rotation generator
+        def get_rot_matrix(theta, axis_vec):
+            # General rotation matrix around axis by theta
+            # Rodrigues formula: I + sin(th) K + (1-cos(th)) K^2
+            # But we need Sympy expression? Or numeric?
+            # Interactions can be symbolic. Let's stick to Sympy for consistency?
+            # Or numeric if K, Axis are numeric.
+            # Assuming K and Axis numeric.
+            ux, uy, uz = axis_vec
+            K = sp.Matrix([[0, -uz, uy], [uz, 0, -ux], [-uy, ux, 0]])
+            I = sp.eye(3)
+            # theta is a float/value
+            # We construct numeric matrix if possible
+            R = I + sp.sin(theta) * K + (1 - sp.cos(theta)) * (K @ K)
+            return R
+
+        # Iterate and rotate
+        # Effective J_{ij} = R_i^T @ J_{ij} @ R_j
+        # Relative displacement r = r_j - r_i
+        # Phase difference phi = k . r
+        # R_j = R(phi) * R_i.  So R_i^T R_j = R(phi).
+        # Thus J_eff = J_{ij} @ R(phi). (Assuming J is matrix form)
+        
+        # For Heisenberg scalar J: J_eff matrix = J * R(phi)
+        # For DM D: D . (Si x Sj) -> R rotates spins?
+        # DM energy: D . (Ri Si x Rj Sj). 
+        # This is complex. Standard LSWT codes usually rotate the Interaction Matrix Kex.
+        # Heisenberg J becomes J * Identity.
+        # Full interaction K_{total} = J*I + S(D) + Kex
+        # We transform K_{total}.
+        
+        for i in range(N_atom):
+            for j in range(N_ouc):
+                r_vec = apos_ouc[j] - apos[i]
+                phase = float(np.dot(k_vec, r_vec) * 2 * np.pi) # k in rlu? r in Angstrom?
+                # Check units!
+                # Usual convention: k in r.l.u, r in cell units?
+                # generic_model apos are Cartesian (Angstroms).
+                # k is likely RLU. We need to convert k to Cartesian (Inverse Angstroms)?
+                # phase = k_cart . r_cart = (k_rlu . B) . (A . r_frac) = k_rlu . 2pi . r_frac
+                # Wait: k . r = 2pi * (h*x + k*y + l*z).
+                # If we have r_cart, we need to convert back to frac or convert k to cart.
+                
+                # Convert r_cart to r_frac
+                # uc = [a, b, c] rows. 
+                # r_frac = r_cart @ inv(uc).
+                
+                # Or just use GenericSpinModel util if available.
+                # Let's compute phase carefully.
+                inv_uc = la.inv(self.unit_cell())
+                r_frac = r_vec @ inv_uc # vector * matrix_inv
+                
+                phase = 2 * np.pi * np.dot(k_vec, r_frac)
+                
+                R_rel = get_rot_matrix(phase, axis)
+                
+                # Total Interaction Matrix in Global Frame
+                # J_tot = J * I + Kex + DM_term
+                # DM term D . (S x S) = S . (Skew(D)) . S? 
+                # No, D . (Si x Sj) = Si . Skew(D) . Sj ?
+                # Skew(D) = [[0, Dz, -Dy], [-Dz, 0, Dx], [Dy, -Dx, 0]] ?
+                # Yes, Si . Skew(D) . Sj = sum Si_mu Skew_mu_nu Sj_nu
+                
+                # Construct Full J_global
+                J_scalar = Jex[i, j]
+                D_vec = DM[i][j]
+                K_mat = Kex[i][j]
+                
+                J_global = sp.eye(3) * J_scalar + K_mat
+                
+                if not (hasattr(D_vec, 'is_zero_matrix') and D_vec.is_zero_matrix) and D_vec != sp.Matrix([0,0,0]):
+                    Dx, Dy, Dz = D_vec[0], D_vec[1], D_vec[2]
+                    D_skew = sp.Matrix([[0, Dz, -Dy], [-Dz, 0, Dx], [Dy, -Dx, 0]])
+                    J_global += D_skew
+                    
+                # Effective J_local = J_global * R_rel
+                # (Assuming R_i = I, R_j = R_rel)
+                # J_eff = J_global * R_rel
+                
+                J_eff = J_global * R_rel
+                
+                # Decompose back?
+                # GenericSpinModel expects Jex, DM, Kex.
+                # But Effective Interaction might be fully anisotropic.
+                # So we put everything into Kex and zero out Jex/DM.
+                
+                Jex[i, j] = 0
+                DM[i][j] = dnull_vec
+                Kex[i][j] = J_eff
+                
         return Jex, DM, Kex
 
     def Hamiltonian(self, Sxyz: List[Any], pr: List[Any]) -> sp.Expr:

@@ -28,5 +28,5 @@ examples/plots/
 **/.pytest_cache/
 **/.ipynb_checkpoints/
 *.egg-info/
-sunny_examples/
-future_examples/
+examples/sunny_examples/
+examples/future_examples/

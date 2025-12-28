@@ -1925,22 +1925,22 @@ function App() {
                       <h3>Display Parameters</h3>
                       <div className="grid-form mt-md">
                         <div className="input-group">
-                          <label>Energy Min (meV)</label>
+                          <label>Energy Min <span style={{ textTransform: 'none' }}>(meV)</span></label>
                           <input type="number" step="0.1" value={config.plotting.energy_min} className="minimal-input"
                             onChange={(e) => updateField('plotting', 'energy_min', parseFloat(e.target.value))} />
                         </div>
                         <div className="input-group">
-                          <label>Energy Max (meV)</label>
+                          <label>Energy Max <span style={{ textTransform: 'none' }}>(meV)</span></label>
                           <input type="number" step="0.1" value={config.plotting.energy_max} className="minimal-input"
                             onChange={(e) => updateField('plotting', 'energy_max', parseFloat(e.target.value))} />
                         </div>
                         <div className="input-group">
-                          <label>Broadening (meV)</label>
+                          <label>Broadening <span style={{ textTransform: 'none' }}>(meV)</span></label>
                           <input type="number" step="0.01" value={config.plotting.broadening} className="minimal-input"
                             onChange={(e) => updateField('plotting', 'broadening', parseFloat(e.target.value))} />
                         </div>
                         <div className="input-group">
-                          <label>Energy Res. (meV)</label>
+                          <label>Energy Res. <span style={{ textTransform: 'none' }}>(meV)</span></label>
                           <input type="number" step="0.01" value={config.plotting.energy_resolution} className="minimal-input"
                             onChange={(e) => updateField('plotting', 'energy_resolution', parseFloat(e.target.value))} />
                         </div>

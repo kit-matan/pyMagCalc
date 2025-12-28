@@ -190,11 +190,29 @@ class MinimizationConfig(BaseModel):
     model_config = ConfigDict(extra='allow')
 
 class MagneticStructureConfig(BaseModel):
-    type: str # 'pattern' or 'explicit'
-    pattern_type: Optional[str] = None
-    directions: Optional[List[Vector3]] = None
-    explicit_list: Optional[List[Dict[str, Any]]] = None
-    configuration: Optional[List[Dict[str, Any]]] = None # Legacy alias?
+    # 'type' can be 'propagation_vector', 'explicit', 'pattern', or 'spiral' (new)
+    type: str 
+    
+    # For 'spiral' (Incommensurate LSWT)
+    k: Optional[List[float]] = None # Propagation vector
+    axis: Optional[List[float]] = None # Rotation axis
+    plane_u: Optional[List[float]] = None # Basis vector in rotation plane
+    
+    # For 'propagation_vector' (supercell based)
+    subtype: Optional[str] = 'planar' 
+    u: Optional[List[float]] = None
+    v: Optional[List[float]] = None
+    n: Optional[List[float]] = None 
+    cone_angle_deg: Optional[float] = 0.0
+    
+    # For 'pattern'
+    pattern_type: Optional[str] = None 
+    direction: Optional[List[float]] = None 
+    directions: Optional[List[List[float]]] = None 
+    
+    # For 'explicit'
+    explicit_list: Optional[List[Dict[str, Any]]] = None 
+    configuration: Optional[List[Dict[str, Any]]] = None 
     
     model_config = ConfigDict(extra='allow')
 
