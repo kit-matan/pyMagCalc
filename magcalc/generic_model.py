@@ -671,7 +671,7 @@ class GenericSpinModel:
 
         # 5. Incommensurate/Spiral Mode Check
         # If magnetic_structure type is 'spiral', we perform the effective interaction rotation here.
-        mag_struct = self.config.get('magnetic_structure', {})
+        mag_struct = self.config.get('magnetic_structure') or {}
         if mag_struct.get('type') == 'spiral':
             logger.info("Spiral Magnetic Structure detected. Computing Effective Rotated Interactions...")
             Jex, DM, Kex = self._compute_rotated_interactions(Jex, DM, Kex, mag_struct)

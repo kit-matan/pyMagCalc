@@ -107,8 +107,9 @@ def run_calculation(config_file: str):
     
     # Initialize MagCalc
     calc_config = final_config.get('calculation', {})
-    cache_mode = calc_config.get('cache_mode', 'none')
-    cache_base = calc_config.get('cache_file_base', 'magcalc_cache')
+    # Default to 'auto' for better performance in iterative GUI/CLI usage
+    cache_mode = calc_config.get('cache_mode', 'auto')
+    cache_base = calc_config.get('cache_file_base', 'magcalc_run_cache')
     
     # Parameters Logic
     parameters_dict = final_config.get('parameters')

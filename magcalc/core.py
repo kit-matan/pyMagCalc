@@ -149,7 +149,7 @@ def _minimize_worker(args):
         (E_sym_num, opt_vars, x0, method, bounds, constraints, kwargs)
     """
     E_sym_num, opt_vars, x0, method, bounds, constraints, kwargs = args
-    from scipy.optimize import minimize
+    from scipy.optimize import minimize, basinhopping, differential_evolution
     import sympy as sp
 
     # Lambdify inside the worker to avoid pickling issues with generated functions
@@ -158,14 +158,24 @@ def _minimize_worker(args):
     def wrapper(x):
         return E_func(*x)
 
-    return minimize(
-        wrapper,
-        x0,
-        method=method,
-        bounds=bounds,
-        constraints=constraints,
-        **kwargs,
-    )
+    if method == 'basinhopping':
+        # Extract niter if present, defaults to 100 in scipy
+        niter = kwargs.pop('niter', 100)
+        return basinhopping(wrapper, x0, niter=niter, minimizer_kwargs={'method': 'L-BFGS-B', 'bounds': bounds, 'constraints': constraints}, **kwargs)
+    elif method == 'differential_evolution':
+        # differential_evolution does not take x0 (uses init), but we might want to respect bounds
+        # It takes bounds as mandatory
+        constraints_diff = constraints if constraints is not None else ()
+        return differential_evolution(wrapper, bounds, constraints=constraints_diff, **kwargs)
+    else:
+        return minimize(
+            wrapper,
+            x0,
+            method=method,
+            bounds=bounds,
+            constraints=constraints,
+            **kwargs,
+        )
 
 
 # --- gen_HM Helper Functions ---
@@ -1537,7 +1547,17 @@ class MagCalc:
                 func, x0_task, method_task, bounds_task, constraints_task, kwargs_task = task_args
                 def energy_wrapper(x):
                     return func(*x)
-                res = minimize(energy_wrapper, x0_task, method=method_task, bounds=bounds_task, constraints=constraints_task, **kwargs_task)
+
+                from scipy.optimize import minimize, basinhopping, differential_evolution
+
+                if method_task == 'basinhopping':
+                    niter = kwargs_task.pop('niter', 100)
+                    res = basinhopping(energy_wrapper, x0_task, niter=niter, minimizer_kwargs={'method': 'L-BFGS-B', 'bounds': bounds_task, 'constraints': constraints_task}, **kwargs_task)
+                elif method_task == 'differential_evolution':
+                    constraints_diff = constraints_task if constraints_task is not None else ()
+                    res = differential_evolution(energy_wrapper, bounds_task, constraints=constraints_diff, **kwargs_task)
+                else:
+                    res = minimize(energy_wrapper, x0_task, method=method_task, bounds=bounds_task, constraints=constraints_task, **kwargs_task)
 
                 if res.success:
                     if np.isclose(res.fun, best_energy, atol=1e-6):

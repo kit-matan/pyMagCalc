@@ -154,10 +154,20 @@ async def trigger_calculation(config: Dict[str, Any]):
         with open(run_config_path, 'w') as f:
             yaml.dump(expanded_data, f, sort_keys=False)
             
+        # Clear log queue for the new run to avoid showing old logs
+        while not log_queue.empty():
+            try:
+                log_queue.get_nowait()
+            except:
+                break
+                
         logging.getLogger().info(f"Starting calculation with config: {run_config_path}")
-        
+        # Explicit info for the UI
+        if MAIN_LOOP:
+            MAIN_LOOP.call_soon_threadsafe(log_queue.put_nowait, "--- NEW CALCULATION STARTED ---")
+
         # 2. Run Calculation: Non-blocking execution
-        # This function is blocking, so we run it in a thread pool to keep the loop free for WS
+        # Use a background thread to keep the main event loop free for WebSocket log streaming
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, run_calculation, run_config_path)
         
@@ -800,16 +810,35 @@ async def expand_config(config: Dict[str, Any]):
                 except Exception as e:
                      print(f"Warning: Skipping rule due to error: {e}")
             
-            # Expand rules based on current atoms_uc (which might be explicit or symmetry-expanded)
-            builder._expand_heisenberg_rules()
-            builder._expand_dm_rules()
-            builder._expand_anisotropic_exchange_rules()
-            
+            # Expand rules based on current atoms_uc
+            try:
+                builder._expand_heisenberg_rules()
+                builder._expand_dm_rules()
+                builder._expand_anisotropic_exchange_rules()
+                builder._expand_symmetry_interactions()
+            except Exception as e:
+                logging.getLogger().error(f"Expansion Error: {e}")
+                import traceback
+                traceback.print_exc()
+
             # Filter and flatten interactions
             final_inters = []
             final_inters.extend(builder.config["interactions"].get("heisenberg", []))
             final_inters.extend(builder.config["interactions"].get("dm_interaction", []))
             final_inters.extend(builder.config["interactions"].get("anisotropic_exchange", []))
+
+        # 4. Global Parameters & Tasks
+        builder.config["parameters"] = data.get("parameters", {})
+        builder.config["tasks"] = data.get("tasks", {})
+        
+        # Ensure calculation section exists and default to auto cache for GUI performance
+        if "calculation" not in builder.config:
+            builder.config["calculation"] = {}
+        if "cache_mode" not in builder.config["calculation"]:
+            builder.config["calculation"]["cache_mode"] = "auto"
+        if "cache_file_base" not in builder.config["calculation"]:
+             # Use a stable but specific cache name for GUI
+             builder.config["calculation"]["cache_file_base"] = "gui_run_cache"
 
         # Re-build atoms list for response if symmetry was used
         if atom_mode != "explicit":

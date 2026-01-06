@@ -30,3 +30,6 @@ examples/plots/
 *.egg-info/
 examples/sunny_examples/
 examples/future_examples/
+sunny_exsamples/
+examples/future_exmaples/
+config_gui_run.yaml
