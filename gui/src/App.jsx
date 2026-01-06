@@ -127,9 +127,19 @@ function App() {
       };
 
       ws.onmessage = (event) => {
+        const rawMsg = event.data;
         setLogs(prev => {
-          // Keep last 1000 lines
-          const newLogs = [...prev, event.data];
+          // If message starts with \r, it's a progress update meant to replace the current line
+          if (rawMsg.startsWith('\r') && prev.length > 0) {
+            const next = [...prev];
+            next[next.length - 1] = rawMsg.replace(/^\r/, ''); // Replace last line, strip the \r
+            return next;
+          }
+
+          // Fallback: If it's a large chunk with internal \r, we might need more complex logic,
+          // but for tqdm it usually comes as separate packets or starts with \r.
+
+          const newLogs = [...prev, rawMsg];
           if (newLogs.length > 1000) return newLogs.slice(newLogs.length - 1000);
           return newLogs;
         });

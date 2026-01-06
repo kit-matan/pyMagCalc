@@ -53,7 +53,8 @@ class StreamToLogger:
         self.original_stream.flush() # Ensure immediate terminal output
         
         # Send to WebSocket queue
-        if buf.strip() and MAIN_LOOP:
+        # For tqdm, we want to preserve \r to allow the frontend to replace lines
+        if buf and MAIN_LOOP:
            try:
                MAIN_LOOP.call_soon_threadsafe(log_queue.put_nowait, buf)
            except Exception:
