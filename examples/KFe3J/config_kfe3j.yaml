@@ -73,8 +73,8 @@ minimization:
   early_stopping: 10
   method: L-BFGS-B
 output:
-  disp_data_filename: disp_data.npz
-  sqw_data_filename: sqw_data.npz
-  disp_csv_filename: disp_data.csv
-  sqw_csv_filename: sqw_data.csv
+  disp_data_filename: KFe3J_disp_data.npz
+  sqw_data_filename: KFe3J_sqw_data.npz
+  disp_csv_filename: KFe3J_disp_data.csv
+  sqw_csv_filename: KFe3J_sqw_data.csv
   save_data: false
