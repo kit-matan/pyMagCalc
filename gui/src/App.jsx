@@ -258,7 +258,12 @@ function App() {
     try {
       const saved = localStorage.getItem('magcalc_config');
       if (saved) {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        // Migration: Update old default 10 to new default 3
+        if (parsed.minimization && parsed.minimization.early_stopping === 10) {
+          parsed.minimization.early_stopping = 3;
+        }
+        return parsed;
       }
     } catch (e) {
       console.error("Failed to load config from localStorage", e);
