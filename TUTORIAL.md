@@ -61,7 +61,7 @@ Open `config.yaml` and define your physics.
 -   `minimization`: Settings for finding the ground state.
     -   `initial_configuration`: **Crucial** for complex systems to avoid local minima. define `theta` and `phi` for each atom.
     -   `n_workers`: Number of CPU cores for parallel minimization (default: 1).
-    -   `early_stopping`: Stop after finding the same ground state N times (default: 0/disabled).
+    -   `early_stopping`: Stop after finding the same ground state N times (default: 3).
 -   `plotting`: Control output behavior.
     -   `show_plot`: Set to `true` to see plots on screen, `false` to save only.
     -   `plot_structure`: Visualize the minimized magnetic state.

@@ -1389,7 +1389,7 @@ class MagCalc:
         constraints: Optional[Dict] = None,
         num_starts: int = 1,
         n_workers: int = 1,
-        early_stopping: int = 0,
+        early_stopping: int = 3,
         **kwargs,
     ) -> Any:
         """
@@ -1409,7 +1409,7 @@ class MagCalc:
             num_starts (int): Number of independent minimizations from random starts (default: 1).
                               If num_starts > 1 and x0 is provided, x0 is used as the first start.
             n_workers (int): Number of parallel workers for multistart (default: 1).
-            early_stopping (int): Stop after N hits of the same minimum energy (default: 0, disabled).
+            early_stopping (int): Stop after N hits of the same minimum energy (default: 3).
 
         Returns:
             OptimizeResult: The result of the optimization (best result found).

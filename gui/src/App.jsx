@@ -246,7 +246,7 @@ function App() {
     minimization: {
       num_starts: 1000,
       n_workers: 8,
-      early_stopping: 10,
+      early_stopping: 3,
       method: "L-BFGS-B"
     },
     calculation: {
@@ -413,7 +413,7 @@ function App() {
     minimization: {
       num_starts: 1000,
       n_workers: 8,
-      early_stopping: 10,
+      early_stopping: 3,
       method: "L-BFGS-B"
     },
     calculation: {
