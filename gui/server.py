@@ -815,7 +815,7 @@ async def expand_config(config: Dict[str, Any]):
                 builder._expand_heisenberg_rules()
                 builder._expand_dm_rules()
                 builder._expand_anisotropic_exchange_rules()
-                builder._expand_symmetry_interactions()
+                builder._expand_interaction_matrix_rules()
             except Exception as e:
                 logging.getLogger().error(f"Expansion Error: {e}")
                 import traceback

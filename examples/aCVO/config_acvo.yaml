@@ -69,8 +69,8 @@ plotting:
   energy_resolution: 0.05
   momentum_max: 4
   save_plot: true
-  disp_plot_filename: CVO_designer_disp.png
-  sqw_plot_filename: CVO_designer_sqw.png
+  disp_plot_filename: CVO_disp.png
+  sqw_plot_filename: CVO_sqw.png
   show_plot: true
   plot_structure: true
   energy_limits_disp: [0, 10]

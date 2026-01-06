@@ -229,13 +229,21 @@ class GenericSpinModel:
                  rules = interactions_data.get('symmetry_rules', [])
                  for rule in rules:
                      try:
-                         builder.add_symmetry_interaction(
-                             type=rule.get('type'),
-                             ref_pair=rule.get('ref_pair'),
-                             value=rule.get('value'),
-                             distance=rule.get('distance'),
-                             offset=rule.get('offset')
-                         )
+                         rtype = rule.get('type')
+                         if rtype == 'heisenberg' and not rule.get('ref_pair'):
+                             builder.add_interaction_rule(
+                                 type='heisenberg',
+                                 distance=rule.get('distance'),
+                                 value=rule.get('value')
+                             )
+                         else:
+                             builder.add_symmetry_interaction(
+                                 type=rtype,
+                                 ref_pair=rule.get('ref_pair'),
+                                 value=rule.get('value'),
+                                 distance=rule.get('distance'),
+                                 offset=rule.get('offset')
+                             )
                      except Exception as e:
                          logger.warning(f"Failed to add symmetry rule {rule}: {e}")
              
@@ -244,6 +252,7 @@ class GenericSpinModel:
                  builder._expand_heisenberg_rules()
                  builder._expand_anisotropic_exchange_rules()
                  builder._expand_dm_rules()
+                 builder._expand_interaction_matrix_rules()
         
         # 4. Integrate back to self.config
         # Update atoms_uc
