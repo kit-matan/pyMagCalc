@@ -57,7 +57,7 @@ Open `config.yaml` and define your physics.
 
 **Key Sections:**
 -   `crystal_structure`: Lattice parameters and atom positions.
--   `interactions`: Heisenberg ($J$), Dzyaloshinskii-Moriya ($D$), Anisotropic Exchange, Kitaev, and Single-Ion Anisotropy ($K$).
+-   `interactions`: Can be defined as explicit pairs (e.g., `heisenberg`) or as `symmetry_rules` for distance-based automatic expansion.
 -   `minimization`: Settings for finding the ground state.
     -   `initial_configuration`: **Crucial** for complex systems to avoid local minima. define `theta` and `phi` for each atom.
     -   `n_workers`: Number of CPU cores for parallel minimization (default: 1).
@@ -70,7 +70,7 @@ Open `config.yaml` and define your physics.
 -   `output`: Define output filenames for data (e.g., `disp_csv_filename: "my_data.csv"`).
 
 ### Step 3: Validate
-Check if your configuration is physically valid without running heavy calculations:
+The CLI uses a robust **Pydantic schema** to check if your configuration is valid before running heavy calculations. This provides clear error messages for missing fields or type mismatches.
 
 ```bash
 magcalc validate config.yaml
@@ -109,25 +109,34 @@ crystal_structure:
 ```
 
 ### Interactions
-Support for Heisenberg, DM, Kitaev, and Single-Ion Anisotropy (SIA) interactions.
+### Interactions
+`pyMagCalc` supports both **explicit pair interactions** and **distance-based symmetry rules**.
 
+#### 1. Distance-Based (Symmetry Rules)
+Best for large systems. Define a distance, and the system finds all symmetry-equivalent bonds.
+```yaml
+interactions:
+  symmetry_rules:
+    - type: "heisenberg"
+      distance: 3.23
+      value: "J1"
+    - type: "dm_interaction"
+      distance: 3.23
+      value: [0, "Dy", "Dz"]
+```
+
+#### 2. Explicit Pairs
+Define specific bonds between atom labels. Use `rij_offset` for neighbors in other cells.
 ```yaml
 interactions:
   heisenberg:
     - pair: ["Fe1", "Fe1"]
       J: "J1"
-      rij_offset: [0.5, 0.0, 0.0]
-  kitaev:
-    - pair: ["Fe1", "Fe1"]
-      K: "K_kit"
-      rij_offset: [0.5, 0.5, 0.0]
+      rij_offset: [1, 0, 0]
   single_ion_anisotropy:
     - atom_label: "Fe1"
       value: "D_sia"
       axis: [0, 0, 1]
-    - atom_label: "Fe1"
-      value: "E_sia"
-      axis: [1, 1, 0]
 ```
 
 ### Data Export (CSV)

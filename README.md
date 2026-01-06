@@ -9,17 +9,17 @@
 
 ## Key Features
 
-*   **pyMagCalc Studio:** Interactive web GUI for designing models from CIF files and symmetry-based bonding rules.
+*   **pyMagCalc Studio:** Interactive modern web GUI for designing models from CIF files and symmetry-based bonding rules. Provides a seamless **Design -> Save -> Run** workflow.
 *   **Symmetry-Aware Mechanics:** Automatically propagates Heisenberg ($J$), DM ($D$), Anisotropic Exchange ($T$), and **Kitaev ($K$)** rules across the crystal using space-group symmetry operators (via `pymatgen` and `spglib`).
-*   **Robust CIF Import:** Imports crystal structures from CIF files, automatically detecting symmetry and reducing to unique Wyckoff positions for a clean workflow.
+*   **Robust CIF Import:** Imports crystal structures from CIF files, automatically detecting symmetry and reducing to unique Wyckoff positions.
 *   **Diffraction Physics:** Calculates spin-wave dispersion and dynamic structure factors $S(Q,\omega)$ with magnetic form factor and polarization factor corrections.
 *   **Energy Minimization:** Numerically finds the classical magnetic ground state by minimizing the Hamiltonian energy, supporting **parallel multistart** and **early stopping** for robust convergence.
 *   **3D Visualization:** Visualizes the magnetic structure in 3D with scaled spins, DM vectors (arrows), and orientation guides.
 *   **Symbolic Engine:** Generates symbolic quadratic boson Hamiltonians using `SymPy` for arbitrary spin interactions.
 *   **Numerical Engine:** Efficient numerical evaluation using `NumPy` and `multiprocessing` for parallel q-point calculations.
 *   **Flexible Caching:** Supports disk caching (`auto`, `r`, `w`) for expensive symbolic matrices, or `none` for purely in-memory execution.
-*   **Data Export (CSV):** Optionally export dispersion and $S(Q,\omega)$ results to `.csv` files for external analysis.
-*   **Flexible Inputs:** Supports declarative YAML configurations (validated against schema) or Python-based model definitions.
+*   **Data Export (CSV):** Export results to `.csv` or `.npz` files for external analysis.
+*   **Validated Configurations:** Supports declarative YAML configurations validated against a robust **Pydantic schema** for immediate error feedback.
 
 ## Directory Structure
 
@@ -28,6 +28,7 @@
     *   `generic_model.py`: `GenericSpinModel` for YAML-based model loading.
     *   `linalg.py`: Matrix operations and Bogoliubov transformation utilities.
     *   `config_loader.py`: Utilities for loading and validating configurations.
+    *   `schema.py`: Pydantic V2 models for robust configuration validation.
 *   `scripts/`: Executable scripts for running calculations and inspecting models (e.g., `run_magcalc.py`).
 *   `examples/`: Sample data and scripts for various materials.
     *   `KFe3J/`: KFe3(OH)6(SO4)2 (Jarosite) - Kagome antiferromagnet.
