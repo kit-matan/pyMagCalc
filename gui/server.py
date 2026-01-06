@@ -141,7 +141,7 @@ async def trigger_calculation(config: Dict[str, Any]):
         # 1. Save Config
         gui_dir = os.path.dirname(os.path.abspath(__file__))
         project_root = os.path.dirname(gui_dir)
-        run_config_path = os.path.join(project_root, "config_gui_run.yaml")
+        run_config_path = os.path.join(project_root, ".config_gui_run.yaml")
         
         # Force standard plot filenames so we can capture and serve them reliably
         if "plotting" not in expanded_data:
