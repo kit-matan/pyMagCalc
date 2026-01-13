@@ -132,7 +132,7 @@ main {
 }
 
 .sidebar-header {
-  font-size: 0.7rem;
+  font-size: 0.8rem;
   font-weight: 800;
   color: var(--text-muted);
   letter-spacing: 0.15em;
@@ -159,6 +159,8 @@ nav {
   border: none;
   color: var(--text-secondary);
   font-weight: 600;
+  font-size: 1.1rem;
+  /* Explicitly larger for menu items */
   cursor: pointer;
   text-align: left;
   transition: var(--transition-base);
@@ -489,11 +491,11 @@ nav {
 }
 
 .text-xs {
-  font-size: 0.75rem;
+  font-size: 0.85rem;
 }
 
 .text-xxs {
-  font-size: 0.65rem;
+  font-size: 0.75rem;
 }
 
 .tracking-wider {
@@ -623,7 +625,7 @@ nav {
 }
 
 .task-desc {
-  font-size: 0.75rem;
+  font-size: 0.85rem;
   color: var(--text-muted);
 }
 

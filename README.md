@@ -105,6 +105,34 @@ This script will:
 
 The designer facilitates a seamless **Design -> Save -> Run** workflow, where the generated `config_designer.yaml` can be executed immediately using `magcalc run`.
 
+### Native macOS Application
+
+You can also run pyMagCalc Studio as a standalone native application on macOS (wrapper around the web app).
+
+1.  **Prerequisites**:
+    *   Build the frontend:
+        ```bash
+        cd gui
+        npm install
+        npm run build
+        cd ..
+        ```
+    *   Install additional Python dependencies:
+        ```bash
+        pip install -r requirements.txt
+        ```
+
+2.  **Launch**:
+    You can use the helper script:
+    ```bash
+    ./run_native.sh
+    ```
+    
+    Or run manually:
+    ```bash
+    python gui/native_app.py
+    ```
+
 ## Basic Usage
 
 ### Running Example Scripts

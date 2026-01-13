@@ -295,7 +295,6 @@ function App() {
             crystal_structure: {
               lattice_parameters: config.lattice,
               wyckoff_atoms: config.wyckoff_atoms,
-              atom_mode: atomMode,
               atom_mode: atomMode
             },
             interactions: {
