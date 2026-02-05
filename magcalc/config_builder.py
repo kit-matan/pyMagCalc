@@ -787,12 +787,13 @@ class MagCalcConfigBuilder:
         }
         logger.info(f"Manually set {len(list(rotations))} symmetry operations.")
 
-    def set_minimization(self, enabled: bool = True, method: str = "L-BFGS-B", maxiter: int = 500, initial_configuration: List[Dict] = None):
+    def set_minimization(self, enabled: bool = True, method: str = "L-BFGS-B", maxiter: int = 500, early_stopping: int = 10, initial_configuration: List[Dict] = None):
         """Set minimization parameters."""
         self.config["minimization"] = {
             "enabled": enabled,
             "method": method,
-            "maxiter": maxiter
+            "maxiter": maxiter,
+            "early_stopping": early_stopping
         }
         if initial_configuration:
             self.config["minimization"]["initial_configuration"] = initial_configuration

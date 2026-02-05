@@ -256,7 +256,7 @@ function App() {
     minimization: {
       num_starts: 1000,
       n_workers: 8,
-      early_stopping: 3,
+      early_stopping: 10,
       method: "L-BFGS-B"
     },
     calculation: {
@@ -269,10 +269,10 @@ function App() {
       const saved = localStorage.getItem('magcalc_config');
       if (saved) {
         const parsed = JSON.parse(saved);
-        // Migration: Update old default 10 to new default 3
-        if (parsed.minimization && parsed.minimization.early_stopping === 10) {
-          parsed.minimization.early_stopping = 3;
-        }
+        // Migration: Update old default 10 to new default 3 - REVERTED
+        // if (parsed.minimization && parsed.minimization.early_stopping === 10) {
+        //   parsed.minimization.early_stopping = 3;
+        // }
         return parsed;
       }
     } catch (e) {
@@ -427,7 +427,7 @@ function App() {
     minimization: {
       num_starts: 1000,
       n_workers: 8,
-      early_stopping: 3,
+      early_stopping: 10,
       method: "L-BFGS-B"
     },
     calculation: {
@@ -2020,6 +2020,9 @@ function App() {
                         <label>Early Stopping</label>
                         <input type="number" value={config.minimization.early_stopping} className="minimal-input"
                           onChange={(e) => updateField('minimization', 'early_stopping', parseInt(e.target.value))} />
+                        <div className="text-xs text-warning mt-1" style={{ gridColumn: "1 / -1" }}>
+                          &ge; 10 to ensure accurate magnetic structure.
+                        </div>
                       </div>
                       <div className="input-group">
                         <label>Method</label>

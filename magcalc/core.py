@@ -1389,7 +1389,7 @@ class MagCalc:
         constraints: Optional[Dict] = None,
         num_starts: int = 1,
         n_workers: int = 1,
-        early_stopping: int = 3,
+        early_stopping: int = 10,
         **kwargs,
     ) -> Any:
         """
@@ -1409,7 +1409,7 @@ class MagCalc:
             num_starts (int): Number of independent minimizations from random starts (default: 1).
                               If num_starts > 1 and x0 is provided, x0 is used as the first start.
             n_workers (int): Number of parallel workers for multistart (default: 1).
-            early_stopping (int): Stop after N hits of the same minimum energy (default: 3).
+            early_stopping (int): Stop after N hits of the same minimum energy (default: 10).
 
         Returns:
             OptimizeResult: The result of the optimization (best result found).
@@ -1418,6 +1418,12 @@ class MagCalc:
             if self.hamiltonian_params is None:
                 raise ValueError("Hamiltonian parameters must be provided either to __init__ or minimize_energy.")
             params = self.hamiltonian_params
+
+        if early_stopping < 10:
+            logger.warning(
+                f"early_stopping is set to {early_stopping} (less than 10). "
+                "This could lead to a wrong magnetic structure."
+            )
 
         # 1. Setup Symbols
         nspins = len(self.sm.atom_pos())

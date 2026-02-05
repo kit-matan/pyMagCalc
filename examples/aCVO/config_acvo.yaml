@@ -82,7 +82,7 @@ minimization:
   enabled: true
   num_starts: 1000
   n_workers: 8
-  early_stopping: 3
+  early_stopping: 10
   method: L-BFGS-B
 output:
   disp_data_filename: disp_data.npz

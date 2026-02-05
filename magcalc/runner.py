@@ -232,7 +232,7 @@ def run_calculation(config_file: str):
                 min_config_section = final_config.get('minimization', {})
                 num_starts = min_config_section.get('num_starts', 1)
                 n_workers = min_config_section.get('n_workers', 1)
-                early_stopping = min_config_section.get('early_stopping', 3)
+                early_stopping = min_config_section.get('early_stopping', 10)
                 
                 min_res = calc_min.minimize_energy(
                     method="L-BFGS-B", 
