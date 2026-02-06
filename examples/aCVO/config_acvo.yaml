@@ -5,8 +5,10 @@ parameters:
   J1: 2.67
   J2: 2.99
   J3: 5.42
-  H_mag: 6
-  H_dir: [1, 0, 0]
+  H_mag: 20
+  H_dir: [0, 0, 1]
+calculation:
+  cache_mode: none
 crystal_structure:
   lattice_parameters:
     a: 20.645

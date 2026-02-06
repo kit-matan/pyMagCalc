@@ -8,10 +8,10 @@ from scipy import linalg as la  # Matches magcalc.py usage
 logger = logging.getLogger(__name__)
 
 # --- Numerical Constants ---
-DEGENERACY_THRESHOLD: float = 1e-12
+DEGENERACY_THRESHOLD: float = 1e-8
 ZERO_MATRIX_ELEMENT_THRESHOLD: float = 1e-6
 ALPHA_MATRIX_ZERO_NORM_WARNING_THRESHOLD: float = 1e-14
-EIGENVECTOR_MATCHING_THRESHOLD: float = 1e-5
+EIGENVECTOR_MATCHING_THRESHOLD: float = 1e-4
 # PROJECTION_CHECK_TOLERANCE: float = 1e-5 # Not clearly used in extracted block, can add if needed.
 I = 1j  # Use pure complex for numerical arrays
 
@@ -601,9 +601,8 @@ def KKdMatrix(
                 
                 m_conj_T = np.conj(degenerate_block_m.T)
                 dots = m_conj_T @ candidate_basis_p_block
-                sum_of_projections = np.sum(dots, axis=0) # flattening happens implicitly
-                
-                projection_magnitudes = np.abs(sum_of_projections)
+                # Use sum of absolute magnitudes as a measure of subspace overlap
+                projection_magnitudes = np.sum(np.abs(dots), axis=0) 
                 sorted_indices_desc = np.argsort(projection_magnitudes)[::-1]
 
                 if len(sorted_indices_desc) >= block_size and projection_magnitudes[sorted_indices_desc[block_size-1]] > EIGENVECTOR_MATCHING_THRESHOLD:

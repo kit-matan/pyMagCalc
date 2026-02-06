@@ -1312,7 +1312,7 @@ class MagCalc:
                 q,
                 self.nspins,
                 self.spin_magnitude,
-                [p for p in self.hamiltonian_params if not isinstance(p, (list, tuple, np.ndarray))],
+                list(self.hamiltonian_params),
             )
             for q in q_vectors_list
         ]

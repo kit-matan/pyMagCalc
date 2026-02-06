@@ -100,13 +100,8 @@ async def startup_event():
     mc_logger = logging.getLogger("magcalc")
     mc_logger.setLevel(logging.INFO)
     mc_logger.addHandler(handler)
-    mc_logger.propagate = False # Prevent double logging if root also handles it, but here we want to be sure logging works.
-    # Actually, keep propagate=True mostly, but if duplicate, we set to False. 
-    # Let's just set level and attach handler. Use propagate=False to avoid root capturing it IF root has handler.
-    # But wait, root HAS handler. So we will get duplicates if we attach to both and propagate is True.
-    # But currently we get NOTHING. So propagate might be False by default or blocked?
-    # Safest: Attach to magcalc, set propagate=False.
-    mc_logger.propagate = False
+    # Enable propagation so child loggers (magcalc.linalg, etc.) reach this handler
+    mc_logger.propagate = True
     
     # Also attach to uvicorn loggers to capture access logs if desired, or ensure magcalc logs propagated
     # logging.getLogger("uvicorn").addHandler(handler)

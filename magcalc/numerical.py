@@ -53,6 +53,7 @@ def _init_worker(HMat_sym, full_symbol_list):
     try:
         # We need to import numpy inside the worker if used in lambdify modules
         import numpy as np 
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
         _worker_HMat_func = lambdify(full_symbol_list, HMat_sym, modules=["numpy"], cse=True)
     except Exception as e:
         sys.stderr.write(f"Error in worker initialization: {e}\n")
