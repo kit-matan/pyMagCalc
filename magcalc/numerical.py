@@ -19,6 +19,8 @@ except ImportError:
     # Fallback if relative import fails (e.g. running script directly)
     from linalg import KKdMatrix
 
+from .form_factors import get_form_factor
+
 logger = logging.getLogger(__name__)
 
 # --- Numerical Constants ---
@@ -148,6 +150,7 @@ def process_calc_Sqw(
         int,
         float,
         Union[List[float], npt.NDArray[np.float64]],
+        Optional[List[str]], # ion_list
     ],
 ) -> Tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
     """
@@ -160,6 +163,7 @@ def process_calc_Sqw(
         nspins,
         spin_magnitude_num,
         hamiltonian_params_num,
+        ion_list,
     ) = args
     
     global _worker_HMat_func
@@ -210,6 +214,15 @@ def process_calc_Sqw(
         energies = np.real(eigenvalues[0:nspins])
         sqw_complex_accumulator = np.zeros(nspins, dtype=complex)
         
+        q_norm_sq = np.dot(q_vector, q_vector)
+        q_mag = np.sqrt(q_norm_sq)
+        
+        # Pre-calculate form factors for all spins at this Q
+        ff_values = np.ones(nspins)
+        if ion_list:
+            for i in range(nspins):
+                ff_values[i] = get_form_factor(ion_list[i], q_mag)
+
         for mode_index in range(nspins):
             spin_correlation_matrix = np.zeros((3, 3), dtype=complex)
             intensity_one_mode = 0.0 + 0.0j
@@ -221,12 +234,12 @@ def process_calc_Sqw(
                             idx_K = 3 * spin_i + alpha
                             idx_Kd = 3 * spin_j + beta
                             correlation_sum += (
+                                ff_values[spin_i] * ff_values[spin_j] *
                                 K_matrix[idx_K, mode_index]
                                 * Kd_matrix[idx_Kd, mode_index + nspins]
                             )
                     spin_correlation_matrix[alpha, beta] = correlation_sum
             
-            q_norm_sq = np.dot(q_vector, q_vector)
             if q_norm_sq < Q_ZERO_THRESHOLD:
                 for alpha in range(3):
                     intensity_one_mode += spin_correlation_matrix[alpha, alpha]

@@ -632,7 +632,8 @@ class MagCalcConfigBuilder:
              pass
 
     def add_wyckoff_atom(self, label: str, pos: List[float], spin: float, 
-                         species: str = None, wyckoff_label: str = ""):
+                         species: str = None, wyckoff_label: str = "",
+                         ion: str = None, element: str = None):
         """
         Add an atom defined by a Wyckoff position. 
         Expands to all equivalent positions using the loaded space group.
@@ -644,7 +645,7 @@ class MagCalcConfigBuilder:
         if not self.symmetry_ops:
             # No symmetry? Just add the one atom.
             # Use label exactly as provided (don't append 0)
-            self._add_atom_raw(label, pos, spin, species)
+            self._add_atom_raw(label, pos, spin, species, ion=ion, element=element)
             return
 
         pos_array = np.array(pos, dtype=float)
@@ -681,9 +682,9 @@ class MagCalcConfigBuilder:
                 
             for i, p in enumerate(orbit_positions):
                 atom_name = f"{label}{start_idx + i}"
-                self._add_atom_raw(atom_name, p, spin, species)
+                self._add_atom_raw(atom_name, p, spin, species, ion=ion, element=element)
 
-    def _add_atom_raw(self, label, pos, spin, species):
+    def _add_atom_raw(self, label, pos, spin, species, ion=None, element=None):
         if species is None:
             # Guess from label (remove digits)
             species = "".join([c for c in label if c.isalpha()])
@@ -692,7 +693,9 @@ class MagCalcConfigBuilder:
             "label": label,
             "species": species,
             "pos": pos,
-            "spin_S": spin
+            "spin_S": spin,
+            "ion": ion,
+            "element": element
         })
         self.config["crystal_structure"]["atoms_uc"] = self.atoms_uc
         self._atom_label_to_idx[label] = len(self.atoms_uc) - 1

@@ -443,6 +443,36 @@ def run_calculation(config_file: str):
                                 line = f"{q[0]:.6f},{q[1]:.6f},{q[2]:.6f},{m},{en_out[i,m]:.6f},{int_out[i,m]:.6f}"
                                 f.write(line + "\n")
 
+    # 4. Powder Average
+    do_powder = tasks.get('powder_average', False) or tasks.get('run_powder_average', False)
+    if do_powder:
+        powder_file = final_config.get('output', {}).get('powder_data_filename', 'powder_data.npz')
+        if not os.path.isabs(powder_file): powder_file = os.path.join(config_dir, powder_file)
+        
+        powder_config = final_config.get('powder_average', {})
+        q_mags = powder_config.get('q_magnitudes')
+        if q_mags is None:
+            q_min = powder_config.get('q_min', 0.1)
+            q_max = powder_config.get('q_max', 4.0)
+            q_count = powder_config.get('q_count', 50)
+            q_mags = np.linspace(q_min, q_max, q_count)
+            
+        num_samples = powder_config.get('num_samples', 50)
+        
+        logger.info(f"Calculating Powder Average (Q={q_mags[0]:.2f} to {q_mags[-1]:.2f}, {len(q_mags)} points, {num_samples} samples)...")
+        powder_res = calculator.calculate_powder_average(q_mags, num_samples=num_samples)
+        
+        if powder_res:
+            memory_cache['powder'] = {
+                'q_vectors': powder_res.q_vectors,
+                'energies': powder_res.energies,
+                'intensities': powder_res.intensities
+            }
+            if save_data_flag:
+                os.makedirs(os.path.dirname(powder_file), exist_ok=True)
+                np.savez(powder_file, q_vectors=powder_res.q_vectors, energies=powder_res.energies, intensities=powder_res.intensities)
+                logger.info(f"Powder average data saved to {powder_file}")
+
     # 3. Plotting
     tasks = final_config.get('tasks', {})
     plot_config = final_config.get('plotting', {})
@@ -496,7 +526,7 @@ def run_calculation(config_file: str):
 
     if should_plot_sqw:
         # Prefer memory cache
-        if memory_cache['sqw'] is not None:
+        if memory_cache['sqw'] is not None and do_sqw:
             data = memory_cache['sqw']
             plot_filename = plot_config.get('sqw_plot_filename', 'sqw_plot.png')
             if not os.path.isabs(plot_filename): plot_filename = os.path.join(config_dir, plot_filename)
@@ -524,15 +554,59 @@ def run_calculation(config_file: str):
                 plot_filename = plot_config.get('sqw_plot_filename', 'sqw_plot.png')
                 if not os.path.isabs(plot_filename): plot_filename = os.path.join(config_dir, plot_filename)
                 
-                ints = data.get('intensities')
-                if ints is None: ints = data.get('sqw_values')
+                plot_ints = data.get('intensities')
+                if plot_ints is None: plot_ints = data.get('sqw_values')
 
                 plot_sqw_map(
                     q_vectors=data['q_vectors'],
                     energies=data['energies'],
-                    intensities=ints,
+                    intensities=plot_ints,
                     save_filename=plot_filename,
                     title=plot_config.get('sqw_title', "S(Q,w)"),
+                    ylim=plot_config.get('energy_limits_sqw'),
+                    broadening_width=plot_config.get('broadening_width', 0.2),
+                    cmap=plot_config.get('cmap', 'PuBu_r'),
+                    show_plot=plot_config.get('show_plot', False)
+                )
+
+    # 4. Powder Plotting
+    should_plot_powder = tasks.get('run_powder_average')
+    if should_plot_powder is None:
+        should_plot_powder = do_powder and plot_config.get('save_plot', True)
+
+    if should_plot_powder:
+        # Prefer memory cache
+        if memory_cache.get('powder') is not None:
+            data = memory_cache['powder']
+            plot_filename = plot_config.get('powder_plot_filename', 'powder_plot.png')
+            if not os.path.isabs(plot_filename): plot_filename = os.path.join(config_dir, plot_filename)
+            
+            plot_sqw_map(
+                q_vectors=data['q_vectors'],
+                energies=data['energies'],
+                intensities=data['intensities'],
+                save_filename=plot_filename,
+                title=plot_config.get('powder_title', "Powder Average S(Q,w)"),
+                ylim=plot_config.get('energy_limits_sqw'),
+                broadening_width=plot_config.get('broadening_width', 0.2),
+                cmap=plot_config.get('cmap', 'PuBu_r'),
+                show_plot=plot_config.get('show_plot', False)
+            )
+        else:
+            powder_file = final_config.get('output', {}).get('powder_data_filename', 'powder_data.npz')
+            if not os.path.isabs(powder_file): powder_file = os.path.join(config_dir, powder_file)
+            
+            if os.path.exists(powder_file):
+                data = np.load(powder_file, allow_pickle=True)
+                plot_filename = plot_config.get('powder_plot_filename', 'powder_plot.png')
+                if not os.path.isabs(plot_filename): plot_filename = os.path.join(config_dir, plot_filename)
+                
+                plot_sqw_map(
+                    q_vectors=data['q_vectors'],
+                    energies=data['energies'],
+                    intensities=data['intensities'],
+                    save_filename=plot_filename,
+                    title=plot_config.get('powder_title', "Powder Average S(Q,w)"),
                     ylim=plot_config.get('energy_limits_sqw'),
                     broadening_width=plot_config.get('broadening_width', 0.2),
                     cmap=plot_config.get('cmap', 'PuBu_r'),

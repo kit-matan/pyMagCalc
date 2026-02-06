@@ -1249,6 +1249,10 @@ class MagCalc:
         else:
              logger.error("Invalid input for q_vectors.")
              return
+             
+        ion_list = None
+        if hasattr(self.sm, 'ion_list'):
+            ion_list = self.sm.ion_list()
 
         task_args = [
             (
@@ -1257,6 +1261,7 @@ class MagCalc:
                 self.nspins,
                 self.spin_magnitude,
                 list(self.hamiltonian_params),
+                ion_list,
             )
             for q in q_vectors_list
         ]
@@ -1306,6 +1311,10 @@ class MagCalc:
              logger.error("Invalid input for q_vectors. Must be list of arrays or 2D array.")
              return None
 
+        ion_list = None
+        if hasattr(self.sm, 'ion_list'):
+            ion_list = self.sm.ion_list()
+
         task_args = [
             (
                 self.Ud_numeric,
@@ -1313,6 +1322,7 @@ class MagCalc:
                 self.nspins,
                 self.spin_magnitude,
                 list(self.hamiltonian_params),
+                ion_list,
             )
             for q in q_vectors_list
         ]
@@ -1354,6 +1364,88 @@ class MagCalc:
             q_vectors=np.array(q_vectors_out),
             energies=np.array(energies_out),
             intensities=np.array(intensities_out)
+        )
+
+    def calculate_powder_average(
+        self,
+        q_magnitudes: Union[List[float], npt.NDArray[np.float64]],
+        num_samples: int = 100,
+    ) -> Optional[SqwResult]:
+        """
+        Calculate the powder-averaged dynamic structure factor S(|q|, w).
+
+        For each momentum magnitude |q|, it averages S(q, w) over a sphere of radius |q|.
+
+        Args:
+            q_magnitudes (Union[List[float], npt.NDArray[np.float64]]):
+                A list or NumPy array of momentum magnitudes |q|.
+            num_samples (int): Number of points to sample on the sphere for each |q|.
+
+        Returns:
+            Optional[SqwResult]: Object containing q_magnitudes (as vectors [|q|, 0, 0]),
+                                 energies, and averaged intensities.
+        """
+        logger.info(f"Starting powder average calculation for {len(q_magnitudes)} magnitudes...")
+        start_t = timeit.default_timer()
+
+        if isinstance(q_magnitudes, (list, tuple)):
+            q_mags = np.array(q_magnitudes)
+        else:
+            q_mags = q_magnitudes
+
+        all_avg_intensities = []
+        all_energies = [] # We assume energies are the same for all points on sphere (often true in LSWT)
+        # Ideally we should average the whole S(q,w) after convolution, but here we average raw intensities
+        # for each mode. This is valid if modes are well-defined.
+
+        for q_mag in tqdm(q_mags, desc="Powder Average (|Q|)", unit="mag"):
+            if q_mag < Q_ZERO_THRESHOLD:
+                # Special case for Q=0
+                res = self.calculate_sqw(np.array([[0.0, 0.0, 0.0]]))
+                if res:
+                    all_energies.append(res.energies[0])
+                    all_avg_intensities.append(res.intensities[0])
+                else:
+                    all_energies.append(np.full(self.nspins, np.nan))
+                    all_avg_intensities.append(np.full(self.nspins, np.nan))
+                continue
+
+            # Fibonacci sphere sampling for uniform coverage
+            indices = np.arange(0, num_samples, dtype=float) + 0.5
+            phi = np.arccos(1 - 2 * indices / num_samples)
+            theta = np.pi * (1 + 5**0.5) * indices
+
+            qx = q_mag * np.sin(phi) * np.cos(theta)
+            qy = q_mag * np.sin(phi) * np.sin(theta)
+            qz = q_mag * np.cos(phi)
+            
+            q_vectors = np.column_stack((qx, qy, qz))
+            
+            # Calculate S(q,w) for all sampled points
+            res = self.calculate_sqw(q_vectors)
+            
+            if res:
+                # Average intensities and energies across samples
+                avg_i = np.nanmean(res.intensities, axis=0)
+                avg_e = np.nanmean(res.energies, axis=0) # Average of sorted energies
+                all_avg_intensities.append(avg_i)
+                all_energies.append(avg_e)
+            else:
+                all_avg_intensities.append(np.full(self.nspins, np.nan))
+                all_energies.append(np.full(self.nspins, np.nan))
+
+        end_time = timeit.default_timer()
+        logger.info(
+            f"Run-time for powder average calculation: {np.round((end_time - start_t) / 60, 2)} min."
+        )
+
+        # Return result with q_vectors as [q_mag, 0, 0] for plotting consistency
+        q_vectors_out = np.column_stack((q_mags, np.zeros_like(q_mags), np.zeros_like(q_mags)))
+
+        return SqwResult(
+            q_vectors=q_vectors_out,
+            energies=np.array(all_energies),
+            intensities=np.array(all_avg_intensities)
         )
 
 

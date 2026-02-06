@@ -5,7 +5,7 @@ import yaml from 'js-yaml'
 import Visualizer from './components/Visualizer'
 import './App.css'
 
-const LogConsole = ({ logs }) => {
+const LogConsole = ({ logs, connected }) => {
   const endRef = React.useRef(null)
   React.useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -17,6 +17,10 @@ const LogConsole = ({ logs }) => {
         <div className="flex align-center gap-xs text-xs font-mono opacity-70">
           <FileText size={14} />
           <span>Execution Logs</span>
+          <div className="flex align-center gap-xs ml-sm opacity-100">
+            <div className={`w-2 h-2 rounded-full ${connected ? 'bg-success animate-pulse' : 'bg-error'}`} />
+            <span style={{ fontSize: '10px' }}>{connected ? 'CONNECTED' : 'DISCONNECTED'}</span>
+          </div>
         </div>
         <span className="text-xs opacity-50">{logs.length} lines</span>
       </div>
@@ -108,57 +112,68 @@ function App() {
     }
   }, [resize])
   const [logs, setLogs] = useState([])
+  const [wsConnected, setWsConnected] = useState(false)
 
   // WebSocket Log Connection
   React.useEffect(() => {
-    // Only connect if on run tab or globally? Let's do globally to catch background logs
-    // But maybe retry if connection fails?
     let ws = null;
-    try {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      // Note: Vite proxy handles /ws -> localhost:8000
-      const wsUrl = `${protocol}//${window.location.host}/ws/logs`;
-      console.log("Connecting log WS:", wsUrl);
+    let reconnectTimeout = null;
+    let isMounted = true;
 
-      ws = new WebSocket(wsUrl);
+    const connect = () => {
+      try {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws/logs`;
+        console.log("Connecting log WS:", wsUrl);
 
-      ws.onopen = () => {
-        console.log("Log WebSocket Connected");
-      };
+        ws = new WebSocket(wsUrl);
 
-      ws.onmessage = (event) => {
-        const rawMsg = event.data;
-        setLogs(prev => {
-          // If message starts with \r, it's a progress update meant to replace the current line
-          if (rawMsg.startsWith('\r') && prev.length > 0) {
-            const next = [...prev];
-            next[next.length - 1] = rawMsg.replace(/^\r/, ''); // Replace last line, strip the \r
-            return next;
+        ws.onopen = () => {
+          console.log("Log WebSocket Connected");
+          setWsConnected(true);
+        };
+
+        ws.onmessage = (event) => {
+          const rawMsg = event.data;
+          setLogs(prev => {
+            if (rawMsg.startsWith('\r') && prev.length > 0) {
+              const next = [...prev];
+              next[next.length - 1] = rawMsg.replace(/^\r/, '');
+              return next;
+            }
+            const newLogs = [...prev, rawMsg];
+            if (newLogs.length > 1000) return newLogs.slice(newLogs.length - 1000);
+            return newLogs;
+          });
+        };
+
+        ws.onclose = () => {
+          console.log("Log WebSocket Closed. Retrying...");
+          setWsConnected(false);
+          if (isMounted) {
+            reconnectTimeout = setTimeout(connect, 3000);
           }
+        };
 
-          // Fallback: If it's a large chunk with internal \r, we might need more complex logic,
-          // but for tqdm it usually comes as separate packets or starts with \r.
+        ws.onerror = (err) => {
+          console.error("Log WebSocket Error:", err);
+          ws.close();
+        };
 
-          const newLogs = [...prev, rawMsg];
-          if (newLogs.length > 1000) return newLogs.slice(newLogs.length - 1000);
-          return newLogs;
-        });
-      };
+      } catch (e) {
+        console.error("Failed to init WebSocket:", e);
+      }
+    };
 
-      ws.onclose = () => {
-        console.log("Log WebSocket Closed");
-      };
-
-      ws.onerror = (err) => {
-        console.error("Log WebSocket Error:", err);
-      };
-
-    } catch (e) {
-      console.error("Failed to init WebSocket:", e);
-    }
+    connect();
 
     return () => {
-      if (ws) ws.close();
+      isMounted = false;
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      if (ws) {
+        ws.onclose = null; // Prevent reconnect logic on cleanup
+        ws.close();
+      }
     }
   }, []);
 
@@ -236,7 +251,8 @@ function App() {
       run_sqw_map: true,
       calculate_sqw_map_new: true,
       plot_sqw_map: true,
-      export_csv: false
+      export_csv: false,
+      run_powder_average: false
     },
     q_path: {
       points: { Start: [0, 1, 0], End: [0, 3, 0] },
@@ -271,6 +287,12 @@ function App() {
     },
     calculation: {
       cache_mode: 'none'
+    },
+    powder_average: {
+      q_min: 0.1,
+      q_max: 4.0,
+      q_count: 50,
+      num_samples: 50
     }
   }
 
@@ -402,6 +424,7 @@ function App() {
       minimization: true,
       dispersion: true,
       sqw_map: true,
+      run_powder_average: false,
       export_csv: false
     },
     q_path: {
@@ -439,6 +462,12 @@ function App() {
       n_workers: 8,
       early_stopping: 10,
       method: "L-BFGS-B"
+    },
+    powder_average: {
+      q_min: 0.1,
+      q_max: 4.0,
+      q_count: 50,
+      num_samples: 50
     },
     calculation: {
       cache_mode: 'none'
@@ -548,7 +577,15 @@ function App() {
         }
         if (doc.tasks) newConfig.tasks = { ...newConfig.tasks, ...doc.tasks }
         if (doc.plotting) newConfig.plotting = { ...newConfig.plotting, ...doc.plotting }
-        if (doc.minimization) newConfig.minimization = { ...newConfig.minimization, ...doc.minimization }
+        if (doc.minimization) {
+          newConfig.minimization = { ...newConfig.minimization, ...doc.minimization }
+        }
+        if (doc.powder_average) {
+          newConfig.powder_average = { ...newConfig.powder_average, ...doc.powder_average }
+        } else if (doc.tasks && doc.tasks.run_powder_average && !newConfig.powder_average) {
+          // Ensure it exists if the task is enabled
+          newConfig.powder_average = { q_min: 0.1, q_max: 4.0, q_count: 50, num_samples: 50 }
+        }
         if (doc.calculation) newConfig.calculation = { ...newConfig.calculation, ...doc.calculation }
         if (doc.magnetic_structure) newConfig.magnetic_structure = { ...newConfig.magnetic_structure, ...doc.magnetic_structure }
         if (doc.q_path) {
@@ -949,10 +986,10 @@ function App() {
   }
 
   const runCalculation = async () => {
-    setLogs([])
     setCalcLoading(true)
-    setCalcResults(null)
     setCalcError(null)
+    setCalcResults(null)
+    setLogs([]) // Clear previous logs
 
     // Construct payload as expected by expand-config logic backend
     const input = {
@@ -1225,6 +1262,7 @@ function App() {
                         <th>Label</th>
                         <th>Pos (x,y,z)</th>
                         <th>S</th>
+                        <th>Ion/Element</th>
                         <th></th>
                       </tr>
                     </thead>
@@ -1248,6 +1286,11 @@ function App() {
                               const next = [...config.wyckoff_atoms]
                               next[idx].spin_S = parseFloat(e.target.value)
                               setConfig({ ...config, wyckoff_atoms: next })
+                            }} />
+                          </td>
+                          <td>
+                            <input type="text" className="table-input mono" placeholder="e.g. Fe3+" value={atom.ion || ''} onChange={(e) => {
+                              const next = [...config.wyckoff_atoms]; next[idx].ion = e.target.value; setConfig({ ...config, wyckoff_atoms: next })
                             }} />
                           </td>
                           <td><button onClick={() => {
@@ -1928,15 +1971,31 @@ function App() {
                         </div>
 
                         <div
-                          className={`task-card ${config.tasks.sqw_map ? 'active' : ''}`}
-                          onClick={() => updateField('tasks', 'sqw_map', !config.tasks.sqw_map)}
+                          className={`task-card ${config.tasks.run_sqw_map ? 'active' : ''}`}
+                          onClick={() => updateField('tasks', 'run_sqw_map', !config.tasks.run_sqw_map)}
                         >
                           <div className="task-icon-box">
-                            <Eye size={18} />
+                            <BarChart2 size={18} />
                           </div>
                           <div className="task-info">
-                            <span className="task-name">S(Q,w) Map</span>
-                            <span className="task-desc">Calculate & Plot</span>
+                            <span className="task-name">S(Q,ω) Map</span>
+                            <span className="task-desc">Full spectral map</span>
+                          </div>
+                          <div className="task-check">
+                            <Check size={12} strokeWidth={4} />
+                          </div>
+                        </div>
+
+                        <div
+                          className={`task-card ${config.tasks.run_powder_average ? 'active' : ''}`}
+                          onClick={() => updateField('tasks', 'run_powder_average', !config.tasks.run_powder_average)}
+                        >
+                          <div className="task-icon-box">
+                            <Wind size={18} />
+                          </div>
+                          <div className="task-info">
+                            <span className="task-name">Powder Average</span>
+                            <span className="task-desc">S(Q,ω) Sphere Sampl.</span>
                           </div>
                           <div className="task-check">
                             <Check size={12} strokeWidth={4} />
@@ -2013,191 +2072,221 @@ function App() {
                     </div>
                   </div>
 
-                  <div className="card shadow-glow">
-                    <h3>Minimization Parameters</h3>
-                    <div className="grid-form mt-md">
-                      <div className="input-group">
-                        <label>Num Starts</label>
-                        <input type="number" value={config.minimization.num_starts} className="minimal-input"
-                          onChange={(e) => updateField('minimization', 'num_starts', parseInt(e.target.value))} />
-                      </div>
-                      <div className="input-group">
-                        <label>N Workers</label>
-                        <input type="number" value={config.minimization.n_workers} className="minimal-input"
-                          onChange={(e) => updateField('minimization', 'n_workers', parseInt(e.target.value))} />
-                      </div>
-                      <div className="input-group">
-                        <label>Early Stopping</label>
-                        <input type="number" value={config.minimization.early_stopping} className="minimal-input"
-                          onChange={(e) => updateField('minimization', 'early_stopping', parseInt(e.target.value))} />
-                        <div className="text-xs text-warning mt-1" style={{ gridColumn: "1 / -1" }}>
-                          &ge; 10 to ensure accurate magnetic structure.
+                  <div className="flex-col gap-lg">
+                    <div className="card shadow-glow">
+                      <h3>Minimization Parameters</h3>
+                      <div className="grid-form mt-md">
+                        <div className="input-group">
+                          <label>Num Starts</label>
+                          <input type="number" value={config.minimization.num_starts} className="minimal-input"
+                            onChange={(e) => updateField('minimization', 'num_starts', parseInt(e.target.value))} />
                         </div>
-                      </div>
-                      <div className="input-group">
-                        <label>Method</label>
-                        <select
-                          className="minimal-select"
-                          value={config.minimization.method}
-                          onChange={(e) => updateField('minimization', 'method', e.target.value)}
-                        >
-                          <option value="L-BFGS-B">L-BFGS-B</option>
-                          <option value="TNC">TNC</option>
-                          <option value="SLSQP">SLSQP</option>
-                        </select>
+                        <div className="input-group">
+                          <label>N Workers</label>
+                          <input type="number" value={config.minimization.n_workers} className="minimal-input"
+                            onChange={(e) => updateField('minimization', 'n_workers', parseInt(e.target.value))} />
+                        </div>
+                        <div className="input-group">
+                          <label>Early Stopping</label>
+                          <input type="number" value={config.minimization.early_stopping} className="minimal-input"
+                            onChange={(e) => updateField('minimization', 'early_stopping', parseInt(e.target.value))} />
+                          <div className="text-xs text-warning mt-1" style={{ gridColumn: "1 / -1" }}>
+                            &ge; 10 to ensure accurate magnetic structure.
+                          </div>
+                        </div>
+                        <div className="input-group">
+                          <label>Method</label>
+                          <select
+                            className="minimal-select"
+                            value={config.minimization.method}
+                            onChange={(e) => updateField('minimization', 'method', e.target.value)}
+                          >
+                            <option value="L-BFGS-B">L-BFGS-B</option>
+                            <option value="TNC">TNC</option>
+                            <option value="SLSQP">SLSQP</option>
+                          </select>
+                        </div>
                       </div>
                     </div>
 
-                    <h3 className="mt-lg">Calculation Settings</h3>
-                    <div className="grid-form mt-md">
-                      <div className="input-group">
-                        <label>Cache Mode</label>
-                        <select
-                          value={config.calculation.cache_mode}
-                          className="minimal-input"
-                          onChange={(e) => updateField('calculation', 'cache_mode', e.target.value)}
-                        >
-                          <option value="none">None (No Caching)</option>
-                          <option value="auto">Auto (Smart Caching)</option>
-                          <option value="r">Read (Force Read Cache)</option>
-                          <option value="w">Write (Force Regeneration)</option>
-                        </select>
-                        <p className="text-xs opacity-50 mt-xs">
-                          'None' is recommended for small systems or when debugging.
-                        </p>
+                    {config.tasks.run_powder_average && config.powder_average && (
+                      <div className="card shadow-glow animate-slide-in">
+                        <h3>Powder Average Settings</h3>
+                        <div className="grid-form mt-md">
+                          <div className="input-group">
+                            <label>Q Min (Å⁻¹)</label>
+                            <input type="number" step="0.1" value={config.powder_average.q_min} className="minimal-input"
+                              onChange={(e) => updateField('powder_average', 'q_min', parseFloat(e.target.value))} />
+                          </div>
+                          <div className="input-group">
+                            <label>Q Max (Å⁻¹)</label>
+                            <input type="number" step="0.1" value={config.powder_average.q_max} className="minimal-input"
+                              onChange={(e) => updateField('powder_average', 'q_max', parseFloat(e.target.value))} />
+                          </div>
+                          <div className="input-group">
+                            <label>Q Points</label>
+                            <input type="number" value={config.powder_average.q_count} className="minimal-input"
+                              onChange={(e) => updateField('powder_average', 'q_count', parseInt(e.target.value))} />
+                          </div>
+                          <div className="input-group">
+                            <label>Num Samples</label>
+                            <input type="number" value={config.powder_average.num_samples} className="minimal-input"
+                              onChange={(e) => updateField('powder_average', 'num_samples', parseInt(e.target.value))} />
+                          </div>
+                        </div>
                       </div>
-                    </div>
+                    )}
 
-                    <h3 className="mt-lg">Data Export</h3>
-                    <div className="mt-md">
-                      <label className="flex-between align-center glass rounded-lg border-light mb-md modern-switch-container pointer" style={{ padding: '8px 12px', display: 'flex' }}>
-                        <div className="flex align-center gap-md">
-                          <Download size={18} className="text-accent" />
-                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
-                            <span className="block font-bold">Export Numeric Results (.npz)</span>
-                            <span className="text-xxs opacity-60 mt-xs" style={{ fontSize: '10px' }}>Save raw eigenvalues and intensities to binary files.</span>
-                          </div>
+                    <div className="card shadow-glow">
+                      <h3>Calculation Settings</h3>
+                      <div className="grid-form mt-md">
+                        <div className="input-group">
+                          <label>Cache Mode</label>
+                          <select
+                            value={config.calculation.cache_mode}
+                            className="minimal-input"
+                            onChange={(e) => updateField('calculation', 'cache_mode', e.target.value)}
+                          >
+                            <option value="none">None (No Caching)</option>
+                            <option value="auto">Auto (Smart Caching)</option>
+                            <option value="r">Read (Force Read Cache)</option>
+                            <option value="w">Write (Force Regeneration)</option>
+                          </select>
+                          <p className="text-xs opacity-50 mt-xs">
+                            'None' is recommended for small systems or when debugging.
+                          </p>
                         </div>
-                        <label className="modern-switch" style={{ marginBottom: 0 }}>
-                          <input
-                            type="checkbox"
-                            checked={config.output.save_data}
-                            onChange={(e) => updateField('output', 'save_data', e.target.checked)}
-                          />
-                          <span className="switch-slider"></span>
+                      </div>
+
+                      <h3 className="mt-lg">Data Export</h3>
+                      <div className="mt-md">
+                        <label className="flex-between align-center glass rounded-lg border-light mb-md modern-switch-container pointer" style={{ padding: '8px 12px', display: 'flex' }}>
+                          <div className="flex align-center gap-md">
+                            <Download size={18} className="text-accent" />
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                              <span className="block font-bold">Export Numeric Results (.npz)</span>
+                              <span className="text-xxs opacity-60 mt-xs" style={{ fontSize: '10px' }}>Save raw eigenvalues and intensities to binary files.</span>
+                            </div>
+                          </div>
+                          <label className="modern-switch" style={{ marginBottom: 0 }}>
+                            <input
+                              type="checkbox"
+                              checked={config.output.save_data}
+                              onChange={(e) => updateField('output', 'save_data', e.target.checked)}
+                            />
+                            <span className="switch-slider"></span>
+                          </label>
                         </label>
-                      </label>
 
-                      {config.output.save_data && (
-                        <div className="grid-form animate-fade-in mb-md">
-                          <div className="input-group">
-                            <label>Dispersion NPZ</label>
-                            <input
-                              type="text"
-                              value={config.output.disp_data_filename}
-                              className="minimal-input"
-                              placeholder="disp_data.npz"
-                              onChange={(e) => updateField('output', 'disp_data_filename', e.target.value)}
-                            />
+                        {config.output.save_data && (
+                          <div className="grid-form animate-fade-in mb-md">
+                            <div className="input-group">
+                              <label>Dispersion NPZ</label>
+                              <input
+                                type="text"
+                                value={config.output.disp_data_filename}
+                                className="minimal-input"
+                                placeholder="disp_data.npz"
+                                onChange={(e) => updateField('output', 'disp_data_filename', e.target.value)}
+                              />
+                            </div>
+                            <div className="input-group">
+                              <label>S(Q,w) NPZ</label>
+                              <input
+                                type="text"
+                                value={config.output.sqw_data_filename}
+                                className="minimal-input"
+                                placeholder="sqw_data.npz"
+                                onChange={(e) => updateField('output', 'sqw_data_filename', e.target.value)}
+                              />
+                            </div>
                           </div>
-                          <div className="input-group">
-                            <label>S(Q,w) NPZ</label>
-                            <input
-                              type="text"
-                              value={config.output.sqw_data_filename}
-                              className="minimal-input"
-                              placeholder="sqw_data.npz"
-                              onChange={(e) => updateField('output', 'sqw_data_filename', e.target.value)}
-                            />
-                          </div>
-                        </div>
-                      )}
+                        )}
 
-                      <label className="flex-between align-center glass rounded-lg border-light mb-md modern-switch-container pointer" style={{ padding: '12px 16px', display: 'flex' }}>
-                        <div className="flex align-center gap-md">
-                          <Image size={18} className="text-accent" />
-                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
-                            <span className="block font-bold">Export Visual Plots (.png)</span>
-                            <span className="text-xxs opacity-60 mt-xs" style={{ fontSize: '10px' }}>Save dispersion and S(Q,w) maps as image files.</span>
+                        <label className="flex-between align-center glass rounded-lg border-light mb-md modern-switch-container pointer" style={{ padding: '12px 16px', display: 'flex' }}>
+                          <div className="flex align-center gap-md">
+                            <Image size={18} className="text-accent" />
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                              <span className="block font-bold">Export Visual Plots (.png)</span>
+                              <span className="text-xxs opacity-60 mt-xs" style={{ fontSize: '10px' }}>Save dispersion and S(Q,w) maps as image files.</span>
+                            </div>
                           </div>
-                        </div>
-                        <label className="modern-switch" style={{ marginBottom: 0 }}>
-                          <input
-                            type="checkbox"
-                            checked={config.plotting.save_plot}
-                            onChange={(e) => updateField('plotting', 'save_plot', e.target.checked)}
-                          />
-                          <span className="switch-slider"></span>
+                          <label className="modern-switch" style={{ marginBottom: 0 }}>
+                            <input
+                              type="checkbox"
+                              checked={config.plotting.save_plot}
+                              onChange={(e) => updateField('plotting', 'save_plot', e.target.checked)}
+                            />
+                            <span className="switch-slider"></span>
+                          </label>
                         </label>
-                      </label>
 
-                      {config.plotting.save_plot && (
-                        <div className="grid-form animate-fade-in mb-md">
-                          <div className="input-group">
-                            <label>Dispersion Plot</label>
-                            <input
-                              type="text"
-                              value={config.plotting.disp_plot_filename}
-                              className="minimal-input"
-                              placeholder="disp_plot.png"
-                              onChange={(e) => updateField('plotting', 'disp_plot_filename', e.target.value)}
-                            />
+                        {config.plotting.save_plot && (
+                          <div className="grid-form animate-fade-in mb-md">
+                            <div className="input-group">
+                              <label>Dispersion Plot</label>
+                              <input
+                                type="text"
+                                value={config.plotting.disp_plot_filename}
+                                className="minimal-input"
+                                placeholder="disp_plot.png"
+                                onChange={(e) => updateField('plotting', 'disp_plot_filename', e.target.value)}
+                              />
+                            </div>
+                            <div className="input-group">
+                              <label>S(Q,w) Plot</label>
+                              <input
+                                type="text"
+                                value={config.plotting.sqw_plot_filename}
+                                className="minimal-input"
+                                placeholder="sqw_plot.png"
+                                onChange={(e) => updateField('plotting', 'sqw_plot_filename', e.target.value)}
+                              />
+                            </div>
                           </div>
-                          <div className="input-group">
-                            <label>S(Q,w) Plot</label>
-                            <input
-                              type="text"
-                              value={config.plotting.sqw_plot_filename}
-                              className="minimal-input"
-                              placeholder="sqw_plot.png"
-                              onChange={(e) => updateField('plotting', 'sqw_plot_filename', e.target.value)}
-                            />
-                          </div>
-                        </div>
-                      )}
+                        )}
 
-                      <label className="flex-between align-center glass rounded-lg border-light mb-md modern-switch-container pointer" style={{ padding: '12px 16px', display: 'flex' }}>
-                        <div className="flex align-center gap-md">
-                          <FileText size={18} className="vibrant-text" />
-                          <span className="text-sm font-bold">Export results to CSV</span>
-                        </div>
-                        <label className="modern-switch" style={{ marginBottom: 0 }}>
-                          <input
-                            type="checkbox"
-                            checked={config.tasks.export_csv}
-                            onChange={(e) => updateField('tasks', 'export_csv', e.target.checked)}
-                          />
-                          <span className="switch-slider"></span>
+                        <label className="flex-between align-center glass rounded-lg border-light mb-md modern-switch-container pointer" style={{ padding: '12px 16px', display: 'flex' }}>
+                          <div className="flex align-center gap-md">
+                            <FileText size={18} className="vibrant-text" />
+                            <span className="text-sm font-bold">Export results to CSV</span>
+                          </div>
+                          <label className="modern-switch" style={{ marginBottom: 0 }}>
+                            <input
+                              type="checkbox"
+                              checked={config.tasks.export_csv}
+                              onChange={(e) => updateField('tasks', 'export_csv', e.target.checked)}
+                            />
+                            <span className="switch-slider"></span>
+                          </label>
                         </label>
-                      </label>
 
-                      {config.tasks.export_csv && (
-                        <div className="grid-form animate-fade-in">
-                          <div className="input-group">
-                            <label>Dispersion CSV</label>
-                            <input
-                              type="text"
-                              value={config.output.disp_csv_filename}
-                              className="minimal-input"
-                              onChange={(e) => updateField('output', 'disp_csv_filename', e.target.value)}
-                            />
+                        {config.tasks.export_csv && (
+                          <div className="grid-form animate-fade-in">
+                            <div className="input-group">
+                              <label>Dispersion CSV</label>
+                              <input
+                                type="text"
+                                value={config.output.disp_csv_filename}
+                                className="minimal-input"
+                                onChange={(e) => updateField('output', 'disp_csv_filename', e.target.value)}
+                              />
+                            </div>
+                            <div className="input-group">
+                              <label>S(Q,w) CSV</label>
+                              <input
+                                type="text"
+                                value={config.output.sqw_csv_filename}
+                                className="minimal-input"
+                                onChange={(e) => updateField('output', 'sqw_csv_filename', e.target.value)}
+                              />
+                            </div>
                           </div>
-                          <div className="input-group">
-                            <label>S(Q,w) CSV</label>
-                            <input
-                              type="text"
-                              value={config.output.sqw_csv_filename}
-                              className="minimal-input"
-                              onChange={(e) => updateField('output', 'sqw_csv_filename', e.target.value)}
-                            />
-                          </div>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
-
-
 
                 <div className="card mt-lg">
                   <div className="flex-between mb-md">
@@ -2501,7 +2590,7 @@ function App() {
             )}
 
             {/* Log Console - Always visible in Run tab */}
-            <LogConsole logs={logs} />
+            <LogConsole logs={logs} connected={wsConnected} />
 
           </div>
         )}

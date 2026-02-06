@@ -36,13 +36,31 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 app.mount("/files", StaticFiles(directory=project_root), name="files")
 
 # --- Log Streaming Setup ---
-# --- Log Streaming Setup ---
-log_queue = asyncio.Queue()
+class LogBroadcaster:
+    def __init__(self):
+        self.queues = set()
+
+    def add_queue(self, queue):
+        self.queues.add(queue)
+
+    def remove_queue(self, queue):
+        self.queues.discard(queue)
+
+    def broadcast(self, msg):
+        for q in self.queues:
+            try:
+                q.put_nowait(msg)
+            except Exception:
+                pass
+
+broadcaster = LogBroadcaster()
 MAIN_LOOP = None # Reference to the main event loop
+LOGGING_INITIALIZED = False
 
 class StreamToLogger:
     """
-    Redirects writes to a stream (stdout/stderr) to both the original stream and the log queue.
+    Redirects writes to a stream (stdout/stderr) to both the original stream and the broadcaster.
+    This is the single entry point for all UI logs (print, tqdm, logging).
     """
     def __init__(self, original_stream):
         self.original_stream = original_stream
@@ -50,77 +68,70 @@ class StreamToLogger:
     def write(self, buf):
         # Write to original stream (terminal)
         self.original_stream.write(buf)
-        self.original_stream.flush() # Ensure immediate terminal output
+        self.original_stream.flush()
         
-        # Send to WebSocket queue
-        # For tqdm, we want to preserve \r to allow the frontend to replace lines
+        # Send to broadcaster
         if buf and MAIN_LOOP:
-           try:
-               MAIN_LOOP.call_soon_threadsafe(log_queue.put_nowait, buf)
-           except Exception:
-               pass
+           MAIN_LOOP.call_soon_threadsafe(broadcaster.broadcast, buf)
                
     def flush(self):
         self.original_stream.flush()
 
-class BroadcastingLogHandler(logging.Handler):
-    """
-    Pushes log records to an asyncio Queue for WebSocket broadcasting.
-    """
-    def emit(self, record):
-        try:
-            msg = self.format(record)
-            if MAIN_LOOP:
-                MAIN_LOOP.call_soon_threadsafe(log_queue.put_nowait, msg)
-        except Exception:
-            self.handleError(record)
-
 @app.on_event("startup")
 async def startup_event():
-    global MAIN_LOOP
+    global MAIN_LOOP, LOGGING_INITIALIZED
     MAIN_LOOP = asyncio.get_running_loop()
 
-    # Redirect stdout/stderr to capture all terminal output (print, tqdm, warnings)
+    # Robust guard: Check if already initialized via flag OR if stdout is already wrapped
+    if LOGGING_INITIALIZED or getattr(sys.stdout, '__class__', None).__name__ == 'StreamToLogger':
+        return
+    LOGGING_INITIALIZED = True
+
+    # 1. Redirect stdout/stderr BEFORE configuring logging
+    # This ensures that even StreamHandler(sys.stdout) is intercepted by us.
     sys.stdout = StreamToLogger(sys.stdout)
     sys.stderr = StreamToLogger(sys.stderr)
 
-    # Setup global logger to capture magcalc output
+    # 2. Setup global logger to use sys.stdout
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
     
-    # Add our broadcasting handler
-    handler = BroadcastingLogHandler()
+    # Remove any existing handlers
+    for h in logger.handlers[:]:
+        logger.removeHandler(h)
+    
+    # Add a standard StreamHandler that writes to the redirected sys.stdout
+    handler = logging.StreamHandler(sys.stdout)
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     handler.setFormatter(formatter)
-    
-    # Attach to root logger
     logger.addHandler(handler)
     
-    # Explicitly attach to magcalc logger and ensure level is INFO
+    # Ensure magcalc logger propagates to root
     mc_logger = logging.getLogger("magcalc")
     mc_logger.setLevel(logging.INFO)
-    mc_logger.addHandler(handler)
-    # Enable propagation so child loggers (magcalc.linalg, etc.) reach this handler
     mc_logger.propagate = True
-    
-    # Also attach to uvicorn loggers to capture access logs if desired, or ensure magcalc logs propagated
-    # logging.getLogger("uvicorn").addHandler(handler)
 
 @app.websocket("/ws/logs")
 async def websocket_logs(websocket: WebSocket):
     await websocket.accept()
-    # Send a welcome message to confirm connection
+    
+    # Create a unique queue for this connection
+    client_queue = asyncio.Queue()
+    broadcaster.add_queue(client_queue)
+    
+    # Send a welcome message
     await websocket.send_text("Connected to Log Stream. Waiting for activity...")
+    
     try:
         while True:
-            # Wait for next log entry
-            log_entry = await log_queue.get()
+            # Wait for next log entry specific to this client
+            log_entry = await client_queue.get()
             await websocket.send_text(log_entry)
-            log_queue.task_done()
+            client_queue.task_done()
     except WebSocketDisconnect:
-        logging.getLogger().info("Log client disconnected")
-    except Exception as e:
-        logging.getLogger().error(f"WebSocket error: {e}")
+        pass
+    finally:
+        broadcaster.remove_queue(client_queue)
 
 # ... (rest of code)
 
@@ -146,21 +157,15 @@ async def trigger_calculation(config: Dict[str, Any]):
         expanded_data["plotting"]["save_plot"] = True
         expanded_data["plotting"]["disp_plot_filename"] = "disp_plot.png"
         expanded_data["plotting"]["sqw_plot_filename"] = "sqw_plot.png"
+        expanded_data["plotting"]["powder_plot_filename"] = "powder_plot.png"
         
         with open(run_config_path, 'w') as f:
             yaml.dump(expanded_data, f, sort_keys=False)
             
-        # Clear log queue for the new run to avoid showing old logs
-        while not log_queue.empty():
-            try:
-                log_queue.get_nowait()
-            except:
-                break
-                
         logging.getLogger().info(f"Starting calculation with config: {run_config_path}")
         # Explicit info for the UI
         if MAIN_LOOP:
-            MAIN_LOOP.call_soon_threadsafe(log_queue.put_nowait, "--- NEW CALCULATION STARTED ---")
+            MAIN_LOOP.call_soon_threadsafe(broadcaster.broadcast, "\n--- NEW CALCULATION STARTED ---\n")
 
         # 2. Run Calculation: Non-blocking execution
         # Use a background thread to keep the main event loop free for WebSocket log streaming
@@ -179,6 +184,9 @@ async def trigger_calculation(config: Dict[str, Any]):
             
         if os.path.exists(os.path.join(project_root, "sqw_plot.png")):
             results["plots"].append("/files/sqw_plot.png")
+            
+        if os.path.exists(os.path.join(project_root, "powder_plot.png")):
+            results["plots"].append("/files/powder_plot.png")
             
         return results
 
@@ -733,7 +741,9 @@ async def expand_config(config: Dict[str, Any]):
                     "label": a.get("label", "Atom"),
                     "pos": [float(x) for x in a.get("pos", [0, 0, 0])],
                     "spin_S": a.get("spin_S", 0.5),
-                    "species": a.get("label", "Atom")
+                    "species": a.get("label", "Atom"),
+                    "ion": a.get("ion"),
+                    "element": a.get("element")
                 })
             builder.config["crystal_structure"]["atoms_uc"] = config_atoms
             builder.atoms_uc = config_atoms # Ensure builder also knows them for neighbor search
@@ -743,7 +753,9 @@ async def expand_config(config: Dict[str, Any]):
                 builder.add_wyckoff_atom(
                     label=atom.get("label", "Atom"),
                     pos=atom.get("pos", [0, 0, 0]),
-                    spin=atom.get("spin_S", 0.5)
+                    spin=atom.get("spin_S", 0.5),
+                    ion=atom.get("ion"),
+                    element=atom.get("element")
                 )
 
         # 2.5 Set Dimensionality
@@ -843,7 +855,9 @@ async def expand_config(config: Dict[str, Any]):
                 config_atoms.append({
                     "label": a["label"],
                     "pos": [float(x) for x in a["pos"]],
-                    "spin_S": a["spin_S"]
+                    "spin_S": a["spin_S"],
+                    "ion": a.get("ion"),
+                    "element": a.get("element")
                 })
             builder.config["crystal_structure"]["atoms_uc"] = config_atoms
 
@@ -888,7 +902,8 @@ async def expand_config(config: Dict[str, Any]):
             "minimization": data.get("minimization", {}),
             "plotting": data.get("plotting", {}),
             "calculation": data.get("calculation", {"cache_mode": "none"}),
-            "output": data.get("output", {"export_csv": False})
+            "output": data.get("output", {"export_csv": False}),
+            "powder_average": data.get("powder_average", {})
         }
         
         return expanded_config

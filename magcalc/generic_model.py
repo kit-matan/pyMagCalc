@@ -112,6 +112,9 @@ class GenericSpinModel:
         # Pre-calc neighbors
         self._atoms_ouc = self._generate_atom_pos_ouc()
         
+        # Ion list for form factors
+        self._ion_list = []
+        
         # Mimic module attribute for logging
         self.__name__ = "GenericSpinModel"
 
@@ -330,6 +333,8 @@ class GenericSpinModel:
                      ]
                 self._uc_vectors = self.atoms.cell[:]
                 self._r_pos = self.atoms.get_positions()
+                # Use elements from CIF
+                self._ion_list = list(self.atoms.get_chemical_symbols())
                 return 
             except Exception as e:
                 raise ValueError(f"Failed to load CIF structure from {cif_file}: {e}")
@@ -377,8 +382,11 @@ class GenericSpinModel:
              # Frac shape (N, 3). UC shape (3, 3) rows a,b,c.
              # R_i = u_i * a + v_i * b + w_i * c
              #     = [u v w] . [a b c]^T ? No.
-             #     = [u v w] * [a; b; c]
+              #     = [u v w] * [a; b; c]
              self._r_pos = np.dot(frac_pos, self._uc_vectors)
+             
+             # Extract ions
+             self._ion_list = [a.get('ion', a.get('element', a.get('label', 'Fe3+'))) for a in atoms]
              
         elif 'atom_positions' in crystal_struct:
              # Legacy/Flat support - Assume Cartesian if only this is provided? 
@@ -405,6 +413,10 @@ class GenericSpinModel:
     def atom_pos_ouc(self):
         """Returns neighbor positions."""
         return self._atoms_ouc
+
+    def ion_list(self):
+        """Returns list of ion names for Each atom in the unit cell."""
+        return self._ion_list
 
     def _generate_atom_pos_ouc(self):
         """Generate neighbors (internal helper)."""
