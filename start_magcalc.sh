@@ -33,4 +33,7 @@ echo "🌐 Opening Browser..."
 open "http://localhost:$CLIENT_PORT"
 
 echo "✅ MagCalc is running! Press Ctrl+C to stop."
-wait
+# Wait for the backend process. If it exits (e.g., via /shutdown), the script will continue.
+wait $BACKEND_PID
+# Once backend is gone, kill frontend and exit
+kill $FRONTEND_PID 2>/dev/null

@@ -162,6 +162,16 @@ function App() {
     }
   }, []);
 
+  // Shutdown backend when window is closed
+  React.useEffect(() => {
+    const handleUnload = () => {
+      // Use sendBeacon for reliable delivery during unload
+      navigator.sendBeacon('/api/shutdown');
+    };
+    window.addEventListener('beforeunload', handleUnload);
+    return () => window.removeEventListener('beforeunload', handleUnload);
+  }, []);
+
   // Helper to consistently generate keys for bond values (handling arrays and strings)
   const getBondKey = (val) => {
     if (Array.isArray(val)) {

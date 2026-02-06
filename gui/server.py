@@ -1256,6 +1256,17 @@ async def get_visualizer_data(config: Dict[str, Any]):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/shutdown")
+async def shutdown():
+    """
+    Shut down the server.
+    """
+    logging.getLogger().info("Shutdown requested. Closing MagCalc...")
+    # Use a small delay to allow the response to reach the client if possible
+    loop = asyncio.get_running_loop()
+    loop.call_later(0.5, os._exit, 0)
+    return {"message": "Shutting down..."}
+
 if __name__ == "__main__":
     import uvicorn
     # Enable reload to pick up code changes automatically!
