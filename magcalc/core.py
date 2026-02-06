@@ -146,34 +146,49 @@ def _minimize_worker(args):
     """
     Worker function for parallel minimization.
     Args:
-        (E_sym_num, opt_vars, x0, method, bounds, constraints, kwargs)
+        (E_sym_num, Grad_sym_num, opt_vars, x0, method, bounds, constraints, kwargs)
     """
-    E_sym_num, opt_vars, x0, method, bounds, constraints, kwargs = args
+    E_sym_num, Grad_sym_num, opt_vars, x0, method, bounds, constraints, kwargs = args
     from scipy.optimize import minimize, basinhopping, differential_evolution
     import sympy as sp
 
-    # Lambdify inside the worker to avoid pickling issues with generated functions
+    # Lambdify energy
     E_func = sp.lambdify(opt_vars, E_sym_num, modules="numpy")
 
     def wrapper(x):
         return E_func(*x)
+        
+    # Lambdify gradient if available
+    jac_wrapper = None
+    if Grad_sym_num is not None:
+        Grad_func = sp.lambdify(opt_vars, Grad_sym_num, modules="numpy")
+        def jac_wrapper(x):
+            return Grad_func(*x)
 
     if method == 'basinhopping':
-        # Extract niter if present, defaults to 100 in scipy
         niter = kwargs.pop('niter', 100)
-        return basinhopping(wrapper, x0, niter=niter, minimizer_kwargs={'method': 'L-BFGS-B', 'bounds': bounds, 'constraints': constraints}, **kwargs)
+        min_kwargs = {'method': 'L-BFGS-B', 'bounds': bounds, 'constraints': constraints}
+        if jac_wrapper:
+             min_kwargs['jac'] = jac_wrapper
+        return basinhopping(wrapper, x0, niter=niter, minimizer_kwargs=min_kwargs, **kwargs)
+        
     elif method == 'differential_evolution':
-        # differential_evolution does not take x0 (uses init), but we might want to respect bounds
-        # It takes bounds as mandatory
         constraints_diff = constraints if constraints is not None else ()
+        # differential_evolution doesn't use gradient for the main search, but can use it for polishing
+        # implicitly via minimizer_kwargs? SciPy's DE polish uses L-BFGS-B but doesn't easily expose passing jac to it unless we use custom minimizer.
+        # For now, let's just pass it to 'minimizer_kwargs' just in case the version supports it or for consistency, usually it won't hurt.
+        # Actually checking docs: DE polish uses L-BFGS-B, but there is no direct 'jac' arg to DE.
         return differential_evolution(wrapper, bounds, constraints=constraints_diff, **kwargs)
+        
     else:
+        # Standard minimize
         return minimize(
             wrapper,
             x0,
             method=method,
             bounds=bounds,
             constraints=constraints,
+            jac=jac_wrapper,
             **kwargs,
         )
 
@@ -1384,7 +1399,7 @@ class MagCalc:
         self,
         params: Optional[List[float]] = None,
         x0: Optional[npt.NDArray[np.float64]] = None,
-        method: str = "L-BFGS-B",
+        method: str = "TNC",
         bounds: Optional[List[Tuple[float, float]]] = None,
         constraints: Optional[Dict] = None,
         num_starts: int = 1,
@@ -1392,6 +1407,9 @@ class MagCalc:
         early_stopping: int = 10,
         **kwargs,
     ) -> Any:
+        logger.info(
+            f"Starting minimization (method={method}, num_starts={num_starts}, n_workers={n_workers}, early_stopping={early_stopping})"
+        )
         """
         Find the classical ground state magnetic structure by minimizing the energy.
 
@@ -1427,8 +1445,8 @@ class MagCalc:
 
         # 1. Setup Symbols
         nspins = len(self.sm.atom_pos())
-        theta_sym = sp.symbols(f"theta0:{nspins}")
-        phi_sym = sp.symbols(f"phi0:{nspins}")
+        theta_sym = sp.symbols(f"theta0:{nspins}", real=True)
+        phi_sym = sp.symbols(f"phi0:{nspins}", real=True)
         
         # 2. Construct Classical Spin Vectors for OUC
         nspins_ouc = len(self.sm.atom_pos_ouc())
@@ -1468,16 +1486,26 @@ class MagCalc:
         
         E_sym_num = E_sym.subs(params_sub_list)
         
-        # Ensure result is real
-        E_sym_num = sp.re(E_sym_num)
+        # Ensure result is real by taking the real component expression explicitly
+        # This avoids 're()' wrapper which complicates symbolic differentiation
+        E_sym_num = E_sym_num.as_real_imag()[0]
+
+        # 4a. Symbolic Gradient (for analytical derivatives)
+        logger.info("Computing symbolic gradient (this may take a moment)...")
+        # Use doit() to force evaluation of any Derivative objects
+        Grad_sym_num = [sp.diff(E_sym_num, v).doit() for v in opt_vars]
         
-        logger.info("Lambdifying classical energy function...")
+        logger.info("Lambdifying classical energy and gradient functions...")
         # lambdify args: flattened list of theta, phi
         E_func_args = lambdify(opt_vars, E_sym_num, modules="numpy")
+        Grad_func_args = lambdify(opt_vars, Grad_sym_num, modules="numpy")
         
         def energy_wrapper(x):
             # x is [th0, ph0, th1, ph1, ...]
             return E_func_args(*x)
+            
+        def grad_wrapper(x):
+            return Grad_func_args(*x)
             
         if bounds is None:
             # Bounds: theta [0, pi], phi [0, 2pi]
@@ -1488,10 +1516,6 @@ class MagCalc:
 
         best_res = None
         best_energy = np.inf
-
-        logger.info(
-            f"Starting minimization (num_starts={num_starts}, n_workers={n_workers}, early_stopping={early_stopping}) with method {method}..."
-        )
 
         tasks = []
         for start_idx in range(num_starts):
@@ -1507,11 +1531,14 @@ class MagCalc:
                     current_x0[2 * i + 1] *= 2 * np.pi
             
             if n_workers > 1:
-                # Pass expression and vars for worker to lambdify
-                tasks.append((E_sym_num, opt_vars, current_x0, method, bounds, constraints, kwargs))
+                # Pass expression and vars for worker to lambdify (including Gradient)
+                tasks.append((E_sym_num, Grad_sym_num, opt_vars, current_x0, method, bounds, constraints, kwargs))
             else:
                 # Sequential can use the already lambdified function
-                tasks.append((E_func_args, current_x0, method, bounds, constraints, kwargs))
+                # We reuse the same task structure but replacing symbolic with lambdified for sequential efficiency?
+                # Actually, sequential loop below handles it specially.
+                # Let's pass the wrappers instead of symbols for sequential to avoid re-lambdifying
+                tasks.append((E_func_args, grad_wrapper, current_x0, method, bounds, constraints, kwargs))
 
         if n_workers > 1:
             from multiprocessing import Pool
@@ -1519,11 +1546,12 @@ class MagCalc:
             best_res = None
             best_energy = np.inf
             hits = 0
+            global_message = f"Maximum number of starts ({num_starts}) reached"
 
             with Pool(processes=n_workers) as pool:
                 try:
                     # Use imap_unordered to process as they finish
-                    for res in pool.imap_unordered(_minimize_worker, tasks):
+                    for res in tqdm(pool.imap_unordered(_minimize_worker, tasks), total=len(tasks), desc="Minimization Starts"):
                         if res.success:
                             if np.isclose(res.fun, best_energy, atol=1e-6):
                                 hits += 1
@@ -1536,9 +1564,8 @@ class MagCalc:
                                 )
 
                             if early_stopping > 0 and hits >= early_stopping:
-                                logger.info(
-                                    f"Early stopping condition met: ground state found {hits} times."
-                                )
+                                global_message = f"Stopped early because it found the same answer {early_stopping} times"
+                                logger.info(global_message)
                                 pool.terminate()
                                 break
                 except KeyboardInterrupt:
@@ -1548,22 +1575,29 @@ class MagCalc:
         else:
             # Sequential execution (original logic with early stopping)
             hits = 0
-            for start_idx, task_args in enumerate(tasks):
-                # Manual decomposition since sequential task_args is (func, x0, ...)
-                func, x0_task, method_task, bounds_task, constraints_task, kwargs_task = task_args
+            global_message = f"Maximum number of starts ({num_starts}) reached"
+            for start_idx, task_args in enumerate(tqdm(tasks, desc="Minimization Starts")):
+                # Manual decomposition since sequential task_args is (func, grad, x0, ...)
+                func, grad, x0_task, method_task, bounds_task, constraints_task, kwargs_task = task_args
                 def energy_wrapper(x):
                     return func(*x)
-
+                
+                # Check if method supports jac
+                jac_arg = grad
+                
                 from scipy.optimize import minimize, basinhopping, differential_evolution
 
                 if method_task == 'basinhopping':
                     niter = kwargs_task.pop('niter', 100)
-                    res = basinhopping(energy_wrapper, x0_task, niter=niter, minimizer_kwargs={'method': 'L-BFGS-B', 'bounds': bounds_task, 'constraints': constraints_task}, **kwargs_task)
+                    min_kwargs = {'method': 'L-BFGS-B', 'bounds': bounds_task, 'constraints': constraints_task}
+                    if jac_arg:
+                        min_kwargs['jac'] = jac_arg
+                    res = basinhopping(energy_wrapper, x0_task, niter=niter, minimizer_kwargs=min_kwargs, **kwargs_task)
                 elif method_task == 'differential_evolution':
                     constraints_diff = constraints_task if constraints_task is not None else ()
                     res = differential_evolution(energy_wrapper, bounds_task, constraints=constraints_diff, **kwargs_task)
                 else:
-                    res = minimize(energy_wrapper, x0_task, method=method_task, bounds=bounds_task, constraints=constraints_task, **kwargs_task)
+                    res = minimize(energy_wrapper, x0_task, method=method_task, bounds=bounds_task, constraints=constraints_task, jac=jac_arg, **kwargs_task)
 
                 if res.success:
                     if np.isclose(res.fun, best_energy, atol=1e-6):
@@ -1579,9 +1613,8 @@ class MagCalc:
                         )
                     
                     if early_stopping > 0 and hits >= early_stopping:
-                        logger.info(
-                            f"Early stopping condition met at start {start_idx+1}: ground state found {hits} times."
-                        )
+                        global_message = f"Stopped early because it found the same answer {early_stopping} times"
+                        logger.info(global_message)
                         break
                 else:
                     logger.debug(
@@ -1595,16 +1628,8 @@ class MagCalc:
             # If all failed, we might want to return the last res if it exists, 
             # but usually it's better to return something indicating failure.
             # However, for consistency with original behavior:
-            if 'res' in locals():
-                 return res
-            return None
-
-        return best_res
-
-        if best_res is None:
-            logger.warning("All minimization starts failed.")
-            # Return last result anyway if all failed, but it might be None if range(num_starts) was somehow empty
-            return res
+        if best_res is not None:
+             best_res.global_message = global_message
 
         return best_res
 

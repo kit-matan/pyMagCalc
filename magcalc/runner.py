@@ -233,17 +233,24 @@ def run_calculation(config_file: str):
                 num_starts = min_config_section.get('num_starts', 1)
                 n_workers = min_config_section.get('n_workers', 1)
                 early_stopping = min_config_section.get('early_stopping', 10)
+                method = min_config_section.get('method', 'TNC')
+
+                # Extract extra kwargs for the minimizer
+                excluded_keys = {'num_starts', 'n_workers', 'early_stopping', 'method', 'initial_configuration', 'enabled'}
+                min_kwargs = {k: v for k, v in min_config_section.items() if k not in excluded_keys}
                 
                 min_res = calc_min.minimize_energy(
-                    method="L-BFGS-B", 
+                    method=method, 
                     x0=x0, 
                     num_starts=num_starts, 
                     n_workers=n_workers, 
-                    early_stopping=early_stopping
+                    early_stopping=early_stopping,
+                    **min_kwargs
                 )
                 
                 if min_res.success:
-                    logger.info(f"Minimization converged. Energy: {min_res.fun:.6f}")
+                    logger.info(f"Global minimization complete (method={method}).")
+                    logger.info(f"Best energy: {min_res.fun:.6f} meV ({min_res.global_message})")
                     if hasattr(spin_model, 'set_magnetic_structure'):
                         spin_model.set_magnetic_structure(min_res.x[0::2], min_res.x[1::2])
                     

@@ -71,7 +71,7 @@ minimization:
   num_starts: 1000
   n_workers: 8
   early_stopping: 10
-  method: L-BFGS-B
+  method: TNC
 output:
   disp_data_filename: KFe3J_disp_data.npz
   sqw_data_filename: KFe3J_sqw_data.npz
