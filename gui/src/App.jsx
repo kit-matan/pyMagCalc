@@ -2557,7 +2557,13 @@ function App() {
                     <div key={idx} className="card p-0 overflow-hidden shadow-lg">
                       <div className="p-sm glass border-b border-light flex-between">
                         <span className="font-bold text-sm uppercase tracking-wider opacity-70">
-                          {plotUrl.includes('disp') ? 'Spin Wave Dispersion' : 'S(Q,ω) Intensity Map'}
+                          {(() => {
+                            if (plotUrl.includes('disp')) return 'Spin Wave Dispersion';
+                            if (plotUrl.includes('sqw')) return 'S(Q,ω) Intensity Map';
+                            if (plotUrl.includes('powder')) return 'Powder Average';
+                            if (plotUrl.includes('mag_structure')) return 'Magnetic Structure';
+                            return 'Result Plot';
+                          })()}
                         </span>
                         <a href={plotUrl} download className="icon-btn" title="Download Plot">
                           <Download size={14} />

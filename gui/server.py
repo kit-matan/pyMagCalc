@@ -14,6 +14,7 @@ import logging
 import uuid
 from itertools import product
 from starlette.websockets import WebSocket, WebSocketDisconnect
+import glob
 
 import sys
 import matplotlib
@@ -145,9 +146,22 @@ async def trigger_calculation(config: Dict[str, Any]):
         # We can reuse the logic from expand_config endpoint
         expanded_data = await expand_config(config)
         
-        # 1. Save Config
+        # 0.5 Clean up old plots to prevent stale results
         gui_dir = os.path.dirname(os.path.abspath(__file__))
         project_root = os.path.dirname(gui_dir)
+        
+        try:
+            old_plots = glob.glob(os.path.join(project_root, "*_plot.png"))
+            old_plots.extend(glob.glob(os.path.join(project_root, "mag_structure.png")))
+            for p in old_plots:
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+        except Exception:
+            pass
+
+        # 1. Save Config
         run_config_path = os.path.join(project_root, ".config_gui_run.yaml")
         
         # Force standard plot filenames so we can capture and serve them reliably
@@ -158,6 +172,7 @@ async def trigger_calculation(config: Dict[str, Any]):
         expanded_data["plotting"]["disp_plot_filename"] = "disp_plot.png"
         expanded_data["plotting"]["sqw_plot_filename"] = "sqw_plot.png"
         expanded_data["plotting"]["powder_plot_filename"] = "powder_plot.png"
+        expanded_data["plotting"]["structure_plot_filename"] = "mag_structure.png"
         
         with open(run_config_path, 'w') as f:
             yaml.dump(expanded_data, f, sort_keys=False)
@@ -187,6 +202,9 @@ async def trigger_calculation(config: Dict[str, Any]):
             
         if os.path.exists(os.path.join(project_root, "powder_plot.png")):
             results["plots"].append("/files/powder_plot.png")
+
+        if os.path.exists(os.path.join(project_root, "mag_structure.png")):
+            results["plots"].append("/files/mag_structure.png")
             
         return results
 

@@ -1375,6 +1375,7 @@ class MagCalc:
         Calculate the powder-averaged dynamic structure factor S(|q|, w).
 
         For each momentum magnitude |q|, it averages S(q, w) over a sphere of radius |q|.
+        Optimized to use batch processing for maximum parallel efficiency.
 
         Args:
             q_magnitudes (Union[List[float], npt.NDArray[np.float64]]):
@@ -1385,54 +1386,75 @@ class MagCalc:
             Optional[SqwResult]: Object containing q_magnitudes (as vectors [|q|, 0, 0]),
                                  energies, and averaged intensities.
         """
-        logger.info(f"Starting powder average calculation for {len(q_magnitudes)} magnitudes...")
-        start_t = timeit.default_timer()
-
         if isinstance(q_magnitudes, (list, tuple)):
             q_mags = np.array(q_magnitudes)
         else:
             q_mags = q_magnitudes
 
-        all_avg_intensities = []
-        all_energies = [] # We assume energies are the same for all points on sphere (often true in LSWT)
-        # Ideally we should average the whole S(q,w) after convolution, but here we average raw intensities
-        # for each mode. This is valid if modes are well-defined.
+        logger.info(f"Preparing batch powder average for {len(q_mags)} magnitudes (samples/mag={num_samples})...")
+        start_t = timeit.default_timer()
 
-        for q_mag in tqdm(q_mags, desc="Powder Average (|Q|)", unit="mag"):
+        all_q_vectors = []
+        segment_sizes = []
+
+        # 1. Generate all Q-vectors upfront
+        for q_mag in q_mags:
             if q_mag < Q_ZERO_THRESHOLD:
-                # Special case for Q=0
-                res = self.calculate_sqw(np.array([[0.0, 0.0, 0.0]]))
-                if res:
-                    all_energies.append(res.energies[0])
-                    all_avg_intensities.append(res.intensities[0])
-                else:
-                    all_energies.append(np.full(self.nspins, np.nan))
-                    all_avg_intensities.append(np.full(self.nspins, np.nan))
-                continue
+                # Special case for Q=0: just one point needed
+                vectors = np.array([[0.0, 0.0, 0.0]])
+            else:
+                # Fibonacci sphere sampling
+                indices = np.arange(0, num_samples, dtype=float) + 0.5
+                phi = np.arccos(1 - 2 * indices / num_samples)
+                theta = np.pi * (1 + 5**0.5) * indices
 
-            # Fibonacci sphere sampling for uniform coverage
-            indices = np.arange(0, num_samples, dtype=float) + 0.5
-            phi = np.arccos(1 - 2 * indices / num_samples)
-            theta = np.pi * (1 + 5**0.5) * indices
+                qx = q_mag * np.sin(phi) * np.cos(theta)
+                qy = q_mag * np.sin(phi) * np.sin(theta)
+                qz = q_mag * np.cos(phi)
+                vectors = np.column_stack((qx, qy, qz))
+            
+            all_q_vectors.extend(vectors)
+            segment_sizes.append(len(vectors))
+        
+        total_points = len(all_q_vectors)
+        logger.info(f"Starting batch S(q,w) calculation for {total_points} total q-points...")
 
-            qx = q_mag * np.sin(phi) * np.cos(theta)
-            qy = q_mag * np.sin(phi) * np.sin(theta)
-            qz = q_mag * np.cos(phi)
+        # 2. Run single batch calculation
+        # This maximizes CPU usage by keeping the worker pool alive for the entire duration
+        res = self.calculate_sqw(all_q_vectors)
+        
+        if res is None:
+            logger.error("Batch calculation failed.")
+            return None
+
+        # 3. Aggregate results
+        all_avg_intensities = []
+        all_energies = []
+        
+        current_idx = 0
+        for count in segment_sizes:
+            # Slice the results for this magnitude
+            chunk_intensities = res.intensities[current_idx : current_idx + count]
+            chunk_energies = res.energies[current_idx : current_idx + count]
             
-            q_vectors = np.column_stack((qx, qy, qz))
+            # Average
+            # Note: For energies, LSWT usually gives same energies for all directions in isotropic cases,
+            # but for anisotropic systems they vary. Conventionally for powder, we might just report
+            # the average, or if users plot dispersion, they might expect specific modes.
+            # Here we follow the previous logic: mean of energies (and intensities).
             
-            # Calculate S(q,w) for all sampled points
-            res = self.calculate_sqw(q_vectors)
-            
-            if res:
-                # Average intensities and energies across samples
-                avg_i = np.nanmean(res.intensities, axis=0)
-                avg_e = np.nanmean(res.energies, axis=0) # Average of sorted energies
+            # Warning: averaging energies of different modes mixing might be physically ambiguous 
+            # if modes cross, but standard practice without specific tracking.
+            if chunk_intensities.size > 0:
+                avg_i = np.nanmean(chunk_intensities, axis=0)
+                avg_e = np.nanmean(chunk_energies, axis=0)
                 all_avg_intensities.append(avg_i)
                 all_energies.append(avg_e)
             else:
                 all_avg_intensities.append(np.full(self.nspins, np.nan))
                 all_energies.append(np.full(self.nspins, np.nan))
+                
+            current_idx += count
 
         end_time = timeit.default_timer()
         logger.info(
