@@ -1023,7 +1023,10 @@ function App() {
       minimization: {
         enabled: config.tasks.run_minimization,
         ...config.minimization
-      }
+      },
+      powder_average: config.powder_average,
+      calculation: config.calculation,
+      output: config.output
     }
 
     try {
