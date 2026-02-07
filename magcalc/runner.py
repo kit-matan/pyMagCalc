@@ -285,6 +285,37 @@ def run_calculation(config_file: str):
                                     save_filename=struct_plot_filename,
                                     show_plot=plot_config.get('show_plot', False)
                                 )
+                                
+                                # Generate JSON for interactive 3D viewer
+                                try:
+                                    json_filename = struct_plot_filename.replace('.png', '.json')
+                                    nspins = len(atoms)
+                                    vectors = []
+                                    start_time = 0
+                                    
+                                    # Convert angles to vectors
+                                    for i in range(nspins):
+                                        th = min_res.x[2*i]
+                                        ph = min_res.x[2*i+1]
+                                        sx = np.sin(th) * np.cos(ph)
+                                        sy = np.sin(th) * np.sin(ph)
+                                        sz = np.cos(th)
+                                        vectors.append([float(sx), float(sy), float(sz)])
+                                    
+                                    import json
+                                    structure_data = {
+                                        "atoms": atoms.tolist(),
+                                        "vectors": vectors,
+                                        "energy": float(min_res.fun)
+                                    }
+                                    
+                                    with open(json_filename, 'w') as f:
+                                        json.dump(structure_data, f, indent=2)
+                                    logger.info(f"Saved interactive structure data to {json_filename}")
+                                except Exception as e_json:
+                                    logger.error(f"Failed to save structure JSON: {e_json}")
+
+
                         except Exception as e_plot:
                             logger.error(f"Failed to plot magnetic structure: {e_plot}")
                 else:

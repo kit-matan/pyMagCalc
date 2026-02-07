@@ -4,6 +4,7 @@ import spaceGroupsList from './data/space_groups.json';
 import yaml from 'js-yaml'
 import Visualizer from './components/Visualizer'
 import './App.css'
+import MagneticStructureViewer from './components/MagneticStructureViewer';
 
 const LogConsole = ({ logs, connected }) => {
   const endRef = React.useRef(null)
@@ -42,6 +43,17 @@ const LogConsole = ({ logs, connected }) => {
 
 function App() {
   const [activeTab, setActiveTab] = useState('structure')
+  const [jsonCache, setJsonCache] = useState({})
+
+  const loadStructureData = async (url) => {
+    try {
+      const res = await fetch(url);
+      const data = await res.json();
+      setJsonCache(prev => ({ ...prev, [url]: data }));
+    } catch (e) {
+      console.error("Failed to load structure JSON", e);
+    }
+  };
   const [showVisualizer, setShowVisualizer] = useState(true)
   const [notification, setNotification] = useState(null)
   const [neighborDistances, setNeighborDistances] = useState([])
@@ -423,7 +435,7 @@ function App() {
     tasks: {
       minimization: true,
       dispersion: true,
-      sqw_map: true,
+      run_sqw_map: false,
       run_powder_average: false,
       export_csv: false
     },
@@ -1007,6 +1019,7 @@ function App() {
       parameters: config.parameters,
       tasks: {
         ...config.tasks,
+        sqw_map: false,
         calculate_dispersion_new: config.tasks.run_dispersion,
         calculate_sqw_map_new: config.tasks.run_sqw_map
       },
@@ -2556,28 +2569,70 @@ function App() {
                 </div>
 
                 <div className="flex-col gap-xl">
-                  {calcResults.plots.map((plotUrl, idx) => (
-                    <div key={idx} className="card p-0 overflow-hidden shadow-lg">
-                      <div className="p-sm glass border-b border-light flex-between">
-                        <span className="font-bold text-sm uppercase tracking-wider opacity-70">
-                          {(() => {
-                            if (plotUrl.includes('disp')) return 'Spin Wave Dispersion';
-                            if (plotUrl.includes('sqw')) return 'S(Q,ω) Intensity Map';
-                            if (plotUrl.includes('powder')) return 'Powder Average';
-                            if (plotUrl.includes('mag_structure')) return 'Magnetic Structure';
-                            return 'Result Plot';
-                          })()}
-                        </span>
-                        <a href={plotUrl} download className="icon-btn" title="Download Plot">
-                          <Download size={14} />
-                        </a>
+                  {calcResults.plots.map((plotUrl, idx) => {
+                    const isJson = plotUrl.endsWith('.json');
+                    const isMagStructure = plotUrl.includes('mag_structure');
+
+                    if (isJson && isMagStructure) {
+                      if (!jsonCache[plotUrl]) {
+                        loadStructureData(plotUrl);
+                        return (
+                          <div key={idx} className="card p-0 overflow-hidden shadow-lg">
+                            <div className="p-xl text-center"><Activity className="animate-spin inline-block" /> Loading 3D View...</div>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div key={idx} className="card p-0 overflow-hidden shadow-lg">
+                          <div className="p-sm glass border-b border-light flex-between">
+                            <span className="font-bold text-sm uppercase tracking-wider opacity-70">Interactive Magnetic Structure</span>
+                            <a href={plotUrl} download className="icon-btn" title="Download Data">
+                              <Download size={14} />
+                            </a>
+                          </div>
+                          <div className="plot-container bg-white">
+                            <MagneticStructureViewer data={jsonCache[plotUrl]} />
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    // Skip static image if we have the JSON version and decide to only show one
+                    // For now, let's render everything else normally. 
+                    // If we have both PNG and JSON for mag structure, the server sends both.
+                    // We might want to HIDE the PNG if we successfully rendered the JSON.
+                    // But determining that across map iterations is hard. 
+                    // Let's just hide the PNG version if it's "mag_structure.png" explicitly?
+                    if (plotUrl.endsWith('mag_structure.png')) {
+                      // Check if we also have the JSON version in the list
+                      const hasJson = calcResults.plots.some(p => p.endsWith('mag_structure.json'));
+                      if (hasJson) return null; // Skip rendering the PNG if JSON is present
+                    }
+
+                    return (
+                      <div key={idx} className="card p-0 overflow-hidden shadow-lg">
+                        <div className="p-sm glass border-b border-light flex-between">
+                          <span className="font-bold text-sm uppercase tracking-wider opacity-70">
+                            {(() => {
+                              if (plotUrl.includes('disp')) return 'Spin Wave Dispersion';
+                              if (plotUrl.includes('sqw')) return 'S(Q,ω) Intensity Map';
+                              if (plotUrl.includes('powder')) return 'Powder Average';
+                              if (plotUrl.includes('mag_structure')) return 'Magnetic Structure';
+                              return 'Result Plot';
+                            })()}
+                          </span>
+                          <a href={plotUrl} download className="icon-btn" title="Download Plot">
+                            <Download size={14} />
+                          </a>
+                        </div>
+                        <div className="plot-container bg-white">
+                          {/* Add timestamp to bust cache */}
+                          <img src={`${plotUrl}?t=${Date.now()}`} alt="Result Plot" className="w-full h-auto object-contain" />
+                        </div>
                       </div>
-                      <div className="plot-container bg-white">
-                        {/* Add timestamp to bust cache */}
-                        <img src={`${plotUrl}?t=${Date.now()}`} alt="Result Plot" className="w-full h-auto object-contain" />
-                      </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                   {calcResults.plots.length === 0 && (
                     <div className="card opacity-60 text-center py-xl">
                       <Info className="mx-auto mb-sm" />

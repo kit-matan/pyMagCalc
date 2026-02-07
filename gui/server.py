@@ -153,6 +153,7 @@ async def trigger_calculation(config: Dict[str, Any]):
         try:
             old_plots = glob.glob(os.path.join(project_root, "*_plot.png"))
             old_plots.extend(glob.glob(os.path.join(project_root, "mag_structure.png")))
+            old_plots.extend(glob.glob(os.path.join(project_root, "mag_structure.json")))
             for p in old_plots:
                 try:
                     os.remove(p)
@@ -204,6 +205,11 @@ async def trigger_calculation(config: Dict[str, Any]):
             results["plots"].append("/files/powder_plot.png")
 
         if os.path.exists(os.path.join(project_root, "mag_structure.png")):
+            # Check if JSON structure data exists (prefer it over the image if we support it in frontend)
+            # We send both, frontend can decide which to show
+            if os.path.exists(os.path.join(project_root, "mag_structure.json")):
+                 results["plots"].append("/files/mag_structure.json")
+            
             results["plots"].append("/files/mag_structure.png")
             
         return results
