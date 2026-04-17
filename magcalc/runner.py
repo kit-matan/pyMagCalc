@@ -267,7 +267,11 @@ def run_calculation(config_file: str):
                 
                 if min_res.success:
                     logger.info(f"Global minimization complete (method={method}).")
-                    logger.info(f"Best energy: {min_res.fun:.6f} meV ({min_res.global_message})")
+                else:
+                    logger.warning(f"Minimization failed to fully converge: {min_res.message}")
+                    
+                if hasattr(min_res, 'x') and min_res.x is not None:
+                    logger.info(f"Best energy: {min_res.fun:.6f} meV ({getattr(min_res, 'global_message', '')})")
                     if hasattr(spin_model, 'set_magnetic_structure'):
                         spin_model.set_magnetic_structure(min_res.x[0::2], min_res.x[1::2])
                     
@@ -334,8 +338,6 @@ def run_calculation(config_file: str):
 
                         except Exception as e_plot:
                             logger.error(f"Failed to plot magnetic structure: {e_plot}")
-                else:
-                    logger.warning(f"Minimization failed: {min_res.message}")
             except Exception as e:
                 logger.warning(f"Optimization attempt using MagCalc failed: {e}")
 

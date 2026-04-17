@@ -15,14 +15,13 @@ const Atom = React.memo(({ position, color = "#333", size = 0.3 }) => {
 const SpinArrow = React.memo(({ position, vector, length = 1.0, color = "#ff0000" }) => {
     // vector is [sx, sy, sz]
     // Guard against zero-length vectors that would cause NaN in normalize/setFromUnitVectors
-    const raw = new THREE.Vector3(...vector);
-    if (raw.length() < 1e-8) return null;
-
-    const dir = raw.normalize();
+    if (new THREE.Vector3(...vector).length() < 1e-8) return null;
 
     // Memoize quaternion to avoid re-creating Three.js objects every render
     const quaternion = useMemo(() => {
         const q = new THREE.Quaternion();
+        const raw = new THREE.Vector3(vector[0], vector[1], vector[2]);
+        const dir = raw.normalize();
         q.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
         return q;
     }, [vector[0], vector[1], vector[2]]);

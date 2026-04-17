@@ -252,6 +252,12 @@ async def trigger_calculation(config: Dict[str, Any]):
         # Force standard plot filenames so we can capture and serve them reliably
         if "plotting" not in expanded_data:
             expanded_data["plotting"] = {}
+            
+        # The GUI controls plots via the 'plotting' block, but App.jsx state might inject explicit 'false' into 'tasks', overriding everything.
+        # We strip these specific plot task keys so the runner.py correctly respects the UI's 'plotting' variables.
+        if "tasks" in expanded_data:
+            for k in ["plot_structure", "plot_sqw_map", "plot_dispersion"]:
+                expanded_data["tasks"].pop(k, None)
         
         expanded_data["plotting"]["save_plot"] = True
         expanded_data["plotting"]["disp_plot_filename"] = "disp_plot.png"

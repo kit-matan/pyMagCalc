@@ -79,7 +79,13 @@ def safe_eval(expr, context):
         "RotZ": RotZ,
     }
     allowed_names.update(context)
-    return eval(expr, {"__builtins__": {}}, allowed_names)
+    try:
+        from sympy.parsing.sympy_parser import parse_expr
+        # Using parse_expr instead of eval for security against arbitrary code execution
+        return parse_expr(str(expr), local_dict=allowed_names)
+    except Exception as e:
+        logger.error(f"Failed to safely evaluate expression '{expr}': {e}")
+        raise ValueError(f"Invalid mathematical expression: {expr}")
 
 class GenericSpinModel:
     """

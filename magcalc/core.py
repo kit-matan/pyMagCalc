@@ -1976,6 +1976,20 @@ def plot_magnetic_structure(
         plt.savefig(save_filename)
         logger.info(f"Magnetic structure plot saved to {save_filename}")
         
+        # Export JSON for the 3D GUI visualizer
+        json_filename = save_filename.rsplit('.', 1)[0] + '.json'
+        try:
+            import json
+            data = {
+                "atoms": atom_positions.tolist(),
+                "vectors": [[us[i], vs[i], ws[i]] for i in range(nspins)]
+            }
+            with open(json_filename, 'w') as f:
+                json.dump(data, f)
+            logger.info(f"Magnetic structure JSON saved to {json_filename}")
+        except Exception as e:
+            logger.error(f"Failed to save magnetic structure JSON: {e}")
+        
     if show_plot:
         plt.show()
     plt.close()

@@ -112,11 +112,19 @@ def plot_sqw_map(
              if isinstance(energies, np.ndarray): all_ens = energies.flatten()
              else: 
                  for e in energies: all_ens.extend(e)
-             all_ens = [e for e in all_ens if not np.isnan(e)]
-             if not all_ens:
+                 
+             valid_ens = []
+             for e in all_ens:
+                 if np.isnan(e): continue
+                 if isinstance(e, complex) or type(e).__name__.startswith('complex'):
+                     if abs(e.imag) > 1e-3: continue
+                     e = e.real
+                 valid_ens.append(float(e))
+                 
+             if not valid_ens:
                  y_max = 20
              else:
-                 y_max = max(all_ens) * 1.1
+                 y_max = max(valid_ens) * 1.1
              y_min = 0
              ylim = [y_min, y_max]
         
@@ -137,6 +145,14 @@ def plot_sqw_map(
             if isinstance(ints, (list, tuple)): ints = np.array(ints)
             
             valid = ~np.isnan(ens) & ~np.isnan(ints)
+            
+            # Filter non-real values (imaginary > tolerance) to prevent crash
+            if np.iscomplexobj(ens):
+                valid = valid & (np.abs(np.imag(ens)) < 1e-3)
+                ens = np.real(ens)
+            if np.iscomplexobj(ints):
+                 ints = np.real(ints) # intensities should be real
+                 
             ens = ens[valid]
             ints = ints[valid]
             

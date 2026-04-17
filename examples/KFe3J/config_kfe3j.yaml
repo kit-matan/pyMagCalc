@@ -65,6 +65,9 @@ plotting:
   show_plot: true
   plot_structure: true
   energy_limits_disp: [0, 20]
+  energy_limits_sqw: [0, 20]
+  disp_title: KFe3J Dispersion
+  sqw_title: KFe3J S(Q,w)
   broadening_width: 0.2
 minimization:
   enabled: true

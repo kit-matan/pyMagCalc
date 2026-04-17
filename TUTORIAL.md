@@ -110,7 +110,6 @@ crystal_structure:
 ```
 
 ### Interactions
-### Interactions
 `pyMagCalc` supports both **explicit pair interactions** and **distance-based symmetry rules**.
 
 #### 1. Distance-Based (Symmetry Rules)
@@ -152,8 +151,6 @@ output:
 *   **Dispersion**: One row per Q-point: `qx, qy, qz, en0, en1, ...`
 *   **S(Q,w)**: Tidy format (one row per mode): `qx, qy, qz, mode, energy, intensity`
 ```
-
----
 
 ---
 
