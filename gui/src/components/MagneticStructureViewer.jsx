@@ -1,25 +1,31 @@
-import React, { useRef } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls, Text, Html } from '@react-three/drei';
+import React, { useMemo } from 'react';
+import { Canvas } from '@react-three/fiber';
+import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 
-const Atom = ({ position, color = "#333", size = 0.3 }) => {
+const Atom = React.memo(({ position, color = "#333", size = 0.3 }) => {
     return (
         <mesh position={position}>
             <sphereGeometry args={[size, 32, 32]} />
             <meshStandardMaterial color={color} />
         </mesh>
     );
-};
+});
 
-const SpinArrow = ({ position, vector, length = 1.0, color = "#ff0000" }) => {
+const SpinArrow = React.memo(({ position, vector, length = 1.0, color = "#ff0000" }) => {
     // vector is [sx, sy, sz]
-    const origin = new THREE.Vector3(...position);
-    const dir = new THREE.Vector3(...vector).normalize();
+    // Guard against zero-length vectors that would cause NaN in normalize/setFromUnitVectors
+    const raw = new THREE.Vector3(...vector);
+    if (raw.length() < 1e-8) return null;
 
-    // Create quaternion to rotate from default UP (0,1,0) to target direction
-    const quaternion = new THREE.Quaternion();
-    quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+    const dir = raw.normalize();
+
+    // Memoize quaternion to avoid re-creating Three.js objects every render
+    const quaternion = useMemo(() => {
+        const q = new THREE.Quaternion();
+        q.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+        return q;
+    }, [vector[0], vector[1], vector[2]]);
 
     // Arrow cylinder length
     const shaftLen = length * 0.7;
@@ -41,7 +47,7 @@ const SpinArrow = ({ position, vector, length = 1.0, color = "#ff0000" }) => {
             </mesh>
         </group>
     );
-};
+});
 
 const StructureScene = ({ data }) => {
     const { atoms, vectors, energy } = data;
@@ -65,7 +71,9 @@ const StructureScene = ({ data }) => {
                 {atoms.map((pos, idx) => (
                     <group key={`atom-${idx}`}>
                         <Atom position={pos} />
-                        <SpinArrow position={pos} vector={vectors[idx]} length={1.5} />
+                        {vectors && vectors[idx] && (
+                            <SpinArrow position={pos} vector={vectors[idx]} length={1.5} />
+                        )}
                     </group>
                 ))}
 

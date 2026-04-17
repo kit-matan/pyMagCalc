@@ -47,7 +47,7 @@ function App() {
 
   const loadStructureData = async (url) => {
     try {
-      const res = await fetch(url);
+      const res = await fetch(`${url}?t=${Date.now()}`);
       const data = await res.json();
       setJsonCache(prev => ({ ...prev, [url]: data }));
     } catch (e) {
@@ -143,10 +143,21 @@ function App() {
         ws.onopen = () => {
           console.log("Log WebSocket Connected");
           setWsConnected(true);
+          
+          // Heartbeat to keep connection alive
+          const heartbeat = setInterval(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send('ping');
+            }
+          }, 30000);
+          
+          ws._heartbeat = heartbeat;
         };
 
         ws.onmessage = (event) => {
           const rawMsg = event.data;
+          if (rawMsg === 'pong' || rawMsg === 'ping') return;
+          
           setLogs(prev => {
             if (rawMsg.startsWith('\r') && prev.length > 0) {
               const next = [...prev];
@@ -162,8 +173,10 @@ function App() {
         ws.onclose = () => {
           console.log("Log WebSocket Closed. Retrying...");
           setWsConnected(false);
+          if (ws._heartbeat) clearInterval(ws._heartbeat);
+          
           if (isMounted) {
-            reconnectTimeout = setTimeout(connect, 3000);
+            reconnectTimeout = setTimeout(connect, 5000);
           }
         };
 
@@ -187,16 +200,6 @@ function App() {
         ws.close();
       }
     }
-  }, []);
-
-  // Shutdown backend when window is closed
-  React.useEffect(() => {
-    const handleUnload = () => {
-      // Use sendBeacon for reliable delivery during unload
-      navigator.sendBeacon('/api/shutdown');
-    };
-    window.addEventListener('beforeunload', handleUnload);
-    return () => window.removeEventListener('beforeunload', handleUnload);
   }, []);
 
   // Helper to consistently generate keys for bond values (handling arrays and strings)
@@ -256,15 +259,14 @@ function App() {
     single_ion_anisotropy: [],
     parameters: { J1: 2.49, J2: 2.79, J3: 5.05, G1: 0.28, Dx: 2.67, D: 0.0, H_mag: 20.0, H_dir: [0, 0, 1] },
     tasks: {
-      run_minimization: true,
-      run_dispersion: true,
-      calculate_dispersion_new: true,
+      minimization: true,
+      dispersion: true,
       plot_dispersion: true,
-      run_sqw_map: true,
-      calculate_sqw_map_new: true,
+      sqw_map: true,
       plot_sqw_map: true,
       export_csv: false,
-      run_powder_average: false
+      powder_average: false,
+      plot_structure: false
     },
     q_path: {
       points: { Start: [0, 1, 0], End: [0, 3, 0] },
@@ -435,9 +437,12 @@ function App() {
     tasks: {
       minimization: true,
       dispersion: true,
-      run_sqw_map: false,
-      run_powder_average: false,
-      export_csv: false
+      plot_dispersion: true,
+      sqw_map: false,
+      plot_sqw_map: false,
+      powder_average: false,
+      export_csv: false,
+      plot_structure: false
     },
     q_path: {
       points: { Gamma: [0, 0, 0] },
@@ -587,14 +592,27 @@ function App() {
           // alert(JSON.stringify(doc.parameters)) 
           newConfig.parameters = { ...newConfig.parameters, ...doc.parameters }
         }
-        if (doc.tasks) newConfig.tasks = { ...newConfig.tasks, ...doc.tasks }
+        if (doc.tasks) {
+          const t = doc.tasks;
+          newConfig.tasks = {
+            ...newConfig.tasks,
+            minimization: t.minimization ?? t.run_minimization ?? newConfig.tasks.minimization,
+            dispersion: t.dispersion ?? t.run_dispersion ?? newConfig.tasks.dispersion,
+            sqw_map: t.sqw_map ?? t.run_sqw_map ?? newConfig.tasks.sqw_map,
+            powder_average: t.powder_average ?? t.run_powder_average ?? newConfig.tasks.powder_average,
+            export_csv: t.export_csv ?? newConfig.tasks.export_csv,
+            plot_dispersion: t.plot_dispersion ?? newConfig.tasks.plot_dispersion,
+            plot_sqw_map: t.plot_sqw_map ?? newConfig.tasks.plot_sqw_map,
+            plot_structure: t.plot_structure ?? newConfig.tasks.plot_structure
+          };
+        }
         if (doc.plotting) newConfig.plotting = { ...newConfig.plotting, ...doc.plotting }
         if (doc.minimization) {
           newConfig.minimization = { ...newConfig.minimization, ...doc.minimization }
         }
         if (doc.powder_average) {
           newConfig.powder_average = { ...newConfig.powder_average, ...doc.powder_average }
-        } else if (doc.tasks && doc.tasks.run_powder_average && !newConfig.powder_average) {
+        } else if (newConfig.tasks.powder_average && !newConfig.powder_average) {
           // Ensure it exists if the task is enabled
           newConfig.powder_average = { q_min: 0.1, q_max: 4.0, q_count: 50, num_samples: 50 }
         }
@@ -665,8 +683,8 @@ function App() {
       magnetic_structure: config.magnetic_structure,
       tasks: {
         ...config.tasks,
-        calculate_dispersion_new: config.tasks.run_dispersion,
-        calculate_sqw_map_new: config.tasks.run_sqw_map
+        calculate_dispersion: config.tasks.dispersion,
+        calculate_sqw_map: config.tasks.sqw_map
       },
       q_path: {
         ...config.q_path.points,
@@ -679,7 +697,7 @@ function App() {
         broadening_width: config.plotting.broadening
       },
       minimization: {
-        enabled: config.tasks.run_minimization,
+        enabled: config.tasks.minimization,
         ...config.minimization
       },
       output: config.output
@@ -1001,6 +1019,7 @@ function App() {
     setCalcLoading(true)
     setCalcError(null)
     setCalcResults(null)
+    setJsonCache({}) // Clear 3D structure data cache
     setLogs([]) // Clear previous logs
 
     // Construct payload as expected by expand-config logic backend
@@ -1017,12 +1036,7 @@ function App() {
       },
       magnetic_structure: config.magnetic_structure,
       parameters: config.parameters,
-      tasks: {
-        ...config.tasks,
-        sqw_map: false,
-        calculate_dispersion_new: config.tasks.run_dispersion,
-        calculate_sqw_map_new: config.tasks.run_sqw_map
-      },
+      tasks: config.tasks,
       q_path: {
         ...config.q_path.points,
         path: config.q_path.path,
@@ -1034,7 +1048,7 @@ function App() {
         broadening_width: config.plotting.broadening
       },
       minimization: {
-        enabled: config.tasks.run_minimization,
+        enabled: config.tasks.minimization,
         ...config.minimization
       },
       powder_average: config.powder_average,
@@ -1987,8 +2001,8 @@ function App() {
                         </div>
 
                         <div
-                          className={`task-card ${config.tasks.run_sqw_map ? 'active' : ''}`}
-                          onClick={() => updateField('tasks', 'run_sqw_map', !config.tasks.run_sqw_map)}
+                          className={`task-card ${config.tasks.sqw_map ? 'active' : ''}`}
+                          onClick={() => updateField('tasks', 'sqw_map', !config.tasks.sqw_map)}
                         >
                           <div className="task-icon-box">
                             <BarChart2 size={18} />
@@ -2003,8 +2017,8 @@ function App() {
                         </div>
 
                         <div
-                          className={`task-card ${config.tasks.run_powder_average ? 'active' : ''}`}
-                          onClick={() => updateField('tasks', 'run_powder_average', !config.tasks.run_powder_average)}
+                          className={`task-card ${config.tasks.powder_average ? 'active' : ''}`}
+                          onClick={() => updateField('tasks', 'powder_average', !config.tasks.powder_average)}
                         >
                           <div className="task-icon-box">
                             <Wind size={18} />
@@ -2125,7 +2139,7 @@ function App() {
                       </div>
                     </div>
 
-                    {config.tasks.run_powder_average && config.powder_average && (
+                    {config.tasks.powder_average && config.powder_average && (
                       <div className="card shadow-glow animate-slide-in">
                         <h3>Powder Average Settings</h3>
                         <div className="grid-form mt-md">

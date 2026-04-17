@@ -15,6 +15,7 @@ import uuid
 from itertools import product
 from starlette.websockets import WebSocket, WebSocketDisconnect
 import glob
+import re
 
 import sys
 import matplotlib
@@ -27,7 +28,19 @@ except ImportError:
     # If not found (e.g. running in a way where it's not available), we'll handle it in the endpoint
     MagCalcConfigBuilder = None
 
-from fastapi.staticfiles import StaticFiles
+import sympy as sp
+from starlette.staticfiles import StaticFiles
+
+def _safe_eval(expr, ctx):
+    """Safely evaluate a mathematical expression using SymPy."""
+    if isinstance(expr, (int, float)):
+        return float(expr)
+    try:
+        # ctx can contain parameter names and their numerical values
+        return float(sp.sympify(str(expr)).evalf(subs=ctx))
+    except Exception:
+        return 0.0
+
 from magcalc.runner import run_calculation
 
 app = FastAPI(title="MagCalc Designer Backend")
@@ -35,6 +48,77 @@ app = FastAPI(title="MagCalc Designer Backend")
 # Mount the project root to serve generated files (e.g. plots)
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 app.mount("/files", StaticFiles(directory=project_root), name="files")
+
+
+def _hydrate_builder(data: Dict[str, Any]) -> 'MagCalcConfigBuilder':
+    """
+    Shared helper to create and hydrate a MagCalcConfigBuilder from a request payload.
+    Handles lattice setup, atom addition (symmetry or explicit), and symmetry detection.
+    """
+    builder = MagCalcConfigBuilder()
+
+    # 1. Lattice
+    lattice = data.get("crystal_structure", {}).get("lattice_parameters", {})
+    struct_data = data.get("crystal_structure", {})
+    atom_mode = struct_data.get("atom_mode", "symmetry")
+
+    builder.set_lattice(
+        a=lattice.get("a", 1.0),
+        b=lattice.get("b", 1.0),
+        c=lattice.get("c", 1.0),
+        alpha=lattice.get("alpha", 90),
+        beta=lattice.get("beta", 90),
+        gamma=lattice.get("gamma", 90),
+        space_group=int(lattice.get("space_group")) if lattice.get("space_group") is not None else None
+    )
+
+    # 2. Basis Atoms
+    wyckoff_atoms = struct_data.get("wyckoff_atoms", [])
+
+    if atom_mode == "explicit":
+        config_atoms = []
+        for a in wyckoff_atoms:
+            config_atoms.append({
+                "label": a.get("label", "Atom"),
+                "pos": [float(x) for x in a.get("pos", [0, 0, 0])],
+                "spin_S": a.get("spin_S", 0.5),
+                "species": a.get("label", "Atom"),
+                "ion": a.get("ion"),
+                "element": a.get("element")
+            })
+        builder.config["crystal_structure"]["atoms_uc"] = config_atoms
+        builder.atoms_uc = config_atoms
+    else:
+        for atom in wyckoff_atoms:
+            builder.add_wyckoff_atom(
+                label=atom.get("label", "Atom"),
+                pos=atom.get("pos", [0, 0, 0]),
+                spin=atom.get("spin_S", 0.5),
+                ion=atom.get("ion"),
+                element=atom.get("element")
+            )
+
+    # 3. Detect Symmetry (Robustness Fix)
+    try:
+        if len(builder.atoms_uc) > 0 and atom_mode != "explicit":
+            positions = [a["pos"] for a in builder.atoms_uc]
+            numbers = []
+            for a in builder.atoms_uc:
+                sym = a.get("species", "")
+                if not sym:
+                    match = re.match(r"([A-Z][a-z]?)", a["label"])
+                    sym = match.group(1) if match else "H"
+                numbers.append(atomic_numbers.get(sym, 1))
+
+            cell = (builder.lattice_vectors, positions, numbers)
+            dataset = spglib.get_symmetry_dataset(cell, symprec=1e-3)
+
+            if dataset:
+                builder.set_symmetry_ops(dataset.rotations, dataset.translations)
+    except Exception as e:
+        logging.getLogger().warning(f"Warning: Failed to detect symmetry: {e}")
+
+    return builder, atom_mode
 
 # --- Log Streaming Setup ---
 class LogBroadcaster:
@@ -219,10 +303,7 @@ async def trigger_calculation(config: Dict[str, Any]):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-    return {
-        "status": status,
-        "logs": logs
-    }
+
 
 @app.post("/parse-cif")
 async def parse_cif(file: UploadFile = File(...)):
@@ -360,68 +441,9 @@ async def get_neighbors(config: Dict[str, Any]):
         raise HTTPException(status_code=500, detail="MagCalcConfigBuilder not found on server.")
         
     try:
-        builder = MagCalcConfigBuilder()
         data = config.get("data", {})
+        builder, atom_mode = _hydrate_builder(data)
         
-        # 1. Lattice
-        lattice = data.get("crystal_structure", {}).get("lattice_parameters", {})
-        builder.set_lattice(
-            a=lattice.get("a", 1.0),
-            b=lattice.get("b", 1.0),
-            c=lattice.get("c", 1.0),
-            alpha=lattice.get("alpha", 90),
-            beta=lattice.get("beta", 90),
-            gamma=lattice.get("gamma", 90),
-            space_group=lattice.get("space_group")
-        )
-        
-        # 2. Basis Atoms
-        struct_data = data.get("crystal_structure", {})
-        wyckoff_atoms = struct_data.get("wyckoff_atoms", [])
-        atom_mode = struct_data.get("atom_mode", "symmetry")
-        
-        # IMPORTANT: Set dimensionality BEFORE adding atoms so reduction logic triggers
-
-
-        if atom_mode == "explicit":
-            # Treat Wyckoff atoms as the full unit cell directly
-            builder.atoms_uc = []
-            for atom in wyckoff_atoms:
-                builder.atoms_uc.append({
-                    "label": atom.get("label", "Atom"),
-                    "pos": atom.get("pos", [0, 0, 0]),
-                    "spin_S": atom.get("spin_S", 0.5)
-                })
-        else:
-            # Standard Wyckoff expansion
-            for atom in wyckoff_atoms:
-                builder.add_wyckoff_atom(
-                    label=atom.get("label", "Atom"),
-                    pos=atom.get("pos", [0, 0, 0]),
-                    spin=atom.get("spin_S", 0.5)
-                )
-        
-        # 2.5 Detect Symmetry (Robustness Fix)
-        try:
-            if len(builder.atoms_uc) > 0 and atom_mode != "explicit":
-                positions = [a["pos"] for a in builder.atoms_uc]
-                numbers = []
-                import re
-                for a in builder.atoms_uc:
-                    sym = a.get("species", "")
-                    if not sym:
-                        match = re.match(r"([A-Z][a-z]?)", a["label"])
-                        sym = match.group(1) if match else "H"
-                    numbers.append(atomic_numbers.get(sym, 1))
-                
-                cell = (builder.lattice_vectors, positions, numbers)
-                dataset = spglib.get_symmetry_dataset(cell, symprec=1e-3)
-                
-                if dataset:
-                    # Override builder symmetry with consistent operations
-                    builder.set_symmetry_ops(dataset.rotations, dataset.translations)
-        except Exception as e:
-            logging.getLogger().warning(f"Warning: Failed to detect symmetry in get_neighbors: {e}")
             
         max_dist = config.get("max_distance", 10.0)
         candidate_bonds = []
@@ -582,59 +604,9 @@ async def analyze_bonds(config: Dict[str, Any]):
         raise HTTPException(status_code=500, detail="MagCalcConfigBuilder not found on server.")
         
     try:
-        builder = MagCalcConfigBuilder()
         data = config.get("data", {})
         max_dist = config.get("max_distance", 6.0)
-        
-        # Hydrate Builder (Lattice + Atoms)
-        # 1. Lattice
-        lattice = data.get("crystal_structure", {}).get("lattice_parameters", {})
-        builder.set_lattice(
-            a=lattice.get("a", 1.0),
-            b=lattice.get("b", 1.0),
-            c=lattice.get("c", 1.0),
-            alpha=lattice.get("alpha", 90),
-            beta=lattice.get("beta", 90),
-            gamma=lattice.get("gamma", 90),
-            space_group=int(lattice.get("space_group")) if lattice.get("space_group") else None
-        )
-        
-        # 2. Atoms
-        struct_data = data.get("crystal_structure", {})
-        wyckoff_atoms = struct_data.get("wyckoff_atoms", [])
-        atom_mode = struct_data.get("atom_mode", "symmetry")
-
-
-        if atom_mode == "explicit":
-            config_atoms = []
-            for a in wyckoff_atoms:
-                config_atoms.append({
-                    "label": a.get("label", "Atom"),
-                    "pos": [float(x) for x in a.get("pos", [0, 0, 0])],
-                    "spin_S": a.get("spin_S", 0.5),
-                    "species": a.get("label", "Atom")
-                })
-            builder.config["crystal_structure"]["atoms_uc"] = config_atoms
-            builder.atoms_uc = config_atoms
-        else:
-            for atom in wyckoff_atoms:
-                builder.add_wyckoff_atom(
-                    label=atom.get("label", "Atom"),
-                    pos=atom.get("pos", [0, 0, 0]),
-                    spin=atom.get("spin_S", 0.5)
-                )
-
-        # 3. Detect Symmetry (Robustness)
-        try:
-            if len(builder.atoms_uc) > 0 and atom_mode != "explicit":
-                positions = [a["pos"] for a in builder.atoms_uc]
-                numbers = [atomic_numbers.get(a.get("species", "H"), 1) for a in builder.atoms_uc]
-                cell = (builder.lattice_vectors, positions, numbers)
-                dataset = spglib.get_symmetry_dataset(cell, symprec=1e-3)
-                if dataset:
-                     builder.set_symmetry_ops(dataset.rotations, dataset.translations)
-        except Exception:
-            pass
+        builder, atom_mode = _hydrate_builder(data)
 
         # 4. Analyze
         orbits = builder.analyze_bond_symmetry(max_distance=max_dist)
@@ -676,42 +648,9 @@ async def bond_constraints(payload: Dict[str, Any]):
         raise HTTPException(status_code=500, detail="MagCalcConfigBuilder not found.")
         
     try:
-        builder = MagCalcConfigBuilder()
         data = payload.get("data", {})
         bond_rep = payload.get("bond", {})
-        
-        # Hydrate Builder (Same boilerplate - maybe refactor later)
-        lattice = data.get("crystal_structure", {}).get("lattice_parameters", {})
-        builder.set_lattice(
-            a=lattice.get("a", 1.0),
-            b=lattice.get("b", 1.0),
-            c=lattice.get("c", 1.0),
-            alpha=lattice.get("alpha", 90),
-            beta=lattice.get("beta", 90),
-            gamma=lattice.get("gamma", 90),
-            space_group=int(lattice.get("space_group")) if lattice.get("space_group") else None
-        )
-        struct_data = data.get("crystal_structure", {})
-        wyckoff_atoms = struct_data.get("wyckoff_atoms", [])
-        atom_mode = struct_data.get("atom_mode", "symmetry")
-
-        if atom_mode == "explicit":
-             config_atoms = [{"label": a.get("label"), "pos": a.get("pos"), "spin_S": a.get("spin_S")} for a in wyckoff_atoms]
-             builder.atoms_uc = config_atoms
-        else:
-            for atom in wyckoff_atoms:
-                builder.add_wyckoff_atom(atom.get("label"), atom.get("pos"), atom.get("spin_S", 0.5))
-        
-        # Symmetry Detect
-        try:
-            if builder.atoms_uc:
-                positions = [a["pos"] for a in builder.atoms_uc]
-                # Dummy species logic if missing
-                numbers = [1] * len(positions) 
-                cell = (builder.lattice_vectors, positions, numbers)
-                dataset = spglib.get_symmetry_dataset(cell, symprec=1e-3)
-                if dataset: builder.set_symmetry_ops(dataset.rotations, dataset.translations)
-        except: pass
+        builder, atom_mode = _hydrate_builder(data)
 
         # Config must match bond logic
         # Bond rep should have { "atom_i": "Cu1", "atom_j": "Cu2", "offset": [0,0,0] }
@@ -736,82 +675,13 @@ async def expand_config(config: Dict[str, Any]):
         raise HTTPException(status_code=500, detail="MagCalcConfigBuilder not found on server.")
         
     try:
-        builder = MagCalcConfigBuilder()
         data = config.get("data", {})
-        
-        # 1. Lattice
-        lattice = data.get("crystal_structure", {}).get("lattice_parameters", {})
-        builder.set_lattice(
-            a=lattice.get("a", 1.0),
-            b=lattice.get("b", 1.0),
-            c=lattice.get("c", 1.0),
-            alpha=lattice.get("alpha", 90),
-            beta=lattice.get("beta", 90),
-            gamma=lattice.get("gamma", 90),
-            space_group=int(lattice.get("space_group")) if lattice.get("space_group") is not None else None
-        )
-        
-        # 2. Basis Atoms
+        builder, atom_mode = _hydrate_builder(data)
         struct_data = data.get("crystal_structure", {})
-        wyckoff_atoms = struct_data.get("wyckoff_atoms", [])
-        atom_mode = struct_data.get("atom_mode", "symmetry")
 
-
-        if atom_mode == "explicit":
-            # Treat Wyckoff atoms as the full unit cell directly
-            config_atoms = []
-            for a in wyckoff_atoms:
-                config_atoms.append({
-                    "label": a.get("label", "Atom"),
-                    "pos": [float(x) for x in a.get("pos", [0, 0, 0])],
-                    "spin_S": a.get("spin_S", 0.5),
-                    "species": a.get("label", "Atom"),
-                    "ion": a.get("ion"),
-                    "element": a.get("element")
-                })
-            builder.config["crystal_structure"]["atoms_uc"] = config_atoms
-            builder.atoms_uc = config_atoms # Ensure builder also knows them for neighbor search
-        else:
-            # Standard Wyckoff expansion
-            for atom in wyckoff_atoms:
-                builder.add_wyckoff_atom(
-                    label=atom.get("label", "Atom"),
-                    pos=atom.get("pos", [0, 0, 0]),
-                    spin=atom.get("spin_S", 0.5),
-                    ion=atom.get("ion"),
-                    element=atom.get("element")
-                )
-
-        # 2.5 Set Dimensionality
-
-        
-        # 4. Global Parameters & Tasks
+        # Global Parameters & Tasks
         builder.config["parameters"] = data.get("parameters", {})
         builder.config["tasks"] = data.get("tasks", {})
-
-        # 2.6 Detect Symmetry from Structure (Robustness Fix)
-        # Verify that loaded operations match the actual atoms, or detect if missing.
-        try:
-            if len(builder.atoms_uc) > 0:
-                positions = [a["pos"] for a in builder.atoms_uc]
-                numbers = []
-                import re
-                for a in builder.atoms_uc:
-                    sym = a.get("species", "")
-                    if not sym:
-                        match = re.match(r"([A-Z][a-z]?)", a["label"])
-                        sym = match.group(1) if match else "H"
-                    numbers.append(atomic_numbers.get(sym, 1))
-                
-                cell = (builder.lattice_vectors, positions, numbers)
-                dataset = spglib.get_symmetry_dataset(cell, symprec=1e-3)
-                
-                if dataset:
-                    detected_sg = dataset.number
-                    # Override builder symmetry with consistent operations
-                    builder.set_symmetry_ops(dataset.rotations, dataset.translations)
-        except Exception as e:
-            logging.getLogger().warning(f"Warning: Failed to detect symmetry from structure: {e}")
 
         # 3. Interactions
         if "list" in data.get("interactions", {}):
@@ -855,9 +725,8 @@ async def expand_config(config: Dict[str, Any]):
 
             # Filter and flatten interactions
             final_inters = []
-            final_inters.extend(builder.config["interactions"].get("heisenberg", []))
-            final_inters.extend(builder.config["interactions"].get("dm_interaction", []))
-            final_inters.extend(builder.config["interactions"].get("anisotropic_exchange", []))
+            for itype in ["heisenberg", "dm_interaction", "anisotropic_exchange", "interaction_matrix", "kitaev"]:
+                final_inters.extend(builder.config["interactions"].get(itype, []))
 
         # 4. Global Parameters & Tasks
         builder.config["parameters"] = data.get("parameters", {})
@@ -946,55 +815,18 @@ async def get_unit_cell_atoms(config: Dict[str, Any]):
         raise HTTPException(status_code=500, detail="MagCalcConfigBuilder not found on server.")
         
     try:
-        builder = MagCalcConfigBuilder()
         data = config.get("data", {})
-        
-        # 1. Lattice
-        lattice = data.get("crystal_structure", {}).get("lattice_parameters", {})
-        builder.set_lattice(
-            a=lattice.get("a", 1.0),
-            b=lattice.get("b", 1.0),
-            c=lattice.get("c", 1.0),
-            alpha=lattice.get("alpha", 90),
-            beta=lattice.get("beta", 90),
-            gamma=lattice.get("gamma", 90),
-            space_group=lattice.get("space_group")
-        )
-        
-        # 2. Basis Atoms
-        struct_data = data.get("crystal_structure", {})
-        wyckoff_atoms = struct_data.get("wyckoff_atoms", [])
-        atom_mode = struct_data.get("atom_mode", "symmetry")
+        builder, atom_mode = _hydrate_builder(data)
 
-
-        if atom_mode == "explicit":
-            # Treat Wyckoff atoms as the full unit cell directly
-            config_atoms = []
-            for a in wyckoff_atoms:
-                config_atoms.append({
-                    "label": a.get("label", "Atom"),
-                    "pos": [float(x) for x in a.get("pos", [0, 0, 0])],
-                    "spin_S": a.get("spin_S", 0.5)
-                })
-            return config_atoms
-        else:
-            # Standard Wyckoff expansion
-            for atom in wyckoff_atoms:
-                builder.add_wyckoff_atom(
-                    label=atom.get("label", "Atom"),
-                    pos=atom.get("pos", [0, 0, 0]),
-                    spin=atom.get("spin_S", 0.5)
-                )
-            
-            # Re-build atoms list
-            config_atoms = []
-            for a in builder.atoms_uc:
-                config_atoms.append({
-                    "label": a["label"],
-                    "pos": [float(x) for x in a["pos"]],
-                    "spin_S": a["spin_S"]
-                })
-            return config_atoms
+        # Build atoms list from builder
+        config_atoms = []
+        for a in builder.atoms_uc:
+            config_atoms.append({
+                "label": a["label"],
+                "pos": [float(x) for x in a["pos"]],
+                "spin_S": a["spin_S"]
+            })
+        return config_atoms
             
     except Exception as e:
         import traceback
@@ -1011,67 +843,8 @@ async def get_visualizer_data(config: Dict[str, Any]):
         raise HTTPException(status_code=500, detail="MagCalcConfigBuilder not found on server.")
         
     try:
-        builder = MagCalcConfigBuilder()
         data = config.get("data", {})
-        
-        # 2. Basis Atoms
-        struct_data = data.get("crystal_structure", {})
-        wyckoff_atoms = struct_data.get("wyckoff_atoms", [])
-        atom_mode = struct_data.get("atom_mode", "symmetry")
-
-
-        # 1. Lattice
-        lattice = data.get("crystal_structure", {}).get("lattice_parameters", {})
-        builder.set_lattice(
-            a=lattice.get("a", 1.0),
-            b=lattice.get("b", 1.0),
-            c=lattice.get("c", 1.0),
-            alpha=lattice.get("alpha", 90),
-            beta=lattice.get("beta", 90),
-            gamma=lattice.get("gamma", 90),
-            space_group=lattice.get("space_group") if atom_mode == "symmetry" else None
-        )
-
-        if atom_mode == "explicit":
-            config_atoms = []
-            for a in wyckoff_atoms:
-                config_atoms.append({
-                    "label": a.get("label", "Atom"),
-                    "pos": [float(x) for x in a.get("pos", [0, 0, 0])],
-                    "spin_S": a.get("spin_S", 0.5),
-                    "species": a.get("label", "Atom")
-                })
-            builder.config["crystal_structure"]["atoms_uc"] = config_atoms
-            builder.atoms_uc = config_atoms
-        else:
-            for atom in wyckoff_atoms:
-                builder.add_wyckoff_atom(
-                    label=atom.get("label", "Atom"),
-                    pos=atom.get("pos", [0, 0, 0]),
-                    spin=atom.get("spin_S", 0.5)
-                )
-
-        # 2.5 Detect Symmetry (Robustness Fix)
-        try:
-            if len(builder.atoms_uc) > 0 and atom_mode != "explicit":
-                positions = [a["pos"] for a in builder.atoms_uc]
-                numbers = []
-                import re
-                for a in builder.atoms_uc:
-                    sym = a.get("species", "")
-                    if not sym:
-                        match = re.match(r"([A-Z][a-z]?)", a["label"])
-                        sym = match.group(1) if match else "H"
-                    numbers.append(atomic_numbers.get(sym, 1))
-                
-                cell = (builder.lattice_vectors, positions, numbers)
-                dataset = spglib.get_symmetry_dataset(cell, symprec=1e-3)
-                
-                if dataset:
-                    # Override builder symmetry with consistent operations
-                    builder.set_symmetry_ops(dataset.rotations, dataset.translations)
-        except Exception as e:
-            print(f"Warning: Failed to detect symmetry in get_visualizer_data: {e}")
+        builder, atom_mode = _hydrate_builder(data)
 
         # 3. Interactions
         # Copy interactions from input
@@ -1206,7 +979,7 @@ async def get_visualizer_data(config: Dict[str, Any]):
                          # Get parameters dict
                          params = config.get("data", {}).get("parameters", {})
                          ctx = {k: float(v) for k, v in params.items() if isinstance(v, (int, float))}
-                         j_val = float(val) if isinstance(val, (int, float)) else float(eval(str(val), {"__builtins__": {}}, ctx))
+                         j_val = _safe_eval(val, ctx)
                          exchange_matrix = [
                              [j_val, 0.0, 0.0],
                              [0.0, j_val, 0.0],
@@ -1228,9 +1001,8 @@ async def get_visualizer_data(config: Dict[str, Any]):
                                  eval_vec.append(float(comp))
                              elif isinstance(comp, str):
                                  try:
-                                     allowed_names = ctx
-                                     res = eval(comp, {"__builtins__": {}}, allowed_names)
-                                     eval_vec.append(float(res))
+                                     res = _safe_eval(comp, ctx)
+                                     eval_vec.append(res)
                                  except Exception:
                                      eval_vec.append(0.0)
                              else:
@@ -1254,7 +1026,7 @@ async def get_visualizer_data(config: Dict[str, Any]):
                          eval_vec = []
                          for comp in val:
                              try:
-                                 v = float(comp) if isinstance(comp, (int, float)) else float(eval(str(comp), {"__builtins__": {}}, ctx))
+                                 v = _safe_eval(comp, ctx)
                                  eval_vec.append(v)
                              except:
                                  eval_vec.append(0.0)
@@ -1303,6 +1075,6 @@ async def shutdown():
 
 if __name__ == "__main__":
     import uvicorn
-    # Enable reload to pick up code changes automatically!
-    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)
+    # Disable reload by default to prevent infinite reload loops when writing result files/plots
+    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=False)
     # Reload trigger: Config builder patch applied

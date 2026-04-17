@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react'
+import React, { useRef, useState, useEffect, useMemo } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls, Stars, PerspectiveCamera, Line, Text, GizmoHelper, GizmoViewport } from '@react-three/drei'
 import * as THREE from 'three'
@@ -37,14 +37,28 @@ function Atom({ position, color, label, isGhost = false }) {
 }
 
 function SpinArrow({ position, direction, length = 1.8, color = '#10b981' }) {
-    const dir = new THREE.Vector3(...direction).normalize()
+    // Guard against zero-length direction vectors that cause NaN
+    const raw = new THREE.Vector3(...direction)
+    if (raw.length() < 1e-8) return null
+
+    const dir = raw.normalize()
     const pos = new THREE.Vector3(...position)
+
+    // Memoize ArrowHelper to prevent GPU memory leaks on every render
+    const arrow = useMemo(() => {
+        return new THREE.ArrowHelper(dir, new THREE.Vector3(0, 0, 0), length, color, 0.5, 0.25)
+    }, [direction[0], direction[1], direction[2], length, color])
+
+    // Cleanup on unmount or when arrow changes
+    useEffect(() => {
+        return () => {
+            if (arrow) arrow.dispose()
+        }
+    }, [arrow])
 
     return (
         <group position={pos}>
-            <primitive
-                object={new THREE.ArrowHelper(dir, new THREE.Vector3(0, 0, 0), length, color, 0.5, 0.25)}
-            />
+            <primitive object={arrow} />
         </group>
     )
 }
@@ -59,11 +73,18 @@ function BondLine({ start, end, label, color, type, labelOffset = [0, 0, 0], onC
         (start[2] + end[2]) / 2 + labelOffset[2]
     ]
 
-    // Calculate length and orientation for the hit cylinder
-    const startVec = new THREE.Vector3(...start)
-    const endVec = new THREE.Vector3(...end)
-    const distance = startVec.distanceTo(endVec)
-    const midVec = new THREE.Vector3().addVectors(startVec, endVec).multiplyScalar(0.5)
+    // Memoize Three.js objects to avoid re-creating them every render
+    const { startVec, endVec, distance, midVec, hitQuaternion } = useMemo(() => {
+        const s = new THREE.Vector3(...start)
+        const e = new THREE.Vector3(...end)
+        const d = s.distanceTo(e)
+        const m = new THREE.Vector3().addVectors(s, e).multiplyScalar(0.5)
+        const q = new THREE.Quaternion().setFromUnitVectors(
+            new THREE.Vector3(0, 1, 0),
+            e.clone().sub(s).normalize()
+        )
+        return { startVec: s, endVec: e, distance: d, midVec: m, hitQuaternion: q }
+    }, [start[0], start[1], start[2], end[0], end[1], end[2]])
 
     // Cylinder lookAt logic is tricky because cylinder creates along Y by default.
     // We can use a group with lookAt.
@@ -80,7 +101,7 @@ function BondLine({ start, end, label, color, type, labelOffset = [0, 0, 0], onC
                      Actually simpler: Make a mesh looking at endVec?
                  */}
                 <mesh
-                    quaternion={new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), endVec.clone().sub(startVec).normalize())}
+                    quaternion={hitQuaternion}
                     onClick={(e) => { e.stopPropagation(); onClick && onClick() }}
                     onPointerOver={(e) => { e.stopPropagation(); setHovered(true); document.body.style.cursor = 'pointer' }}
                     onPointerOut={(e) => { e.stopPropagation(); setHovered(false); document.body.style.cursor = 'default' }}

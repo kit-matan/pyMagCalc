@@ -9,6 +9,23 @@ from magcalc.plotting import plot_dispersion, plot_sqw_map
 
 logger = logging.getLogger(__name__)
 
+def compute_b_matrix(spin_model):
+    """Compute the reciprocal lattice B-matrix from the spin model's unit cell."""
+    uc = spin_model.unit_cell()
+    a1, a2, a3 = uc[0], uc[1], uc[2]
+    V = np.dot(a1, np.cross(a2, a3))
+    return np.array([
+        2 * np.pi * np.cross(a2, a3) / V,
+        2 * np.pi * np.cross(a3, a1) / V,
+        2 * np.pi * np.cross(a1, a2) / V
+    ])
+
+def _safe_makedirs(filepath):
+    """Create parent directories for filepath if they exist."""
+    dir_path = os.path.dirname(filepath)
+    if dir_path:
+        os.makedirs(dir_path, exist_ok=True)
+
 def generate_q_path_from_config(config):
     """Generates Q-path from configuration dictionary."""
     q_conf = config.get('q_path', {})
@@ -161,8 +178,8 @@ def run_calculation(config_file: str):
     logger.info(f"Model Parameters: {params_val}, S={S_val}")
 
     tasks = final_config.get('tasks', {})
-    # 1. Minimization
-    do_minimization = tasks.get('minimization', False) or tasks.get('run_minimization', False)
+    q_vectors = None
+    do_minimization = tasks.get('minimization', False)
     
     if do_minimization:
         # Check if python model provides minimization
@@ -291,7 +308,6 @@ def run_calculation(config_file: str):
                                     json_filename = struct_plot_filename.replace('.png', '.json')
                                     nspins = len(atoms)
                                     vectors = []
-                                    start_time = 0
                                     
                                     # Convert angles to vectors
                                     for i in range(nspins):
@@ -347,16 +363,13 @@ def run_calculation(config_file: str):
     save_data_flag = final_config.get('output', {}).get('save_data', True)
 
     # 2. Dispersion
-    q_vectors = None
-    do_dispersion = tasks.get('dispersion', False) or tasks.get('run_dispersion', False)
+    do_dispersion = tasks.get('dispersion', False)
     
     if do_dispersion:
         disp_file = final_config.get('output', {}).get('disp_data_filename', 'disp_data.npz')
         if not os.path.isabs(disp_file): disp_file = os.path.join(config_dir, disp_file)
         
-        need_recalc = True # If dispersion=True, we generally want to run unless cached logic is added back
-        # Legacy key check
-        if 'calculate_dispersion_new' in tasks: need_recalc = tasks['calculate_dispersion_new']
+        need_recalc = tasks.get('calculate_dispersion', True)
         if not os.path.exists(disp_file) and save_data_flag: need_recalc = True
         
         if need_recalc:
@@ -364,14 +377,7 @@ def run_calculation(config_file: str):
                 q_vectors = generate_q_path_from_config(final_config)
             
             if len(q_vectors) > 0:
-                uc = spin_model.unit_cell()
-                a1, a2, a3 = uc[0], uc[1], uc[2]
-                V = np.dot(a1, np.cross(a2, a3))
-                B_matrix = np.array([
-                    2 * np.pi * np.cross(a2, a3) / V,
-                    2 * np.pi * np.cross(a3, a1) / V,
-                    2 * np.pi * np.cross(a1, a2) / V
-                ])
+                B_matrix = compute_b_matrix(spin_model)
                 
                 q_rlu = np.array(q_vectors)
                 q_cart = np.dot(q_rlu, B_matrix)
@@ -384,7 +390,7 @@ def run_calculation(config_file: str):
                 if energies is not None:
                     try:
                         energies_arr = np.array(energies)
-                    except:
+                    except (ValueError, TypeError):
                         energies_arr = np.array(energies, dtype=object)
 
                     memory_cache['dispersion'] = {
@@ -393,7 +399,7 @@ def run_calculation(config_file: str):
                     }
 
                     if save_data_flag:
-                        os.makedirs(os.path.dirname(disp_file), exist_ok=True)
+                        _safe_makedirs(disp_file)
                         np.savez(disp_file, q_vectors=q_vectors_cart, energies=energies_arr)
                         logger.info(f"Dispersion saved to {disp_file}")
 
@@ -416,14 +422,13 @@ def run_calculation(config_file: str):
                 logger.warning("No Q-vectors.")
     
     # 3. S(Q,w) Map
-    do_sqw = tasks.get('sqw_map', False) or tasks.get('run_sqw_map', False)
+    do_sqw = tasks.get('sqw_map', False)
     
     if do_sqw:
         sqw_file = final_config.get('output', {}).get('sqw_data_filename', 'sqw_data.npz')
         if not os.path.isabs(sqw_file): sqw_file = os.path.join(config_dir, sqw_file)
         
-        need_recalc = True
-        if 'calculate_sqw_map_new' in tasks: need_recalc = tasks['calculate_sqw_map_new']
+        need_recalc = tasks.get('calculate_sqw_map', True)
         if not os.path.exists(sqw_file) and save_data_flag: need_recalc = True
         
         if need_recalc:
@@ -431,14 +436,7 @@ def run_calculation(config_file: str):
                 q_vectors = generate_q_path_from_config(final_config)
             
             if q_vectors is not None and len(q_vectors) > 0:
-                uc = spin_model.unit_cell()
-                a1, a2, a3 = uc[0], uc[1], uc[2]
-                V = np.dot(a1, np.cross(a2, a3))
-                B_matrix = np.array([
-                    2 * np.pi * np.cross(a2, a3) / V,
-                    2 * np.pi * np.cross(a3, a1) / V,
-                    2 * np.pi * np.cross(a1, a2) / V
-                ])
+                B_matrix = compute_b_matrix(spin_model)
                 q_vectors_cart = np.dot(q_vectors, B_matrix)
 
                 logger.info("Calculating S(Q,w)...")
@@ -454,7 +452,7 @@ def run_calculation(config_file: str):
                 }
 
                 if save_data_flag:
-                    os.makedirs(os.path.dirname(sqw_file), exist_ok=True)
+                    _safe_makedirs(sqw_file)
                     np.savez(sqw_file, q_vectors=q_out, energies=en_out, intensities=int_out)
                     logger.info(f"S(Q,w) saved to {sqw_file}")
 
@@ -475,7 +473,7 @@ def run_calculation(config_file: str):
                                 f.write(line + "\n")
 
     # 4. Powder Average
-    do_powder = tasks.get('powder_average', False) or tasks.get('run_powder_average', False)
+    do_powder = tasks.get('powder_average', False)
     if do_powder:
         powder_file = final_config.get('output', {}).get('powder_data_filename', 'powder_data.npz')
         if not os.path.isabs(powder_file): powder_file = os.path.join(config_dir, powder_file)
@@ -500,12 +498,11 @@ def run_calculation(config_file: str):
                 'intensities': powder_res.intensities
             }
             if save_data_flag:
-                os.makedirs(os.path.dirname(powder_file), exist_ok=True)
+                _safe_makedirs(powder_file)
                 np.savez(powder_file, q_vectors=powder_res.q_vectors, energies=powder_res.energies, intensities=powder_res.intensities)
                 logger.info(f"Powder average data saved to {powder_file}")
 
-    # 3. Plotting
-    tasks = final_config.get('tasks', {})
+    # 5. Plotting
     plot_config = final_config.get('plotting', {})
     
     # Priority: tasks['plot_dispersion'] -> tasks['run_plotting'] -> (do_dispersion and save_plot)
@@ -542,7 +539,7 @@ def run_calculation(config_file: str):
             if not os.path.isabs(disp_file): disp_file = os.path.join(config_dir, disp_file)
             
             if os.path.exists(disp_file):
-                data = np.load(disp_file, allow_pickle=True)
+                data = np.load(disp_file)
                 plot_filename = plot_config.get('disp_plot_filename', 'disp_plot.png')
                 if not os.path.isabs(plot_filename): plot_filename = os.path.join(config_dir, plot_filename)
                 
@@ -581,7 +578,7 @@ def run_calculation(config_file: str):
             if not os.path.isabs(sqw_file): sqw_file = os.path.join(config_dir, sqw_file)
             
             if os.path.exists(sqw_file):
-                data = np.load(sqw_file, allow_pickle=True)
+                data = np.load(sqw_file)
                 plot_filename = plot_config.get('sqw_plot_filename', 'sqw_plot.png')
                 if not os.path.isabs(plot_filename): plot_filename = os.path.join(config_dir, plot_filename)
                 
@@ -600,7 +597,7 @@ def run_calculation(config_file: str):
                     show_plot=plot_config.get('show_plot', False)
                 )
 
-    # 4. Powder Plotting
+    # 6. Powder Plotting
     should_plot_powder = tasks.get('run_powder_average')
     if should_plot_powder is None:
         should_plot_powder = do_powder and plot_config.get('save_plot', True)
@@ -628,7 +625,7 @@ def run_calculation(config_file: str):
             if not os.path.isabs(powder_file): powder_file = os.path.join(config_dir, powder_file)
             
             if os.path.exists(powder_file):
-                data = np.load(powder_file, allow_pickle=True)
+                data = np.load(powder_file)
                 plot_filename = plot_config.get('powder_plot_filename', 'powder_plot.png')
                 if not os.path.isabs(plot_filename): plot_filename = os.path.join(config_dir, plot_filename)
                 
