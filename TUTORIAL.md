@@ -36,7 +36,8 @@ The Designer allows you to generate robust, symmetry-consistent configurations w
 2.  **Design**:
     -   **Load CIF**: Import your crystal structure. The app will automatically detect the space group and populate only the unique basis atoms.
     -   **Define Rules**: Add Bonding Rules (e.g., "Heisenberg" or "DM"). The system automatically expands these based on the structure's space group checking against symmetry constraints.
-    -   **Configure Tasks**: Enable "Run Dispersion" or "Run S(Q,w)" in the Tasks tab.
+    -   **Configure Tasks**: Enable "Dispersion", "S(Q,w) Map", or "Powder Average" in the **Tasks & Plotting** tab.
+    -   **Safe Parameters**: Parameters can use mathematical expressions (e.g., `1.5 * sqrt(3)`). The system evaluates these safely using SymPy.
 3.  **Save**: Click **"Save to Disk"**. This creates an expanded `config_designer.yaml` in your workspace root.
 
     The app supports a seamless **Design -> Save -> Run** workflow. After saving, you can immediately run the configuration.
@@ -182,7 +183,7 @@ minimization:
 ### Performance & Caching
 *   Use `cache_mode: 'none'` (default) to avoid disk I/O. This is recommended for small systems or when rapidly iterating on symmetry rules.
 *   Use `cache_mode: 'auto'` to reuse symbolic calculations for very large units cells where matrix construction is slow.
-*   Set `calculate_dispersion_new: false` if you only want to change plot aesthetics (titles, limits) without re-running the physics.
+*   Set `calculate_dispersion: false` if you only want to change plot aesthetics (titles, limits) without re-running the physics.
 
 ---
 

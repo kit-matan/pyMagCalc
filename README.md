@@ -9,14 +9,12 @@
 
 ## Key Features
 
-*   **pyMagCalc Studio:** Interactive modern web GUI for designing models from CIF files and symmetry-based bonding rules. Provides a seamless **Design -> Save -> Run** workflow.
+*   **pyMagCalc Studio:** Interactive modern web GUI for designing models from CIF files and symmetry-based bonding rules. Provides a seamless **Design -> Save -> Run** workflow with 3D visualization.
 *   **Symmetry-Aware Mechanics:** Automatically propagates Heisenberg ($J$), DM ($D$), Anisotropic Exchange ($T$), and **Kitaev ($K$)** rules across the crystal using space-group symmetry operators (via `pymatgen` and `spglib`).
 *   **Robust CIF Import:** Imports crystal structures from CIF files, automatically detecting symmetry and reducing to unique Wyckoff positions.
-*   **Diffraction Physics:** Calculates spin-wave dispersion and dynamic structure factors $S(Q,\omega)$ with magnetic form factor and polarization factor corrections.
-*   **Energy Minimization:** Numerically finds the classical magnetic ground state by minimizing the Hamiltonian energy, supporting **parallel multistart** and **early stopping** for robust convergence.
-*   **3D Visualization:** Visualizes the magnetic structure in 3D with scaled spins, DM vectors (arrows), and orientation guides.
-*   **Symbolic Engine:** Generates symbolic quadratic boson Hamiltonians using `SymPy` for arbitrary spin interactions.
-*   **Numerical Engine:** Efficient numerical evaluation using `NumPy` and `multiprocessing` for parallel q-point calculations.
+*   **Security & Safety:** Replaced insecure `eval()` with a SymPy-based safe evaluator for mathematical expressions in Hamiltonian parameters.
+*   **Stable Runner Engine:** Standardized task architecture with concise keys and improved error handling to prevent runtime crashes.
+*   **3D Visualization:** Visualizes the magnetic structure in 3D with scaled spins, DM vectors (arrows), and orientation guides. Includes zero-vector guarding and memory optimizations.
 *   **Flexible Caching:** Supports disk caching (`auto`, `r`, `w`) for expensive symbolic matrices, or `none` for purely in-memory execution.
 *   **Data Export (CSV):** Export results to `.csv` or `.npz` files for external analysis.
 *   **Validated Configurations:** Supports declarative YAML configurations validated against a robust **Pydantic schema** for immediate error feedback.
@@ -187,6 +185,19 @@ The core of `pyMagCalc` is the declarative YAML configuration (e.g., `config_mod
 *   **Interactions**: Heisenberg ($J$), DM ($D$), Anisotropic Exchange ($K, \Gamma, \Gamma'$), Kitaev, and Single-Ion Anisotropy (SIA) with arbitrary axes.
 *   **Minimization**: Initial guess (`initial_configuration`) and method.
 *   **Plotting**: Options like `show_plot`, `plot_structure`, and axis limits.
+
+## Symbolic Parameter Evaluation
+
+Hamiltonian parameters in `pyMagCalc` support safe mathematical expressions via `SymPy`. This allows for physically intuitive definitions directly in the YAML config:
+
+```yaml
+parameters:
+  J_ex: "2.5 * exp(-1.2)"
+  D_vec: "[0, 0, 1.25 * sqrt(2)]"
+  K_kitaev: "12.5 / 3.0"
+```
+
+The server uses a dedicated `_safe_eval` helper ensuring calculation robustness while preventing arbitrary code execution.
 
 ## Examples
 
