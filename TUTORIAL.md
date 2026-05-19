@@ -161,7 +161,7 @@ If you see **imaginary energy eigenvalues** (warnings in the log), your system i
 
 **Solution**: Use `initial_configuration` in the `minimization` section to guide the solver.
 *   For a 120-degree structure (e.g., Kagome), initialize spins at 0, 120, and 240 degrees.
-*   Example (from `KFe3J/config_modern.yaml`):
+*   Example (from `KFe3J/config_kfe3j.yaml`):
 
 ```yaml
 minimization:

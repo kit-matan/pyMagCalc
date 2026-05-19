@@ -139,10 +139,10 @@ The recommended way to run examples is via the CLI using the modern configuratio
 
 ```bash
 # Run the Jarosite (KFe3J) example
-magcalc run examples/KFe3J/config_modern.yaml
+magcalc run examples/KFe3J/config_kfe3j.yaml
 
 # Run the CVO example
-magcalc run examples/aCVO/config_modern.yaml
+magcalc run examples/aCVO/config_acvo.yaml
 ```
 
 Plots are automatically saved to `examples/plots/`. You can toggle on-screen display using the `show_plot` option in the config.
@@ -157,7 +157,7 @@ from magcalc.generic_model import GenericSpinModel
 import yaml
 
 # 1. Load Model from YAML
-with open("examples/KFe3J/config_modern.yaml") as f:
+with open("examples/KFe3J/config_kfe3j.yaml") as f:
     config = yaml.safe_load(f)
 model = GenericSpinModel(config)
 
@@ -179,7 +179,7 @@ mc.plot_magnetic_structure(calc.sm.atom_pos(), min_res.x, show_plot=True)
 
 ## Configuration
 
-The core of `pyMagCalc` is the declarative YAML configuration (e.g., `config_modern.yaml`). It defines:
+The core of `pyMagCalc` is the declarative YAML configuration (e.g., `config.yaml`). It defines:
 
 *   **Structure**: Lattice vectors and atoms.
 *   **Interactions**: Heisenberg ($J$), DM ($D$), Anisotropic Exchange ($K, \Gamma, \Gamma'$), Kitaev, and Single-Ion Anisotropy (SIA) with arbitrary axes.
@@ -202,7 +202,7 @@ The server uses a dedicated `_safe_eval` helper ensuring calculation robustness 
 ## Examples
 
 *   **`examples/KFe3J/`**: Kagome Antiferromagnet (Jarosite).
-    *   Uses `config_modern.yaml` for a fully declarative workflow.
+    *   Uses `config.yaml` for a fully declarative workflow.
     *   Demonstrates `initial_configuration` for handling complex ground states (120-degree structure).
 *   **`examples/aCVO/`**: 1D Chain / Honeycomb (Cu2V2O7).
     *   Demonstrates handling of imaginary eigenvalues via correct ground state finding.
