@@ -30,6 +30,14 @@ magcalc = "magcalc.cli:main"
 dev = [
     "pytest>=7.0.0",
 ]
+gui = [
+    "fastapi>=0.100",
+    "uvicorn>=0.20",
+    "starlette>=0.27",
+    "python-multipart>=0.0.6",
+    "pymatgen>=2023.0",
+    "spglib>=2.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

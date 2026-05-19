@@ -475,11 +475,17 @@ def run_calculation(config_file: str):
                                 f.write(line + "\n")
 
     # 4. Powder Average
+    # NOTE on units: dispersion and S(Q,w) above interpret q_path entries as
+    # reciprocal-lattice units (RLU) and multiply by the B-matrix internally,
+    # but the powder section consumes |Q| magnitudes in absolute reciprocal
+    # angstrom (1/A). They are NOT converted via B-matrix. Configure
+    # powder_average.q_min/q_max/q_count or powder_average.q_magnitudes
+    # accordingly.
     do_powder = tasks.get('powder_average', False)
     if do_powder:
         powder_file = final_config.get('output', {}).get('powder_data_filename', 'powder_data.npz')
         if not os.path.isabs(powder_file): powder_file = os.path.join(config_dir, powder_file)
-        
+
         powder_config = final_config.get('powder_average', {})
         q_mags = powder_config.get('q_magnitudes')
         if q_mags is None:

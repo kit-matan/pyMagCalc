@@ -29,15 +29,60 @@ except ImportError:
     MagCalcConfigBuilder = None
 
 import sympy as sp
+from sympy.parsing.sympy_parser import parse_expr
 from starlette.staticfiles import StaticFiles
 
+# Whitelist of SymPy names safe to expose to parse_expr from untrusted input.
+_SAFE_EVAL_FUNCS = {
+    "sqrt": sp.sqrt, "sin": sp.sin, "cos": sp.cos, "tan": sp.tan,
+    "asin": sp.asin, "acos": sp.acos, "atan": sp.atan, "atan2": sp.atan2,
+    "exp": sp.exp, "log": sp.log, "ln": sp.log,
+    "pi": sp.pi, "E": sp.E, "Abs": sp.Abs, "abs": sp.Abs,
+}
+
+# Minimal sympy globals needed by parse_expr's transformations (Symbol,
+# Integer, etc.) while denying Python's __builtins__.
+_SAFE_EVAL_GLOBALS = {
+    "__builtins__": {},
+    "Symbol": sp.Symbol,
+    "Integer": sp.Integer,
+    "Float": sp.Float,
+    "Rational": sp.Rational,
+    "Function": sp.Function,
+}
+
 def _safe_eval(expr, ctx):
-    """Safely evaluate a mathematical expression using SymPy."""
+    """Safely evaluate a mathematical expression using SymPy.
+
+    Uses parse_expr with an explicit whitelist instead of sympify(str(...)),
+    which can fall back to eval and execute arbitrary Python code on
+    untrusted input. Additionally:
+
+    - rejects any input containing dunder tokens (e.g. ``__class__``,
+      ``__bases__``) so attackers cannot walk the Python type hierarchy
+      to reach dangerous classes;
+    - denies builtins via global_dict so names like ``__import__`` cannot
+      resolve to the real built-in.
+    """
     if isinstance(expr, (int, float)):
         return float(expr)
+    s = str(expr)
+    # Block introspection-based escapes outright.
+    if "__" in s:
+        return 0.0
     try:
-        # ctx can contain parameter names and their numerical values
-        return float(sp.sympify(str(expr)).evalf(subs=ctx))
+        local_dict = dict(_SAFE_EVAL_FUNCS)
+        # Convert numeric ctx values into SymPy numbers so they substitute cleanly.
+        for k, v in ctx.items():
+            if isinstance(v, (int, float)):
+                local_dict[str(k)] = sp.Float(v)
+        parsed = parse_expr(
+            s,
+            local_dict=local_dict,
+            global_dict=_SAFE_EVAL_GLOBALS,
+            evaluate=True,
+        )
+        return float(parsed.evalf())
     except Exception:
         return 0.0
 
@@ -1081,6 +1126,10 @@ async def shutdown():
 
 if __name__ == "__main__":
     import uvicorn
+    # Default to localhost-only to avoid exposing the API (which evaluates
+    # user-supplied expressions) over the network. Set MAGCALC_HOST=0.0.0.0
+    # explicitly to bind to all interfaces.
+    host = os.environ.get("MAGCALC_HOST", "127.0.0.1")
+    port = int(os.environ.get("MAGCALC_PORT", "8000"))
     # Disable reload by default to prevent infinite reload loops when writing result files/plots
-    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=False)
-    # Reload trigger: Config builder patch applied
+    uvicorn.run("server:app", host=host, port=port, reload=False)

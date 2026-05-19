@@ -582,39 +582,60 @@ def KKdMatrix(
             # If block_size > 1, we have degeneracy. Try to match +q basis.
             if block_size > 1:
                 degenerate_block_m = eigvecs_m_sorted[:, current_block_start_idx:i]
-                
+
                 # Determine candidate basis part
                 if current_block_start_idx < nspins:
                     candidate_basis_p_block = evecswap_p[:, nspins:]
                 else:
                     candidate_basis_p_block = evecswap_p[:, :nspins]
 
-                # Project degenerate_block_m onto candidate_basis_p_block
-                # Optimize: vectorization? 
-                # degenerate_block_m: (2N, K)
-                # candidate_basis_p_block: (2N, N) usually
-                # Projections: Sum of |<v_m, v_p>| for all k in K
-                
-                # m_conj_T = degenerate_block_m.conj().T  # (K, 2N)
-                # dots = m_conj_T @ candidate_basis_p_block # (K, N)
-                # sum_dots = np.sum(dots, axis=0) # (N,) - Sum over K vectors in block
-                
-                m_conj_T = np.conj(degenerate_block_m.T)
-                dots = m_conj_T @ candidate_basis_p_block
-                # Use sum of absolute magnitudes as a measure of subspace overlap
-                projection_magnitudes = np.sum(np.abs(dots), axis=0) 
+                # Pick the top-block_size +q reference vectors with the largest
+                # overlap onto this degenerate -q subspace, then PROJECT them
+                # back into the subspace (preserving -q eigenvector identity)
+                # rather than substituting +q vectors directly.
+                m_conj_T = np.conj(degenerate_block_m.T)            # (K, 2N)
+                dots = m_conj_T @ candidate_basis_p_block           # (K, M)
+                projection_magnitudes = np.sum(np.abs(dots), axis=0)
                 sorted_indices_desc = np.argsort(projection_magnitudes)[::-1]
 
-                if len(sorted_indices_desc) >= block_size and projection_magnitudes[sorted_indices_desc[block_size-1]] > EIGENVECTOR_MATCHING_THRESHOLD:
+                if (
+                    len(sorted_indices_desc) >= block_size
+                    and projection_magnitudes[sorted_indices_desc[block_size - 1]]
+                    > EIGENVECTOR_MATCHING_THRESHOLD
+                ):
                     selected_indices = sorted_indices_desc[:block_size]
                     if np.sum(projection_magnitudes > EIGENVECTOR_MATCHING_THRESHOLD) > block_size:
-                         logger.debug(f"Custom GS: Selecting top {block_size} matches at {q_label}.")
-                    
-                    new_basis_for_m_block = candidate_basis_p_block[:, selected_indices]
-                    eigvecs_m_processed[:, current_block_start_idx:i] = gram_schmidt(new_basis_for_m_block)
+                        logger.debug(
+                            f"Custom GS: Selecting top {block_size} matches at {q_label}."
+                        )
+                    # Project the chosen +q reference vectors onto the subspace
+                    # spanned by the actual -q eigenvectors:
+                    #   v_proj = M @ (M^H @ v_ref)
+                    # where M is the (already-normalized) degenerate -q block.
+                    ref_vectors = candidate_basis_p_block[:, selected_indices]
+                    coeffs = m_conj_T @ ref_vectors                # (K, block_size)
+                    projected_vectors = degenerate_block_m @ coeffs  # (2N, block_size)
+
+                    # Orthonormalize the projected vectors; if rank-deficient
+                    # (numerical near-collinearity), fall back to the standard
+                    # GS of the original block.
+                    orthonormal = gram_schmidt(projected_vectors)
+                    if orthonormal.shape[1] == block_size:
+                        eigvecs_m_processed[:, current_block_start_idx:i] = orthonormal
+                    else:
+                        logger.warning(
+                            f"Custom GS projection rank-deficient at {q_label}; using standard GS."
+                        )
+                        eigvecs_m_processed[:, current_block_start_idx:i] = gram_schmidt(
+                            degenerate_block_m
+                        )
                 else:
-                    logger.warning(f"Custom GS fallback to standard for block {current_block_start_idx}-{i-1} at {q_label}.")
-                    eigvecs_m_processed[:, current_block_start_idx:i] = gram_schmidt(degenerate_block_m)
+                    logger.warning(
+                        f"Custom GS fallback to standard for block {current_block_start_idx}-{i-1} at {q_label}."
+                    )
+                    eigvecs_m_processed[:, current_block_start_idx:i] = gram_schmidt(
+                        degenerate_block_m
+                    )
             
             else:
                 # No degeneracy, no action needed unless we want to normalize/phase fix? 

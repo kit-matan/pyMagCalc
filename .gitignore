@@ -34,3 +34,18 @@ sunny_exsamples/
 examples/future_exmaples/
 config_gui_run.yaml
 .config_gui_run.yaml
+
+# Frontend (built artifacts and node deps live outside source control)
+gui/node_modules/
+gui/dist/
+gui/frontend_debug*.log
+
+# Run-output artifacts (live alongside config files; should not be tracked)
+mag_structure.json
+mag_structure.png
+disp_data.npz
+sqw_data.npz
+powder_data.npz
+disp_plot.png
+sqw_plot.png
+powder_plot.png

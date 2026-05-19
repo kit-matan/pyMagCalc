@@ -223,45 +223,33 @@ def process_calc_Sqw(
             for i in range(nspins):
                 ff_values[i] = get_form_factor(ion_list[i], q_mag)
 
-        for mode_index in range(nspins):
-            spin_correlation_matrix = np.zeros((3, 3), dtype=complex)
-            intensity_one_mode = 0.0 + 0.0j
-            for alpha in range(3):
-                for beta in range(3):
-                    correlation_sum = 0.0 + 0.0j
-                    for spin_i in range(nspins):
-                        for spin_j in range(nspins):
-                            idx_K = 3 * spin_i + alpha
-                            idx_Kd = 3 * spin_j + beta
-                            correlation_sum += (
-                                ff_values[spin_i] * ff_values[spin_j] *
-                                K_matrix[idx_K, mode_index]
-                                * Kd_matrix[idx_Kd, mode_index + nspins]
-                            )
-                    spin_correlation_matrix[alpha, beta] = correlation_sum
-            
-            if q_norm_sq < Q_ZERO_THRESHOLD:
-                for alpha in range(3):
-                    intensity_one_mode += spin_correlation_matrix[alpha, alpha]
-            else:
-                q_normalized = q_vector / np.sqrt(q_norm_sq)
-                for alpha in range(3):
-                    for beta in range(3):
-                        delta_ab = 1.0 if alpha == beta else 0.0
-                        polarization_factor = (
-                            delta_ab - q_normalized[alpha] * q_normalized[beta]
-                        )
-                        intensity_one_mode += (
-                            polarization_factor * spin_correlation_matrix[alpha, beta]
-                        )
-            
-            if np.abs(np.imag(intensity_one_mode)) > SQW_IMAG_PART_THRESHOLD:
-                logger.warning(
-                    f"Significant imaginary part in Sqw for {q_label}, mode {mode_index}: {np.imag(intensity_one_mode)}"
-                )
-            sqw_complex_accumulator[mode_index] = intensity_one_mode
-            
-        intensities = np.real(sqw_complex_accumulator)
+        # Vectorized spin correlation matrix.
+        # K is (3*N, 2*N); reshape to (N, 3, 2*N) so axis 0 indexes spins and
+        # axis 1 indexes Cartesian components. Multiply by form factors and
+        # restrict mode axis to magnon modes (mode_index in [0, N) for K and
+        # [N, 2N) for Kd, matching the original loop).
+        K_modes = K_matrix[:, :nspins].reshape(nspins, 3, nspins)
+        Kd_modes = Kd_matrix[:, nspins:].reshape(nspins, 3, nspins)
+        K_w = K_modes * ff_values[:, None, None]
+        Kd_w = Kd_modes * ff_values[:, None, None]
+        # spin_corr[alpha, beta, mode] = sum_{i,j} K_w[i, alpha, mode] * Kd_w[j, beta, mode]
+        spin_corr = np.einsum("iam,jbm->abm", K_w, Kd_w)
+
+        if q_norm_sq < Q_ZERO_THRESHOLD:
+            intensity_per_mode = np.einsum("aam->m", spin_corr)
+        else:
+            q_normalized = q_vector / np.sqrt(q_norm_sq)
+            polarization = np.eye(3) - np.outer(q_normalized, q_normalized)
+            intensity_per_mode = np.einsum("ab,abm->m", polarization, spin_corr)
+
+        max_imag = float(np.max(np.abs(np.imag(intensity_per_mode)))) if nspins > 0 else 0.0
+        if max_imag > SQW_IMAG_PART_THRESHOLD:
+            worst_mode = int(np.argmax(np.abs(np.imag(intensity_per_mode))))
+            logger.warning(
+                f"Significant imaginary part in Sqw for {q_label}, mode {worst_mode}: {np.imag(intensity_per_mode[worst_mode])}"
+            )
+
+        intensities = np.real(intensity_per_mode)
         intensities[intensities < 0] = 0
         return q_vector, energies, intensities
     except Exception:

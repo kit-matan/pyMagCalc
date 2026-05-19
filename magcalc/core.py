@@ -1009,6 +1009,16 @@ class MagCalc:
 
         # 1. Symbolic model identifier
         hasher.update(str(self.cache_file_base).encode("utf-8"))
+        # 1b. Hash of the actual symbolic Hamiltonian. Without this, editing
+        # the model (interactions, transformations, etc.) without changing
+        # cache_file_base or numerical parameters would silently reuse stale
+        # numerical results.
+        try:
+            if self.HMat_sym is not None:
+                hasher.update(sp.srepr(self.HMat_sym).encode("utf-8"))
+        except Exception:
+            # Hashing should never break the calculation; fall back silently.
+            hasher.update(b"HMat_sym_unhashable")
         # 2. Spin magnitude
         hasher.update(str(self.spin_magnitude).encode("utf-8"))
         # 3. Hamiltonian parameters
