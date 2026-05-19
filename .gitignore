@@ -40,6 +40,9 @@ gui/node_modules/
 gui/dist/
 gui/frontend_debug*.log
 
+# Launcher logs
+.magcalc_logs/
+
 # Run-output artifacts (live alongside config files; should not be tracked)
 mag_structure.json
 mag_structure.png
