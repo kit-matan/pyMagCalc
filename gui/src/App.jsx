@@ -3,43 +3,12 @@ import { Beaker, Database, Activity, Code, Download, Plus, Trash2, Settings, Box
 import spaceGroupsList from './data/space_groups.json';
 import yaml from 'js-yaml'
 import Visualizer from './components/Visualizer'
+import MagneticStructureViewer from './components/MagneticStructureViewer'
+import LogConsole from './components/LogConsole'
+import AppHeader from './components/AppHeader'
+import Sidebar from './components/Sidebar'
+import { calculateExchangeMatrixSymbolic } from './lib/exchangeMatrix'
 import './App.css'
-import MagneticStructureViewer from './components/MagneticStructureViewer';
-
-const LogConsole = ({ logs, connected }) => {
-  const endRef = React.useRef(null)
-  React.useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [logs])
-
-  return (
-    <div className="log-console mt-lg rounded-md border border-color bg-surface-hover p-md overflow-hidden flex flex-col" style={{ height: '300px' }}>
-      <div className="flex-between mb-sm align-center border-b border-color pb-sm">
-        <div className="flex align-center gap-xs text-xs font-mono opacity-70">
-          <FileText size={14} />
-          <span>Execution Logs</span>
-          <div className="flex align-center gap-xs ml-sm opacity-100">
-            <div className={`w-2 h-2 rounded-full ${connected ? 'bg-success animate-pulse' : 'bg-error'}`} />
-            <span style={{ fontSize: '10px' }}>{connected ? 'CONNECTED' : 'DISCONNECTED'}</span>
-          </div>
-        </div>
-        <span className="text-xs opacity-50">{logs.length} lines</span>
-      </div>
-      <div className="flex-1 overflow-y-auto font-mono text-xs opacity-80 leading-relaxed custom-scrollbar">
-        {logs.length === 0 ? (
-          <div className="text-center opacity-30 mt-xl">Waiting for logs...</div>
-        ) : (
-          logs.map((log, i) => (
-            <div key={i} className="whitespace-pre-wrap break-all py-xxs">
-              {log}
-            </div>
-          ))
-        )}
-        <div ref={endRef} />
-      </div>
-    </div>
-  )
-}
 
 function App() {
   const [activeTab, setActiveTab] = useState('structure')
@@ -1086,62 +1055,15 @@ function App() {
     <div className="app-container">
       <div className="background-glow"></div>
 
-      <header className="glass">
-        <div className="logo animate-fade-in">
-          <div className="icon-wrapper gradient-bg">
-            <img src="/spin_vector_icon.png" alt="Spin Vector Icon" className="w-full h-full object-cover" />
-          </div>
-          <div>
-            <h1 className="header-title">pyMagCalc Studio</h1>
-            <div className="flex-gap-xs align-center">
-              <span className="subtitle">Configure Models & Calculate Spin-Waves</span>
-            </div>
-          </div>
-        </div>
-        <div className="header-actions">
-          <label className="btn btn-secondary glass cursor-pointer">
-            <Share2 size={16} /> Load CIF
-            <input type="file" accept=".cif" hidden onChange={handleCifUpload} />
-          </label>
-          <label className="btn btn-secondary glass cursor-pointer">
-            <Code size={16} /> Load YAML
-            <input type="file" accept=".yaml,.yml" hidden onChange={handleImport} />
-          </label>
-          <button className="btn btn-secondary glass cursor-pointer" onClick={resetToDefaults}>
-            <Trash2 size={16} /> Load Defaults
-          </button>
-          <button className="btn btn-primary shadow-glow" onClick={handleExportYaml}>
-            <Download size={16} /> Export YAML
-          </button>
-        </div>
-      </header>
+      <AppHeader
+        onCifUpload={handleCifUpload}
+        onYamlImport={handleImport}
+        onReset={resetToDefaults}
+        onExportYaml={handleExportYaml}
+      />
 
       <main>
-        <aside className="sidebar glass" style={{ width: sidebarWidth }}>
-          <nav>
-            <button className={`nav-item ${activeTab === 'structure' ? 'active' : ''}`} onClick={() => setActiveTab('structure')}>
-              <Box size={20} /> Structure
-            </button>
-            <button className={`nav-item ${activeTab === 'interactions' ? 'active' : ''}`} onClick={() => setActiveTab('interactions')}>
-              <Magnet size={20} /> Interactions
-            </button>
-            <button className={`nav-item ${activeTab === 'params' ? 'active' : ''}`} onClick={() => setActiveTab('params')}>
-              <Settings size={20} /> Environment
-            </button>
-            <button className={`nav-item ${activeTab === 'tasks' ? 'active' : ''}`} onClick={() => setActiveTab('tasks')}>
-              <Activity size={20} /> Tasks & Plotting
-            </button>
-            <button className={`nav-item ${activeTab === 'magstruct' ? 'active' : ''}`} onClick={() => setActiveTab('magstruct')}>
-              <Wind size={20} /> Mag. Structure
-            </button>
-            <div className="nav-divider"></div>
-            <button className={`nav-item ${activeTab === 'run' ? 'active' : ''}`} onClick={() => setActiveTab('run')}>
-              <BarChart2 size={20} /> Run & Analyze
-            </button>
-          </nav>
-
-
-        </aside>
+        <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} width={sidebarWidth} />
 
         <div
           className="resizer"
@@ -2824,190 +2746,5 @@ function App() {
     </div >
   )
 }
-
-const calculateExchangeMatrix = (inter, numericParams = {}) => {
-  const type = inter.type;
-  const value = inter.value;
-
-  // Helper to safely evaluate parameter string
-  const evalParam = (val) => {
-    if (typeof val === 'number') return val;
-    if (!val) return 0.0;
-    if (numericParams[val] !== undefined) return numericParams[val];
-    // Try simple eval if string is number
-    const f = parseFloat(val);
-    if (!isNaN(f)) return f;
-    return 0.0;
-  };
-
-  try {
-    if (type === 'heisenberg') {
-      const j = evalParam(value);
-      return [
-        [j, 0, 0],
-        [0, j, 0],
-        [0, 0, j]
-      ];
-    } else if (type === 'dm' || type === 'dm_interaction') {
-      // DM value should be array [Dx, Dy, Dz] or string "Dx,Dy,Dz"
-      let vec = [0, 0, 0];
-      if (Array.isArray(value)) {
-        vec = value.map(evalParam);
-      } else if (typeof value === 'string') {
-        vec = value.split(',').map(s => evalParam(s.trim()));
-      }
-
-      const [dx, dy, dz] = vec;
-      // Skew symmetric
-      return [
-        [0, dz, -dy],
-        [-dz, 0, dx],
-        [dy, -dx, 0]
-      ];
-    } else if (type === 'anisotropic' || type === 'anisotropic_exchange') {
-      // Anisotropic value should be array [Jx, Jy, Jz] or string
-      let vec = [0, 0, 0];
-      if (Array.isArray(value)) {
-        vec = value.map(evalParam);
-      } else if (typeof value === 'string') {
-        vec = value.split(',').map(s => evalParam(s.trim()));
-      }
-      const [jx, jy, jz] = vec;
-      return [
-        [jx, 0, 0],
-        [0, jy, 0],
-        [0, 0, jz]
-      ];
-    }
-  } catch (e) {
-    console.error("Matrix Calc Error", e);
-    return null;
-  }
-  return null;
-};
-
-const calculateExchangeMatrixSymbolic = (inter, numericParams = {}) => {
-  const type = inter.type;
-  const value = inter.value;
-
-  // Helper to get symbol or value
-  const getSymbol = (val) => {
-    if (val === undefined || val === null) return 0;
-    if (typeof val === 'number') {
-      if (Math.abs(val) < 1e-10) return 0;
-      return val;
-    }
-
-    let s = String(val).trim();
-
-    // 1. Clean up numeric artifacts (rounding, scientific notation, leading zeros)
-    // First, convert scientific notation to zero if tiny
-    const smallFloatRegex = /[+-]?\d+\.?\d*[eE]-[1-9]\d+/g;
-    s = s.replace(smallFloatRegex, (match) => {
-      if (Math.abs(parseFloat(match)) < 1e-10) return "0";
-      return match;
-    });
-
-    // Then handle all decimal numbers: round to 5 digits and fix leading dots (.5 -> 0.5)
-    // We use a regex that captures numbers like .5, 0.5, -0.5, -.5 (including scientific)
-    const floatRegex = /[+-]?\d*\.\d+(?:[eE][+-]?\d+)?/g;
-    s = s.replace(floatRegex, (match) => {
-      let f = parseFloat(match);
-      if (Math.abs(f) < 1e-10) return "0";
-
-      let rounded = Number(f.toFixed(5));
-      let str = String(rounded);
-
-      // Ensure leading zero if it starts with . or -.
-      if (str.startsWith('.')) return '0' + str;
-      if (str.startsWith('-.')) return '-0' + str.substring(1);
-      return str;
-    });
-
-    // 2. Clean up resulting expressions (e.g. "0*Dz" -> "0", "A + 0" -> "A")
-    // Simple algebraic simplifications for display
-    s = s.replace(/\b0\s*\*\s*[a-zA-Z0-9_]+/g, '0'); // 0 * Var
-    s = s.replace(/[a-zA-Z0-9_]+\s*\*\s*0\b/g, '0'); // Var * 0
-    s = s.replace(/\+\s*0\b/g, ''); // X + 0
-    s = s.replace(/\b0\s*\+\s*/g, ''); // 0 + X
-    s = s.replace(/\-\s*0\b/g, ''); // X - 0
-    s = s.replace(/\b0\s*\-\s*/g, '-'); // 0 - X -> -X
-
-    if (s.trim() === '' || s === '-0' || s === '-0.0') s = '0';
-
-    // 3. Clean up symbolic math artifacts from backend
-    // Remove leading "1.0*" or "1*"
-    if (s.startsWith('1.0*')) s = s.substring(4);
-    else if (s.startsWith('1*')) s = s.substring(2);
-
-    // Replace leading "-1.0*" or "-1*" with "-"
-    if (s.startsWith('-1.0*')) s = '-' + s.substring(5);
-    else if (s.startsWith('-1*')) s = '-' + s.substring(3);
-
-    if (s === '0' || s === '0.0') return 0;
-
-    // If it looks like a pure number, parse it
-    if (!isNaN(parseFloat(s)) && isFinite(s)) {
-      if (Math.abs(parseFloat(s)) < 1e-10) return 0;
-      return s;
-    }
-    return s;
-  };
-
-  try {
-    if (type === 'heisenberg') {
-      const j = getSymbol(value);
-      return [
-        [j, 0, 0],
-        [0, j, 0],
-        [0, 0, j]
-      ];
-    } else if (type === 'dm' || type === 'dm_interaction') {
-      // DM value should be array or string
-      let vec = [0, 0, 0];
-      if (Array.isArray(value)) {
-        vec = value.map(getSymbol);
-      } else if (typeof value === 'string') {
-        vec = value.split(',').map(getSymbol);
-      }
-
-      const [dx, dy, dz] = vec;
-
-      // Handle negation for symbols
-      const neg = (v) => {
-        if (v === 0) return 0;
-        if (typeof v === 'string') {
-          // Handle double negatives
-          if (v.startsWith('-')) return v.substring(1);
-          return `-${v}`;
-        }
-        return -v;
-      }
-
-      return [
-        [0, dz, neg(dy)],
-        [neg(dz), 0, dx],
-        [dy, neg(dx), 0]
-      ];
-    } else if (type === 'anisotropic' || type === 'anisotropic_exchange') {
-      let vec = [0, 0, 0];
-      if (Array.isArray(value)) {
-        vec = value.map(getSymbol);
-      } else if (typeof value === 'string') {
-        vec = value.split(',').map(getSymbol);
-      }
-      const [jx, jy, jz] = vec;
-      return [
-        [jx, 0, 0],
-        [0, jy, 0],
-        [0, 0, jz]
-      ];
-    }
-  } catch (e) {
-    console.error("Matrix Calc Error", e);
-    return null;
-  }
-  return null;
-};
 
 export default App
