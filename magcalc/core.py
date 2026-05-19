@@ -1007,6 +1007,13 @@ class MagCalc:
         """
         hasher = hashlib.md5()
 
+        # 0. Algorithm version: bump whenever a change in linalg.py /
+        # numerical.py affects the numerical output so that stale cache
+        # entries are invalidated automatically.
+        #   v2 - fix vertical streaks in S(Q,w) by replacing the custom
+        #        -q basis selection in KKdMatrix with standard Gram–Schmidt
+        hasher.update(b"algo_v2")
+
         # 1. Symbolic model identifier
         hasher.update(str(self.cache_file_base).encode("utf-8"))
         # 1b. Hash of the actual symbolic Hamiltonian. Without this, editing
