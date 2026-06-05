@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Beaker, Database, Activity, Code, Download, Plus, Trash2, Settings, Box, Eye, EyeOff, Share2, Info, Magnet, Wind, Check, ChevronRight, Zap, Crosshair, FileText, BarChart2, Play, Image, ArrowDown, X, XCircle, Minus, ChevronDown, Search } from 'lucide-react'
+import { Beaker, Database, Activity, Code, Download, Plus, Trash2, Settings, Box, Eye, EyeOff, Share2, Info, Magnet, Wind, Check, ChevronRight, Zap, Crosshair, FileText, BarChart2, Play, Image, ArrowDown, X, XCircle, Minus, ChevronDown, Search, Square } from 'lucide-react'
 import spaceGroupsList from './data/space_groups.json';
 import yaml from 'js-yaml'
 import Visualizer from './components/Visualizer'
@@ -45,6 +45,9 @@ function App() {
   const sgDropdownRef = React.useRef(null);
 
   const [calcError, setCalcError] = useState(null)
+  const [calcStopping, setCalcStopping] = useState(false)
+  // Tracks a user-initiated stop so the resulting aborted request isn't shown as an error.
+  const stopRequestedRef = React.useRef(false)
 
   // Resizable layout state
   const [sidebarWidth, setSidebarWidth] = useState(280)
@@ -984,8 +987,23 @@ function App() {
     showNotify(`Added ${type} interaction`, 'success');
   }
 
+  const stopCalculation = async () => {
+    if (!calcLoading || calcStopping) return
+    setCalcStopping(true)
+    stopRequestedRef.current = true
+    try {
+      await fetch('/api/stop-calculation', { method: 'POST' })
+      showNotify("Stopping calculation...", "info")
+    } catch (err) {
+      console.error(err)
+      showNotify("Failed to stop calculation", "error")
+    }
+  }
+
   const runCalculation = async () => {
     setCalcLoading(true)
+    setCalcStopping(false)
+    stopRequestedRef.current = false
     setCalcError(null)
     setCalcResults(null)
     setJsonCache({}) // Clear 3D structure data cache
@@ -1044,10 +1062,17 @@ function App() {
       showNotify("Calculation completed!", "success")
     } catch (err) {
       console.error(err)
-      setCalcError(err.message)
-      showNotify("Calculation failed", "error")
+      if (stopRequestedRef.current) {
+        // User intentionally stopped — don't surface it as a failure.
+        showNotify("Calculation stopped", "info")
+      } else {
+        setCalcError(err.message)
+        showNotify("Calculation failed", "error")
+      }
     } finally {
       setCalcLoading(false)
+      setCalcStopping(false)
+      stopRequestedRef.current = false
     }
   }
 
@@ -2467,20 +2492,29 @@ function App() {
                 <h2 className="section-title mb-xs">Run Calculation & Analysis</h2>
                 <p className="text-sm opacity-60">Execute the simulation using current settings and visualize results.</p>
               </div>
-              <button
-                className={`btn btn-primary btn-lg shadow-glow ${calcLoading ? 'opacity-50 pointer-events-none' : ''}`}
-                onClick={runCalculation}
-              >
+              <div className="flex align-center gap-md">
                 {calcLoading ? (
                   <>
-                    <Activity className="animate-spin mr-sm" /> Calculating...
+                    <span className="btn btn-secondary btn-lg shadow-glow opacity-80 pointer-events-none">
+                      <Activity className="animate-spin mr-sm" /> Calculating...
+                    </span>
+                    <button
+                      className={`btn btn-danger btn-lg shadow-glow ${calcStopping ? 'opacity-50 pointer-events-none' : ''}`}
+                      onClick={stopCalculation}
+                      disabled={calcStopping}
+                    >
+                      <Square size={16} className="mr-sm" /> {calcStopping ? 'Stopping...' : 'Stop'}
+                    </button>
                   </>
                 ) : (
-                  <>
+                  <button
+                    className="btn btn-primary btn-lg shadow-glow"
+                    onClick={runCalculation}
+                  >
                     <Play size={18} className="mr-sm" /> Run Calculation
-                  </>
+                  </button>
                 )}
-              </button>
+              </div>
             </div>
 
             {calcError && (

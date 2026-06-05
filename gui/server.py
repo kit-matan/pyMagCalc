@@ -187,6 +187,11 @@ broadcaster = LogBroadcaster()
 MAIN_LOOP = None # Reference to the main event loop
 LOGGING_INITIALIZED = False
 
+# Handle to the currently running calculation subprocess (if any). Calculations
+# run in a separate, terminable process so the UI can stop them mid-flight; a
+# background thread (the previous approach) cannot be killed cooperatively.
+CURRENT_PROC = None
+
 class StreamToLogger:
     """
     Redirects writes to a stream (stdout/stderr) to both the original stream and the broadcaster.
@@ -318,11 +323,54 @@ async def trigger_calculation(config: Dict[str, Any]):
         if MAIN_LOOP:
             MAIN_LOOP.call_soon_threadsafe(broadcaster.broadcast, "\n--- NEW CALCULATION STARTED ---\n")
 
-        # 2. Run Calculation: Non-blocking execution
-        # Use a background thread to keep the main event loop free for WebSocket log streaming
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, run_calculation, run_config_path)
-        
+        # 2. Run Calculation: Non-blocking execution in a separate process.
+        # Running in a subprocess (rather than a thread) lets the UI terminate
+        # the calculation mid-flight via /stop-calculation. We stream the child's
+        # stdout/stderr to the log broadcaster.
+        #
+        # The child sets up the SAME logging format the in-process runner used
+        # (timestamp - LEVEL - message) so the UI log console looks unchanged.
+        global CURRENT_PROC
+        if CURRENT_PROC is not None and CURRENT_PROC.returncode is None:
+            raise HTTPException(status_code=409, detail="A calculation is already running.")
+
+        child_script = (
+            "import sys, logging\n"
+            "logging.basicConfig(level=logging.INFO, "
+            "format='%(asctime)s - %(levelname)s - %(message)s')\n"
+            "logging.getLogger('magcalc').setLevel(logging.INFO)\n"
+            "from magcalc.runner import run_calculation\n"
+            "run_calculation(sys.argv[1])\n"
+        )
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-u", "-c", child_script,
+            run_config_path,
+            cwd=project_root,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        CURRENT_PROC = proc
+
+        try:
+            assert proc.stdout is not None
+            # Stream raw chunks (not whole lines) so carriage-return progress
+            # bars (tqdm) update live, matching the previous in-process behaviour.
+            while True:
+                chunk = await proc.stdout.read(1024)
+                if not chunk:
+                    break
+                # We're on the main event loop, so broadcasting directly is safe.
+                broadcaster.broadcast(chunk.decode(errors="replace"))
+            returncode = await proc.wait()
+        finally:
+            CURRENT_PROC = None
+
+        if returncode != 0:
+            # Negative return code => terminated by a signal (i.e. user pressed Stop).
+            if returncode < 0:
+                raise HTTPException(status_code=499, detail="Calculation stopped by user.")
+            raise HTTPException(status_code=500, detail="Calculation failed. See logs for details.")
+
         # 3. Check for outputs
         # We expect disp_plot.png and sqw_plot.png in project root if plotting was enabled
         results = {
@@ -349,11 +397,38 @@ async def trigger_calculation(config: Dict[str, Any]):
             
         return results
 
+    except HTTPException:
+        # Pass through deliberate status codes (e.g. 499 user-stop, 409 busy).
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.post("/stop-calculation")
+async def stop_calculation():
+    """
+    Terminate the currently running calculation subprocess, if any.
+    """
+    proc = CURRENT_PROC
+    if proc is None or proc.returncode is not None:
+        return {"stopped": False, "message": "No calculation is currently running."}
+
+    broadcaster.broadcast("\n--- STOPPING CALCULATION (requested by user) ---\n")
+    try:
+        proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            # Process ignored SIGTERM; force kill.
+            proc.kill()
+            await proc.wait()
+    except ProcessLookupError:
+        # Already exited between our check and terminate().
+        pass
+
+    return {"stopped": True, "message": "Calculation stopped."}
 
 
 @app.post("/parse-cif")
