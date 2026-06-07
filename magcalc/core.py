@@ -1296,6 +1296,24 @@ class MagCalc:
             logger.exception(f"Error in S(q,w) generator: {e}")
             raise
 
+    @staticmethod
+    def _locate_fmagcalc() -> Optional[str]:
+        """Best-effort: make the `fmagcalc` package importable. Honors the
+        FMAGCALC_PATH env var, then falls back to a sibling checkout
+        (../fMagCalc/python next to the pyMagCalc repo). Returns the path added
+        to sys.path, or None."""
+        candidates = []
+        env_path = os.environ.get("FMAGCALC_PATH")
+        if env_path:
+            candidates.append(env_path)
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        candidates.append(os.path.join(os.path.dirname(repo_root), "fMagCalc", "python"))
+        for c in candidates:
+            if c and os.path.isdir(os.path.join(c, "fmagcalc")) and c not in sys.path:
+                sys.path.insert(0, c)
+                return c
+        return None
+
     def _calculate_sqw_fortran(
         self,
         q_vectors_list: List[npt.NDArray[np.float64]],
@@ -1306,15 +1324,29 @@ class MagCalc:
         Returns a SqwResult, or None if the backend (the `fmagcalc` package and
         its compiled ctypes library) is unavailable or errors — the caller then
         falls back to the NumPy path. This keeps pyMagCalc fully functional
-        without fMagCalc installed.
+        without fMagCalc installed. Because the user explicitly asked for the
+        Fortran backend, every fallback is logged at WARNING level.
         """
         try:
             import fmagcalc
         except Exception:
-            logger.info("fMagCalc backend not importable; using NumPy.")
-            return None
+            located = self._locate_fmagcalc()  # try env var / sibling checkout
+            try:
+                import fmagcalc
+            except Exception:
+                logger.warning(
+                    "backend='fortran' requested but the fMagCalc package could not be "
+                    "imported; using NumPy instead. Install it (`pip install -e "
+                    "<fMagCalc>/python`) or set FMAGCALC_PATH. (searched: %s)",
+                    located or "PYTHONPATH only",
+                )
+                return None
         if getattr(fmagcalc, "backend", None) != "ctypes":
-            logger.warning("fMagCalc present but its compiled library is missing; using NumPy.")
+            logger.warning(
+                "backend='fortran' requested but fMagCalc's compiled library is not "
+                "built (run `cmake -S . -B build && cmake --build build` in fMagCalc); "
+                "using NumPy instead."
+            )
             return None
         try:
             from .form_factors import get_form_factor
