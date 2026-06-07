@@ -1296,9 +1296,51 @@ class MagCalc:
             logger.exception(f"Error in S(q,w) generator: {e}")
             raise
 
+    def _calculate_sqw_fortran(
+        self,
+        q_vectors_list: List[npt.NDArray[np.float64]],
+        ion_list: Optional[List[str]],
+    ) -> Optional[SqwResult]:
+        """Opt-in S(q,w) via the external fMagCalc Fortran backend.
+
+        Returns a SqwResult, or None if the backend (the `fmagcalc` package and
+        its compiled ctypes library) is unavailable or errors — the caller then
+        falls back to the NumPy path. This keeps pyMagCalc fully functional
+        without fMagCalc installed.
+        """
+        try:
+            import fmagcalc
+        except Exception:
+            logger.info("fMagCalc backend not importable; using NumPy.")
+            return None
+        if getattr(fmagcalc, "backend", None) != "ctypes":
+            logger.warning("fMagCalc present but its compiled library is missing; using NumPy.")
+            return None
+        try:
+            from .form_factors import get_form_factor
+
+            n, S, Ud, dvec, Mb = fmagcalc.extract_bond_model(self)
+            q_grid = np.array([np.asarray(q, dtype=float) for q in q_vectors_list])
+            ff = np.ones((len(q_grid), n))
+            if ion_list:
+                for iq, q in enumerate(q_grid):
+                    qmag = float(np.linalg.norm(q))
+                    ff[iq] = [get_form_factor(ion_list[i], qmag) for i in range(n)]
+            res = fmagcalc.run_sqw_model(dvec, Mb, Ud, ff, S, q_grid)
+            logger.info("S(q,w) computed via fMagCalc Fortran backend.")
+            return SqwResult(
+                q_vectors=q_grid,
+                energies=res["energies"],
+                intensities=res["intensities"],
+            )
+        except Exception:
+            logger.exception("fMagCalc backend failed; falling back to NumPy.")
+            return None
+
     def calculate_sqw(
         self,
         q_vectors: Union[List[npt.NDArray[np.float64]], npt.NDArray[np.float64]],
+        backend: str = "numpy",
     ) -> Optional[SqwResult]:
         """
         Calculate the dynamical structure factor S(q,w) over a list of q-points.
@@ -1307,6 +1349,9 @@ class MagCalc:
             q_vectors (Union[List[npt.NDArray[np.float64]], npt.NDArray[np.float64]]):
                 A list or NumPy array of momentum vectors q = [qx, qy, qz].
                 Each vector should be a 1D array/list of 3 numbers.
+            backend (str): "numpy" (default) uses the in-process multiprocessing
+                path. "fortran" uses the external fMagCalc backend if available,
+                transparently falling back to NumPy otherwise.
 
         Returns:
             Optional[SqwResult]: Object containing q_vectors, energies, and intensities.
@@ -1331,6 +1376,12 @@ class MagCalc:
         ion_list = None
         if hasattr(self.sm, 'ion_list'):
             ion_list = self.sm.ion_list()
+
+        # Opt-in Fortran backend (falls back to NumPy on any unavailability).
+        if backend == "fortran":
+            fortran_result = self._calculate_sqw_fortran(q_vectors_list, ion_list)
+            if fortran_result is not None:
+                return fortran_result
 
         task_args = [
             (
@@ -1387,6 +1438,7 @@ class MagCalc:
         self,
         q_magnitudes: Union[List[float], npt.NDArray[np.float64]],
         num_samples: int = 100,
+        backend: str = "numpy",
     ) -> Optional[SqwResult]:
         """
         Calculate the powder-averaged dynamic structure factor S(|q|, w).
@@ -1438,7 +1490,7 @@ class MagCalc:
 
         # 2. Run single batch calculation
         # This maximizes CPU usage by keeping the worker pool alive for the entire duration
-        res = self.calculate_sqw(all_q_vectors)
+        res = self.calculate_sqw(all_q_vectors, backend=backend)
         
         if res is None:
             logger.error("Batch calculation failed.")
