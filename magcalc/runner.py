@@ -127,6 +127,9 @@ def run_calculation(config_file: str):
     # Default to 'auto' for better performance in iterative GUI/CLI usage
     cache_mode = calc_config.get('cache_mode', 'auto')
     cache_base = calc_config.get('cache_file_base', 'magcalc_run_cache')
+    # Compute backend: 'numpy' (default) or 'fortran' (external fMagCalc, with
+    # automatic fallback to NumPy if unavailable). Applies to S(Q,w) and powder.
+    backend = calc_config.get('backend', 'numpy')
     
     # Parameters Logic
     parameters_dict = final_config.get('parameters')
@@ -441,8 +444,8 @@ def run_calculation(config_file: str):
                 B_matrix = compute_b_matrix(spin_model)
                 q_vectors_cart = np.dot(q_vectors, B_matrix)
 
-                logger.info("Calculating S(Q,w)...")
-                sqw_res = calculator.calculate_sqw(q_vectors_cart)
+                logger.info(f"Calculating S(Q,w)... (backend={backend})")
+                sqw_res = calculator.calculate_sqw(q_vectors_cart, backend=backend)
                 q_out = sqw_res.q_vectors
                 en_out = sqw_res.energies
                 int_out = sqw_res.intensities
@@ -496,8 +499,8 @@ def run_calculation(config_file: str):
             
         num_samples = powder_config.get('num_samples', 50)
         
-        logger.info(f"Calculating Powder Average (Q={q_mags[0]:.2f} to {q_mags[-1]:.2f}, {len(q_mags)} points, {num_samples} samples)...")
-        powder_res = calculator.calculate_powder_average(q_mags, num_samples=num_samples)
+        logger.info(f"Calculating Powder Average (Q={q_mags[0]:.2f} to {q_mags[-1]:.2f}, {len(q_mags)} points, {num_samples} samples, backend={backend})...")
+        powder_res = calculator.calculate_powder_average(q_mags, num_samples=num_samples, backend=backend)
         
         if powder_res:
             memory_cache['powder'] = {

@@ -272,7 +272,8 @@ function App() {
       method: "L-BFGS-B"
     },
     calculation: {
-      cache_mode: 'none'
+      cache_mode: 'none',
+      backend: 'numpy'
     },
     powder_average: {
       q_min: 0.1,
@@ -459,7 +460,8 @@ function App() {
       num_samples: 50
     },
     calculation: {
-      cache_mode: 'none'
+      cache_mode: 'none',
+      backend: 'numpy'
     }
   }
 
@@ -2131,6 +2133,21 @@ function App() {
                           </select>
                           <p className="text-xs opacity-50 mt-xs">
                             'None' is recommended for small systems or when debugging.
+                          </p>
+                        </div>
+                        <div className="input-group">
+                          <label>Compute Backend</label>
+                          <select
+                            value={config.calculation.backend || 'numpy'}
+                            className="minimal-input"
+                            onChange={(e) => updateField('calculation', 'backend', e.target.value)}
+                          >
+                            <option value="numpy">NumPy (default)</option>
+                            <option value="fortran">Fortran (fMagCalc)</option>
+                          </select>
+                          <p className="text-xs opacity-50 mt-xs">
+                            'Fortran' uses the fMagCalc backend for S(Q,ω) and powder
+                            (much faster); falls back to NumPy if it isn't installed.
                           </p>
                         </div>
                       </div>
