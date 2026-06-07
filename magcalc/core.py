@@ -1351,15 +1351,38 @@ class MagCalc:
         try:
             from .form_factors import get_form_factor
 
-            n, S, Ud, dvec, Mb = fmagcalc.extract_bond_model(self)
+            n = int(self.nspins)
+            S = float(self.spin_magnitude)
+            Ud = np.asarray(self.Ud_numeric, dtype=np.complex128)
             q_grid = np.array([np.asarray(q, dtype=float) for q in q_vectors_list])
+
+            # Feed the EXACT lambdified Hamiltonian (what the NumPy path
+            # diagonalizes), not the bond-reconstructed one. The reconstruction
+            # differs from the exact H only at the ~1e-14 level, but at
+            # degenerate eigenspaces KKdMatrix is ill-conditioned and that tiny
+            # perturbation flips it onto a different eigenbasis, producing
+            # spurious vertical streaks in S(Q,w). Using the exact H keeps the
+            # Fortran result aligned with NumPy. (run_sqw_model — building H(q)
+            # in Fortran from bonds — remains available for max speed on systems
+            # without degeneracies.)
+            lam = [s for s in self.full_symbol_list if isinstance(s, sp.Symbol)]
+            hfunc = lambdify(lam, self.HMat_sym, modules=["numpy"], cse=True)
+            base = [S] + list(self.hamiltonian_params)
+            two_n = 2 * n
+            h_plus = np.empty((len(q_grid), two_n, two_n), dtype=np.complex128)
+            h_minus = np.empty_like(h_plus)
+            for iq, q in enumerate(q_grid):
+                h_plus[iq] = np.asarray(hfunc(*(list(q) + base)), dtype=np.complex128)
+                h_minus[iq] = np.asarray(hfunc(*(list(-q) + base)), dtype=np.complex128)
+
             ff = np.ones((len(q_grid), n))
             if ion_list:
                 for iq, q in enumerate(q_grid):
                     qmag = float(np.linalg.norm(q))
                     ff[iq] = [get_form_factor(ion_list[i], qmag) for i in range(n)]
-            res = fmagcalc.run_sqw_model(dvec, Mb, Ud, ff, S, q_grid)
-            logger.info("S(q,w) computed via fMagCalc Fortran backend.")
+
+            res = fmagcalc.run_sqw(h_plus, h_minus, Ud, ff, S, q_grid)
+            logger.info("S(q,w) computed via fMagCalc Fortran backend (exact-H path).")
             return SqwResult(
                 q_vectors=q_grid,
                 energies=res["energies"],
