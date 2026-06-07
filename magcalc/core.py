@@ -1052,6 +1052,7 @@ class MagCalc:
         q_vectors_list: Union[List[npt.NDArray[np.float64]], npt.NDArray[np.float64]],
         processes: Optional[int] = None,
         serial: bool = False,
+        backend: str = "numpy",
     ) -> Optional[DispersionResult]:
         """
         Calculate the spin-wave dispersion relation over a list of q-points.
@@ -1062,9 +1063,12 @@ class MagCalc:
                 Each vector should be a 1D array/list of 3 numbers.
             processes (Optional[int]): Number of worker processes (default: cpu_count).
             serial (bool): If True, run in the main process without multiprocessing (avoid spawn/fork overhead).
+            backend (str): "numpy" (default) uses the in-process multiprocessing
+                path. "fortran" uses the external fMagCalc backend if available,
+                transparently falling back to NumPy otherwise.
 
         Returns:
-            Optional[DispersionResult]: A result object containing energies and q-vectors. 
+            Optional[DispersionResult]: A result object containing energies and q-vectors.
             Returns None if the calculation fails to start.
         """
         start_time = timeit.default_timer()
@@ -1100,6 +1104,12 @@ class MagCalc:
         else:
             raise TypeError("q_vectors_list must be a list or NumPy array.")
         # --- End q_vector validation ---
+
+        # Opt-in Fortran backend (falls back to NumPy on any unavailability).
+        if backend == "fortran":
+            fortran_result = self._calculate_dispersion_fortran(q_vectors_list)
+            if fortran_result is not None:
+                return fortran_result
 
         num_processes = processes if processes is not None else os.cpu_count()
 
@@ -1313,6 +1323,57 @@ class MagCalc:
                 sys.path.insert(0, c)
                 return c
         return None
+
+    def _calculate_dispersion_fortran(
+        self,
+        q_vectors_list: List[npt.NDArray[np.float64]],
+    ) -> Optional[DispersionResult]:
+        """Opt-in dispersion via the external fMagCalc Fortran backend.
+
+        Builds the exact lambdified H(q) stack (the same H the NumPy path
+        diagonalizes) and runs the Fortran zgeev/OpenMP loop. Returns a
+        DispersionResult, or None to fall back to NumPy. Every fallback is
+        logged at WARNING level since the Fortran backend was explicitly
+        requested.
+        """
+        try:
+            import fmagcalc
+        except Exception:
+            located = self._locate_fmagcalc()
+            try:
+                import fmagcalc
+            except Exception:
+                logger.warning(
+                    "backend='fortran' requested but the fMagCalc package could not be "
+                    "imported; using NumPy instead. (searched: %s)",
+                    located or "PYTHONPATH only",
+                )
+                return None
+        if getattr(fmagcalc, "backend", None) != "ctypes":
+            logger.warning(
+                "backend='fortran' requested but fMagCalc's compiled library is not "
+                "built (run cmake in fMagCalc); using NumPy instead."
+            )
+            return None
+        try:
+            n = int(self.nspins)
+            S = float(self.spin_magnitude)
+            q_grid = np.array([np.asarray(q, dtype=float) for q in q_vectors_list])
+
+            lam = [s for s in self.full_symbol_list if isinstance(s, sp.Symbol)]
+            hfunc = lambdify(lam, self.HMat_sym, modules=["numpy"], cse=True)
+            base = [S] + list(self.hamiltonian_params)
+            two_n = 2 * n
+            h_plus = np.empty((len(q_grid), two_n, two_n), dtype=np.complex128)
+            for iq, q in enumerate(q_grid):
+                h_plus[iq] = np.asarray(hfunc(*(list(q) + base)), dtype=np.complex128)
+
+            energies, info = fmagcalc.run_dispersion(h_plus)
+            logger.info("Dispersion computed via fMagCalc Fortran backend (exact-H path).")
+            return DispersionResult(q_vectors=q_grid, energies=energies)
+        except Exception:
+            logger.exception("fMagCalc dispersion backend failed; falling back to NumPy.")
+            return None
 
     def _calculate_sqw_fortran(
         self,

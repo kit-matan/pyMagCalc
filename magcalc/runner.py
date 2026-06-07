@@ -434,8 +434,8 @@ def run_calculation(config_file: str):
                         "(same q-path; skipping redundant eigensolve)."
                     )
                 else:
-                    logger.info("Calculating dispersion...")
-                    disp_res = calculator.calculate_dispersion(q_vectors_cart)
+                    logger.info(f"Calculating dispersion... (backend={backend})")
+                    disp_res = calculator.calculate_dispersion(q_vectors_cart, backend=backend)
                     _emit_dispersion(q_vectors_cart, disp_res.energies, disp_file)
             else:
                 logger.warning("No Q-vectors.")
@@ -504,8 +504,8 @@ def run_calculation(config_file: str):
             )
             logger.info("Dispersion reused from S(Q,w) result (no extra eigensolve).")
         else:
-            logger.info("S(Q,w) result unavailable; computing dispersion directly.")
-            disp_res = calculator.calculate_dispersion(q_cart_disp)
+            logger.info(f"S(Q,w) result unavailable; computing dispersion directly. (backend={backend})")
+            disp_res = calculator.calculate_dispersion(q_cart_disp, backend=backend)
             _emit_dispersion(q_cart_disp, disp_res.energies, disp_file_disp)
 
     # 4. Powder Average
