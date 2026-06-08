@@ -401,6 +401,34 @@ def _normal_order_terms(args: Tuple[sp.Expr, List[sp.Symbol], List[sp.Symbol], i
     return Add(*new_terms)
 
 
+# Fanning these symbolic maps out to a multiprocessing Pool pickles SymPy
+# expressions to/from workers and pays a fixed spawn+teardown cost of ~2-3 s
+# (macOS 'spawn' re-imports the world in every worker). Profiling gen_HM showed
+# that for typical models (hundreds–low-thousands of terms) that overhead
+# *dwarfs* the actual symbolic work — the Pool teardown and result unpickling
+# alone were ~4 s — making the parallel path 3-5x SLOWER than doing it
+# in-process. Only fan out once there are enough terms that the per-chunk
+# compute can amortize the spawn cost. Measured: even a ~4700-term model
+# (9-spin non-collinear cell) is FASTER serial (20.6 s) than parallel (25.6 s),
+# so the crossover is high — set the gate well above realistic model sizes and
+# treat the Pool as a safety valve for genuinely huge cells only.
+_PARALLEL_TERM_THRESHOLD = 8000
+
+
+def _map_terms(worker, pool_args, n_terms):
+    """Map ``worker`` over ``pool_args``, using a Pool only when the workload
+    (``n_terms``) is large enough to outweigh process spawn/pickle overhead;
+    otherwise run serially in-process (far faster for small/medium models)."""
+    if (
+        n_terms < _PARALLEL_TERM_THRESHOLD
+        or (os.cpu_count() or 1) < 2
+        or len(pool_args) < 2
+    ):
+        return [worker(a) for a in pool_args]
+    with Pool() as pool:
+        return list(pool.imap(worker, pool_args))
+
+
 def _process_hamiltonian_terms(
     hamiltonian_sym: sp.Expr,
     fourier_lookup: Dict[Tuple[str, str], sp.Expr],
@@ -427,10 +455,11 @@ def _process_hamiltonian_terms(
     pool_args_ft = [
         (sp.Add(*chunk), fourier_lookup) for chunk in chunks
     ]
-    
-    with Pool() as pool:
-        results_ft = list(pool.imap(_fourier_transform_terms, pool_args_ft))
-        
+
+    results_ft = _map_terms(
+        _fourier_transform_terms, pool_args_ft, len(hamiltonian_terms)
+    )
+
     hamiltonian_k_space = Add(*results_ft).expand()
     end_time_ft = timeit.default_timer()
     logger.info(
@@ -449,10 +478,9 @@ def _process_hamiltonian_terms(
     pool_args_no = [
         (Add(*chunk), ck_ops, ckd_ops, nspins) for chunk in chunks
     ]
-    
-    with Pool() as pool:
-        results_no = list(pool.imap(_normal_order_terms, pool_args_no))
-        
+
+    results_no = _map_terms(_normal_order_terms, pool_args_no, len(k_terms))
+
     hamiltonian_normal_ordered = Add(*results_no)
     
     # Expand one last time to ensure coeff * Op1 * Op2 structure

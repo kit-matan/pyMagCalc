@@ -52,3 +52,6 @@ powder_data.npz
 disp_plot.png
 sqw_plot.png
 powder_plot.png
+
+# Claude Code persistent memory (local context, not project code)
+memory/

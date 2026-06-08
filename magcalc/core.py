@@ -34,6 +34,7 @@ from tqdm import tqdm # Added for progress indication
 import hashlib  # For numerical cache key generation
 import logging
 import os  # Added for cpu_count
+import functools  # partial() for analytical energy/grad wrappers
 import json  # For metadata
 
 # Type Hinting Imports
@@ -142,28 +143,84 @@ logger.addHandler(logging.NullHandler())
 # KKdMatrix is now imported from magcalc.linalg
 
 
+# --- Analytical classical energy (quadratic form in spin components) ---
+# The classical energy of any bilinear spin Hamiltonian (Heisenberg, DM,
+# anisotropic exchange, single-ion, Zeeman) is a quadratic form in the Cartesian
+# spin components:  E(m) = 0.5 m^T H m + b^T m + c.  Extracting (H, b, c) once
+# (see MagCalc._extract_classical_quadratic) lets the minimizer evaluate energy
+# and gradient as pure NumPy array ops — no SymPy in the hot loop — which is
+# faster per call, scales with N (not bond count), and is trivially picklable so
+# parallel workers need no per-task lambdify. These are module-level (not
+# closures) so they pickle cleanly to multiprocessing workers.
+
+def _classical_spin_components(x, S, n):
+    """Cartesian spin components m (3N,) from angle vector x=[th0,ph0,th1,...].
+    Returns m and the trig factors (reused by the gradient)."""
+    th = x[0::2]
+    ph = x[1::2]
+    st, ct = np.sin(th), np.cos(th)
+    sp_, cp = np.sin(ph), np.cos(ph)
+    m = np.empty(3 * n)
+    m[0::3] = S * st * cp
+    m[1::3] = S * st * sp_
+    m[2::3] = S * ct
+    return m, st, ct, sp_, cp
+
+
+def _classical_energy_np(x, H, b, c, S, n):
+    m, *_ = _classical_spin_components(x, S, n)
+    return float(0.5 * (m @ (H @ m)) + b @ m + c)
+
+
+def _classical_grad_np(x, H, b, c, S, n):
+    m, st, ct, sp_, cp = _classical_spin_components(x, S, n)
+    gm = H @ m + b  # dE/dm (H is the symmetric Hessian)
+    dth = np.empty(3 * n)
+    dph = np.empty(3 * n)
+    dth[0::3] = S * ct * cp
+    dth[1::3] = S * ct * sp_
+    dth[2::3] = -S * st
+    dph[0::3] = -S * st * sp_
+    dph[1::3] = S * st * cp
+    dph[2::3] = 0.0
+    gm3 = gm.reshape(n, 3)
+    g = np.empty(2 * n)
+    g[0::2] = np.einsum("ij,ij->i", gm3, dth.reshape(n, 3))  # dE/dtheta_i
+    g[1::2] = np.einsum("ij,ij->i", gm3, dph.reshape(n, 3))  # dE/dphi_i
+    return g
+
+
 def _minimize_worker(args):
     """
     Worker function for parallel minimization.
-    Args:
-        (E_sym_num, Grad_sym_num, opt_vars, x0, method, bounds, constraints, kwargs)
+    Args: (payload, x0, method, bounds, constraints, kwargs) where payload is
+        ('np', H, b, c, S, n)                       -> analytical NumPy energy/grad
+        ('sym', E_sym_num, Grad_sym_num, opt_vars)  -> symbolic fallback (lambdified here)
+    The analytical payload carries only NumPy arrays, so there is no per-task
+    SymPy lambdify (faster worker startup) and the energy/gradient evaluate as
+    plain array ops.
     """
-    E_sym_num, Grad_sym_num, opt_vars, x0, method, bounds, constraints, kwargs = args
+    from functools import partial
+    payload, x0, method, bounds, constraints, kwargs = args
     from scipy.optimize import minimize, basinhopping, differential_evolution
-    import sympy as sp
 
-    # Lambdify energy
-    E_func = sp.lambdify(opt_vars, E_sym_num, modules="numpy")
-
-    def wrapper(x):
-        return E_func(*x)
-        
-    # Lambdify gradient if available
-    jac_wrapper = None
-    if Grad_sym_num is not None:
-        Grad_func = sp.lambdify(opt_vars, Grad_sym_num, modules="numpy")
-        def jac_wrapper(x):
-            return Grad_func(*x)
+    if payload[0] == "np":
+        _, H, b, c, S, n = payload
+        wrapper = partial(_classical_energy_np, H=H, b=b, c=c, S=S, n=n)
+        jac_wrapper = partial(_classical_grad_np, H=H, b=b, c=c, S=S, n=n)
+    else:
+        import sympy as sp
+        _, E_sym_num, Grad_sym_num, opt_vars = payload
+        # cse=True factors shared trig subexpressions across the energy and every
+        # gradient component (~10x faster per call), which dominates runtime.
+        E_func = sp.lambdify(opt_vars, E_sym_num, modules="numpy", cse=True)
+        def wrapper(x):
+            return E_func(*x)
+        jac_wrapper = None
+        if Grad_sym_num is not None:
+            Grad_func = sp.lambdify(opt_vars, Grad_sym_num, modules="numpy", cse=True)
+            def jac_wrapper(x):
+                return Grad_func(*x)
 
     if method == 'basinhopping':
         niter = kwargs.pop('niter', 100)
@@ -636,6 +693,64 @@ class MagCalc:
             logger.warning(f"Failed to read metadata file {meta_filepath}: {e}")
             return None
 
+    def _rotation_signature(self) -> Optional[str]:
+        """Hash of the ground-state rotation matrices that gen_HM bakes into
+        HMat_sym (via ``sm.mpr``). The symbolic Hamiltonian depends on these
+        float rotations, so the cache MUST be invalidated when the magnetic
+        structure changes — otherwise 'auto' would serve a matrix built for a
+        different ground state (wrong physics). Returns None if the rotations
+        can't be obtained, in which case the caller treats the cache as
+        rotation-agnostic (legacy behavior) rather than crashing.
+
+        Rounded to 1e-6 so reproducible-but-noisy minimization still hits the
+        cache, while a genuinely different ground state misses it.
+        """
+        try:
+            mats = self.sm.mpr(list(self.params_sym))  # type: ignore
+            hasher = hashlib.sha256()
+            for m in mats:
+                arr = np.array(sp.Matrix(m).tolist(), dtype=float)
+                hasher.update(np.round(arr, 6).tobytes())
+            return hasher.hexdigest()
+        except Exception as e:
+            logger.debug(f"Could not compute rotation signature for cache: {e}")
+            return None
+
+    def _model_structure_hash(self) -> Optional[str]:
+        """Short hash of the model's STRUCTURE — number of spins, parameter
+        symbols, atom positions, and the bond/interaction topology — used to
+        namespace the symbolic cache file so different models sharing the same
+        ``cache_file_base`` (e.g. every model the GUI runs writes
+        ``.config_gui_run_cache``) get distinct cache files instead of clobbering
+        each other.
+
+        Deliberately EXCLUDES the ground-state rotations: those are handled by
+        the rotation_signature in the validity check, so a model whose ground
+        state changes reuses one cache slot (regenerated safely) rather than
+        spawning an unbounded set of files during a fitting sweep. This hash is
+        only a namespacing convenience — correctness is still guaranteed by
+        _check_parameter_consistency_with_cache, so a hash collision at worst
+        triggers a safe regeneration.
+        """
+        try:
+            parts = [
+                str(self.nspins),
+                repr([str(s) for s in self.params_sym]),
+            ]
+            try:
+                parts.append(repr(self.sm.atom_pos_ouc()))  # type: ignore
+            except Exception:
+                parts.append(repr(self.sm.atom_pos()))  # type: ignore
+            try:
+                parts.append(repr(self.sm.spin_interactions(list(self.params_sym))))  # type: ignore
+            except Exception:
+                pass
+            hasher = hashlib.sha256("||".join(parts).encode("utf-8"))
+            return hasher.hexdigest()[:12]
+        except Exception as e:
+            logger.debug(f"Could not compute model structure hash for cache: {e}")
+            return None
+
     def _write_symbolic_cache_metadata(self, meta_filepath: str):
         """Writes current model parameters to a symbolic cache metadata JSON file."""
         model_source_type = "config" if self.config_data else "module"
@@ -646,6 +761,7 @@ class MagCalc:
             "hamiltonian_params": self.hamiltonian_params,
             "model_source_type": model_source_type,
             "model_identifier": model_identifier,
+            "rotation_signature": self._rotation_signature(),
             # "pyMagCalc_version": __version__ # TODO: Add versioning if MagCalc gets one
         }
         try:
@@ -690,6 +806,39 @@ class MagCalc:
                 f"Metadata check: model_identifier mismatch (cache: {cached_meta.get('model_identifier')}, current: {current_model_identifier})."
             )
             return False
+
+        # Ground-state rotations are baked into HMat_sym, so a different magnetic
+        # structure must invalidate the symbolic cache (otherwise 'auto' returns
+        # a matrix built for the wrong ground state). If the current model has a
+        # rotation signature, the cache must carry a matching one — a cache that
+        # predates rotation tracking (cached_rot is None) can't prove it was
+        # built for this ground state, so regenerate rather than risk it.
+        current_rot = self._rotation_signature()
+        if current_rot is not None and cached_meta.get("rotation_signature") != current_rot:
+            logger.info(
+                "Metadata check: ground-state rotation signature mismatch or "
+                "absent (magnetic structure differs, or cache predates rotation "
+                "tracking). Regenerating symbolic cache."
+            )
+            return False
+
+        # Symbol-compatibility check: the loaded HMat must only contain symbols
+        # the current model knows how to bind at lambdify time. A cache from a
+        # different model/version under the same cache_file_base could carry an
+        # extra symbol, which would survive substitution and blow up as "Cannot
+        # convert expression to float". Reject such caches outright.
+        try:
+            if self.HMat_sym is not None and self.full_symbol_list is not None:
+                allowed = {str(s) for s in self.full_symbol_list}
+                extra = {str(s) for s in self.HMat_sym.free_symbols} - allowed
+                if extra:
+                    logger.info(
+                        f"Metadata check: cached HMat contains symbols {sorted(extra)} "
+                        f"not in the current model's symbol list. Regenerating."
+                    )
+                    return False
+        except Exception as e:
+            logger.debug(f"Symbol-compatibility cache check skipped: {e}")
 
         # Structural check: number of parameters
         cached_params = cached_meta.get("hamiltonian_params", [])
@@ -758,14 +907,22 @@ class MagCalc:
         Handles reading from `.pck` files if `cache_mode='r'` or 'auto' (and valid),
         or calling `gen_HM` and writing the files if `cache_mode='w'` or 'auto' (and regeneration needed).
         """
+        # Namespace the cache file by model structure so different models that
+        # share a cache_file_base (notably every GUI run, which uses
+        # ".config_gui_run_cache") don't collide. Falls back to the bare base if
+        # the hash can't be computed, preserving legacy behavior.
+        struct_hash = self._model_structure_hash()
+        effective_base = (
+            f"{self.cache_file_base}_{struct_hash}" if struct_hash else self.cache_file_base
+        )
         hm_cache_file: str = os.path.join(
-            self.symbolic_cache_dir, self.cache_file_base + "_HM.pck"
+            self.symbolic_cache_dir, effective_base + "_HM.pck"
         )
         ud_cache_file: str = os.path.join(  # type: ignore
-            self.symbolic_cache_dir, self.cache_file_base + "_Ud.pck"
+            self.symbolic_cache_dir, effective_base + "_Ud.pck"
         )
         meta_cache_file: str = os.path.join(
-            self.symbolic_cache_dir, self.cache_file_base + "_meta.json"
+            self.symbolic_cache_dir, effective_base + "_meta.json"
         )
 
         if self.cache_mode == "auto":
@@ -1324,6 +1481,45 @@ class MagCalc:
                 return c
         return None
 
+    def _build_h_stack(
+        self,
+        q_grid: npt.NDArray[np.float64],
+        S: float,
+        negate: bool = False,
+    ) -> npt.NDArray[np.complex128]:
+        """Evaluate the dynamical matrix H(q) over the whole q-grid at once.
+
+        Vectorized replacement for the per-q ``lambdify`` loop. The exact-H
+        Fortran path needs a dense ``(Nq, 2N, 2N)`` stack of Hamiltonians; the
+        old code built it with a Python ``for`` loop calling a lambdified matrix
+        function once per q-point, which becomes the dominant cost for large
+        unit cells (the Fortran kernel is far faster than this Python build).
+
+        Here we lambdify the *flattened* list of the 4N^2 matrix entries and
+        call it once with the q-components as arrays, so SymPy/NumPy evaluates
+        the q-dependence across all Nq points with vectorized ufuncs. The only
+        Python-level loop left is over the matrix entries (4N^2, independent of
+        Nq) to broadcast constant entries up to the grid length — assembling a
+        ragged mix of scalars and ``(Nq,)`` arrays into one dense block.
+
+        ``list(self.HMat_sym)`` iterates row-major, matching the ``[[...]]``
+        layout lambdify would otherwise emit, so the result is bit-identical to
+        the per-q path.
+        """
+        lam = [s for s in self.full_symbol_list if isinstance(s, sp.Symbol)]
+        entry_func = lambdify(lam, list(self.HMat_sym), modules=["numpy"], cse=True)
+        base = [S] + list(self.hamiltonian_params)
+        two_n = 2 * int(self.nspins)
+        nq = len(q_grid)
+        qx, qy, qz = q_grid[:, 0], q_grid[:, 1], q_grid[:, 2]
+        if negate:
+            qx, qy, qz = -qx, -qy, -qz
+        entries = entry_func(qx, qy, qz, *base)
+        flat = np.empty((two_n * two_n, nq), dtype=np.complex128)
+        for k, col in enumerate(entries):
+            flat[k] = col  # scalar entries broadcast to (Nq,); array entries copy
+        return np.ascontiguousarray(flat.T.reshape(nq, two_n, two_n))
+
     def _calculate_dispersion_fortran(
         self,
         q_vectors_list: List[npt.NDArray[np.float64]],
@@ -1356,17 +1552,10 @@ class MagCalc:
             )
             return None
         try:
-            n = int(self.nspins)
             S = float(self.spin_magnitude)
             q_grid = np.array([np.asarray(q, dtype=float) for q in q_vectors_list])
 
-            lam = [s for s in self.full_symbol_list if isinstance(s, sp.Symbol)]
-            hfunc = lambdify(lam, self.HMat_sym, modules=["numpy"], cse=True)
-            base = [S] + list(self.hamiltonian_params)
-            two_n = 2 * n
-            h_plus = np.empty((len(q_grid), two_n, two_n), dtype=np.complex128)
-            for iq, q in enumerate(q_grid):
-                h_plus[iq] = np.asarray(hfunc(*(list(q) + base)), dtype=np.complex128)
+            h_plus = self._build_h_stack(q_grid, S)
 
             energies, info = fmagcalc.run_dispersion(h_plus)
             logger.info("Dispersion computed via fMagCalc Fortran backend (exact-H path).")
@@ -1426,15 +1615,8 @@ class MagCalc:
             # Fortran result aligned with NumPy. (run_sqw_model — building H(q)
             # in Fortran from bonds — remains available for max speed on systems
             # without degeneracies.)
-            lam = [s for s in self.full_symbol_list if isinstance(s, sp.Symbol)]
-            hfunc = lambdify(lam, self.HMat_sym, modules=["numpy"], cse=True)
-            base = [S] + list(self.hamiltonian_params)
-            two_n = 2 * n
-            h_plus = np.empty((len(q_grid), two_n, two_n), dtype=np.complex128)
-            h_minus = np.empty_like(h_plus)
-            for iq, q in enumerate(q_grid):
-                h_plus[iq] = np.asarray(hfunc(*(list(q) + base)), dtype=np.complex128)
-                h_minus[iq] = np.asarray(hfunc(*(list(-q) + base)), dtype=np.complex128)
+            h_plus = self._build_h_stack(q_grid, S)
+            h_minus = self._build_h_stack(q_grid, S, negate=True)
 
             ff = np.ones((len(q_grid), n))
             if ion_list:
@@ -1694,6 +1876,123 @@ class MagCalc:
             )
             raise
 
+    def _extract_classical_quadratic(self, params, nspins, nspins_ouc, S_val):
+        """Extract the classical energy as a quadratic form in the Cartesian spin
+        components: E(m) = 0.5 m^T H m + b^T m + c, where m stacks the 3N
+        components of the N unit-cell spins. Valid for any bilinear/single-ion
+        spin Hamiltonian (Heisenberg, DM, anisotropic exchange, single-ion,
+        Zeeman) — i.e. quadratic in the spin components.
+
+        Returns (H (3N,3N), b (3N,), c (scalar)) as NumPy arrays, or None if the
+        energy is NOT quadratic in the components (verified numerically), in
+        which case the caller falls back to the symbolic lambdify path. The
+        OUC->UC component sharing (each over-unit-cell spin is a copy of its
+        unit-cell parent) is built into H, so the Hessian/gradient accumulate
+        all bond contributions onto the unit-cell variables.
+        """
+        try:
+            d = 3 * nspins
+            comps = sp.symbols(f"_mc0:{d}", real=True)
+            Svec = [
+                sp.Matrix(comps[3 * (i % nspins): 3 * (i % nspins) + 3])
+                for i in range(nspins_ouc)
+            ]
+            Ec = self.sm.Hamiltonian(Svec, self.params_sym)  # type: ignore
+            Ec = Ec.subs(self.S_sym, S_val).subs(list(zip(self.params_sym_flat, params)))
+            Ec = Ec.as_real_imag()[0]
+            Ef = lambdify(comps, Ec, modules="numpy", cse=True)
+
+            # Extract (H, b, c) by NUMERIC probing of Ef rather than a symbolic
+            # Hessian (which is the bulk of the setup cost). For an exact
+            # quadratic these identities hold with step h=1 (no truncation error):
+            #   c     = E(0)
+            #   b_i   = (E(e_i) - E(-e_i)) / 2
+            #   H_ii  = E(e_i) + E(-e_i) - 2c
+            #   H_ij  = E(e_i+e_j) - E(e_i) - E(e_j) + c     (i<j)
+            eye = np.eye(d)
+            c = float(Ef(*np.zeros(d)))
+            Ep = np.array([float(Ef(*eye[i])) for i in range(d)])
+            Em = np.array([float(Ef(*(-eye[i]))) for i in range(d)])
+            b = (Ep - Em) / 2.0
+            H = np.zeros((d, d))
+            H[np.diag_indices(d)] = Ep + Em - 2.0 * c
+            for i in range(d):
+                for j in range(i + 1, d):
+                    Hij = float(Ef(*(eye[i] + eye[j]))) - Ep[i] - Ep[j] + c
+                    H[i, j] = H[j, i] = Hij
+
+            # Verify the energy really is quadratic: the reconstruction must match
+            # a direct eval at random points. Mismatch => higher-order terms exist
+            # (not a standard bilinear spin model) => signal symbolic fallback.
+            rng = np.random.default_rng(0)
+            for _ in range(4):
+                mv = rng.uniform(-S_val, S_val, size=d)
+                analytic = 0.5 * (mv @ (H @ mv)) + b @ mv + c
+                if not np.isclose(analytic, float(Ef(*mv)), rtol=1e-7, atol=1e-7):
+                    logger.info(
+                        "Classical energy is not quadratic in spin components; "
+                        "using symbolic path."
+                    )
+                    return None
+            return H, b, c
+        except Exception as e:
+            logger.info(f"Quadratic energy extraction failed ({e}); using symbolic path.")
+            return None
+
+    def _minimize_batched(self, H, b, c, S, n, num_starts, seed,
+                          max_iter=2000, tol=1e-8, topk=10):
+        """Vectorized multistart minimization. Optimizes ALL `num_starts`
+        simultaneously with projected-gradient descent on the unit spheres (one
+        set of NumPy array ops for the whole batch — no per-start Python loop),
+        then polishes the few lowest-energy candidates with scipy for precision.
+
+        Requires the analytical quadratic energy E(m)=0.5 m^T H m + b^T m + c.
+        Returns a scipy OptimizeResult (best found), or None to signal fallback.
+
+        The batch is seeded, so the result is reproducible; momentum GD with the
+        1/L step (L = S^2 * spectral radius of H) is scale-free. Polishing the
+        top-k distinct candidates guards against imperfect batch convergence —
+        the final energy/structure is whatever scipy refines them to.
+        """
+        try:
+            from scipy.optimize import minimize as _sp_min
+            rng = np.random.default_rng(seed)
+            B, d = int(num_starts), 3 * n
+            v = rng.normal(size=(B, n, 3))
+            v /= np.linalg.norm(v, axis=2, keepdims=True)
+            lam = float(np.max(np.abs(np.linalg.eigvalsh(H))))
+            lr = 1.0 / (S * S * lam + 1e-12)
+            beta = 0.9
+            mom = np.zeros_like(v)
+            for _ in range(max_iter):
+                m = (S * v).reshape(B, d)
+                gn = (S * (m @ H + b)).reshape(B, n, 3)        # dE/dn
+                gtan = gn - np.sum(gn * v, axis=2, keepdims=True) * v  # tangent
+                if np.max(np.abs(gtan)) < tol:
+                    break
+                mom = beta * mom + gtan
+                v = v - lr * mom
+                v /= np.linalg.norm(v, axis=2, keepdims=True)
+            m = (S * v).reshape(B, d)
+            E = 0.5 * np.sum(m * (m @ H), axis=1) + m @ b + c
+            order = np.argsort(E)[:min(topk, B)]
+            best = None
+            for k in order:
+                vi = v[k]
+                th = np.arccos(np.clip(vi[:, 2], -1.0, 1.0))
+                ph = np.arctan2(vi[:, 1], vi[:, 0])
+                x0 = np.empty(2 * n)
+                x0[0::2] = th
+                x0[1::2] = ph
+                r = _sp_min(_classical_energy_np, x0, jac=_classical_grad_np,
+                            args=(H, b, c, S, n), method="L-BFGS-B")
+                if best is None or r.fun < best.fun:
+                    best = r
+            return best
+        except Exception as e:
+            logger.info(f"Batched minimization failed ({e}); falling back to multistart.")
+            return None
+
     def minimize_energy(
         self,
         params: Optional[List[float]] = None,
@@ -1704,10 +2003,12 @@ class MagCalc:
         num_starts: int = 1,
         n_workers: int = 1,
         early_stopping: int = 10,
+        seed: Optional[int] = 0,
+        batched: bool = False,
         **kwargs,
     ) -> Any:
         logger.info(
-            f"Starting minimization (method={method}, num_starts={num_starts}, n_workers={n_workers}, early_stopping={early_stopping})"
+            f"Starting minimization (method={method}, num_starts={num_starts}, n_workers={n_workers}, early_stopping={early_stopping}, seed={seed})"
         )
         """
         Find the classical ground state magnetic structure by minimizing the energy.
@@ -1742,70 +2043,61 @@ class MagCalc:
                 "This could lead to a wrong magnetic structure."
             )
 
-        # 1. Setup Symbols
+        # 1. Model sizes
         nspins = len(self.sm.atom_pos())
-        theta_sym = sp.symbols(f"theta0:{nspins}", real=True)
-        phi_sym = sp.symbols(f"phi0:{nspins}", real=True)
-        
-        # 2. Construct Classical Spin Vectors for OUC
         nspins_ouc = len(self.sm.atom_pos_ouc())
-        S_vectors_ouc = []
         S_val = self.spin_magnitude
-        
-        for i_ouc in range(nspins_ouc):
-            i_uc = i_ouc % nspins # Assume periodic boundary / q=0 order
-            th = theta_sym[i_uc]
-            ph = phi_sym[i_uc]
-            
-            # Classical vector components
-            Sx = self.S_sym * sp.sin(th) * sp.cos(ph)
-            Sy = self.S_sym * sp.sin(th) * sp.sin(ph)
-            Sz = self.S_sym * sp.cos(th)
-            
-            # The Hamiltonian function expects a list of 3-component objects (Matrix or list)
-            # We use sympy Matrix to be consistent with what 'gen_HM' usually passes
-            S_vectors_ouc.append(sp.Matrix([Sx, Sy, Sz]))
-            
-        # 3. Get Symbolic Energy
-        H_sym_classical = self.sm.Hamiltonian(S_vectors_ouc, self.params_sym)
-        # H_sym_classical usually contains S_sym terms and params_sym terms.
-        
-        # Substitute S value
-        E_sym = H_sym_classical.subs(self.S_sym, S_val)
-        
-        # 4. Create Numerical Function
-        opt_vars = []
-        for i in range(nspins):
-            opt_vars.append(theta_sym[i])
-            opt_vars.append(phi_sym[i])
-            
-        # Filter out non-symbolic keys (e.g. vector lists) from substitution
-        # Map all flat symbolic parameters to their numerical values
-        params_sub_list = list(zip(self.params_sym_flat, params))
-        
-        E_sym_num = E_sym.subs(params_sub_list)
-        
-        # Ensure result is real by taking the real component expression explicitly
-        # This avoids 're()' wrapper which complicates symbolic differentiation
-        E_sym_num = E_sym_num.as_real_imag()[0]
 
-        # 4a. Symbolic Gradient (for analytical derivatives)
-        logger.info("Computing symbolic gradient (this may take a moment)...")
-        # Use doit() to force evaluation of any Derivative objects
-        Grad_sym_num = [sp.diff(E_sym_num, v).doit() for v in opt_vars]
-        
-        logger.info("Lambdifying classical energy and gradient functions...")
-        # lambdify args: flattened list of theta, phi
-        E_func_args = lambdify(opt_vars, E_sym_num, modules="numpy")
-        Grad_func_args = lambdify(opt_vars, Grad_sym_num, modules="numpy")
-        
-        def energy_wrapper(x):
-            # x is [th0, ph0, th1, ph1, ...]
-            return E_func_args(*x)
-            
-        def grad_wrapper(x):
-            return Grad_func_args(*x)
-            
+        # 2. Energy + gradient for the optimizer. Prefer the analytical NumPy
+        # form: the classical energy is a quadratic form in the spin components,
+        # so (H,b,c) extracted once give energy/gradient as pure array ops (no
+        # SymPy in the optimizer's hot loop — the dominant cost). `payload` is
+        # what each multistart task carries to _minimize_worker; with the
+        # analytical form it is just NumPy arrays (no per-task lambdify, and
+        # picklable to parallel workers). The angle-based symbolic energy is only
+        # built on the fallback path, so the common case skips it entirely.
+        quad = self._extract_classical_quadratic(params, nspins, nspins_ouc, S_val)
+        if quad is not None:
+            H_q, b_q, c_q = quad
+            # Fast path: batched multistart (all starts vectorized on the spheres,
+            # then scipy-polished). Only for plain gradient methods — basinhopping
+            # / differential_evolution keep their dedicated scipy drivers.
+            if batched and method not in ("basinhopping", "differential_evolution"):
+                logger.info(
+                    f"Minimizing via batched projected-gradient ({num_starts} starts, vectorized)..."
+                )
+                res = self._minimize_batched(H_q, b_q, c_q, S_val, nspins, num_starts, seed)
+                if res is not None:
+                    res.global_message = "batched projected-gradient multistart"
+                    logger.info(f"Batched minimization complete: E_min={res.fun:.6f}")
+                    return res
+                logger.info("Batched minimization unavailable; using scipy multistart.")
+            payload = ("np", H_q, b_q, c_q, S_val, nspins)
+            logger.info("Using analytical NumPy classical energy (quadratic-form extraction).")
+        else:
+            # Fallback: symbolic angle-based energy + gradient (lambdified per
+            # worker with cse=True). Build trig spin vectors in the unit-cell
+            # angles, then differentiate.
+            logger.info("Energy not quadratic; building symbolic angle-based energy/gradient...")
+            theta_sym = sp.symbols(f"theta0:{nspins}", real=True)
+            phi_sym = sp.symbols(f"phi0:{nspins}", real=True)
+            S_vectors_ouc = []
+            for i_ouc in range(nspins_ouc):
+                th = theta_sym[i_ouc % nspins]
+                ph = phi_sym[i_ouc % nspins]
+                S_vectors_ouc.append(sp.Matrix([
+                    self.S_sym * sp.sin(th) * sp.cos(ph),
+                    self.S_sym * sp.sin(th) * sp.sin(ph),
+                    self.S_sym * sp.cos(th),
+                ]))
+            opt_vars = []
+            for i in range(nspins):
+                opt_vars.extend([theta_sym[i], phi_sym[i]])
+            E_sym_num = self.sm.Hamiltonian(S_vectors_ouc, self.params_sym).subs(self.S_sym, S_val)
+            E_sym_num = E_sym_num.subs(list(zip(self.params_sym_flat, params))).as_real_imag()[0]
+            Grad_sym_num = [sp.diff(E_sym_num, v).doit() for v in opt_vars]
+            payload = ("sym", E_sym_num, Grad_sym_num, opt_vars)
+
         if bounds is None:
             # Bounds: theta [0, pi], phi [0, 2pi]
             bounds = []
@@ -1816,6 +2108,15 @@ class MagCalc:
         best_res = None
         best_energy = np.inf
 
+        # Seed a LOCAL rng so the random multistart is reproducible: the ground
+        # state (hence the rotations baked into HMat_sym) is otherwise different
+        # every run, which both makes results non-reproducible AND defeats the
+        # symbolic cache (its rotation signature never matches). A fixed default
+        # seed gives the same set of starts each run; pass seed=None to opt back
+        # into nondeterministic exploration. Using a local Generator avoids
+        # perturbing global numpy random state elsewhere.
+        rng = np.random.default_rng(seed)
+
         tasks = []
         for start_idx in range(num_starts):
             # 5. Determine initial guess for this start
@@ -1823,21 +2124,16 @@ class MagCalc:
                 current_x0 = x0
             else:
                 # Default guess: Random to break symmetry
-                current_x0 = np.random.rand(2 * nspins)
+                current_x0 = rng.random(2 * nspins)
                 # Scale theta [0, pi], phi [0, 2pi]
                 for i in range(nspins):
                     current_x0[2 * i] *= np.pi
                     current_x0[2 * i + 1] *= 2 * np.pi
             
-            if n_workers > 1:
-                # Pass expression and vars for worker to lambdify (including Gradient)
-                tasks.append((E_sym_num, Grad_sym_num, opt_vars, current_x0, method, bounds, constraints, kwargs))
-            else:
-                # Sequential can use the already lambdified function
-                # We reuse the same task structure but replacing symbolic with lambdified for sequential efficiency?
-                # Actually, sequential loop below handles it specially.
-                # Let's pass the wrappers instead of symbols for sequential to avoid re-lambdifying
-                tasks.append((E_func_args, grad_wrapper, current_x0, method, bounds, constraints, kwargs))
+            # Unified task tuple for both sequential and parallel paths; both run
+            # through _minimize_worker. dict(kwargs) gives each start its own copy
+            # (some methods, e.g. basinhopping, pop keys from it).
+            tasks.append((payload, current_x0, method, bounds, constraints, dict(kwargs)))
 
         if n_workers > 1:
             from multiprocessing import Pool
@@ -1849,8 +2145,11 @@ class MagCalc:
 
             with Pool(processes=n_workers) as pool:
                 try:
-                    # Use imap_unordered to process as they finish
-                    for res in tqdm(pool.imap_unordered(_minimize_worker, tasks), total=len(tasks), desc="Minimization Starts"):
+                    # Ordered imap (not imap_unordered): with seeded starts this
+                    # makes which degenerate ground state wins deterministic, so
+                    # the baked rotations — and the symbolic cache — are stable
+                    # run-to-run. (Completion-order selection would otherwise vary.)
+                    for res in tqdm(pool.imap(_minimize_worker, tasks), total=len(tasks), desc="Minimization Starts"):
                         if res.success:
                             if np.isclose(res.fun, best_energy, atol=1e-6):
                                 hits += 1
@@ -1876,27 +2175,8 @@ class MagCalc:
             hits = 0
             global_message = f"Maximum number of starts ({num_starts}) reached"
             for start_idx, task_args in enumerate(tqdm(tasks, desc="Minimization Starts")):
-                # Manual decomposition since sequential task_args is (func, grad, x0, ...)
-                func, grad, x0_task, method_task, bounds_task, constraints_task, kwargs_task = task_args
-                def energy_wrapper(x):
-                    return func(*x)
-                
-                # Check if method supports jac
-                jac_arg = grad
-                
-                from scipy.optimize import minimize, basinhopping, differential_evolution
-
-                if method_task == 'basinhopping':
-                    niter = kwargs_task.pop('niter', 100)
-                    min_kwargs = {'method': 'L-BFGS-B', 'bounds': bounds_task, 'constraints': constraints_task}
-                    if jac_arg:
-                        min_kwargs['jac'] = jac_arg
-                    res = basinhopping(energy_wrapper, x0_task, niter=niter, minimizer_kwargs=min_kwargs, **kwargs_task)
-                elif method_task == 'differential_evolution':
-                    constraints_diff = constraints_task if constraints_task is not None else ()
-                    res = differential_evolution(energy_wrapper, bounds_task, constraints=constraints_diff, **kwargs_task)
-                else:
-                    res = minimize(energy_wrapper, x0_task, method=method_task, bounds=bounds_task, constraints=constraints_task, jac=jac_arg, **kwargs_task)
+                # Same worker as the parallel path (unified energy/grad handling).
+                res = _minimize_worker(task_args)
 
                 if res.success:
                     if np.isclose(res.fun, best_energy, atol=1e-6):

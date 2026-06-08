@@ -920,7 +920,11 @@ async def expand_config(config: Dict[str, Any]):
             "q_path": data.get("q_path", {}),
             "minimization": data.get("minimization", {}),
             "plotting": data.get("plotting", {}),
-            "calculation": data.get("calculation", {"cache_mode": "none"}),
+            # Default to 'auto' caching: gen_HM is deterministic per model
+            # topology and pickle-cached, so 'none' needlessly regenerates the
+            # symbolic matrix every run (~seconds of cold start). Respect an
+            # explicit client choice when one is sent.
+            "calculation": {"cache_mode": "auto", **(data.get("calculation") or {})},
             "output": data.get("output", {"export_csv": False}),
             "powder_average": data.get("powder_average", {})
         }
