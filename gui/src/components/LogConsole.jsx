@@ -8,7 +8,7 @@ export default function LogConsole({ logs, connected }) {
   }, [logs])
 
   return (
-    <div className="log-console mt-lg rounded-md border border-color bg-surface-hover p-md overflow-hidden flex flex-col" style={{ height: '300px' }}>
+    <div className="log-console mt-lg rounded-md border border-color bg-surface-hover p-md overflow-hidden flex flex-col" style={{ height: '500px', flexShrink: 0 }}>
       <div className="flex-between mb-sm align-center border-b border-color pb-sm">
         <div className="flex align-center gap-xs text-xs font-mono opacity-70">
           <FileText size={14} />
