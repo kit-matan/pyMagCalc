@@ -127,6 +127,9 @@ def run_calculation(config_file: str):
     # Default to 'auto' for better performance in iterative GUI/CLI usage
     cache_mode = calc_config.get('cache_mode', 'auto')
     cache_base = calc_config.get('cache_file_base', 'magcalc_run_cache')
+    # Compute backend: 'numpy' (default) or 'fortran' (external fMagCalc, with
+    # automatic fallback to NumPy if unavailable). Applies to S(Q,w) and powder.
+    backend = calc_config.get('backend', 'numpy')
     
     # Parameters Logic
     parameters_dict = final_config.get('parameters')
@@ -364,62 +367,76 @@ def run_calculation(config_file: str):
     
     save_data_flag = final_config.get('output', {}).get('save_data', True)
 
+    # Emit dispersion outputs (memory cache, .npz, optional CSV) from energies.
+    # Shared by the standalone eigensolve and the guarded reuse of S(Q,w) energies.
+    def _emit_dispersion(q_cart, energies, disp_file):
+        if energies is None:
+            return
+        try:
+            energies_arr = np.array(energies)
+        except (ValueError, TypeError):
+            energies_arr = np.array(energies, dtype=object)
+
+        memory_cache['dispersion'] = {
+            'q_vectors': q_cart,
+            'energies': energies_arr
+        }
+
+        if save_data_flag:
+            _safe_makedirs(disp_file)
+            np.savez(disp_file, q_vectors=q_cart, energies=energies_arr)
+            logger.info(f"Dispersion saved to {disp_file}")
+
+        if tasks.get('export_csv', False):
+            disp_csv = final_config.get('output', {}).get('disp_csv_filename', 'disp_data.csv')
+            if not os.path.isabs(disp_csv): disp_csv = os.path.join(config_dir, disp_csv)
+
+            logger.info(f"Exporting dispersion to CSV: {disp_csv}")
+            # qx, qy, qz, en1, en2, ...
+            header = "qx,qy,qz," + ",".join([f"en{i}" for i in range(energies_arr.shape[1])])
+            with open(disp_csv, 'w') as f:
+                f.write(header + "\n")
+                for i in range(len(q_cart)):
+                    q = q_cart[i]
+                    en = energies_arr[i]
+                    line = f"{q[0]:.6f},{q[1]:.6f},{q[2]:.6f}," + ",".join([f"{e:.6f}" for e in en])
+                    f.write(line + "\n")
+
     # 2. Dispersion
     do_dispersion = tasks.get('dispersion', False)
-    
+    # When S(Q,w) is also requested it returns identical energies on the same
+    # q-path, so defer the dispersion and reuse them rather than running a
+    # redundant eigensolve. Set to (q_cart, disp_file) when deferred.
+    dispersion_pending = None
+
     if do_dispersion:
         disp_file = final_config.get('output', {}).get('disp_data_filename', 'disp_data.npz')
         if not os.path.isabs(disp_file): disp_file = os.path.join(config_dir, disp_file)
-        
+
         need_recalc = tasks.get('calculate_dispersion', True)
         if not os.path.exists(disp_file) and save_data_flag: need_recalc = True
-        
+
         if need_recalc:
             if q_vectors is None:
                 q_vectors = generate_q_path_from_config(final_config)
-            
+
             if len(q_vectors) > 0:
                 B_matrix = compute_b_matrix(spin_model)
-                
-                q_rlu = np.array(q_vectors)
-                q_cart = np.dot(q_rlu, B_matrix)
-                q_vectors_cart = q_cart
+                q_vectors_cart = np.dot(np.array(q_vectors), B_matrix)
 
-                logger.info("Calculating dispersion...")
-                disp_res = calculator.calculate_dispersion(q_vectors_cart)
-                energies = disp_res.energies
-                
-                if energies is not None:
-                    try:
-                        energies_arr = np.array(energies)
-                    except (ValueError, TypeError):
-                        energies_arr = np.array(energies, dtype=object)
-
-                    memory_cache['dispersion'] = {
-                        'q_vectors': q_vectors_cart,
-                        'energies': energies_arr
-                    }
-
-                    if save_data_flag:
-                        _safe_makedirs(disp_file)
-                        np.savez(disp_file, q_vectors=q_vectors_cart, energies=energies_arr)
-                        logger.info(f"Dispersion saved to {disp_file}")
-
-                    if tasks.get('export_csv', False):
-                        disp_csv = final_config.get('output', {}).get('disp_csv_filename', 'disp_data.csv')
-                        if not os.path.isabs(disp_csv): disp_csv = os.path.join(config_dir, disp_csv)
-                        
-                        logger.info(f"Exporting dispersion to CSV: {disp_csv}")
-                        # qx, qy, qz, en1, en2, ...
-                        header = "qx,qy,qz," + ",".join([f"en{i}" for i in range(energies_arr.shape[1])])
-                        with open(disp_csv, 'w') as f:
-                            f.write(header + "\n")
-                            for i in range(len(q_vectors_cart)):
-                                q = q_vectors_cart[i]
-                                en = energies_arr[i]
-                                line = f"{q[0]:.6f},{q[1]:.6f},{q[2]:.6f}," + ",".join([f"{e:.6f}" for e in en])
-                                f.write(line + "\n")
-                
+                if tasks.get('sqw_map', False) and tasks.get('calculate_sqw_map', True):
+                    # S(Q,w) (computed next, same q-path) yields identical
+                    # energies; defer and reuse them. Skips a full eigensolve
+                    # pass and its worker-pool spin-up.
+                    dispersion_pending = (q_vectors_cart, disp_file)
+                    logger.info(
+                        "Dispersion deferred to reuse S(Q,w) energies "
+                        "(same q-path; skipping redundant eigensolve)."
+                    )
+                else:
+                    logger.info(f"Calculating dispersion... (backend={backend})")
+                    disp_res = calculator.calculate_dispersion(q_vectors_cart, backend=backend)
+                    _emit_dispersion(q_vectors_cart, disp_res.energies, disp_file)
             else:
                 logger.warning("No Q-vectors.")
     
@@ -441,8 +458,8 @@ def run_calculation(config_file: str):
                 B_matrix = compute_b_matrix(spin_model)
                 q_vectors_cart = np.dot(q_vectors, B_matrix)
 
-                logger.info("Calculating S(Q,w)...")
-                sqw_res = calculator.calculate_sqw(q_vectors_cart)
+                logger.info(f"Calculating S(Q,w)... (backend={backend})")
+                sqw_res = calculator.calculate_sqw(q_vectors_cart, backend=backend)
                 q_out = sqw_res.q_vectors
                 en_out = sqw_res.energies
                 int_out = sqw_res.intensities
@@ -474,6 +491,23 @@ def run_calculation(config_file: str):
                                 line = f"{q[0]:.6f},{q[1]:.6f},{q[2]:.6f},{m},{en_out[i,m]:.6f},{int_out[i,m]:.6f}"
                                 f.write(line + "\n")
 
+    # Guarded reuse: derive the deferred dispersion from the S(Q,w) energies
+    # just computed (identical on the shared q-path). Fall back to a standalone
+    # eigensolve if S(Q,w) produced no result, so the output is always emitted.
+    if dispersion_pending is not None:
+        q_cart_disp, disp_file_disp = dispersion_pending
+        if memory_cache.get('sqw') is not None:
+            _emit_dispersion(
+                memory_cache['sqw']['q_vectors'],
+                memory_cache['sqw']['energies'],
+                disp_file_disp,
+            )
+            logger.info("Dispersion reused from S(Q,w) result (no extra eigensolve).")
+        else:
+            logger.info(f"S(Q,w) result unavailable; computing dispersion directly. (backend={backend})")
+            disp_res = calculator.calculate_dispersion(q_cart_disp, backend=backend)
+            _emit_dispersion(q_cart_disp, disp_res.energies, disp_file_disp)
+
     # 4. Powder Average
     # NOTE on units: dispersion and S(Q,w) above interpret q_path entries as
     # reciprocal-lattice units (RLU) and multiply by the B-matrix internally,
@@ -496,8 +530,8 @@ def run_calculation(config_file: str):
             
         num_samples = powder_config.get('num_samples', 50)
         
-        logger.info(f"Calculating Powder Average (Q={q_mags[0]:.2f} to {q_mags[-1]:.2f}, {len(q_mags)} points, {num_samples} samples)...")
-        powder_res = calculator.calculate_powder_average(q_mags, num_samples=num_samples)
+        logger.info(f"Calculating Powder Average (Q={q_mags[0]:.2f} to {q_mags[-1]:.2f}, {len(q_mags)} points, {num_samples} samples, backend={backend})...")
+        powder_res = calculator.calculate_powder_average(q_mags, num_samples=num_samples, backend=backend)
         
         if powder_res:
             memory_cache['powder'] = {

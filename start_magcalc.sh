@@ -13,10 +13,34 @@ mkdir -p "$LOG_DIR"
 echo "🚀 Starting MagCalc Designer..."
 echo "   Logs: $LOG_DIR"
 
-# 1. Cleanup existing ports
-echo "🧹 Cleaning up existing processes..."
+# 1. Stop ALL running MagCalc processes before starting new ones.
+#    Killing by port alone is not enough: stale backends that failed to bind the
+#    port (e.g. a second `python gui/server.py` launched while one was already
+#    running) keep lingering and can serve old code. We match by command, send
+#    SIGTERM, then SIGKILL any survivor (uvicorn ignores SIGTERM mid-shutdown).
+echo "🧹 Stopping any running MagCalc processes..."
+
+stop_matching() {
+    local pattern="$1" label="$2" pids
+    pids=$(pgrep -f "$pattern" 2>/dev/null)
+    [ -z "$pids" ] && return 0
+    echo "   • $label (PIDs: $(echo $pids | tr '\n' ' '))"
+    kill $pids 2>/dev/null
+    sleep 1
+    pids=$(pgrep -f "$pattern" 2>/dev/null)   # force any survivor
+    [ -n "$pids" ] && kill -9 $pids 2>/dev/null
+}
+
+# Backend: every `python .../gui/server.py`
+stop_matching "gui/server.py" "backend server(s)"
+# Frontend: the Vite dev server for THIS project (scoped by project path so we
+# don't touch unrelated Vite instances)
+stop_matching "$PROJECT_DIR/gui/node_modules.*vite" "frontend dev server(s)"
+
+# Final catch-all: anything still holding the ports
 lsof -ti:$SERVER_PORT | xargs kill -9 2>/dev/null
 lsof -ti:$CLIENT_PORT | xargs kill -9 2>/dev/null
+sleep 1
 
 # 2. Start Backend
 echo "🔥 Starting Backend Server (Port $SERVER_PORT)..."
