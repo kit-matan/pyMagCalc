@@ -6,6 +6,11 @@ options:
     iOS: "17.0"
   createIntermediateGroups: true
 
+packages:
+  Yams:
+    url: https://github.com/jpsim/Yams.git
+    from: 5.1.0
+
 settings:
   base:
     SWIFT_VERSION: "5.10"
@@ -21,6 +26,8 @@ targets:
       - path: Sources
       - path: Resources
         buildPhase: resources
+    dependencies:
+      - package: Yams
     settings:
       base:
         PRODUCT_NAME: MagCalc Studio
@@ -37,6 +44,8 @@ targets:
       - path: Sources
       - path: Resources
         buildPhase: resources
+    dependencies:
+      - package: Yams
     settings:
       base:
         PRODUCT_NAME: MagCalc Studio

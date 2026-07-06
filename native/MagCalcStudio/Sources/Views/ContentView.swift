@@ -4,9 +4,12 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @EnvironmentObject var model: AppModel
     @State private var showCIFImporter = false
+    @State private var showYAMLImporter = false
+    @State private var showYAMLExporter = false
     @State private var showProjectImporter = false
     @State private var showProjectExporter = false
     @State private var showSettings = false
+    @State private var showResetConfirm = false
 
     var body: some View {
         NavigationSplitView {
@@ -37,6 +40,23 @@ struct ContentView: View {
         .fileImporter(isPresented: $showCIFImporter,
                       allowedContentTypes: [.data, .text]) { result in
             if case .success(let url) = result { model.importCIF(from: url) }
+        }
+        .fileImporter(isPresented: $showYAMLImporter,
+                      allowedContentTypes: [.yaml, .data, .text]) { result in
+            if case .success(let url) = result { model.importYAML(from: url) }
+        }
+        .fileExporter(isPresented: $showYAMLExporter,
+                      document: YAMLDocument(text: (try? model.exportYAML()) ?? ""),
+                      contentType: .yaml,
+                      defaultFilename: "config_designer") { result in
+            if case .success = result { model.notify("Success! Configuration exported.") }
+        }
+        .confirmationDialog(
+            "Are you sure you want to load the default example (aCVO)?\nCurrent changes will be lost.",
+            isPresented: $showResetConfirm, titleVisibility: .visible
+        ) {
+            Button("Load Defaults", role: .destructive) { model.resetToDemo() }
+            Button("Cancel", role: .cancel) {}
         }
         .fileImporter(isPresented: $showProjectImporter,
                       allowedContentTypes: [.json]) { result in
@@ -99,12 +119,26 @@ struct ContentView: View {
             }
             #endif
             Menu {
-                Button("Open Project…") { showProjectImporter = true }
-                Button("Save Project…") { showProjectExporter = true }
+                Button {
+                    showCIFImporter = true
+                } label: {
+                    Label("Load CIF…", systemImage: "square.and.arrow.up")
+                }
+                Button {
+                    showYAMLImporter = true
+                } label: {
+                    Label("Load YAML…", systemImage: "chevron.left.forwardslash.chevron.right")
+                }
+                Button {
+                    showYAMLExporter = true
+                } label: {
+                    Label("Export YAML…", systemImage: "square.and.arrow.down")
+                }
                 Divider()
-                Button("Import CIF…") { showCIFImporter = true }
+                Button("Open Project (JSON)…") { showProjectImporter = true }
+                Button("Save Project (JSON)…") { showProjectExporter = true }
                 Divider()
-                Button("Reset to Demo (aCVO)", role: .destructive) { model.resetToDemo() }
+                Button("Load Defaults (aCVO)", role: .destructive) { showResetConfirm = true }
             } label: {
                 Label("Project", systemImage: "folder")
             }
@@ -125,6 +159,23 @@ struct ContentView: View {
                 .disabled(!model.serverReachable)
             }
         }
+    }
+}
+
+/// FileDocument wrapper for exporting the web-app-format YAML config.
+struct YAMLDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.yaml, .plainText] }
+
+    var text: String
+
+    init(text: String) { self.text = text }
+
+    init(configuration: ReadConfiguration) throws {
+        text = String(data: configuration.file.regularFileContents ?? Data(), encoding: .utf8) ?? ""
+    }
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: Data(text.utf8))
     }
 }
 

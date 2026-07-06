@@ -56,6 +56,13 @@ struct RunView: View {
     @ViewBuilder
     private var resultsSection: some View {
         if let results = model.calcResults {
+            Label("Calculation Completed Successfully", systemImage: "checkmark.circle.fill")
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.green)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+
             if let fitParams = results.fitParams, !fitParams.isEmpty {
                 SectionCard(title: "Best-Fit Parameters") {
                     Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 4) {
@@ -75,31 +82,46 @@ struct RunView: View {
                 }
             }
 
-            let imagePlots = results.plots.filter { $0.hasSuffix(".png") }
+            // Match the web app: if mag_structure.json is present, show the
+            // interactive 3D viewer and skip the static mag_structure.png.
+            let hasStructureJSON = results.plots.contains { $0.hasSuffix("mag_structure.json") }
+            let imagePlots = results.plots.filter {
+                $0.hasSuffix(".png") && !(hasStructureJSON && $0.hasSuffix("mag_structure.png"))
+            }
             ForEach(imagePlots, id: \.self) { path in
                 SectionCard(title: plotTitle(path)) {
                     ResultPlotView(serverPath: path)
                 }
             }
 
-            if model.magStructure != nil {
-                SectionCard(title: "Minimized Magnetic Structure (interactive)") {
-                    if let structure = model.magStructure {
-                        SpinStructureSceneView(structure: structure)
-                            .frame(height: 420)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                        if let e = structure.energy {
-                            Text("Ground-state energy: \(String(format: "%.6f", e)) meV")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Button {
-                            model.importMinimizedStructure()
-                        } label: {
-                            Label("Use as Manual Structure", systemImage: "square.and.arrow.down")
-                        }
+            if hasStructureJSON, let structure = model.magStructure {
+                SectionCard(title: "Interactive Magnetic Structure") {
+                    SpinStructureSceneView(structure: structure)
+                        .frame(height: 420)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    if let e = structure.energy {
+                        Text("Ground-state energy: \(String(format: "%.6f", e)) meV")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
+                    Button {
+                        model.importMinimizedStructure()
+                    } label: {
+                        Label("Use as Manual Structure", systemImage: "wind")
+                    }
+                    .help("Save this minimized structure into the Manual Structure tab for reuse (disables minimization)")
                 }
+            }
+
+            if results.plots.isEmpty {
+                VStack(spacing: 6) {
+                    Image(systemName: "info.circle").font(.title2).foregroundStyle(.tertiary)
+                    Text("No plots generated. Enable plotting in \"Tasks & Plotting\" tab.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding()
             }
         } else if !model.calcRunning {
             ContentUnavailableView(

@@ -74,6 +74,7 @@ final class AppModel: ObservableObject {
     @Published var neighborShells: [NeighborShell] = []
     @Published var neighborsLoading = false
     @Published var hiddenBondKeys: Set<String> = []
+    @Published var selectedBond: VisualizerBond?
 
     @Published var calcRunning = false
     @Published var calcStopping = false
@@ -110,7 +111,7 @@ final class AppModel: ObservableObject {
         notification = Notification(message: message, kind: kind)
         let current = notification
         Task {
-            try? await Task.sleep(for: .seconds(4))
+            try? await Task.sleep(for: .seconds(5))
             if notification == current { notification = nil }
         }
     }
@@ -353,16 +354,116 @@ final class AppModel: ObservableObject {
 
     // MARK: Interaction helpers
 
-    func addInteraction(from shell: NeighborShell, type: InteractionType) {
+    /// Adds a Heisenberg rule J{n} from a neighbor-shell suggestion, exactly
+    /// like the web app's "Add J{i+1}" button (n = 1-based shell index).
+    func addNeighborRule(shellIndex: Int, pair: [String], offset: [Int], distance: Double) {
+        let name = "J\(shellIndex + 1)"
         var rule = SymmetryInteraction()
-        rule.type = type
-        rule.refPair = shell.refPair
-        rule.distance = (shell.distance * 100000).rounded() / 100000
-        rule.offset = shell.offset
-        rule.value = type.defaultValue
+        rule.type = .heisenberg
+        rule.refPair = pair
+        rule.distance = (distance * 100000).rounded() / 100000
+        rule.offset = offset
+        rule.value = .string(name)
         config.symmetryInteractions.append(rule)
-        registerParameters(of: rule.value)
-        notify("Added \(type.displayName) at d = \(String(format: "%.4f", shell.distance)) Å")
+        if config.parameters[name] == nil || config.parameters[name]?.doubleValue == nil {
+            config.parameters[name] = .number(0)
+        }
+        notify("Added Interaction Rule \(name)")
+    }
+
+    /// "Add Rule" button: blank heisenberg J1 at 3 Å (ensures the parameter).
+    func addBlankRule() {
+        config.symmetryInteractions.append(SymmetryInteraction())
+        if config.parameters["J1"] == nil { config.parameters["J1"] = .number(0) }
+    }
+
+    /// Add an interaction on the bond selected in the 3D visualizer,
+    /// mirroring addRuleFromVisualizer in App.jsx.
+    func addRuleFromVisualizer(type: InteractionType) {
+        guard let bond = selectedBond, let atoms = visualizerData?.atoms else { return }
+
+        if config.interactionMode == "explicit" {
+            var inter = ExplicitInteraction()
+            inter.type = type == .dm ? "dm_manual" : type.rawValue
+            inter.atomI = bond.atomI
+            inter.atomJ = bond.atomJ
+            inter.offsetJ = bond.offset
+            inter.distance = bond.distance ?? 0
+            inter.value = type.defaultValue
+            config.explicitInteractions.append(inter)
+        } else {
+            var rule = SymmetryInteraction()
+            rule.type = type
+            rule.refPair = [
+                atoms.first { $0.idx == bond.atomI }?.label ?? "?",
+                atoms.first { $0.idx == bond.atomJ }?.label ?? "?",
+            ]
+            rule.offset = bond.offset
+            rule.distance = ((bond.distance ?? 0) * 100000).rounded() / 100000
+            rule.value = type.defaultValue
+            config.symmetryInteractions.append(rule)
+        }
+        registerParameters(of: type.defaultValue)
+        notify("Added \(type.rawValue) interaction")
+    }
+
+    /// Adds an interaction_matrix rule from a symmetry orbit + its allowed
+    /// matrix form; free parameters get created at 0 (web parity).
+    func addOrbitMatrixRule(orbit: BondOrbit, constraints: BondConstraints) {
+        var rule = SymmetryInteraction()
+        rule.type = .interactionMatrix
+        rule.refPair = [orbit.representative.atomIText, orbit.representative.atomJText]
+        rule.offset = orbit.representative.offset
+        rule.distance = (orbit.distance * 100000).rounded() / 100000
+        rule.value = .array(constraints.symbolicMatrix.map { row in
+            .array(row.map { .string($0) })
+        })
+        config.symmetryInteractions.append(rule)
+        for p in constraints.freeParameters where config.parameters[p] == nil {
+            config.parameters[p] = .number(0)
+        }
+        notify("Added Symmetry Matrix Interaction")
+    }
+
+    /// Toggle 3D visibility of all bonds produced by a rule, keyed like the
+    /// web app's getBondKey (arrays join with ",").
+    func toggleBondVisibility(_ value: JSONValue?) {
+        let key = VisualizerBond.bondKey(value)
+        if hiddenBondKeys.contains(key) {
+            hiddenBondKeys.remove(key)
+        } else {
+            hiddenBondKeys.insert(key)
+        }
+    }
+
+    func isBondHidden(_ value: JSONValue?) -> Bool {
+        hiddenBondKeys.contains(VisualizerBond.bondKey(value))
+    }
+
+    // MARK: YAML config exchange (web-app format)
+
+    func exportYAML() throws -> String {
+        try YAMLConfig.export(config)
+    }
+
+    func importYAML(from url: URL) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            config = try YAMLConfig.importConfig(from: text)
+            neighborShells = []
+            visualizerData = nil
+            selectedBond = nil
+            calcResults = nil
+            calcError = nil
+            magStructure = nil
+            logStream.clear()
+            refreshVisualizer()
+            notify("Configuration imported successfully! Previous state cleared.")
+        } catch {
+            notify("Error parsing YAML: \(error.localizedDescription)", .error)
+        }
     }
 
     /// Ensure symbolic names used in an interaction value exist as parameters.

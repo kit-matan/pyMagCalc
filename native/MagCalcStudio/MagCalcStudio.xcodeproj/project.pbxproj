@@ -10,6 +10,7 @@
 		173A6CE9CD8547C69DBD0BD9 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B0540B3868FD7A105529CA5 /* AppModel.swift */; };
 		1CEAE2A8A28C68910B8120DD /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B0540B3868FD7A105529CA5 /* AppModel.swift */; };
 		214AFB825AD62C22D73F946D /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70539559C011BD1C0F4F2F8 /* APIClient.swift */; };
+		24081F9A66C4A134D68169F1 /* Yams in Frameworks */ = {isa = PBXBuildFile; productRef = 1354214794623CBB78E41095 /* Yams */; };
 		245C631C8CB6DD7D0C2023C2 /* LogStreamClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AD76BDECF04549A91067E31 /* LogStreamClient.swift */; };
 		24B781E61059FE278AD01EB4 /* SceneKitSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB3ADDCB0C0635B37F705C93 /* SceneKitSupport.swift */; };
 		2AC434D4F23704D03D69DDB7 /* LogStreamClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AD76BDECF04549A91067E31 /* LogStreamClient.swift */; };
@@ -28,6 +29,7 @@
 		8AD0DE485E013B90DFA0778C /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7313A17CF72940277C23ED9F /* SettingsView.swift */; };
 		95A23C7A85007D7122765587 /* LocalBackendController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E970AD007500EA080566AD6 /* LocalBackendController.swift */; };
 		9876AC0BDE08E5328042D10B /* SpaceGroups.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F073A80464EE5A8512ED688 /* SpaceGroups.swift */; };
+		9CF109E390DCC636928CE8D6 /* ExchangeMatrix.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25E22CB5DC8FAE937FA5FA2B /* ExchangeMatrix.swift */; };
 		9D8E67C4B627F0AD682FBB09 /* RunView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03A16E81FB2B0A8763ED5D1E /* RunView.swift */; };
 		A18E2D2EB07C2754FE695FEC /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2783F083FF3B6CFEBAC6D2A3 /* Components.swift */; };
 		A2B46B1622872BAA76004942 /* CrystalSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96FB47DCBFE486DC61E5926F /* CrystalSceneView.swift */; };
@@ -37,15 +39,19 @@
 		AE989558501CD30C5EF857E8 /* MagneticStructureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A328EBB0F23A55FF0E7690F2 /* MagneticStructureView.swift */; };
 		AF2B01D78DE94B188A061759 /* CrystalSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96FB47DCBFE486DC61E5926F /* CrystalSceneView.swift */; };
 		B34CA23842529C2EB1BADE56 /* FittingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6087E2BBBBA654BAB3560C76 /* FittingView.swift */; };
+		BB0D451F5FF789ED5B1B57A5 /* Yams in Frameworks */ = {isa = PBXBuildFile; productRef = 640D180D39F2BCF7E2AC6C97 /* Yams */; };
 		C3EA8CCB4DEDABD3D5E46E82 /* TasksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98CFCE2908CC24739FCB09B0 /* TasksView.swift */; };
 		C4E4C2532E0C41F51B576ED9 /* EnvironmentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D2E1286A842B41E978E3768 /* EnvironmentView.swift */; };
+		C9A92D231175DCA910D06DCD /* ExchangeMatrix.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25E22CB5DC8FAE937FA5FA2B /* ExchangeMatrix.swift */; };
 		CCEFD83D4ADC035BAABCF12A /* APIResponses.swift in Sources */ = {isa = PBXBuildFile; fileRef = 121B54B04E97892BF3F5600C /* APIResponses.swift */; };
 		CDDDEDE4B290B800387ED99C /* JSONValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 151B4565A599347A78767848 /* JSONValue.swift */; };
+		CDFE685CF502665AE6C01F7E /* YAMLConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B3E9CAE784CF7FE7FD4CE5D /* YAMLConfig.swift */; };
 		D887949AA030B5739D2EAFEB /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B1338D63391E57B500037E1 /* ContentView.swift */; };
 		DEFADC6B23308038330828F1 /* FittingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6087E2BBBBA654BAB3560C76 /* FittingView.swift */; };
 		E1E38E15E8A2D94D3A181387 /* StructureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DA4410D86ED94B0C3A286D3 /* StructureView.swift */; };
 		E52646AB7F245D517EBEA9F3 /* MagCalcConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A93EA424B2A581750D10E84 /* MagCalcConfig.swift */; };
 		E838D995D259DE427A898D48 /* SpaceGroups.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F073A80464EE5A8512ED688 /* SpaceGroups.swift */; };
+		EBD92ED6DC7D18EC0A54D718 /* YAMLConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B3E9CAE784CF7FE7FD4CE5D /* YAMLConfig.swift */; };
 		ECEDB56727ED4C1503AE58A4 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70539559C011BD1C0F4F2F8 /* APIClient.swift */; };
 		EF5B632293B85C6105BE3F1F /* SceneKitSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB3ADDCB0C0635B37F705C93 /* SceneKitSupport.swift */; };
 		F005A576EC8A12C77336C9F4 /* TasksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98CFCE2908CC24739FCB09B0 /* TasksView.swift */; };
@@ -58,12 +64,14 @@
 		121B54B04E97892BF3F5600C /* APIResponses.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIResponses.swift; sourceTree = "<group>"; };
 		151B4565A599347A78767848 /* JSONValue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONValue.swift; sourceTree = "<group>"; };
 		1E970AD007500EA080566AD6 /* LocalBackendController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalBackendController.swift; sourceTree = "<group>"; };
+		25E22CB5DC8FAE937FA5FA2B /* ExchangeMatrix.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExchangeMatrix.swift; sourceTree = "<group>"; };
 		2783F083FF3B6CFEBAC6D2A3 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		2B1338D63391E57B500037E1 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		4B0540B3868FD7A105529CA5 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		4F073A80464EE5A8512ED688 /* SpaceGroups.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpaceGroups.swift; sourceTree = "<group>"; };
 		5A9A6F2D63E0B7399B31BA19 /* MagCalcStudio-macOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "MagCalcStudio-macOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		5AD76BDECF04549A91067E31 /* LogStreamClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogStreamClient.swift; sourceTree = "<group>"; };
+		5B3E9CAE784CF7FE7FD4CE5D /* YAMLConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YAMLConfig.swift; sourceTree = "<group>"; };
 		6087E2BBBBA654BAB3560C76 /* FittingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FittingView.swift; sourceTree = "<group>"; };
 		6DA4410D86ED94B0C3A286D3 /* StructureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StructureView.swift; sourceTree = "<group>"; };
 		7313A17CF72940277C23ED9F /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
@@ -79,6 +87,25 @@
 		E70539559C011BD1C0F4F2F8 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		EA76DFA64681DBEA76DE8FC8 /* MagCalcStudioApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MagCalcStudioApp.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		3314D04F7C83A3E55324A3CD /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BB0D451F5FF789ED5B1B57A5 /* Yams in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E539519F9D8E18E602FF4264 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				24081F9A66C4A134D68169F1 /* Yams in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		01A5E813A076969917E38183 /* Server */ = {
@@ -145,9 +172,11 @@
 			isa = PBXGroup;
 			children = (
 				121B54B04E97892BF3F5600C /* APIResponses.swift */,
+				25E22CB5DC8FAE937FA5FA2B /* ExchangeMatrix.swift */,
 				151B4565A599347A78767848 /* JSONValue.swift */,
 				7A93EA424B2A581750D10E84 /* MagCalcConfig.swift */,
 				4F073A80464EE5A8512ED688 /* SpaceGroups.swift */,
+				5B3E9CAE784CF7FE7FD4CE5D /* YAMLConfig.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -200,6 +229,7 @@
 			buildPhases = (
 				FEE38278D51774614C707154 /* Sources */,
 				3B52400D42ACD8D370E1B8A3 /* Resources */,
+				E539519F9D8E18E602FF4264 /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -207,6 +237,7 @@
 			);
 			name = "MagCalcStudio-macOS";
 			packageProductDependencies = (
+				1354214794623CBB78E41095 /* Yams */,
 			);
 			productName = "MagCalcStudio-macOS";
 			productReference = 5A9A6F2D63E0B7399B31BA19 /* MagCalcStudio-macOS.app */;
@@ -218,6 +249,7 @@
 			buildPhases = (
 				E21DD687308FD4EB66423360 /* Sources */,
 				C3A421162C5F3538C39F6D59 /* Resources */,
+				3314D04F7C83A3E55324A3CD /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -225,6 +257,7 @@
 			);
 			name = "MagCalcStudio-iOS";
 			packageProductDependencies = (
+				640D180D39F2BCF7E2AC6C97 /* Yams */,
 			);
 			productName = "MagCalcStudio-iOS";
 			productReference = 7C33EE66A203D669DBB9A6B6 /* MagCalcStudio-iOS.app */;
@@ -256,6 +289,9 @@
 			);
 			mainGroup = 9BC831F1F2EABE31A46E8DF2;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				77A5E101365F9D1ECB0EBDC5 /* XCRemoteSwiftPackageReference "Yams" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = BC89DEADD2771F54499AC217 /* Products */;
 			projectDirPath = "";
@@ -298,6 +334,7 @@
 				6EAC50D3FEE3AAE2A05CC472 /* ContentView.swift in Sources */,
 				A2B46B1622872BAA76004942 /* CrystalSceneView.swift in Sources */,
 				2CAF8A143C5AB69F8D766209 /* EnvironmentView.swift in Sources */,
+				9CF109E390DCC636928CE8D6 /* ExchangeMatrix.swift in Sources */,
 				B34CA23842529C2EB1BADE56 /* FittingView.swift in Sources */,
 				4E28EC2C02A084FCD3B9DED1 /* InteractionsView.swift in Sources */,
 				A783CE9B0896A57765482B66 /* JSONValue.swift in Sources */,
@@ -312,6 +349,7 @@
 				E838D995D259DE427A898D48 /* SpaceGroups.swift in Sources */,
 				E1E38E15E8A2D94D3A181387 /* StructureView.swift in Sources */,
 				C3EA8CCB4DEDABD3D5E46E82 /* TasksView.swift in Sources */,
+				EBD92ED6DC7D18EC0A54D718 /* YAMLConfig.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -326,6 +364,7 @@
 				D887949AA030B5739D2EAFEB /* ContentView.swift in Sources */,
 				AF2B01D78DE94B188A061759 /* CrystalSceneView.swift in Sources */,
 				C4E4C2532E0C41F51B576ED9 /* EnvironmentView.swift in Sources */,
+				C9A92D231175DCA910D06DCD /* ExchangeMatrix.swift in Sources */,
 				DEFADC6B23308038330828F1 /* FittingView.swift in Sources */,
 				FAEB633C086B47169D5E3320 /* InteractionsView.swift in Sources */,
 				CDDDEDE4B290B800387ED99C /* JSONValue.swift in Sources */,
@@ -340,6 +379,7 @@
 				9876AC0BDE08E5328042D10B /* SpaceGroups.swift in Sources */,
 				665B27909D647B1EE00CFE67 /* StructureView.swift in Sources */,
 				F005A576EC8A12C77336C9F4 /* TasksView.swift in Sources */,
+				CDFE685CF502665AE6C01F7E /* YAMLConfig.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -576,6 +616,30 @@
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		77A5E101365F9D1ECB0EBDC5 /* XCRemoteSwiftPackageReference "Yams" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/jpsim/Yams.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 5.1.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		1354214794623CBB78E41095 /* Yams */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 77A5E101365F9D1ECB0EBDC5 /* XCRemoteSwiftPackageReference "Yams" */;
+			productName = Yams;
+		};
+		640D180D39F2BCF7E2AC6C97 /* Yams */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 77A5E101365F9D1ECB0EBDC5 /* XCRemoteSwiftPackageReference "Yams" */;
+			productName = Yams;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 110109A73D47E08ABEEF7715 /* Project object */;
 }

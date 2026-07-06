@@ -13,6 +13,11 @@ struct ParsedCIF: Codable {
     }
 }
 
+struct EquivalentBond: Codable, Hashable {
+    var pair: [String]
+    var offset: [Int]
+}
+
 struct NeighborShell: Codable, Identifiable {
     var distance: Double
     var refPair: [String]
@@ -20,6 +25,7 @@ struct NeighborShell: Codable, Identifiable {
     var multiplicity: Int
     var shellLabel: String?
     var rank: Int?
+    var equivalentBonds: [EquivalentBond]?
 
     var id: String { "\(refPair.joined(separator: "-"))@\(distance)@\(offset.map(String.init).joined(separator: ","))" }
 
@@ -27,6 +33,46 @@ struct NeighborShell: Codable, Identifiable {
         case distance, offset, multiplicity, rank
         case refPair = "ref_pair"
         case shellLabel = "shell_label"
+        case equivalentBonds = "equivalent_bonds"
+    }
+}
+
+/// /analyze-bonds response entry.
+struct BondOrbit: Codable, Identifiable {
+    struct Representative: Codable {
+        var atomI: JSONValue   // label (symmetry mode) or index (explicit)
+        var atomJ: JSONValue
+        var offset: [Int]
+
+        enum CodingKeys: String, CodingKey {
+            case atomI = "atom_i"
+            case atomJ = "atom_j"
+            case offset
+        }
+
+        var atomIText: String { atomI.stringValue ?? "?" }
+        var atomJText: String { atomJ.stringValue ?? "?" }
+    }
+
+    var distance: Double
+    var multiplicity: Int
+    var representative: Representative
+
+    var id: String {
+        "\(representative.atomIText)-\(representative.atomJText)@\(distance)@\(representative.offset.map(String.init).joined(separator: ","))"
+    }
+}
+
+/// /bond-constraints response: symmetry-allowed exchange-matrix form.
+struct BondConstraints: Codable {
+    var symbolicMatrix: [[String]]
+    var freeParameters: [String]
+    var isCentrosymmetric: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case symbolicMatrix = "symbolic_matrix"
+        case freeParameters = "free_parameters"
+        case isCentrosymmetric = "is_centrosymmetric"
     }
 }
 
@@ -50,6 +96,7 @@ struct VisualizerBond: Codable, Identifiable, Hashable {
     var offset: [Int]
     var type: String
     var value: JSONValue?
+    var ruleValue: JSONValue?
     var label: String?
     var dmVector: [Double]?
     var distance: Double?
@@ -57,14 +104,24 @@ struct VisualizerBond: Codable, Identifiable, Hashable {
 
     var id: String { "\(atomI)-\(atomJ)@\(offset.map(String.init).joined(separator: ","))-\(type)-\(value?.displayString ?? "")" }
 
-    /// Grouping key used for per-rule visibility toggles (same idea as the
-    /// web app's getBondKey).
-    var valueKey: String { value?.displayString ?? label ?? type }
+    /// Visibility-toggle key, matching the web app's
+    /// getBondKey(bond.rule_value || bond.value): arrays join with ",",
+    /// everything else stringifies.
+    var valueKey: String { Self.bondKey(ruleValue ?? value) }
+
+    static func bondKey(_ value: JSONValue?) -> String {
+        guard let value else { return "undefined" }
+        if let arr = value.arrayValue {
+            return arr.map { $0.stringValue ?? $0.displayString }.joined(separator: ",")
+        }
+        return value.stringValue ?? value.displayString
+    }
 
     enum CodingKeys: String, CodingKey {
         case offset, type, value, label, distance
         case atomI = "atom_i"
         case atomJ = "atom_j"
+        case ruleValue = "rule_value"
         case dmVector = "dm_vector"
         case exchangeMatrix = "exchange_matrix"
     }

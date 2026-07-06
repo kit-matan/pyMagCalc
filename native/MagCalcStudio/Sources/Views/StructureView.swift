@@ -88,16 +88,40 @@ struct StructureView: View {
     }
 
     private var atomsCard: some View {
-        SectionCard(title: "Basis Atoms (Wyckoff Positions)",
-                    subtitle: "Fractional coordinates of the asymmetric unit; symmetry expansion happens on the backend") {
+        SectionCard(title: "Basis Atoms",
+                    subtitle: model.config.atomMode == "symmetry"
+                        ? "Define unique atoms (Wyckoff positions). The full structure will be generated using the Space Group symmetry."
+                        : "Define all atoms in the unit cell explicitly. Space group symmetry will be ignored for atomic positions.") {
+            Picker("", selection: $model.config.atomMode) {
+                Label("Wyckoff Positions", systemImage: "wind").tag("symmetry")
+                Label("Explicit Unit Cell", systemImage: "cube").tag("explicit")
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: 340)
+
             ForEach($model.config.wyckoffAtoms) { $atom in
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
-                        TextField("Label", text: $atom.label)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: 120)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Label").font(.caption).foregroundStyle(.secondary)
+                            TextField("Label", text: $atom.label)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.body.monospaced())
+                                .frame(maxWidth: 110)
+                        }
                         NumberField(label: "Spin S", value: $atom.spinS)
-                            .frame(maxWidth: 90)
+                            .frame(maxWidth: 80)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Ion/Element").font(.caption).foregroundStyle(.secondary)
+                            TextField("e.g. Fe3+", text: Binding(
+                                get: { atom.ion ?? "" },
+                                set: { atom.ion = $0.isEmpty ? nil : $0 }
+                            ))
+                            .textFieldStyle(.roundedBorder)
+                            .font(.body.monospaced())
+                            .frame(maxWidth: 100)
+                        }
                         Spacer()
                         Button(role: .destructive) {
                             model.config.wyckoffAtoms.removeAll { $0.id == atom.id }
@@ -260,9 +284,8 @@ struct CrystalVisualizerPanel: View {
                             }
                         } label: {
                             HStack(spacing: 4) {
-                                Circle()
-                                    .fill(BondPalette.color(for: key))
-                                    .frame(width: 8, height: 8)
+                                Image(systemName: model.hiddenBondKeys.contains(key) ? "eye.slash" : "eye")
+                                    .font(.caption2)
                                 Text(key).font(.caption)
                             }
                             .padding(.horizontal, 8)

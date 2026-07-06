@@ -104,6 +104,25 @@ struct APIClient: Sendable {
                            as: VisualizerData.self)
     }
 
+    func analyzeBonds(for config: MagCalcConfig, maxDistance: Double = 10.0) async throws -> [BondOrbit] {
+        try await postJSON("analyze-bonds",
+                           body: .object(["data": config.structurePayload(),
+                                          "max_distance": .number(maxDistance)]),
+                           as: [BondOrbit].self)
+    }
+
+    func bondConstraints(for config: MagCalcConfig, bond: BondOrbit.Representative) async throws -> BondConstraints {
+        let bondValue: JSONValue = .object([
+            "atom_i": bond.atomI,
+            "atom_j": bond.atomJ,
+            "offset": .array(bond.offset.map { .number(Double($0)) }),
+        ])
+        return try await postJSON("bond-constraints",
+                                  body: .object(["data": config.structurePayload(),
+                                                 "bond": bondValue]),
+                                  as: BondConstraints.self)
+    }
+
     func expandConfig(_ config: MagCalcConfig) async throws -> JSONValue {
         try await postJSON("expand-config",
                            body: .object(["data": config.backendInput()]),

@@ -22,12 +22,24 @@ struct MagneticStructureView: View {
                     .frame(maxWidth: .infinity)
                 } else {
                     SectionCard(title: "Pattern") {
-                        Picker("Pattern type", selection: $model.config.magneticStructure.patternType) {
-                            Text("Antiferromagnetic").tag("antiferromagnetic")
-                            Text("Generic / Custom List").tag("generic")
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Structure Type").font(.caption).foregroundStyle(.secondary)
+                            Picker("", selection: $model.config.magneticStructure.type) {
+                                Text("Pattern Based").tag("pattern")
+                            }
+                            .labelsHidden()
+                            .frame(maxWidth: 220)
                         }
-                        .pickerStyle(.segmented)
-                        .frame(maxWidth: 380)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Pattern Type").font(.caption).foregroundStyle(.secondary)
+                            Picker("", selection: $model.config.magneticStructure.patternType) {
+                                Text("Antiferromagnetic").tag("antiferromagnetic")
+                                Text("Generic / Custom List").tag("generic")
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .frame(maxWidth: 380)
+                        }
                     }
 
                     SectionCard(title: "Spin Directions (unit vectors)",

@@ -7,7 +7,7 @@ struct EnvironmentView: View {
 
     private var scalarNames: [String] {
         model.config.parameters
-            .filter { !$0.value.isVector && $0.key != "H_mag" }
+            .filter { !$0.value.isVector && !["S", "H_mag", "H_dir"].contains($0.key) }
             .keys.sorted()
     }
 
@@ -57,17 +57,6 @@ struct EnvironmentView: View {
                         .frame(maxWidth: 340)
                 }
 
-                SectionCard(title: "Calculation Backend") {
-                    Picker("Cache mode", selection: $model.config.calculation.cacheMode) {
-                        Text("Auto (recommended)").tag("auto")
-                        Text("None").tag("none")
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(maxWidth: 340)
-                    Text("Auto reuses the cached symbolic Hamiltonian across runs (~79× faster startup on cached models).")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
             }
             .padding()
         }

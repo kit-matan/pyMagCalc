@@ -92,14 +92,50 @@ enum InteractionType: String, Codable, CaseIterable, Identifiable {
 struct SymmetryInteraction: Codable, Hashable, Identifiable {
     var id = UUID()
     var type: InteractionType = .heisenberg
-    var refPair: [String] = ["?", "?"]
-    var distance: Double = 0
+    /// nil ⇒ distance-only rule ("Auto-detected" in the web UI).
+    var refPair: [String]?
+    var distance: Double = 3.0
     var value: JSONValue = .string("J1")
-    var offset: [Int] = [0, 0, 0]
+    var offset: [Int]?
+    /// Kitaev only: bond direction x/y/z.
+    var bondDirection: String?
 
     enum CodingKeys: String, CodingKey {
         case type, distance, value, offset
         case refPair = "ref_pair"
+        case bondDirection = "bond_direction"
+    }
+}
+
+/// Manual per-bond interaction used in "Explicit Interactions" mode
+/// (interaction type heisenberg | dm_manual | anisotropic_exchange).
+struct ExplicitInteraction: Codable, Hashable, Identifiable {
+    var id = UUID()
+    var type = "heisenberg"
+    var atomI = 0
+    var atomJ = 1
+    var offsetJ: [Int] = [0, 0, 0]
+    var distance: Double = 3.0
+    var value: JSONValue = .string("J1")
+
+    enum CodingKeys: String, CodingKey {
+        case type, distance, value
+        case atomI = "atom_i"
+        case atomJ = "atom_j"
+        case offsetJ = "offset_j"
+    }
+}
+
+struct SingleIonAnisotropy: Codable, Hashable, Identifiable {
+    var id = UUID()
+    var type = "sia"
+    var atomLabel = "Cu"
+    var value: JSONValue = .string("D")
+    var axis: [Double] = [0, 0, 1]
+
+    enum CodingKeys: String, CodingKey {
+        case type, value, axis
+        case atomLabel = "atom_label"
     }
 }
 
@@ -145,6 +181,8 @@ struct PlottingSettings: Codable, Hashable {
     var savePlot = false
     var showPlot = false
     var plotStructure = false
+    var dispPlotFilename = "disp_plot.png"
+    var sqwPlotFilename = "sqw_plot.png"
 
     enum CodingKeys: String, CodingKey {
         case energyMin = "energy_min"
@@ -155,6 +193,25 @@ struct PlottingSettings: Codable, Hashable {
         case savePlot = "save_plot"
         case showPlot = "show_plot"
         case plotStructure = "plot_structure"
+        case dispPlotFilename = "disp_plot_filename"
+        case sqwPlotFilename = "sqw_plot_filename"
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = PlottingSettings()
+        energyMin = try c.decodeIfPresent(Double.self, forKey: .energyMin) ?? d.energyMin
+        energyMax = try c.decodeIfPresent(Double.self, forKey: .energyMax) ?? d.energyMax
+        broadening = try c.decodeIfPresent(Double.self, forKey: .broadening) ?? d.broadening
+        energyResolution = try c.decodeIfPresent(Double.self, forKey: .energyResolution) ?? d.energyResolution
+        momentumMax = try c.decodeIfPresent(Double.self, forKey: .momentumMax) ?? d.momentumMax
+        savePlot = try c.decodeIfPresent(Bool.self, forKey: .savePlot) ?? d.savePlot
+        showPlot = try c.decodeIfPresent(Bool.self, forKey: .showPlot) ?? d.showPlot
+        plotStructure = try c.decodeIfPresent(Bool.self, forKey: .plotStructure) ?? d.plotStructure
+        dispPlotFilename = try c.decodeIfPresent(String.self, forKey: .dispPlotFilename) ?? d.dispPlotFilename
+        sqwPlotFilename = try c.decodeIfPresent(String.self, forKey: .sqwPlotFilename) ?? d.sqwPlotFilename
     }
 }
 
@@ -236,10 +293,28 @@ struct FittingSettings: Codable, Hashable {
 struct OutputSettings: Codable, Hashable {
     var dispCSVFilename = "disp_data.csv"
     var sqwCSVFilename = "sqw_data.csv"
+    var dispDataFilename = "disp_data.npz"
+    var sqwDataFilename = "sqw_data.npz"
+    var saveData = true
 
     enum CodingKeys: String, CodingKey {
         case dispCSVFilename = "disp_csv_filename"
         case sqwCSVFilename = "sqw_csv_filename"
+        case dispDataFilename = "disp_data_filename"
+        case sqwDataFilename = "sqw_data_filename"
+        case saveData = "save_data"
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = OutputSettings()
+        dispCSVFilename = try c.decodeIfPresent(String.self, forKey: .dispCSVFilename) ?? d.dispCSVFilename
+        sqwCSVFilename = try c.decodeIfPresent(String.self, forKey: .sqwCSVFilename) ?? d.sqwCSVFilename
+        dispDataFilename = try c.decodeIfPresent(String.self, forKey: .dispDataFilename) ?? d.dispDataFilename
+        sqwDataFilename = try c.decodeIfPresent(String.self, forKey: .sqwDataFilename) ?? d.sqwDataFilename
+        saveData = try c.decodeIfPresent(Bool.self, forKey: .saveData) ?? d.saveData
     }
 }
 
@@ -250,6 +325,8 @@ struct MagCalcConfig: Codable, Hashable {
     var wyckoffAtoms: [WyckoffAtom] = []
     var magneticElements: [String] = ["Cu"]
     var symmetryInteractions: [SymmetryInteraction] = []
+    var explicitInteractions: [ExplicitInteraction] = []
+    var singleIonAnisotropy: [SingleIonAnisotropy] = []
     var parameters: [String: JSONValue] = ["H_mag": .number(0), "H_dir": .array([0, 0, 1])]
     var tasks = Tasks()
     var qPath = QPath()
@@ -260,17 +337,48 @@ struct MagCalcConfig: Codable, Hashable {
     var powderAverage = PowderAverageSettings()
     var fitting = FittingSettings()
     var output = OutputSettings()
-    var atomMode = "symmetry"     // "symmetry" | "explicit"
+    var atomMode = "symmetry"          // "symmetry" | "explicit"
+    var interactionMode = "symmetry"   // "symmetry" | "explicit"
 
     enum CodingKeys: String, CodingKey {
         case lattice, parameters, tasks, plotting, minimization, calculation, fitting, output
         case wyckoffAtoms = "wyckoff_atoms"
         case magneticElements = "magnetic_elements"
         case symmetryInteractions = "symmetry_interactions"
+        case explicitInteractions = "explicit_interactions"
+        case singleIonAnisotropy = "single_ion_anisotropy"
         case qPath = "q_path"
         case magneticStructure = "magnetic_structure"
         case powderAverage = "powder_average"
         case atomMode = "atom_mode"
+        case interactionMode = "interaction_mode"
+    }
+
+    // Decode with defaults for keys added after older saved configs (mirrors
+    // the web app's merge-over-defaults on load).
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = MagCalcConfig()
+        lattice = try c.decodeIfPresent(LatticeParameters.self, forKey: .lattice) ?? d.lattice
+        wyckoffAtoms = try c.decodeIfPresent([WyckoffAtom].self, forKey: .wyckoffAtoms) ?? d.wyckoffAtoms
+        magneticElements = try c.decodeIfPresent([String].self, forKey: .magneticElements) ?? d.magneticElements
+        symmetryInteractions = try c.decodeIfPresent([SymmetryInteraction].self, forKey: .symmetryInteractions) ?? d.symmetryInteractions
+        explicitInteractions = try c.decodeIfPresent([ExplicitInteraction].self, forKey: .explicitInteractions) ?? d.explicitInteractions
+        singleIonAnisotropy = try c.decodeIfPresent([SingleIonAnisotropy].self, forKey: .singleIonAnisotropy) ?? d.singleIonAnisotropy
+        parameters = try c.decodeIfPresent([String: JSONValue].self, forKey: .parameters) ?? d.parameters
+        tasks = try c.decodeIfPresent(Tasks.self, forKey: .tasks) ?? d.tasks
+        qPath = try c.decodeIfPresent(QPath.self, forKey: .qPath) ?? d.qPath
+        plotting = try c.decodeIfPresent(PlottingSettings.self, forKey: .plotting) ?? d.plotting
+        magneticStructure = try c.decodeIfPresent(MagneticStructureSettings.self, forKey: .magneticStructure) ?? d.magneticStructure
+        minimization = try c.decodeIfPresent(MinimizationSettings.self, forKey: .minimization) ?? d.minimization
+        calculation = try c.decodeIfPresent(CalculationSettings.self, forKey: .calculation) ?? d.calculation
+        powderAverage = try c.decodeIfPresent(PowderAverageSettings.self, forKey: .powderAverage) ?? d.powderAverage
+        fitting = try c.decodeIfPresent(FittingSettings.self, forKey: .fitting) ?? d.fitting
+        output = try c.decodeIfPresent(OutputSettings.self, forKey: .output) ?? d.output
+        atomMode = try c.decodeIfPresent(String.self, forKey: .atomMode) ?? d.atomMode
+        interactionMode = try c.decodeIfPresent(String.self, forKey: .interactionMode) ?? d.interactionMode
     }
 
     /// Scalar parameter names available for fitting (vectors like H_dir excluded).
@@ -288,13 +396,13 @@ struct MagCalcConfig: Codable, Hashable {
         c.wyckoffAtoms = [WyckoffAtom(label: "Cu", pos: [0.16572, 0.3646, 0.7545], spinS: 0.5)]
         c.magneticElements = ["Cu"]
         c.symmetryInteractions = [
-            SymmetryInteraction(type: .heisenberg, refPair: ["Cu0", "Cu2"], distance: 3.1325, value: .string("J1")),
+            SymmetryInteraction(type: .heisenberg, refPair: ["Cu0", "Cu2"], distance: 3.1325, value: .string("J1"), offset: [0, 0, 0]),
             SymmetryInteraction(type: .dm, refPair: ["Cu0", "Cu2"], distance: 3.1325,
-                                value: .array([.string("Dx"), .string("0"), .string("0")])),
+                                value: .array([.string("Dx"), .string("0"), .string("0")]), offset: [0, 0, 0]),
             SymmetryInteraction(type: .anisotropicExchange, refPair: ["Cu0", "Cu2"], distance: 3.1325,
-                                value: .array([.string("G1"), .string("-G1"), .string("-G1")])),
-            SymmetryInteraction(type: .heisenberg, refPair: ["Cu0", "Cu13"], distance: 3.9751, value: .string("J2")),
-            SymmetryInteraction(type: .heisenberg, refPair: ["Cu0", "Cu9"], distance: 5.2572, value: .string("J3")),
+                                value: .array([.string("G1"), .string("-G1"), .string("-G1")]), offset: [0, 0, 0]),
+            SymmetryInteraction(type: .heisenberg, refPair: ["Cu0", "Cu13"], distance: 3.9751, value: .string("J2"), offset: [0, 0, 0]),
+            SymmetryInteraction(type: .heisenberg, refPair: ["Cu0", "Cu9"], distance: 5.2572, value: .string("J3"), offset: [0, 0, 0]),
         ]
         c.parameters = [
             "J1": .number(2.49), "J2": .number(2.79), "J3": .number(5.05),
@@ -340,6 +448,10 @@ extension MagCalcConfig {
             tasksValue = (try? JSONValue(encoding: tasks)) ?? .object([:])
         }
 
+        let interactionsValue: JSONValue = interactionMode == "explicit"
+            ? .object(["list": .array(explicitInteractions.map { $0.payloadValue })])
+            : .object(["symmetry_rules": .array(symmetryInteractions.map { $0.payloadValue })])
+
         var input: [String: JSONValue] = [
             "crystal_structure": .object([
                 "lattice_parameters": (try? JSONValue(encoding: lattice)) ?? .object([:]),
@@ -348,9 +460,7 @@ extension MagCalcConfig {
                 "dimensionality": .number(3),
                 "magnetic_elements": .array(magneticElements.map { .string($0) }),
             ]),
-            "interactions": .object([
-                "symmetry_rules": .array(symmetryInteractions.map { $0.payloadValue }),
-            ]),
+            "interactions": interactionsValue,
             "magnetic_structure": (try? JSONValue(encoding: magneticStructure)) ?? .object([:]),
             "parameters": .object(parameters),
             "tasks": tasksValue,
@@ -376,9 +486,18 @@ extension MagCalcConfig {
             ]),
         ]
         if includeInteractions {
-            data["interactions"] = .object([
+            // Mirrors the web app's preview payload: symmetry rules always,
+            // explicit list only in explicit mode, SIA alongside.
+            var inter: [String: JSONValue] = [
                 "symmetry_rules": .array(symmetryInteractions.map { $0.payloadValue }),
-            ])
+                "single_ion_anisotropy": .array(singleIonAnisotropy.map {
+                    (try? JSONValue(encoding: $0)) ?? .object([:])
+                }),
+            ]
+            if interactionMode == "explicit" {
+                inter["list"] = .array(explicitInteractions.map { $0.payloadValue })
+            }
+            data["interactions"] = .object(inter)
             data["parameters"] = .object(parameters)
         }
         return .object(data)
@@ -400,12 +519,27 @@ extension WyckoffAtom {
 
 extension SymmetryInteraction {
     var payloadValue: JSONValue {
-        .object([
+        var o: [String: JSONValue] = [
             "type": .string(type.rawValue),
-            "ref_pair": .array(refPair.map { .string($0) }),
             "distance": .number(distance),
             "value": value,
-            "offset": .array(offset.map { .number(Double($0)) }),
+        ]
+        if let refPair { o["ref_pair"] = .array(refPair.map { .string($0) }) }
+        if let offset { o["offset"] = .array(offset.map { .number(Double($0)) }) }
+        if let bondDirection { o["bond_direction"] = .string(bondDirection) }
+        return .object(o)
+    }
+}
+
+extension ExplicitInteraction {
+    var payloadValue: JSONValue {
+        .object([
+            "type": .string(type),
+            "atom_i": .number(Double(atomI)),
+            "atom_j": .number(Double(atomJ)),
+            "offset_j": .array(offsetJ.map { .number(Double($0)) }),
+            "distance": .number(distance),
+            "value": value,
         ])
     }
 }
