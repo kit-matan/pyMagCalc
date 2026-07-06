@@ -39,6 +39,11 @@ gui = [
     "pymatgen>=2023.0",
     "spglib>=2.0",
 ]
+# Compiled Fortran backend (fMagCalc). Until fmagcalc is published on PyPI,
+# install it from a local checkout: pip install /path/to/fMagCalc
+fortran = [
+    "fmagcalc>=0.1.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

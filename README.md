@@ -59,6 +59,22 @@
     ```
     This installs the `magcalc` command-line tool and all dependencies.
 
+### Optional: compiled Fortran backend (fMagCalc)
+
+Dispersion and S(Q,ω) accept `backend="fortran"` (also exposed in the GUI),
+which runs the per-q diagonalization in [fMagCalc](https://github.com/kit-matan/fMagCalc)'s
+OpenMP/LAPACK core — much faster at large q-counts — and falls back to NumPy
+with a warning if unavailable. fMagCalc is pip-installable (needs a Fortran
+compiler + CMake):
+
+```bash
+pip install /path/to/fMagCalc
+```
+
+Once installed, `import fmagcalc` works everywhere and pyMagCalc uses it
+directly; the `FMAGCALC_PATH` env var / sibling-checkout lookup remains only
+as a development fallback.
+
 ## CLI Usage (New)
 
 The new command-line interface makes it easy to manage calculations.

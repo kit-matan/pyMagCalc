@@ -1668,14 +1668,17 @@ class MagCalc:
             except Exception:
                 logger.warning(
                     "backend='fortran' requested but the fMagCalc package could not be "
-                    "imported; using NumPy instead. (searched: %s)",
+                    "imported; using NumPy instead. Install it with `pip install "
+                    "/path/to/fMagCalc` or set FMAGCALC_PATH. (searched: %s)",
                     located or "PYTHONPATH only",
                 )
                 return None
         if getattr(fmagcalc, "backend", None) != "ctypes":
             logger.warning(
                 "backend='fortran' requested but fMagCalc's compiled library is not "
-                "built (run cmake in fMagCalc); using NumPy instead."
+                "available (reinstall with `pip install /path/to/fMagCalc`, or run "
+                "`cmake -S . -B build && cmake --build build` in a source checkout); "
+                "using NumPy instead."
             )
             return None
         try:
@@ -1713,15 +1716,16 @@ class MagCalc:
             except Exception:
                 logger.warning(
                     "backend='fortran' requested but the fMagCalc package could not be "
-                    "imported; using NumPy instead. Install it (`pip install -e "
-                    "<fMagCalc>/python`) or set FMAGCALC_PATH. (searched: %s)",
+                    "imported; using NumPy instead. Install it with `pip install "
+                    "/path/to/fMagCalc` or set FMAGCALC_PATH. (searched: %s)",
                     located or "PYTHONPATH only",
                 )
                 return None
         if getattr(fmagcalc, "backend", None) != "ctypes":
             logger.warning(
                 "backend='fortran' requested but fMagCalc's compiled library is not "
-                "built (run `cmake -S . -B build && cmake --build build` in fMagCalc); "
+                "available (reinstall with `pip install /path/to/fMagCalc`, or run "
+                "`cmake -S . -B build && cmake --build build` in a source checkout); "
                 "using NumPy instead."
             )
             return None
