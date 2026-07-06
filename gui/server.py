@@ -350,12 +350,25 @@ async def trigger_calculation(config: Dict[str, Any]):
         if CURRENT_PROC is not None and CURRENT_PROC.returncode is None:
             raise HTTPException(status_code=409, detail="A calculation is already running.")
 
+        # The import is retried because the project may live in cloud-synced
+        # storage (OneDrive/Google Drive): reading a not-yet-hydrated module
+        # file can raise TimeoutError ([Errno 60]) while the sync client
+        # downloads it. TimeoutError is a subclass of OSError.
         child_script = (
-            "import sys, logging\n"
+            "import sys, time, logging\n"
             "logging.basicConfig(level=logging.INFO, "
             "format='%(asctime)s - %(levelname)s - %(message)s')\n"
             "logging.getLogger('magcalc').setLevel(logging.INFO)\n"
-            "from magcalc.runner import run_calculation\n"
+            "for _attempt in range(3):\n"
+            "    try:\n"
+            "        from magcalc.runner import run_calculation\n"
+            "        break\n"
+            "    except OSError as e:\n"
+            "        if _attempt == 2:\n"
+            "            raise\n"
+            "        logging.warning('Import of magcalc failed (%s); file may be "
+            "downloading from cloud storage, retrying in 5 s...', e)\n"
+            "        time.sleep(5)\n"
             "run_calculation(sys.argv[1])\n"
         )
         proc = await asyncio.create_subprocess_exec(
