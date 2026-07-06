@@ -1,0 +1,62 @@
+# Example: fit magnon dispersion to neutron data with pyMagCalc.
+#
+#   magcalc fit examples/fitting/fit_dispersion.yaml
+#
+# A 2D J1-J2 square lattice (one magnetic site). The synthetic data in
+# disp_data.txt was generated at J1=1.0, J2=0.3 with added noise; the fit below
+# starts from deliberately wrong values and should recover them.
+
+crystal_structure:
+  lattice_parameters:
+    a: 4.0
+    b: 4.0
+    c: 8.0
+    alpha: 90
+    beta: 90
+    gamma: 90
+  atoms_uc:
+    - label: "Fe1"
+      pos: [0.0, 0.0, 0.0]
+      spin_S: 1.0
+
+interactions:
+  - type: heisenberg
+    pair: ["Fe1", "Fe1"]
+    value: "J1"
+    rij_offset: [1, 0, 0]
+  - type: heisenberg
+    pair: ["Fe1", "Fe1"]
+    value: "J2"
+    rij_offset: [0, 1, 0]
+
+parameters:
+  J1: 0.6        # wrong on purpose (true value 1.0)
+  J2: 0.6        # wrong on purpose (true value 0.3)
+  S: 1.0
+
+tasks:
+  fit: true
+  plot_fit: true
+
+fitting:
+  type: dispersion           # dispersion | sqw | powder
+  data_file: disp_data.txt   # columns: h, k, l, E, sigma [, mode]
+  method: leastsq
+  vary: [J1, J2]             # subset of parameter names to optimize
+  bounds:
+    J1: [0.0, 5.0]
+    J2: [0.0, 5.0]
+  match: nearest             # assign each data point to the closest model band
+  # fast: true               # compile-once fast dispersion path (default true);
+                             # set false only to cross-check the legacy path.
+
+calculation:
+  cache_mode: auto
+
+output:
+  fit_report_filename: fit_report.txt
+  fit_params_filename: fit_params.yaml
+
+plotting:
+  fit_plot_filename: fit_comparison.png
+  show_plot: false

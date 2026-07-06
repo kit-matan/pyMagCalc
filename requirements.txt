@@ -1,6 +1,7 @@
 numpy>=1.20.0
 scipy>=1.7.0
 sympy>=1.9
+lmfit>=1.2.0
 tqdm>=4.60.0
 matplotlib>=3.4.0
 pytest>=7.0.0

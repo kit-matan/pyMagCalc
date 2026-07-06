@@ -65,12 +65,19 @@ FRONTEND_PID=$!
 trap "echo '🛑 Stopping MagCalc...'; kill $BACKEND_PID $FRONTEND_PID 2>/dev/null; exit" SIGINT SIGTERM
 
 # 4. Wait for services to be actually listening (up to ~20 s) before opening the browser
+# $4 = timeout in seconds (default 20). The backend needs a generous budget:
+# it imports pymatgen/spglib/ase/matplotlib/sympy and the magcalc package
+# (~13 s warm, and much longer cold when files are pulled from cloud storage
+# like OneDrive/Google Drive). The server had actually bound the port before
+# the old 20 s limit fired, but the cleanup path below then killed it.
 wait_for_port() {
     local port=$1
     local name=$2
     local pid=$3
+    local timeout=${4:-20}
+    local iterations=$(( timeout * 2 ))   # loop sleeps 0.5 s per iteration
     local i
-    for i in $(seq 1 40); do
+    for i in $(seq 1 "$iterations"); do
         if lsof -iTCP:$port -sTCP:LISTEN -P -n >/dev/null 2>&1; then
             return 0
         fi
@@ -83,15 +90,15 @@ wait_for_port() {
         fi
         sleep 0.5
     done
-    echo "⏰ $name did not bind port $port within 20 s. Tail of log:"
+    echo "⏰ $name did not bind port $port within ${timeout} s. Tail of log:"
     if [ "$name" = "Backend" ]; then tail -20 "$BACKEND_LOG"; else tail -20 "$FRONTEND_LOG"; fi
     return 1
 }
 
 echo "⏳ Waiting for backend on $SERVER_PORT..."
-wait_for_port $SERVER_PORT "Backend" $BACKEND_PID || { kill $BACKEND_PID $FRONTEND_PID 2>/dev/null; exit 1; }
+wait_for_port $SERVER_PORT "Backend" $BACKEND_PID 60 || { kill $BACKEND_PID $FRONTEND_PID 2>/dev/null; exit 1; }
 echo "⏳ Waiting for frontend on $CLIENT_PORT..."
-wait_for_port $CLIENT_PORT "Frontend" $FRONTEND_PID || { kill $BACKEND_PID $FRONTEND_PID 2>/dev/null; exit 1; }
+wait_for_port $CLIENT_PORT "Frontend" $FRONTEND_PID 20 || { kill $BACKEND_PID $FRONTEND_PID 2>/dev/null; exit 1; }
 
 URL="http://localhost:$CLIENT_PORT"
 echo "🌐 Opening $URL ..."

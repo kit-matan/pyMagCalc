@@ -266,6 +266,86 @@ def _minimize_worker(args):
 # --- NEW HELPER for config-driven Fourier substitutions ---
 
 
+# --- Fast dispersion evaluator (for fitting / repeated parameter changes) ---
+class DispersionEvaluator:
+    """
+    Fast, reusable dispersion evaluator for repeated parameter changes.
+
+    Wraps a single lambdified copy of the symbolic Bogoliubov Hamiltonian
+    ``H(q, S, params)`` so mode energies can be evaluated at arbitrary
+    Hamiltonian parameters with **no per-call symbolic work** (no ``subs`` and
+    no re-``lambdify``). This is the hot path for data fitting, where the
+    standard :meth:`MagCalc.calculate_dispersion` pays the lambdify cost on
+    every parameter update.
+
+    The energies replicate :func:`magcalc.numerical.process_calc_disp`
+    exactly: eigenvalues of the numerical Hamiltonian, sorted, upper
+    ``nspins`` branch (padded with NaN when fewer are found).
+
+    Note:
+        The magnetic structure enters through the local-frame rotations baked
+        into the symbolic Hamiltonian at generation time. If the model's
+        structure is changed outside the symbolic parameters (e.g. a new
+        minimized configuration installed via ``mpr``), the evaluator must be
+        recompiled with :meth:`MagCalc.compile_dispersion_evaluator`.
+    """
+
+    def __init__(self, hmat_func, n_args: int, nspins: int,
+                 spin_magnitude: float, default_params: List[Any]):
+        self._f = hmat_func
+        self._n_args = n_args
+        self.nspins = nspins
+        self.spin_magnitude = float(spin_magnitude)
+        self.default_params = list(default_params)
+
+    @staticmethod
+    def _flatten_params(params: List[Any]) -> List[float]:
+        """Flatten vector parameters to match the flat symbol list."""
+        flat: List[float] = []
+        for p in params:
+            if isinstance(p, (list, tuple, np.ndarray)):
+                flat.extend(float(v) for v in p)
+            else:
+                flat.append(float(p))
+        return flat
+
+    def energies(
+        self,
+        q_vectors: Union[List[npt.NDArray[np.float64]], npt.NDArray[np.float64]],
+        params: Optional[List[Any]] = None,
+    ) -> npt.NDArray[np.float64]:
+        """
+        Mode energies at each q for the given Hamiltonian parameters.
+
+        Args:
+            q_vectors: (N, 3) array or list of Cartesian momentum vectors.
+            params: Hamiltonian parameter list (vectors allowed; flattened
+                internally). Defaults to the parameters the evaluator was
+                compiled with.
+
+        Returns:
+            (N, nspins) array of mode energies, ascending per q-point.
+        """
+        p = self.default_params if params is None else list(params)
+        base_args = [self.spin_magnitude] + self._flatten_params(p)
+        if 3 + len(base_args) != self._n_args:
+            raise ValueError(
+                f"Parameter list yields {3 + len(base_args)} lambdify arguments; "
+                f"the compiled Hamiltonian expects {self._n_args}."
+            )
+        qs = np.atleast_2d(np.asarray(q_vectors, dtype=float))
+        n = self.nspins
+        out = np.empty((qs.shape[0], n), dtype=float)
+        for i, q in enumerate(qs):
+            H = np.array(self._f(*(list(q) + base_args)), dtype=np.complex128)
+            ev = np.linalg.eigvals(H)
+            e = np.real(np.sort(ev))[n:]
+            if len(e) != n:
+                e = e[:n] if len(e) > n else np.pad(
+                    e, (0, n - len(e)), constant_values=np.nan
+                )
+            out[i] = e
+        return out
 
 
 # --- MagCalc Class ---
@@ -1111,10 +1191,15 @@ class MagCalc:
         if not all(isinstance(x, (int, float, list, tuple, np.ndarray)) for x in new_hamiltonian_params):
              raise TypeError("All elements in new_hamiltonian_params must be numbers or sequences (vectors).")
 
+        # Store as a FLAT list of scalars so it matches `params_sym_flat`
+        # (vectors such as a field direction are expanded component-wise),
+        # exactly as __init__ does. Keeping vectors as nested sublists here
+        # would desynchronize the length from params_sym_flat and break
+        # _calculate_numerical_ud for any model with a vector parameter.
         self.hamiltonian_params = []
         for p in new_hamiltonian_params:
             if isinstance(p, (list, tuple, np.ndarray)):
-                self.hamiltonian_params.append([float(v) for v in p])
+                self.hamiltonian_params.extend(float(v) for v in p)
             else:
                 self.hamiltonian_params.append(float(p))
 
@@ -1403,6 +1488,48 @@ class MagCalc:
                 logger.warning(f"Failed to save to numerical cache {cache_filepath}: {e}")
 
         return dispersion_result
+
+    def compile_dispersion_evaluator(self) -> DispersionEvaluator:
+        """
+        Compile a fast, parameter-symbolic dispersion evaluator.
+
+        The symbolic Hamiltonian is lambdified **once** over
+        ``(q, S, parameters)``; the returned :class:`DispersionEvaluator`
+        then computes mode energies at any parameter values as a pure
+        numerical operation. Use this in fitting loops instead of calling
+        :meth:`update_hamiltonian_params` + :meth:`calculate_dispersion`
+        per iteration.
+
+        Returns:
+            DispersionEvaluator: reusable evaluator bound to the current
+            symbolic Hamiltonian (and hence the current magnetic structure).
+
+        Raises:
+            RuntimeError: If the symbolic Hamiltonian is not available.
+        """
+        if self.HMat_sym is None:
+            raise RuntimeError(
+                "Symbolic Hamiltonian not available; cannot compile evaluator."
+            )
+        lambdify_symbols = [
+            s for s in self.full_symbol_list if isinstance(s, sp.Symbol)
+        ]
+        t0 = timeit.default_timer()
+        hmat_func = lambdify(
+            lambdify_symbols, self.HMat_sym, modules=["numpy"], cse=True
+        )
+        logger.info(
+            f"Compiled dispersion evaluator ({len(lambdify_symbols)} symbols) "
+            f"in {timeit.default_timer() - t0:.2f} s."
+        )
+        return DispersionEvaluator(
+            hmat_func,
+            n_args=len(lambdify_symbols),
+            nspins=self.nspins,
+            spin_magnitude=self.spin_magnitude,
+            default_params=list(self.hamiltonian_params),
+        )
+
     def calculate_sqw_generator(
         self,
         q_vectors: Union[List[npt.NDArray[np.float64]], npt.NDArray[np.float64]],

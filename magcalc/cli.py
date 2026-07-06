@@ -98,6 +98,8 @@ _KNOWN_TASK_KEYS = {
     "plot_structure",
     "run_plotting",
     "run_powder_average",
+    "fit",
+    "plot_fit",
 }
 
 
@@ -194,6 +196,61 @@ def run(
     except Exception as e:
         typer.secho(f"Calculation failed: {e}", fg=typer.colors.RED)
         raise typer.Exit(code=1)
+
+@app.command()
+def fit(
+    config_file: Annotated[str, typer.Argument(help="Path to the config.yaml file")]
+):
+    """
+    Fit the model to neutron data defined in the config's `fitting:` block.
+
+    Reads the same config as `run`, but forces the `fit` task on so the fitting
+    engine drives the calculation. The config must contain a `fitting:` section
+    (type / data_file / vary / ...). On success the best-fit parameters, an lmfit
+    report, and a data-vs-model comparison plot are written.
+    """
+    if not os.path.exists(config_file):
+        typer.secho(f"Error: File {config_file} not found.", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
+    # Inject `tasks.fit = True` into a temporary copy so the runner takes the
+    # fit branch even if the on-disk config left it off.
+    try:
+        with open(config_file, 'r') as f:
+            data = yaml.safe_load(f) or {}
+    except yaml.YAMLError as e:
+        typer.secho(f"YAML Parse Failed: {e}", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
+    if 'fitting' not in data and not any(
+        isinstance(v, dict) and 'fitting' in v for v in data.values()
+    ):
+        typer.secho(
+            "Error: config has no `fitting:` block. See TUTORIAL.md for the format.",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=1)
+
+    data.setdefault('tasks', {})['fit'] = True
+    # Write the temp config next to the original so relative paths (data_file,
+    # output filenames) still resolve against the config's directory.
+    import tempfile
+    cfg_dir = os.path.dirname(os.path.abspath(config_file))
+    with tempfile.NamedTemporaryFile('w', suffix='.yaml', delete=False, dir=cfg_dir) as tf:
+        yaml.safe_dump(data, tf)
+        tmp_path = tf.name
+
+    try:
+        runner.run_calculation(tmp_path)
+        typer.secho("Fit completed successfully.", fg=typer.colors.GREEN)
+    except Exception as e:
+        typer.secho(f"Fit failed: {e}", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
 # Entry point for setuptools
 def main():

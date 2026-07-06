@@ -61,3 +61,5 @@ class MagCalcConfig(BaseModel):
     plotting: Optional[Dict[str, Any]] = {}
     calculation: Optional[Dict[str, Any]] = {}
     magnetic_structure: Optional[Dict[str, Any]] = {}
+    fitting: Optional[Dict[str, Any]] = {}
+    powder_average: Optional[Dict[str, Any]] = {}

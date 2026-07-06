@@ -7,6 +7,61 @@ from typing import Optional, List, Union
 
 logger = logging.getLogger(__name__)
 
+
+def broaden_spectrum(
+    centers: np.ndarray,
+    weights: np.ndarray,
+    eval_grid: np.ndarray,
+    width: float = 0.2,
+    kind: str = "lorentzian",
+) -> np.ndarray:
+    """
+    Broaden a set of delta-function modes into a continuous spectrum.
+
+    Given mode energies ``centers`` with spectral weights ``weights`` (e.g. the
+    per-mode S(Q,w) intensities at one Q-point), return the broadened intensity
+    sampled at every energy in ``eval_grid``. This is the single source of truth
+    for energy broadening, shared by the S(Q,w) plot and the intensity-fitting
+    residuals (so the fit and the plot use identical line-shapes).
+
+    Args:
+        centers: (M,) mode energies for one Q-point. NaN/complex entries are dropped.
+        weights: (M,) spectral weights (intensities) for those modes.
+        eval_grid: (G,) energies at which to evaluate the broadened spectrum.
+        width: full-width parameter (FWHM) of the line-shape, in meV.
+        kind: "lorentzian" (default, matches the S(Q,w) map) or "gaussian".
+
+    Returns:
+        (G,) array of broadened intensity at each ``eval_grid`` energy.
+    """
+    centers = np.asarray(centers, dtype=float).ravel() if not np.iscomplexobj(centers) \
+        else np.real(np.asarray(centers).ravel())
+    weights = np.asarray(weights, dtype=float).ravel() if not np.iscomplexobj(weights) \
+        else np.real(np.asarray(weights).ravel())
+    eval_grid = np.asarray(eval_grid, dtype=float).ravel()
+
+    out = np.zeros(eval_grid.shape[0], dtype=float)
+    if centers.size == 0:
+        return out
+
+    valid = ~np.isnan(centers) & ~np.isnan(weights)
+    centers = centers[valid]
+    weights = weights[valid]
+    if centers.size == 0:
+        return out
+
+    width = max(float(width), 1e-9)
+    delta = eval_grid[:, None] - centers[None, :]  # (G, M)
+    if kind == "gaussian":
+        sigma = width / 2.3548200450309493  # FWHM -> sigma
+        shape = np.exp(-0.5 * (delta / sigma) ** 2) / (sigma * np.sqrt(2.0 * np.pi))
+    else:  # lorentzian
+        hwhm = width / 2.0
+        shape = (1.0 / np.pi) * hwhm / (delta ** 2 + hwhm ** 2)
+
+    return (shape * weights[None, :]).sum(axis=1)
+
+
 def plot_dispersion(
     q_vectors: np.ndarray,
     energies: Union[List[np.ndarray], np.ndarray],
@@ -132,38 +187,19 @@ def plot_sqw_map(
         dy = 0.05 # Energy resolution
         y_grid = np.arange(y_min, y_max + dy, dy)
         
-        # 3. Broadening
+        # 3. Broadening (shared line-shape with the intensity-fitting residuals)
         intensity_matrix = np.zeros((len(y_grid), len(x_vals)))
-        
+
         for i_q in range(len(x_vals)):
             ens = energies[i_q]
             ints = intensities[i_q]
-            
+
             # Handle None or NaN
             if ens is None or ints is None: continue
-            if isinstance(ens, (list, tuple)): ens = np.array(ens)
-            if isinstance(ints, (list, tuple)): ints = np.array(ints)
-            
-            valid = ~np.isnan(ens) & ~np.isnan(ints)
-            
-            # Filter non-real values (imaginary > tolerance) to prevent crash
-            if np.iscomplexobj(ens):
-                valid = valid & (np.abs(np.imag(ens)) < 1e-3)
-                ens = np.real(ens)
-            if np.iscomplexobj(ints):
-                 ints = np.real(ints) # intensities should be real
-                 
-            ens = ens[valid]
-            ints = ints[valid]
-            
-            if len(ens) == 0: continue
-            
-            # Lorentzian Broadening
-            for band_idx, en_val in enumerate(ens):
-                w_val = ints[band_idx]
-                denom = (y_grid - en_val)**2 + (broadening_width/2)**2
-                lor = (1.0 / np.pi) * (broadening_width / 2) / denom
-                intensity_matrix[:, i_q] += w_val * lor
+
+            intensity_matrix[:, i_q] = broaden_spectrum(
+                ens, ints, y_grid, width=broadening_width, kind="lorentzian"
+            )
 
         # 4. Plotting
         plt.figure(figsize=(10, 6))
@@ -202,4 +238,80 @@ def plot_sqw_map(
 
     except Exception as e:
         logger.error(f"Failed to plot S(Q,w): {e}")
+        raise e
+
+
+def plot_fit_comparison(
+    fit_type: str,
+    prediction: dict,
+    save_filename: str,
+    title: str = "Fit comparison",
+    show_plot: bool = False,
+):
+    """
+    Plot a data-vs-best-fit-model comparison produced by ``FitProblem.predict``.
+
+    dispersion: measured peak energies (black, with error bars) overlaid with the
+        matched model energies (red), plus a model-vs-data parity panel.
+    sqw/powder: a model-vs-data intensity parity scatter and a residual panel,
+        which work for both scattered and gridded data.
+    """
+    try:
+        if fit_type == "dispersion":
+            x = prediction["x"]
+            E_data = prediction["E_data"]
+            sigma = prediction["sigma"]
+            E_model = prediction["E_model"]
+
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+            ax1.errorbar(x, E_data, yerr=sigma, fmt="ko", ms=4, label="data", capsize=2)
+            ax1.plot(x, E_model, "rx", ms=7, label="best-fit model")
+            ax1.set_xlabel("data point index")
+            ax1.set_ylabel("Energy (meV)")
+            ax1.legend()
+            ax1.grid(True, alpha=0.3)
+
+            lo = float(min(E_data.min(), E_model.min()))
+            hi = float(max(E_data.max(), E_model.max()))
+            ax2.plot([lo, hi], [lo, hi], "k--", alpha=0.6)
+            ax2.errorbar(E_data, E_model, xerr=sigma, fmt="bo", ms=4, capsize=2)
+            ax2.set_xlabel("measured E (meV)")
+            ax2.set_ylabel("model E (meV)")
+            ax2.set_title("parity")
+            ax2.grid(True, alpha=0.3)
+        else:
+            I_data = prediction["I_data"]
+            I_model = prediction["I_model"]
+            resid = I_model - I_data
+
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+            lo = float(min(I_data.min(), I_model.min()))
+            hi = float(max(I_data.max(), I_model.max()))
+            ax1.plot([lo, hi], [lo, hi], "k--", alpha=0.6)
+            ax1.scatter(I_data, I_model, s=10, alpha=0.6)
+            ax1.set_xlabel("measured intensity")
+            ax1.set_ylabel("model intensity")
+            ax1.set_title("parity")
+            ax1.grid(True, alpha=0.3)
+
+            ax2.scatter(prediction["energy"], resid, s=10, alpha=0.6)
+            ax2.axhline(0.0, color="k", ls="--", alpha=0.6)
+            ax2.set_xlabel("Energy (meV)")
+            ax2.set_ylabel("model - data")
+            ax2.set_title("residuals")
+            ax2.grid(True, alpha=0.3)
+
+        fig.suptitle(title)
+        fig.tight_layout()
+
+        if save_filename:
+            os.makedirs(os.path.dirname(os.path.abspath(save_filename)), exist_ok=True)
+            fig.savefig(save_filename, dpi=150, bbox_inches="tight", pad_inches=0.1)
+            logger.info(f"Fit comparison plot saved to {save_filename}")
+        if show_plot:
+            plt.show()
+        plt.close(fig)
+
+    except Exception as e:
+        logger.error(f"Failed to plot fit comparison: {e}")
         raise e

@@ -1,0 +1,12 @@
+[[Fit Statistics]]
+    # fitting method   = leastsq
+    # function evals   = 16
+    # data points      = 20
+    # variables        = 2
+    chi-square         = 5.37932315
+    reduced chi-square = 0.29885129
+    Akaike info crit   = -22.2633943
+    Bayesian info crit = -20.2719298
+[[Variables]]
+    J1:  1.00023816 +/- 0.00661348 (0.66%) (init = 0.6)
+    J2:  0.29667524 +/- 0.00656348 (2.21%) (init = 0.6)

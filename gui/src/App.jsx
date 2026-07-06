@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Beaker, Database, Activity, Code, Download, Plus, Trash2, Settings, Box, Eye, EyeOff, Share2, Info, Magnet, Wind, Check, ChevronRight, Zap, Crosshair, FileText, BarChart2, Play, Image, ArrowDown, X, XCircle, Minus, ChevronDown, Search, Square } from 'lucide-react'
+import { Beaker, Database, Activity, Code, Download, Plus, Trash2, Settings, Box, Eye, EyeOff, Share2, Info, Magnet, Wind, Check, ChevronRight, Zap, Crosshair, FileText, BarChart2, Play, Image, ArrowDown, X, XCircle, Minus, ChevronDown, Search, Square, Target } from 'lucide-react'
 import spaceGroupsList from './data/space_groups.json';
 import yaml from 'js-yaml'
 import Visualizer from './components/Visualizer'
@@ -284,6 +284,18 @@ function App() {
       q_max: 4.0,
       q_count: 50,
       num_samples: 50
+    },
+    fitting: {
+      type: 'dispersion',          // dispersion | sqw | powder
+      data_file: '',               // set by the data-file upload
+      data_label: '',              // original filename, for display
+      method: 'leastsq',
+      vary: [],                    // names of parameters to optimize
+      bounds: {},                  // { paramName: [min, max] }
+      match: 'nearest',            // dispersion: nearest | mode
+      scale: { value: 1.0, vary: true },          // sqw/powder
+      background: { value: 0.0, vary: true },      // sqw/powder
+      energy_broadening: { value: 0.3, vary: false } // sqw/powder
     }
   }
 
@@ -304,7 +316,11 @@ function App() {
           }
           localStorage.setItem('magcalc_cache_migrated', '1');
         }
-        return parsed;
+        // Merge over defaults so top-level keys added in newer versions (e.g.
+        // `fitting`) are always present, even for configs saved before they
+        // existed. Without this, accessing config.fitting.* throws and blanks
+        // the panel.
+        return { ...DEMO_CONFIG, ...parsed };
       }
     } catch (e) {
       console.error("Failed to load config from localStorage", e);
@@ -478,6 +494,18 @@ function App() {
       // 9-spin model. Cache auto-invalidates when the model structure changes.
       cache_mode: 'auto',
       backend: 'numpy'
+    },
+    fitting: {
+      type: 'dispersion',
+      data_file: '',
+      data_label: '',
+      method: 'leastsq',
+      vary: [],
+      bounds: {},
+      match: 'nearest',
+      scale: { value: 1.0, vary: true },
+      background: { value: 0.0, vary: true },
+      energy_broadening: { value: 0.3, vary: false }
     }
   }
 
@@ -1018,7 +1046,7 @@ function App() {
     }
   }
 
-  const runCalculation = async () => {
+  const runCalculation = async (overrides = {}) => {
     setCalcLoading(true)
     setCalcStopping(false)
     stopRequestedRef.current = false
@@ -1058,8 +1086,13 @@ function App() {
       },
       powder_average: config.powder_average,
       calculation: config.calculation,
-      output: config.output
+      output: config.output,
+      fitting: config.fitting
     }
+
+    // Per-run overrides (e.g. the Fitting panel forces `tasks: { fit: true }`
+    // so only the fit runs, regardless of the Tasks panel's checkboxes).
+    if (overrides.tasks) input.tasks = overrides.tasks
 
     try {
       // First ensure backend can expand it (optional check, but good for robust config)
@@ -1092,6 +1125,95 @@ function App() {
       setCalcStopping(false)
       stopRequestedRef.current = false
     }
+  }
+
+  // --- Data fitting helpers ---------------------------------------------- //
+  const updateFitting = (patch) =>
+    setConfig(c => ({ ...c, fitting: { ...c.fitting, ...patch } }))
+
+  const toggleVaryParam = (name) => {
+    setConfig(c => {
+      const vary = new Set(c.fitting.vary || [])
+      if (vary.has(name)) vary.delete(name); else vary.add(name)
+      return { ...c, fitting: { ...c.fitting, vary: Array.from(vary) } }
+    })
+  }
+
+  const setParamBound = (name, idx, value) => {
+    setConfig(c => {
+      const bounds = { ...(c.fitting.bounds || {}) }
+      const cur = bounds[name] ? [...bounds[name]] : [null, null]
+      cur[idx] = value === '' ? null : parseFloat(value)
+      bounds[name] = cur
+      return { ...c, fitting: { ...c.fitting, bounds } }
+    })
+  }
+
+  const handleFitDataUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const fd = new FormData()
+    fd.append('file', file)
+    try {
+      const res = await fetch('/api/upload-fit-data', { method: 'POST', body: fd })
+      if (!res.ok) throw new Error('Upload failed')
+      const data = await res.json()
+      updateFitting({ data_file: data.data_file, data_label: data.original_name })
+      showNotify(`Loaded data: ${data.original_name}`, 'success')
+    } catch (err) {
+      showNotify('Failed to upload data file', 'error')
+    }
+  }
+
+  const runFit = async () => {
+    if (!config.fitting.data_file) {
+      showNotify('Upload an experimental data file first', 'error')
+      return
+    }
+    if (!(config.fitting.vary || []).length) {
+      showNotify('Select at least one parameter to vary', 'error')
+      return
+    }
+    setActiveTab('run')
+    // Only run the fit (+ comparison plot); ignore the Tasks panel's switches.
+    await runCalculation({ tasks: { fit: true, plot_fit: true } })
+  }
+
+  // Scalar parameter names available to vary (vectors like H_dir are excluded).
+  const fittableParams = Object.entries(config.parameters || {})
+    .filter(([k, v]) => k !== 'S' && !Array.isArray(v))
+    .map(([k]) => k)
+
+  // Import a minimized magnetic structure (from the energy-minimization result)
+  // into the Manual Magnetic Structure tab as a per-spin 'generic' direction
+  // list, so it can be reused as a fixed input (for plain runs or fitting)
+  // without re-running minimization. Minimization is disabled so subsequent runs
+  // use the imported structure directly.
+  const importMinimizedStructure = (data) => {
+    const vectors = (data && data.vectors) || []
+    if (!vectors.length) {
+      showNotify('No structure vectors found to import', 'error')
+      return
+    }
+    // Keep FULL precision: the LSWT spin-wave intensities (S(Q,ω)) are evaluated
+    // about the minimized ground state, and the Bogoliubov eigenvectors are
+    // sensitive to small deviations from it. Rounding the directions (e.g. to 5
+    // decimals) nudges the structure off the true minimum — energies stay
+    // correct (the energy is stationary there) but S(Q,ω) intensities shift.
+    const directions = vectors.map(v => v.map(x => Number(x)))
+    setConfig(c => ({
+      ...c,
+      magnetic_structure: {
+        ...c.magnetic_structure,
+        enabled: true,
+        type: 'pattern',
+        pattern_type: 'generic',
+        directions
+      },
+      tasks: { ...c.tasks, minimization: false }
+    }))
+    showNotify(`Imported ${directions.length} spins into Manual Structure (minimization disabled)`, 'success')
+    setActiveTab('magstruct')
   }
 
   return (
@@ -2515,6 +2637,136 @@ function App() {
                 )}
               </div>
             )}
+            {activeTab === 'fitting' && (
+              <div className="form-section">
+                <div className="flex-between mb-md">
+                  <h2 className="section-title">Data Fitting</h2>
+                  <button className="btn btn-primary btn-sm" onClick={runFit} disabled={calcLoading}>
+                    <Target size={14} /> {calcLoading ? 'Fitting…' : 'Run Fit'}
+                  </button>
+                </div>
+
+                <p className="text-xs opacity-70 mb-lg">
+                  Fit the spin Hamiltonian to inelastic-neutron-scattering data. The
+                  fit reuses one calculator and updates parameters each iteration.
+                  Best-fit values, an lmfit report, and a data-vs-model comparison
+                  plot appear in the Run &amp; Analyze tab.
+                </p>
+
+                <div className="card mb-lg">
+                  <div className="input-group">
+                    <label>Data Type</label>
+                    <select className="minimal-select" value={config.fitting.type}
+                      onChange={(e) => updateFitting({ type: e.target.value })}>
+                      <option value="dispersion">Dispersion E(Q) — peak positions</option>
+                      <option value="sqw">Single-crystal S(Q,ω) — intensities</option>
+                      <option value="powder">Powder S(|Q|,ω) — intensities</option>
+                    </select>
+                  </div>
+
+                  <div className="input-group mt-md">
+                    <label>Experimental Data File</label>
+                    <div className="flex-gap-sm align-center">
+                      <input type="file" accept=".txt,.csv,.dat,.npz"
+                        onChange={handleFitDataUpload} style={{ flex: 1 }} />
+                      {config.fitting.data_label && (
+                        <span className="text-xs vibrant-text">{config.fitting.data_label}</span>
+                      )}
+                    </div>
+                    <p className="text-xs opacity-60 mt-xs">
+                      {config.fitting.type === 'dispersion'
+                        ? 'Columns: h, k, l, E, sigma [, mode]  (comma-separated, # comments)'
+                        : config.fitting.type === 'sqw'
+                          ? 'Columns: h, k, l, energy, intensity, error'
+                          : 'Columns: |Q|, energy, intensity, error'}
+                    </p>
+                  </div>
+
+                  <div className="flex-gap-sm mt-md">
+                    <div className="input-group" style={{ flex: 1 }}>
+                      <label>Method</label>
+                      <select className="minimal-select" value={config.fitting.method}
+                        onChange={(e) => updateFitting({ method: e.target.value })}>
+                        <option value="leastsq">Levenberg–Marquardt (leastsq)</option>
+                        <option value="least_squares">Trust Region (least_squares)</option>
+                        <option value="nelder">Nelder–Mead</option>
+                        <option value="differential_evolution">Differential Evolution</option>
+                      </select>
+                    </div>
+                    {config.fitting.type === 'dispersion' && (
+                      <div className="input-group" style={{ flex: 1 }}>
+                        <label>Band Assignment</label>
+                        <select className="minimal-select" value={config.fitting.match}
+                          onChange={(e) => updateFitting({ match: e.target.value })}>
+                          <option value="nearest">Nearest band (no mode column)</option>
+                          <option value="mode">Use mode column</option>
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="card mb-lg">
+                  <h3 className="mb-sm">Parameters to Fit</h3>
+                  {fittableParams.length === 0 ? (
+                    <p className="text-xs opacity-60">No scalar parameters defined.</p>
+                  ) : (
+                    <table className="data-table">
+                      <thead>
+                        <tr><th>Vary</th><th>Name</th><th>Start</th><th>Min</th><th>Max</th></tr>
+                      </thead>
+                      <tbody>
+                        {fittableParams.map((name) => {
+                          const varied = (config.fitting.vary || []).includes(name)
+                          const b = (config.fitting.bounds || {})[name] || [null, null]
+                          return (
+                            <tr key={name}>
+                              <td>
+                                <input type="checkbox" checked={varied}
+                                  onChange={() => toggleVaryParam(name)} />
+                              </td>
+                              <td className="font-bold">{name}</td>
+                              <td>{config.parameters[name]}</td>
+                              <td>
+                                <input type="number" className="minimal-input" style={{ width: '70px' }}
+                                  disabled={!varied} value={b[0] ?? ''}
+                                  onChange={(e) => setParamBound(name, 0, e.target.value)} />
+                              </td>
+                              <td>
+                                <input type="number" className="minimal-input" style={{ width: '70px' }}
+                                  disabled={!varied} value={b[1] ?? ''}
+                                  onChange={(e) => setParamBound(name, 1, e.target.value)} />
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+
+                {(config.fitting.type === 'sqw' || config.fitting.type === 'powder') && (
+                  <div className="card mb-lg">
+                    <h3 className="mb-sm">Intensity Model</h3>
+                    {['scale', 'background', 'energy_broadening'].map((key) => (
+                      <div className="flex-gap-sm align-center mb-sm" key={key}>
+                        <span style={{ width: '150px' }} className="text-sm font-bold">
+                          {key === 'energy_broadening' ? 'Energy broadening (FWHM)' : key}
+                        </span>
+                        <input type="number" className="minimal-input" style={{ width: '90px' }}
+                          value={config.fitting[key].value}
+                          onChange={(e) => updateFitting({ [key]: { ...config.fitting[key], value: parseFloat(e.target.value) } })} />
+                        <label className="flex-gap-sm align-center pointer text-xs">
+                          <input type="checkbox" checked={config.fitting[key].vary}
+                            onChange={(e) => updateFitting({ [key]: { ...config.fitting[key], vary: e.target.checked } })} />
+                          vary
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </section>
         )}
 
@@ -2590,9 +2842,18 @@ function App() {
                         <div key={idx} className="card p-0 overflow-hidden shadow-lg">
                           <div className="p-sm glass border-b border-light flex-between">
                             <span className="font-bold text-sm uppercase tracking-wider opacity-70">Interactive Magnetic Structure</span>
-                            <a href={plotUrl} download className="icon-btn" title="Download Data">
-                              <Download size={14} />
-                            </a>
+                            <div className="flex-gap-sm align-center">
+                              <button
+                                className="btn btn-secondary btn-sm"
+                                title="Save this minimized structure into the Manual Structure tab for reuse (disables minimization)"
+                                onClick={() => importMinimizedStructure(jsonCache[plotUrl])}
+                              >
+                                <Wind size={14} /> Use as Manual Structure
+                              </button>
+                              <a href={plotUrl} download className="icon-btn" title="Download Data">
+                                <Download size={14} />
+                              </a>
+                            </div>
                           </div>
                           <div className="plot-container bg-white">
                             <MagneticStructureViewer data={jsonCache[plotUrl]} />

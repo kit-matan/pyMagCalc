@@ -16,14 +16,16 @@
 *   **Stable Runner Engine:** Standardized task architecture with concise keys and improved error handling to prevent runtime crashes.
 *   **3D Visualization:** Visualizes the magnetic structure in 3D with scaled spins, DM vectors (arrows), and orientation guides. Includes zero-vector guarding and memory optimizations.
 *   **Flexible Caching:** Supports disk caching (`auto`, `r`, `w`) for expensive symbolic matrices, or `none` for purely in-memory execution.
+*   **Data Fitting:** Fits the spin Hamiltonian to inelastic-neutron-scattering data — magnon dispersion `E(Q)`, single-crystal `I(Q, ω)`, or powder `I(|Q|, ω)` — via [lmfit](https://lmfit.github.io/) (bounds, tied/fixed parameters, uncertainties, choice of optimizer). Dispersion fits use a **compile-once fast evaluator** (`DispersionEvaluator`) that skips all per-iteration symbolic work, making fits of large magnetic cells orders of magnitude faster.
 *   **Data Export (CSV):** Export results to `.csv` or `.npz` files for external analysis.
 *   **Validated Configurations:** Supports declarative YAML configurations validated against a robust **Pydantic schema** for immediate error feedback.
 
 ## Directory Structure
 
 *   `magcalc/`: Core Python package.
-    *   `core.py`: Main `MagCalc` class and calculation logic.
+    *   `core.py`: Main `MagCalc` class, calculation logic, and the `DispersionEvaluator` fast dispersion engine.
     *   `generic_model.py`: `GenericSpinModel` for YAML-based model loading.
+    *   `fitting.py`: Data-fitting engine (`run_fit`, `FitProblem`) for dispersion / S(Q,ω) / powder data.
     *   `linalg.py`: Matrix operations and Bogoliubov transformation utilities.
     *   `config_loader.py`: Utilities for loading and validating configurations.
     *   `schema.py`: Pydantic V2 models for robust configuration validation.
@@ -31,6 +33,7 @@
 *   `examples/`: Sample data and scripts for various materials.
     *   `KFe3J/`: KFe3(OH)6(SO4)2 (Jarosite) - Kagome antiferromagnet.
     *   `aCVO/`: alpha-Cu2V2O7 - Honeycomb-like antiferromagnet with Dzyaloshinskii-Moriya interactions.
+    *   `fitting/`: Example fitting configuration and synthetic data.
     *   `plots/`: Centralized directory where all example scripts save their output plots.
 *   `tests/`: Unit and integration tests ensuring package reliability.
 
@@ -44,6 +47,7 @@
 *   tqdm (>=4.60.0)
 *   PyYAML (>=5.4)
 *   ASE (>=3.22.0, for CIF file reading)
+*   lmfit (>=1.0, for data fitting)
 *   pytest (>=7.0.0, for testing)
 
 ## Installation
@@ -76,6 +80,17 @@ Run dispersion, S(Q,w), and plotting as defined in the config:
 ```bash
 magcalc run my_config.yaml
 ```
+
+### 4. Fit to Neutron Data
+Fit the spin Hamiltonian to experimental data defined in the config's
+`fitting:` block (or add `tasks: { fit: true }` and use `magcalc run`):
+```bash
+magcalc fit my_config.yaml
+```
+This writes an lmfit report (`fit_report.txt`), the best-fit parameters
+(`fit_params.yaml`), and a data-vs-model comparison plot (`fit_comparison.png`).
+See **TUTORIAL.md** (§4b) for the full `fitting:` block reference, the
+compile-once fast dispersion path, and the `DispersionEvaluator` Python API.
 
 ## Graphical User Interface: pyMagCalc Studio
 

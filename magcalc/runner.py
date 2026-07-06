@@ -56,6 +56,73 @@ def generate_q_path_from_config(config):
             
     return np.array(q_vectors)
 
+def _resolve_plot_structure_flag(tasks, plot_config):
+    """Priority: tasks['plot_structure'] -> tasks['run_plotting'] -> plotting['plot_structure']."""
+    flag = tasks.get('plot_structure')
+    if flag is None:
+        flag = tasks.get('run_plotting')
+    if flag is None:
+        flag = plot_config.get('plot_structure', False)
+    return flag
+
+
+def _plot_structure_outputs(spin_model, spin_angles, energy, final_config, config_file, title):
+    """Render the magnetic structure (PNG + JSON for the GUI's interactive
+    viewer) from interleaved spin angles [th0, ph0, th1, ph1, ...].
+
+    Used both for minimized structures and for manual structures supplied via
+    the 'magnetic_structure' config with minimization skipped."""
+    plot_config = final_config.get('plotting', {})
+    try:
+        if not hasattr(spin_model, 'atom_pos'):
+            return
+        atoms = spin_model.atom_pos()
+        plot_dir = os.path.join(os.path.dirname(config_file), plot_config.get('plot_dir', '../plots'))
+        struct_plot_filename = plot_config.get('structure_plot_filename')
+        if not struct_plot_filename:
+            base_name = os.path.splitext(os.path.basename(config_file))[0]
+            struct_plot_filename = os.path.join(plot_dir, f"{base_name}_structure.png")
+        elif not os.path.isabs(struct_plot_filename):
+            struct_plot_filename = os.path.join(os.path.dirname(config_file), struct_plot_filename)
+
+        os.makedirs(os.path.dirname(struct_plot_filename), exist_ok=True)
+
+        mc.plot_magnetic_structure(
+            atom_positions=atoms,
+            spin_angles=spin_angles,
+            title=title,
+            save_filename=struct_plot_filename,
+            show_plot=plot_config.get('show_plot', False)
+        )
+
+        # JSON for the interactive 3D viewer
+        try:
+            json_filename = struct_plot_filename.replace('.png', '.json')
+            vectors = []
+            for i in range(len(atoms)):
+                th = spin_angles[2 * i]
+                ph = spin_angles[2 * i + 1]
+                vectors.append([float(np.sin(th) * np.cos(ph)),
+                                float(np.sin(th) * np.sin(ph)),
+                                float(np.cos(th))])
+
+            import json
+            structure_data = {
+                "atoms": atoms.tolist(),
+                "vectors": vectors
+            }
+            if energy is not None:
+                structure_data["energy"] = float(energy)
+
+            with open(json_filename, 'w') as f:
+                json.dump(structure_data, f, indent=2)
+            logger.info(f"Saved interactive structure data to {json_filename}")
+        except Exception as e_json:
+            logger.error(f"Failed to save structure JSON: {e_json}")
+    except Exception as e_plot:
+        logger.error(f"Failed to plot magnetic structure: {e_plot}")
+
+
 def run_calculation(config_file: str):
     """
     Main execution logic for running a MagCalc calculation.
@@ -279,70 +346,42 @@ def run_calculation(config_file: str):
                         spin_model.set_magnetic_structure(min_res.x[0::2], min_res.x[1::2])
                     
                     plot_config = final_config.get('plotting', {})
-                    # Priority: tasks['plot_structure'] -> tasks['run_plotting'] -> plot_config['plot_structure']
-                    should_plot_struct = tasks.get('plot_structure')
-                    if should_plot_struct is None:
-                        should_plot_struct = tasks.get('run_plotting')
-                    if should_plot_struct is None:
-                        should_plot_struct = plot_config.get('plot_structure', False)
-                    
-                    if should_plot_struct:
+                    if _resolve_plot_structure_flag(tasks, plot_config):
                         logger.info("Plotting minimized magnetic structure...")
-                        try:
-                            if hasattr(spin_model, 'atom_pos'):
-                                atoms = spin_model.atom_pos()
-                                plot_dir = os.path.join(os.path.dirname(config_file), plot_config.get('plot_dir', '../plots')) 
-                                struct_plot_filename = plot_config.get('structure_plot_filename')
-                                if not struct_plot_filename:
-                                    base_name = os.path.splitext(os.path.basename(config_file))[0]
-                                    struct_plot_filename = os.path.join(plot_dir, f"{base_name}_structure.png")
-                                else:
-                                    if not os.path.isabs(struct_plot_filename):
-                                        struct_plot_filename = os.path.join(os.path.dirname(config_file), struct_plot_filename)
-                                
-                                os.makedirs(os.path.dirname(struct_plot_filename), exist_ok=True)
-                                
-                                mc.plot_magnetic_structure(
-                                    atom_positions=atoms,
-                                    spin_angles=min_res.x,
-                                    title=f"Minimized Structure ({os.path.basename(config_file)})",
-                                    save_filename=struct_plot_filename,
-                                    show_plot=plot_config.get('show_plot', False)
-                                )
-                                
-                                # Generate JSON for interactive 3D viewer
-                                try:
-                                    json_filename = struct_plot_filename.replace('.png', '.json')
-                                    nspins = len(atoms)
-                                    vectors = []
-                                    
-                                    # Convert angles to vectors
-                                    for i in range(nspins):
-                                        th = min_res.x[2*i]
-                                        ph = min_res.x[2*i+1]
-                                        sx = np.sin(th) * np.cos(ph)
-                                        sy = np.sin(th) * np.sin(ph)
-                                        sz = np.cos(th)
-                                        vectors.append([float(sx), float(sy), float(sz)])
-                                    
-                                    import json
-                                    structure_data = {
-                                        "atoms": atoms.tolist(),
-                                        "vectors": vectors,
-                                        "energy": float(min_res.fun)
-                                    }
-                                    
-                                    with open(json_filename, 'w') as f:
-                                        json.dump(structure_data, f, indent=2)
-                                    logger.info(f"Saved interactive structure data to {json_filename}")
-                                except Exception as e_json:
-                                    logger.error(f"Failed to save structure JSON: {e_json}")
-
-
-                        except Exception as e_plot:
-                            logger.error(f"Failed to plot magnetic structure: {e_plot}")
+                        _plot_structure_outputs(
+                            spin_model, min_res.x, min_res.fun, final_config, config_file,
+                            title=f"Minimized Structure ({os.path.basename(config_file)})"
+                        )
             except Exception as e:
                 logger.warning(f"Optimization attempt using MagCalc failed: {e}")
+
+    # Apply a manual magnetic structure when minimization is NOT run. This lets a
+    # structure obtained from a previous energy minimization (e.g. imported into
+    # the GUI's Manual Structure tab) drive the LSWT calculation directly, without
+    # re-minimizing every run. Skipped if minimization already set the structure.
+    elif spin_model is not None and hasattr(spin_model, 'generate_magnetic_structure'):
+        ms_cfg = final_config.get('magnetic_structure') or {}
+        if ms_cfg.get('type') and ms_cfg.get('enabled', True):
+            try:
+                thetas, phis = spin_model.generate_magnetic_structure()
+                if thetas is not None and phis is not None and \
+                        hasattr(spin_model, 'set_magnetic_structure'):
+                    spin_model.set_magnetic_structure(thetas, phis)
+                    logger.info(
+                        "Applied manual magnetic structure from config "
+                        "(minimization skipped)."
+                    )
+                    # Render the supplied structure so the GUI's Magnetic
+                    # Structure panel shows it even without minimization.
+                    if _resolve_plot_structure_flag(tasks, final_config.get('plotting', {})):
+                        logger.info("Plotting manual magnetic structure...")
+                        spin_angles = np.ravel(np.column_stack([thetas, phis]))
+                        _plot_structure_outputs(
+                            spin_model, spin_angles, None, final_config, config_file,
+                            title=f"Manual Structure ({os.path.basename(config_file)})"
+                        )
+            except Exception as e:
+                logger.warning(f"Failed to apply manual magnetic structure: {e}")
 
     # Initialize Main MagCalc (Heavyweight)
     logger.info("Initializing MagCalc for LSWT Calculation...")
@@ -358,13 +397,78 @@ def run_calculation(config_file: str):
         logger.error(f"Failed to initialize MagCalc: {e}")
         # Explicitly re-raise to stop execution and show error in UI
         raise e
-    
+
+    # 1b. Data Fitting (optional)
+    # Runs before the forward tasks so that, on success, the best-fit parameters
+    # are loaded into the SAME calculator (no re-init) and every downstream
+    # dispersion/S(Q,w)/powder/plot task renders the best-fit model for direct
+    # comparison against the data.
+    do_fit = tasks.get('fit', False) or final_config.get('fitting', {}).get('enabled', False)
+    if do_fit:
+        from magcalc import fitting
+        logger.info("Data fitting enabled.")
+        try:
+            name_order = fitting.canonical_name_order(final_config)
+            B_matrix = compute_b_matrix(spin_model)
+            fit_out = fitting.run_fit(
+                final_config=final_config,
+                calculator=calculator,
+                name_order=name_order,
+                B_matrix=B_matrix,
+                config_dir=config_dir,
+                backend=backend,
+            )
+
+            # Pin the calculator (and params_val) to the optimum for downstream tasks.
+            best_p = fit_out['best_p']
+            calculator.update_hamiltonian_params(best_p)
+            params_val = best_p
+            logger.info(f"Best-fit parameters: {fit_out['best_values']}")
+
+            out_cfg = final_config.get('output', {})
+            report_file = out_cfg.get('fit_report_filename', 'fit_report.txt')
+            if not os.path.isabs(report_file): report_file = os.path.join(config_dir, report_file)
+            _safe_makedirs(report_file)
+            with open(report_file, 'w') as f:
+                f.write(fit_out['report'] + "\n")
+            logger.info(f"Fit report written to {report_file}")
+
+            params_file = out_cfg.get('fit_params_filename', 'fit_params.yaml')
+            if not os.path.isabs(params_file): params_file = os.path.join(config_dir, params_file)
+            _safe_makedirs(params_file)
+            with open(params_file, 'w') as f:
+                yaml.safe_dump({'best_fit_parameters': fit_out['best_values']}, f,
+                               default_flow_style=False)
+            logger.info(f"Best-fit parameters written to {params_file}")
+
+            # Optional data-vs-model comparison plot.
+            should_plot_fit = tasks.get('plot_fit')
+            if should_plot_fit is None:
+                should_plot_fit = final_config.get('plotting', {}).get('plot_fit', True)
+            if should_plot_fit:
+                from magcalc.plotting import plot_fit_comparison
+                fit_type = final_config.get('fitting', {}).get('type', 'dispersion')
+                prediction = fit_out['problem'].predict(fit_out['result'].params)
+                plot_cfg = final_config.get('plotting', {})
+                fit_plot = plot_cfg.get('fit_plot_filename', 'fit_comparison.png')
+                if not os.path.isabs(fit_plot): fit_plot = os.path.join(config_dir, fit_plot)
+                plot_fit_comparison(
+                    fit_type=fit_type,
+                    prediction=prediction,
+                    save_filename=fit_plot,
+                    title=plot_cfg.get('fit_title', f"Fit comparison ({fit_type})"),
+                    show_plot=plot_cfg.get('show_plot', False),
+                )
+        except Exception as e:
+            logger.error(f"Data fitting failed: {e}")
+            raise e
+
     # Store calculated data for plotting if not saved to file
     memory_cache = {
         'dispersion': None,
         'sqw': None
     }
-    
+
     save_data_flag = final_config.get('output', {}).get('save_data', True)
 
     # Emit dispersion outputs (memory cache, .npz, optional CSV) from energies.

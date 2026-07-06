@@ -1,5 +1,5 @@
 import React from 'react'
-import { Box, Magnet, Settings, Activity, Wind, BarChart2 } from 'lucide-react'
+import { Box, Magnet, Settings, Activity, Wind, BarChart2, Target } from 'lucide-react'
 
 const TABS = [
   { id: 'structure',    label: 'Structure',        icon: Box },
@@ -7,6 +7,7 @@ const TABS = [
   { id: 'params',       label: 'Environment',      icon: Settings },
   { id: 'tasks',        label: 'Tasks & Plotting', icon: Activity },
   { id: 'magstruct',    label: 'Mag. Structure',   icon: Wind },
+  { id: 'fitting',      label: 'Data Fitting',     icon: Target },
 ]
 
 export default function Sidebar({ activeTab, setActiveTab, width }) {

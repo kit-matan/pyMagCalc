@@ -314,6 +314,22 @@ async def trigger_calculation(config: Dict[str, Any]):
         expanded_data["plotting"]["sqw_plot_filename"] = "sqw_plot.png"
         expanded_data["plotting"]["powder_plot_filename"] = "powder_plot.png"
         expanded_data["plotting"]["structure_plot_filename"] = "mag_structure.png"
+
+        # When a fit is requested, pin the comparison-plot and report filenames so
+        # the UI can capture and serve them reliably (same pattern as the plots).
+        if expanded_data.get("tasks", {}).get("fit") or \
+                (expanded_data.get("fitting") or {}).get("enabled"):
+            expanded_data["plotting"]["fit_plot_filename"] = "fit_comparison.png"
+            if "output" not in expanded_data:
+                expanded_data["output"] = {}
+            expanded_data["output"]["fit_report_filename"] = "fit_report.txt"
+            expanded_data["output"]["fit_params_filename"] = "fit_params.yaml"
+            try:
+                fc = os.path.join(project_root, "fit_comparison.png")
+                if os.path.exists(fc):
+                    os.remove(fc)
+            except OSError:
+                pass
         
         with open(run_config_path, 'w') as f:
             yaml.dump(expanded_data, f, sort_keys=False)
@@ -387,6 +403,19 @@ async def trigger_calculation(config: Dict[str, Any]):
         if os.path.exists(os.path.join(project_root, "powder_plot.png")):
             results["plots"].append("/files/powder_plot.png")
 
+        if os.path.exists(os.path.join(project_root, "fit_comparison.png")):
+            results["plots"].append("/files/fit_comparison.png")
+            # Surface the best-fit parameters to the UI alongside the plot.
+            fit_params_path = os.path.join(project_root, "fit_params.yaml")
+            if os.path.exists(fit_params_path):
+                try:
+                    with open(fit_params_path) as fpf:
+                        results["fit_params"] = (yaml.safe_load(fpf) or {}).get(
+                            "best_fit_parameters", {}
+                        )
+                except Exception:
+                    pass
+
         if os.path.exists(os.path.join(project_root, "mag_structure.png")):
             # Check if JSON structure data exists (prefer it over the image if we support it in frontend)
             # We send both, frontend can decide which to show
@@ -429,6 +458,32 @@ async def stop_calculation():
         pass
 
     return {"stopped": True, "message": "Calculation stopped."}
+
+
+@app.post("/upload-fit-data")
+async def upload_fit_data(file: UploadFile = File(...)):
+    """
+    Save an uploaded experimental data file for fitting into the project root and
+    return the filename the config's `fitting.data_file` should reference.
+
+    The file is stored as ``.fit_data.<ext>`` next to ``.config_gui_run.yaml`` so
+    that the runner (cwd = project root) resolves the relative path correctly.
+    """
+    try:
+        content = await file.read()
+        gui_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(gui_dir)
+        ext = os.path.splitext(file.filename or "")[1].lower() or ".txt"
+        if ext not in (".txt", ".csv", ".dat", ".npz"):
+            ext = ".txt"
+        target_name = f".fit_data{ext}"
+        with open(os.path.join(project_root, target_name), "wb") as f:
+            f.write(content)
+        return {"data_file": target_name, "original_name": file.filename}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/parse-cif")
@@ -926,9 +981,10 @@ async def expand_config(config: Dict[str, Any]):
             # explicit client choice when one is sent.
             "calculation": {"cache_mode": "auto", **(data.get("calculation") or {})},
             "output": data.get("output", {"export_csv": False}),
-            "powder_average": data.get("powder_average", {})
+            "powder_average": data.get("powder_average", {}),
+            "fitting": data.get("fitting", {})
         }
-        
+
         return expanded_config
         
     except Exception as e:

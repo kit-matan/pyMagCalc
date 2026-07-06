@@ -1436,25 +1436,29 @@ class GenericSpinModel:
                 ph = np.arctan2(v[1], v[0])
                 thetas = [float(th)] * nspins
                 phis = [float(ph)] * nspins
-        elif pattern == 'antiferromagnetic':
-             # Need sublattices
-             # Simplest: list of directions applied cyclically or by index mapping
+        elif pattern in ('antiferromagnetic', 'generic', 'custom'):
+             # A list of spin-direction unit vectors applied to the spins.
+             #   - 'antiferromagnetic': typically two sublattice directions applied
+             #     cyclically (defaults to a Neel pattern if none are given).
+             #   - 'generic'/'custom': one direction per spin (e.g. a structure
+             #     imported from an energy minimization). Applied 1:1 when the list
+             #     length matches the spin count, otherwise cyclically.
              directions = config.get('directions', [])
              if not directions:
-                 # Default Neel for 2 sublattices?
+                 # Default Neel for 2 sublattices (only sensible for AFM).
                  directions = [[0, 0, 1], [0, 0, -1]]
-             
+
              for i in range(nspins):
                  d = directions[i % len(directions)]
                  v = np.array(d, dtype=float)
                  norm = np.linalg.norm(v)
                  if norm > 1e-9:
                       v /= norm
-                      th = np.arccos(v[2])
+                      th = np.arccos(np.clip(v[2], -1.0, 1.0))
                       ph = np.arctan2(v[1], v[0])
                       thetas[i] = float(th)
                       phis[i] = float(ph)
-        
+
         return thetas, phis
 
     def _generate_structure_from_k(self, config):

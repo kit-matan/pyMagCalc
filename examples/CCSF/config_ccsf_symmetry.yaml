@@ -1,0 +1,129 @@
+# =====================================================================
+# Cs2Cu3SnF12 -- distorted spin-1/2 kagome antiferromagnet
+# Symmetry-driven model for the pyMagCalc web app (pyMagCalc Studio):
+#   ./start_magcalc.sh  ->  Import YAML  ->  this file
+# The GUI expands the Wyckoff sites and symmetry rules into the full
+# 6-spin / 104-bond model (via /expand-config) and runs LSWT. For the
+# explicit, CLI-runnable version of the same model use config_ccsf.yaml.
+#
+# Crystal structure: 10 K P2_1/n FullProf refinement (SuperHRPD data,
+# a=7.88873, b=7.08597, c=10.5622, beta=97.7168), re-expressed in the
+# standard P2_1/c (b1) setting used by the builder for space group 14:
+#   a' = a, b' = -b, c' = -(a+c)  =>  x' = x - z, y' = -y, z' = -z
+# Only the two inequivalent Cu sites are given; the space-group symmetry
+# generates all 6 spins of the unit cell and propagates every exchange
+# and Dzyaloshinskii-Moriya interaction from one reference bond per
+# orbit (physics identical to the legacy examples/CCSF/config_ccsf.yaml;
+# regenerate/verify with examples/CCSF/make_symmetry_config.py).
+#
+# Kagome geometry in this cell: the layers are spanned by b and c
+# (b ~ 7.086 A = kagome axis, |c| ~ 12.305 A = sqrt(3) x 7.10); the
+# layer normal is a* . Nearest-neighbour bonds split into three orbits
+# J11 (3.522 A), J12 (3.548 A), J13 (3.586 A); the weak J2 covers the
+# 2nd/3rd-neighbour shells (5.99-7.17 A) exactly as in the legacy model.
+# DM vectors are given in the Cartesian frame of this cell (a || x,
+# b || y, c in the xz plane) and already include the J_ij prefactor.
+# Parameters: variant-B refit of the AMATERAS INS data (see README.md).
+# The coplanar 120-degree, negative-vector-chirality ground state is
+# supplied via magnetic_structure, so no minimization is needed.
+# =====================================================================
+
+parameter_order: [J11, J12, J13, J2, Dy, Dz]
+parameters:
+  J11: 6.89141591
+  J12: 8.1417295
+  J13: 11.94012088
+  J2: 0.21420878
+  Dy: 0.15
+  Dz: -0.26218775
+
+crystal_structure:
+  lattice_parameters:
+    a: 7.88873
+    b: 7.08597
+    c: 12.30511
+    alpha: 90.0
+    beta: 121.72456
+    gamma: 90.0
+    space_group: 14        # P2_1/c (b1 setting, Hall -P 2ybc)
+  atom_mode: symmetry
+  magnetic_elements: [Cu]
+  # Asymmetric unit only -- SG 14 expands these to 6 Cu sites per cell,
+  # labelled Cu10, Cu11 (from Cu1) and Cu20..Cu23 (from Cu2).
+  wyckoff_atoms:
+    - { label: Cu1, pos: [0.0, 0.0, 0.5], spin_S: 0.5, ion: Cu2+ }
+    - { label: Cu2, pos: [0.01129, 0.27045, 0.25761], spin_S: 0.5, ion: Cu2+ }
+
+interactions:
+  # One reference bond per symmetry orbit; ref_pair uses the expanded
+  # labels. The builder propagates each rule with the P2_1/c operators
+  # (DM as an axial vector, D' = det(R) R D).
+  symmetry_rules:
+  # --- nearest-neighbour kagome bonds (one rule per orbit) ---
+  - { type: heisenberg, ref_pair: [Cu10, Cu22], offset: [-1, -1, 0], distance: 3.5221, value: "J11" }
+  - { type: heisenberg, ref_pair: [Cu20, Cu22], offset: [-1, -1, 0], distance: 3.5475, value: "J12" }
+  - { type: heisenberg, ref_pair: [Cu10, Cu20], offset: [0, 0, 0], distance: 3.5855, value: "J13" }
+  # --- DM on the nearest-neighbour bonds ---
+  - { type: dm, ref_pair: [Cu10, Cu22], offset: [-1, -1, 0], distance: 3.5221, value: ["J11*(+0.26291815*Dy-0.85058579*Dz)", "J11*(+0.86602540*Dy)", "J11*(-0.42529289*Dy-0.52583631*Dz)"] }
+  - { type: dm, ref_pair: [Cu20, Cu22], offset: [-1, -1, 0], distance: 3.5475, value: ["J12*(+0.52583631*Dy+0.85058579*Dz)", "0", "J12*(-0.85058579*Dy+0.52583631*Dz)"] }
+  - { type: dm, ref_pair: [Cu10, Cu20], offset: [0, 0, 0], distance: 3.5855, value: ["J13*(-0.26291815*Dy+0.85058579*Dz)", "J13*(+0.86602540*Dy)", "J13*(+0.42529289*Dy+0.52583631*Dz)"] }
+  # --- weak 2nd/3rd-neighbour coupling J2 (one rule per orbit) ---
+  - { type: heisenberg, ref_pair: [Cu10, Cu20], offset: [0, -1, 0], distance: 5.9923, value: "J2" }
+  - { type: heisenberg, ref_pair: [Cu20, Cu23], offset: [0, 0, -1], distance: 6.1594, value: "J2" }
+  - { type: heisenberg, ref_pair: [Cu10, Cu22], offset: [-1, 0, 0], distance: 6.2900, value: "J2" }
+  - { type: heisenberg, ref_pair: [Cu20, Cu21], offset: [-1, 0, 0], distance: 6.8787, value: "J2" }
+  - { type: heisenberg, ref_pair: [Cu20, Cu21], offset: [-1, 0, -1], distance: 7.0442, value: "J2" }
+  - { type: heisenberg, ref_pair: [Cu10, Cu10], offset: [0, -1, 0], distance: 7.0860, value: "J2" }
+  - { type: heisenberg, ref_pair: [Cu20, Cu20], offset: [0, -1, 0], distance: 7.0860, value: "J2" }
+  - { type: heisenberg, ref_pair: [Cu10, Cu11], offset: [0, -1, 0], distance: 7.0998, value: "J2" }
+  - { type: heisenberg, ref_pair: [Cu20, Cu21], offset: [-1, -1, 0], distance: 7.1711, value: "J2" }
+
+magnetic_structure:
+  enabled: true
+  type: pattern
+  pattern_type: generic   # minimized negative-chirality 120-degree state,
+                          # one direction per expanded spin (Cu10..Cu23)
+  directions:
+    - [+0.18761718, +0.96165373, -0.20005474]
+    - [-0.18660430, +0.96219645, +0.19838555]
+    - [-0.45155583, -0.50688051, +0.73428161]
+    - [-0.45156173, -0.50687733, +0.73428018]
+    - [+0.45102842, -0.50862240, -0.73340072]
+    - [+0.45103174, -0.50862720, -0.73339535]
+
+tasks:
+  minimization: false      # ground state supplied above
+  dispersion: true
+  sqw_map: true
+
+# Same physical path as the legacy example (kagome-frame Gamma-X-M-Y-Gamma):
+# in this cell the in-plane reciprocal axes are b* and c*, so
+# X = (0, 1/2, 0), M = (0, 1/2, 1/2), Y = (0, 0, 1/2); the a* component
+# is out-of-plane and does not disperse (layers are decoupled).
+q_path:
+  Gamma: [0.0, 0.0, 0.0]
+  X:     [0.0, 0.5, 0.0]
+  M:     [0.0, 0.5, 0.5]
+  Y:     [0.0, 0.0, 0.5]
+  path: ["Gamma", "X", "M", "Y", "Gamma"]
+  points_per_segment: 100
+
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: true
+  disp_plot_filename: CCSF_symmetry_disp.png
+  sqw_plot_filename: CCSF_symmetry_sqw.png
+  energy_limits_disp: [0, 16]
+  energy_limits_sqw: [0, 16]
+  broadening: 0.4
+  broadening_width: 0.4
+  energy_resolution: 0.04
+  disp_title: "Cs2Cu3SnF12 P2_1/n neg-chirality LSWT dispersion (symmetry-generated)"
+  sqw_title: "Cs2Cu3SnF12 S(Q,w)"
+
+calculation:
+  cache_mode: "none"
+
+output:
+  save_data: false
