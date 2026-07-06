@@ -1,0 +1,60 @@
+name: MagCalcStudio
+options:
+  bundleIdPrefix: edu.mahidol.magcalc
+  deploymentTarget:
+    macOS: "14.0"
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGN_STYLE: Automatic
+
+targets:
+  MagCalcStudio-macOS:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources
+      - path: Resources
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_NAME: MagCalc Studio
+        PRODUCT_BUNDLE_IDENTIFIER: edu.mahidol.magcalc.studio
+        INFOPLIST_FILE: SupportFiles/Info-macOS.plist
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_IDENTITY: "-"
+        ENABLE_HARDENED_RUNTIME: YES
+
+  MagCalcStudio-iOS:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      - path: Resources
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_NAME: MagCalc Studio
+        PRODUCT_BUNDLE_IDENTIFIER: edu.mahidol.magcalc.studio.ios
+        INFOPLIST_FILE: SupportFiles/Info-iOS.plist
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+
+schemes:
+  MagCalcStudio-macOS:
+    build:
+      targets:
+        MagCalcStudio-macOS: all
+    run:
+      config: Debug
+  MagCalcStudio-iOS:
+    build:
+      targets:
+        MagCalcStudio-iOS: all
+    run:
+      config: Debug

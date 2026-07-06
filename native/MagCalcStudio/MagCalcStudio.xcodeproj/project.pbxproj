@@ -1,0 +1,581 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		173A6CE9CD8547C69DBD0BD9 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B0540B3868FD7A105529CA5 /* AppModel.swift */; };
+		1CEAE2A8A28C68910B8120DD /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B0540B3868FD7A105529CA5 /* AppModel.swift */; };
+		214AFB825AD62C22D73F946D /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70539559C011BD1C0F4F2F8 /* APIClient.swift */; };
+		245C631C8CB6DD7D0C2023C2 /* LogStreamClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AD76BDECF04549A91067E31 /* LogStreamClient.swift */; };
+		24B781E61059FE278AD01EB4 /* SceneKitSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB3ADDCB0C0635B37F705C93 /* SceneKitSupport.swift */; };
+		2AC434D4F23704D03D69DDB7 /* LogStreamClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AD76BDECF04549A91067E31 /* LogStreamClient.swift */; };
+		2CAF8A143C5AB69F8D766209 /* EnvironmentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D2E1286A842B41E978E3768 /* EnvironmentView.swift */; };
+		3F1E9354A11F70DCB7D67EB7 /* space_groups.json in Resources */ = {isa = PBXBuildFile; fileRef = 9638CF0570B8E229E7AE9540 /* space_groups.json */; };
+		4811EE4E99C0BF7105854C73 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7313A17CF72940277C23ED9F /* SettingsView.swift */; };
+		4E28EC2C02A084FCD3B9DED1 /* InteractionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBACAEA15E11559BB3F050D9 /* InteractionsView.swift */; };
+		665B27909D647B1EE00CFE67 /* StructureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DA4410D86ED94B0C3A286D3 /* StructureView.swift */; };
+		66DDB0316C7227797B9B6748 /* MagneticStructureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A328EBB0F23A55FF0E7690F2 /* MagneticStructureView.swift */; };
+		6EAC50D3FEE3AAE2A05CC472 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B1338D63391E57B500037E1 /* ContentView.swift */; };
+		7695071EA1C52134FA215726 /* space_groups.json in Resources */ = {isa = PBXBuildFile; fileRef = 9638CF0570B8E229E7AE9540 /* space_groups.json */; };
+		780F87448809B414E62E2234 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2783F083FF3B6CFEBAC6D2A3 /* Components.swift */; };
+		7A40F68515A85ACED47C69B1 /* MagCalcStudioApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA76DFA64681DBEA76DE8FC8 /* MagCalcStudioApp.swift */; };
+		831F15350C44A9E2B23670DB /* MagCalcConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A93EA424B2A581750D10E84 /* MagCalcConfig.swift */; };
+		87747FCCDE715E6E9CE522A8 /* APIResponses.swift in Sources */ = {isa = PBXBuildFile; fileRef = 121B54B04E97892BF3F5600C /* APIResponses.swift */; };
+		8AD0DE485E013B90DFA0778C /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7313A17CF72940277C23ED9F /* SettingsView.swift */; };
+		95A23C7A85007D7122765587 /* LocalBackendController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E970AD007500EA080566AD6 /* LocalBackendController.swift */; };
+		9876AC0BDE08E5328042D10B /* SpaceGroups.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F073A80464EE5A8512ED688 /* SpaceGroups.swift */; };
+		9D8E67C4B627F0AD682FBB09 /* RunView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03A16E81FB2B0A8763ED5D1E /* RunView.swift */; };
+		A18E2D2EB07C2754FE695FEC /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2783F083FF3B6CFEBAC6D2A3 /* Components.swift */; };
+		A2B46B1622872BAA76004942 /* CrystalSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96FB47DCBFE486DC61E5926F /* CrystalSceneView.swift */; };
+		A783CE9B0896A57765482B66 /* JSONValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 151B4565A599347A78767848 /* JSONValue.swift */; };
+		AA4F51B5BF7F6522433C2268 /* RunView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03A16E81FB2B0A8763ED5D1E /* RunView.swift */; };
+		AE6E71329D3A0E2C35D21876 /* LocalBackendController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E970AD007500EA080566AD6 /* LocalBackendController.swift */; };
+		AE989558501CD30C5EF857E8 /* MagneticStructureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A328EBB0F23A55FF0E7690F2 /* MagneticStructureView.swift */; };
+		AF2B01D78DE94B188A061759 /* CrystalSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96FB47DCBFE486DC61E5926F /* CrystalSceneView.swift */; };
+		B34CA23842529C2EB1BADE56 /* FittingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6087E2BBBBA654BAB3560C76 /* FittingView.swift */; };
+		C3EA8CCB4DEDABD3D5E46E82 /* TasksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98CFCE2908CC24739FCB09B0 /* TasksView.swift */; };
+		C4E4C2532E0C41F51B576ED9 /* EnvironmentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D2E1286A842B41E978E3768 /* EnvironmentView.swift */; };
+		CCEFD83D4ADC035BAABCF12A /* APIResponses.swift in Sources */ = {isa = PBXBuildFile; fileRef = 121B54B04E97892BF3F5600C /* APIResponses.swift */; };
+		CDDDEDE4B290B800387ED99C /* JSONValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 151B4565A599347A78767848 /* JSONValue.swift */; };
+		D887949AA030B5739D2EAFEB /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B1338D63391E57B500037E1 /* ContentView.swift */; };
+		DEFADC6B23308038330828F1 /* FittingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6087E2BBBBA654BAB3560C76 /* FittingView.swift */; };
+		E1E38E15E8A2D94D3A181387 /* StructureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DA4410D86ED94B0C3A286D3 /* StructureView.swift */; };
+		E52646AB7F245D517EBEA9F3 /* MagCalcConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A93EA424B2A581750D10E84 /* MagCalcConfig.swift */; };
+		E838D995D259DE427A898D48 /* SpaceGroups.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F073A80464EE5A8512ED688 /* SpaceGroups.swift */; };
+		ECEDB56727ED4C1503AE58A4 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70539559C011BD1C0F4F2F8 /* APIClient.swift */; };
+		EF5B632293B85C6105BE3F1F /* SceneKitSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB3ADDCB0C0635B37F705C93 /* SceneKitSupport.swift */; };
+		F005A576EC8A12C77336C9F4 /* TasksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98CFCE2908CC24739FCB09B0 /* TasksView.swift */; };
+		F8844E6195E88101F4A29B87 /* MagCalcStudioApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA76DFA64681DBEA76DE8FC8 /* MagCalcStudioApp.swift */; };
+		FAEB633C086B47169D5E3320 /* InteractionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBACAEA15E11559BB3F050D9 /* InteractionsView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		03A16E81FB2B0A8763ED5D1E /* RunView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunView.swift; sourceTree = "<group>"; };
+		121B54B04E97892BF3F5600C /* APIResponses.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIResponses.swift; sourceTree = "<group>"; };
+		151B4565A599347A78767848 /* JSONValue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONValue.swift; sourceTree = "<group>"; };
+		1E970AD007500EA080566AD6 /* LocalBackendController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalBackendController.swift; sourceTree = "<group>"; };
+		2783F083FF3B6CFEBAC6D2A3 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
+		2B1338D63391E57B500037E1 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		4B0540B3868FD7A105529CA5 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		4F073A80464EE5A8512ED688 /* SpaceGroups.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpaceGroups.swift; sourceTree = "<group>"; };
+		5A9A6F2D63E0B7399B31BA19 /* MagCalcStudio-macOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "MagCalcStudio-macOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		5AD76BDECF04549A91067E31 /* LogStreamClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogStreamClient.swift; sourceTree = "<group>"; };
+		6087E2BBBBA654BAB3560C76 /* FittingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FittingView.swift; sourceTree = "<group>"; };
+		6DA4410D86ED94B0C3A286D3 /* StructureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StructureView.swift; sourceTree = "<group>"; };
+		7313A17CF72940277C23ED9F /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		7A93EA424B2A581750D10E84 /* MagCalcConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MagCalcConfig.swift; sourceTree = "<group>"; };
+		7C33EE66A203D669DBB9A6B6 /* MagCalcStudio-iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "MagCalcStudio-iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		9638CF0570B8E229E7AE9540 /* space_groups.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = space_groups.json; sourceTree = "<group>"; };
+		96FB47DCBFE486DC61E5926F /* CrystalSceneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrystalSceneView.swift; sourceTree = "<group>"; };
+		98CFCE2908CC24739FCB09B0 /* TasksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TasksView.swift; sourceTree = "<group>"; };
+		9D2E1286A842B41E978E3768 /* EnvironmentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnvironmentView.swift; sourceTree = "<group>"; };
+		A328EBB0F23A55FF0E7690F2 /* MagneticStructureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MagneticStructureView.swift; sourceTree = "<group>"; };
+		BBACAEA15E11559BB3F050D9 /* InteractionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InteractionsView.swift; sourceTree = "<group>"; };
+		CB3ADDCB0C0635B37F705C93 /* SceneKitSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneKitSupport.swift; sourceTree = "<group>"; };
+		E70539559C011BD1C0F4F2F8 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		EA76DFA64681DBEA76DE8FC8 /* MagCalcStudioApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MagCalcStudioApp.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		01A5E813A076969917E38183 /* Server */ = {
+			isa = PBXGroup;
+			children = (
+				1E970AD007500EA080566AD6 /* LocalBackendController.swift */,
+			);
+			path = Server;
+			sourceTree = "<group>";
+		};
+		43E8CC7DD370423B1CCBA852 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				EA76DFA64681DBEA76DE8FC8 /* MagCalcStudioApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		670A29A19E33191B19956E18 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				2783F083FF3B6CFEBAC6D2A3 /* Components.swift */,
+				2B1338D63391E57B500037E1 /* ContentView.swift */,
+				9D2E1286A842B41E978E3768 /* EnvironmentView.swift */,
+				6087E2BBBBA654BAB3560C76 /* FittingView.swift */,
+				BBACAEA15E11559BB3F050D9 /* InteractionsView.swift */,
+				A328EBB0F23A55FF0E7690F2 /* MagneticStructureView.swift */,
+				03A16E81FB2B0A8763ED5D1E /* RunView.swift */,
+				7313A17CF72940277C23ED9F /* SettingsView.swift */,
+				6DA4410D86ED94B0C3A286D3 /* StructureView.swift */,
+				98CFCE2908CC24739FCB09B0 /* TasksView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		9BC831F1F2EABE31A46E8DF2 = {
+			isa = PBXGroup;
+			children = (
+				B9BD06CA9485661C248B4ACB /* Resources */,
+				D768ABBE575FDB6457356AD6 /* Sources */,
+				BC89DEADD2771F54499AC217 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		9ED37CA489A56F776DFF2E59 /* Networking */ = {
+			isa = PBXGroup;
+			children = (
+				E70539559C011BD1C0F4F2F8 /* APIClient.swift */,
+				5AD76BDECF04549A91067E31 /* LogStreamClient.swift */,
+			);
+			path = Networking;
+			sourceTree = "<group>";
+		};
+		A72246636399DB9B6053089D /* Visualizer */ = {
+			isa = PBXGroup;
+			children = (
+				96FB47DCBFE486DC61E5926F /* CrystalSceneView.swift */,
+				CB3ADDCB0C0635B37F705C93 /* SceneKitSupport.swift */,
+			);
+			path = Visualizer;
+			sourceTree = "<group>";
+		};
+		AAEC4FDCC666736E77AFD8D9 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				121B54B04E97892BF3F5600C /* APIResponses.swift */,
+				151B4565A599347A78767848 /* JSONValue.swift */,
+				7A93EA424B2A581750D10E84 /* MagCalcConfig.swift */,
+				4F073A80464EE5A8512ED688 /* SpaceGroups.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		B9BD06CA9485661C248B4ACB /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				9638CF0570B8E229E7AE9540 /* space_groups.json */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		BC89DEADD2771F54499AC217 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				7C33EE66A203D669DBB9A6B6 /* MagCalcStudio-iOS.app */,
+				5A9A6F2D63E0B7399B31BA19 /* MagCalcStudio-macOS.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		D768ABBE575FDB6457356AD6 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				43E8CC7DD370423B1CCBA852 /* App */,
+				AAEC4FDCC666736E77AFD8D9 /* Models */,
+				9ED37CA489A56F776DFF2E59 /* Networking */,
+				01A5E813A076969917E38183 /* Server */,
+				F6E7EEC414CCDF1F51B0F098 /* ViewModels */,
+				670A29A19E33191B19956E18 /* Views */,
+				A72246636399DB9B6053089D /* Visualizer */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		F6E7EEC414CCDF1F51B0F098 /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				4B0540B3868FD7A105529CA5 /* AppModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		69C396C634CAE4F827CF0614 /* MagCalcStudio-macOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7944895C590174B9B452F67A /* Build configuration list for PBXNativeTarget "MagCalcStudio-macOS" */;
+			buildPhases = (
+				FEE38278D51774614C707154 /* Sources */,
+				3B52400D42ACD8D370E1B8A3 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "MagCalcStudio-macOS";
+			packageProductDependencies = (
+			);
+			productName = "MagCalcStudio-macOS";
+			productReference = 5A9A6F2D63E0B7399B31BA19 /* MagCalcStudio-macOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+		9D76C1C9A06AAC1679376645 /* MagCalcStudio-iOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5E9941F0B638B027708B26B1 /* Build configuration list for PBXNativeTarget "MagCalcStudio-iOS" */;
+			buildPhases = (
+				E21DD687308FD4EB66423360 /* Sources */,
+				C3A421162C5F3538C39F6D59 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "MagCalcStudio-iOS";
+			packageProductDependencies = (
+			);
+			productName = "MagCalcStudio-iOS";
+			productReference = 7C33EE66A203D669DBB9A6B6 /* MagCalcStudio-iOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		110109A73D47E08ABEEF7715 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					69C396C634CAE4F827CF0614 = {
+						ProvisioningStyle = Automatic;
+					};
+					9D76C1C9A06AAC1679376645 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 24927E824547CA1C91E1DCB7 /* Build configuration list for PBXProject "MagCalcStudio" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 9BC831F1F2EABE31A46E8DF2;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = BC89DEADD2771F54499AC217 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				9D76C1C9A06AAC1679376645 /* MagCalcStudio-iOS */,
+				69C396C634CAE4F827CF0614 /* MagCalcStudio-macOS */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		3B52400D42ACD8D370E1B8A3 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7695071EA1C52134FA215726 /* space_groups.json in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C3A421162C5F3538C39F6D59 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3F1E9354A11F70DCB7D67EB7 /* space_groups.json in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		E21DD687308FD4EB66423360 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				214AFB825AD62C22D73F946D /* APIClient.swift in Sources */,
+				87747FCCDE715E6E9CE522A8 /* APIResponses.swift in Sources */,
+				173A6CE9CD8547C69DBD0BD9 /* AppModel.swift in Sources */,
+				780F87448809B414E62E2234 /* Components.swift in Sources */,
+				6EAC50D3FEE3AAE2A05CC472 /* ContentView.swift in Sources */,
+				A2B46B1622872BAA76004942 /* CrystalSceneView.swift in Sources */,
+				2CAF8A143C5AB69F8D766209 /* EnvironmentView.swift in Sources */,
+				B34CA23842529C2EB1BADE56 /* FittingView.swift in Sources */,
+				4E28EC2C02A084FCD3B9DED1 /* InteractionsView.swift in Sources */,
+				A783CE9B0896A57765482B66 /* JSONValue.swift in Sources */,
+				95A23C7A85007D7122765587 /* LocalBackendController.swift in Sources */,
+				245C631C8CB6DD7D0C2023C2 /* LogStreamClient.swift in Sources */,
+				E52646AB7F245D517EBEA9F3 /* MagCalcConfig.swift in Sources */,
+				F8844E6195E88101F4A29B87 /* MagCalcStudioApp.swift in Sources */,
+				AE989558501CD30C5EF857E8 /* MagneticStructureView.swift in Sources */,
+				AA4F51B5BF7F6522433C2268 /* RunView.swift in Sources */,
+				24B781E61059FE278AD01EB4 /* SceneKitSupport.swift in Sources */,
+				8AD0DE485E013B90DFA0778C /* SettingsView.swift in Sources */,
+				E838D995D259DE427A898D48 /* SpaceGroups.swift in Sources */,
+				E1E38E15E8A2D94D3A181387 /* StructureView.swift in Sources */,
+				C3EA8CCB4DEDABD3D5E46E82 /* TasksView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FEE38278D51774614C707154 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				ECEDB56727ED4C1503AE58A4 /* APIClient.swift in Sources */,
+				CCEFD83D4ADC035BAABCF12A /* APIResponses.swift in Sources */,
+				1CEAE2A8A28C68910B8120DD /* AppModel.swift in Sources */,
+				A18E2D2EB07C2754FE695FEC /* Components.swift in Sources */,
+				D887949AA030B5739D2EAFEB /* ContentView.swift in Sources */,
+				AF2B01D78DE94B188A061759 /* CrystalSceneView.swift in Sources */,
+				C4E4C2532E0C41F51B576ED9 /* EnvironmentView.swift in Sources */,
+				DEFADC6B23308038330828F1 /* FittingView.swift in Sources */,
+				FAEB633C086B47169D5E3320 /* InteractionsView.swift in Sources */,
+				CDDDEDE4B290B800387ED99C /* JSONValue.swift in Sources */,
+				AE6E71329D3A0E2C35D21876 /* LocalBackendController.swift in Sources */,
+				2AC434D4F23704D03D69DDB7 /* LogStreamClient.swift in Sources */,
+				831F15350C44A9E2B23670DB /* MagCalcConfig.swift in Sources */,
+				7A40F68515A85ACED47C69B1 /* MagCalcStudioApp.swift in Sources */,
+				66DDB0316C7227797B9B6748 /* MagneticStructureView.swift in Sources */,
+				9D8E67C4B627F0AD682FBB09 /* RunView.swift in Sources */,
+				EF5B632293B85C6105BE3F1F /* SceneKitSupport.swift in Sources */,
+				4811EE4E99C0BF7105854C73 /* SettingsView.swift in Sources */,
+				9876AC0BDE08E5328042D10B /* SpaceGroups.swift in Sources */,
+				665B27909D647B1EE00CFE67 /* StructureView.swift in Sources */,
+				F005A576EC8A12C77336C9F4 /* TasksView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		0ECD4D5B4550C34D0C2E5718 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.10;
+			};
+			name = Release;
+		};
+		230B6DC3573E672502076854 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "SupportFiles/Info-iOS.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = edu.mahidol.magcalc.studio.ios;
+				PRODUCT_NAME = "MagCalc Studio";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		2461E3BDCC6D9B9E04A18894 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "-";
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "SupportFiles/Info-macOS.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = edu.mahidol.magcalc.studio;
+				PRODUCT_NAME = "MagCalc Studio";
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		2EA9021B349C6FFACEF9F74C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "-";
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "SupportFiles/Info-macOS.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = edu.mahidol.magcalc.studio;
+				PRODUCT_NAME = "MagCalc Studio";
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		4F8C94FB52624F7DEED8FE4A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "SupportFiles/Info-iOS.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = edu.mahidol.magcalc.studio.ios;
+				PRODUCT_NAME = "MagCalc Studio";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		9FACB2216F53F613DDD0D3EF /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.10;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		24927E824547CA1C91E1DCB7 /* Build configuration list for PBXProject "MagCalcStudio" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9FACB2216F53F613DDD0D3EF /* Debug */,
+				0ECD4D5B4550C34D0C2E5718 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		5E9941F0B638B027708B26B1 /* Build configuration list for PBXNativeTarget "MagCalcStudio-iOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				230B6DC3573E672502076854 /* Debug */,
+				4F8C94FB52624F7DEED8FE4A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		7944895C590174B9B452F67A /* Build configuration list for PBXNativeTarget "MagCalcStudio-macOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2EA9021B349C6FFACEF9F74C /* Debug */,
+				2461E3BDCC6D9B9E04A18894 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 110109A73D47E08ABEEF7715 /* Project object */;
+}
