@@ -16,6 +16,10 @@ Verify installation:
 magcalc --help
 ```
 
+Optionally, install the compiled **fMagCalc** backend for much faster
+dispersion / S(Q,ω) / powder calculations on dense q-grids — see
+**§4c. Faster Calculations with the Fortran Backend**.
+
 ---
 
 ## 2. Quick Start (modern workflow)
@@ -342,6 +346,109 @@ the **Run & Analyze** tab.
 * Intensity fits use a single global scale, flat background and a simple
   Gaussian/Lorentzian energy broadening — not a full instrument-resolution
   convolution.
+
+---
+
+## 4c. Faster Calculations with the Fortran Backend (fMagCalc)
+
+[fMagCalc](https://github.com/kit-matan/fMagCalc) is a compiled companion
+package that runs pyMagCalc's numerical hot path — the per-q diagonalization
+of the Bogoliubov Hamiltonian, the S(Q,ω) intensity contraction, and powder
+averaging — in an OpenMP-parallel Fortran core backed by LAPACK. The physics
+and results are identical to the NumPy path (parity to ~1e-13); the win is
+speed: the compute kernel is 18–100× faster than the multiprocessing NumPy
+path, and on the KFe3J example with 8000 q-points the end-to-end S(Q,ω) run is
+roughly an order of magnitude faster. It shines on dense q-grids and powder
+averages; for a handful of q-points the default NumPy path is fine.
+
+pyMagCalc never *requires* fMagCalc: if it is missing or broken, any
+`backend: fortran` request logs a WARNING and falls back to NumPy, so runs
+always complete.
+
+### Installing fMagCalc
+
+fMagCalc compiles during installation, so you need a Fortran compiler,
+CMake ≥ 3.20, and LAPACK first:
+
+```bash
+# macOS
+brew install gcc cmake          # gfortran + CMake; LAPACK comes from Accelerate
+
+# Debian/Ubuntu Linux
+sudo apt install gfortran cmake libopenblas-dev
+```
+
+Then install with pip, either directly from GitHub or from a local clone:
+
+```bash
+pip install git+https://github.com/kit-matan/fMagCalc
+# or, from a local checkout:
+pip install /path/to/fMagCalc
+```
+
+Verify the compiled library is found (must print `ctypes`, not `subprocess`):
+
+```bash
+python -c "import fmagcalc; print(fmagcalc.backend)"
+```
+
+### Using it from a config file (CLI)
+
+Add `backend: fortran` to the `calculation` block — it applies to the
+dispersion, S(Q,ω), and powder tasks of that run:
+
+```yaml
+calculation:
+  cache_mode: auto
+  backend: fortran        # numpy (default) | fortran
+```
+
+Then run as usual:
+
+```bash
+magcalc run config.yaml
+```
+
+The log line `Calculating dispersion... (backend=fortran)` confirms the
+selection, and `Dispersion computed via fMagCalc Fortran backend` confirms it
+was actually used (rather than falling back).
+
+### Using it from the GUI
+
+In **pyMagCalc Studio**, open **Tasks & Plotting → Calculation Settings** and
+set **Compute Backend** to *Fortran (fMagCalc)*. The setting is saved into the
+generated config as `calculation.backend`.
+
+### Using it from the Python API
+
+`calculate_dispersion`, `calculate_sqw`, and `calculate_powder_average` all
+accept a `backend` keyword:
+
+```python
+E = calc.calculate_dispersion(q_list, backend="fortran")
+sqw = calc.calculate_sqw(q_list, backend="fortran")
+powder = calc.calculate_powder_average(q_mags, num_samples=200, backend="fortran")
+```
+
+### Troubleshooting
+
+* **`backend='fortran' requested but the fMagCalc package could not be
+  imported`** — fMagCalc is not installed in the active environment. Install
+  it as above (check `pip show fmagcalc`), or point the `FMAGCALC_PATH` env
+  var at a source checkout's `python/` directory (development fallback).
+* **`fMagCalc's compiled library is not available`** — the package imported
+  but `fmagcalc.backend` is `subprocess`, meaning `libfmagcalc` was not found.
+  Reinstall with pip (which compiles it into the package), or in a source
+  checkout run `cmake -S . -B build && cmake --build build`. The
+  `FMAGCALC_LIB` env var can point at a specific library file.
+* **No Fortran compiler / CMake at install time** — `pip install` fails with a
+  build error; install the prerequisites above and retry. pyMagCalc itself is
+  unaffected — just leave `backend` at `numpy` until fMagCalc installs.
+* Fitting note: `calculation.backend` is honored by fits too — `sqw` and
+  `powder` fits evaluate each iteration through the selected backend, so
+  fMagCalc speeds them up directly. `dispersion` fits with `fast: true` (the
+  default) instead use the compile-once `DispersionEvaluator` (§4b) and do not
+  need fMagCalc.
 
 ---
 

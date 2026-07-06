@@ -49,6 +49,7 @@
 *   ASE (>=3.22.0, for CIF file reading)
 *   lmfit (>=1.0, for data fitting)
 *   pytest (>=7.0.0, for testing)
+*   fMagCalc (optional compiled Fortran backend — see Installation below)
 
 ## Installation
 
@@ -61,19 +62,54 @@
 
 ### Optional: compiled Fortran backend (fMagCalc)
 
-Dispersion and S(Q,ω) accept `backend="fortran"` (also exposed in the GUI),
-which runs the per-q diagonalization in [fMagCalc](https://github.com/kit-matan/fMagCalc)'s
-OpenMP/LAPACK core — much faster at large q-counts — and falls back to NumPy
-with a warning if unavailable. fMagCalc is pip-installable (needs a Fortran
-compiler + CMake):
+[fMagCalc](https://github.com/kit-matan/fMagCalc) is a compiled OpenMP/LAPACK
+engine for the numerical hot path (per-q diagonalization, S(Q,ω) intensities,
+powder averaging). It is optional — pyMagCalc is fully functional without it —
+but much faster at large q-counts.
+
+**Prerequisites** (compiles on install): a Fortran compiler, CMake ≥ 3.20, and
+LAPACK.
 
 ```bash
-pip install /path/to/fMagCalc
+# macOS
+brew install gcc cmake          # gfortran + CMake; LAPACK comes from Accelerate
+
+# Debian/Ubuntu Linux
+sudo apt install gfortran cmake libopenblas-dev
 ```
 
-Once installed, `import fmagcalc` works everywhere and pyMagCalc uses it
-directly; the `FMAGCALC_PATH` env var / sibling-checkout lookup remains only
-as a development fallback.
+**Install** straight from GitHub (or from a local clone):
+
+```bash
+pip install git+https://github.com/kit-matan/fMagCalc
+# or: pip install /path/to/fMagCalc
+```
+
+**Verify** — should print `ctypes`:
+
+```bash
+python -c "import fmagcalc; print(fmagcalc.backend)"
+```
+
+**Use it** by selecting the backend in any of the three interfaces (all fall
+back to NumPy with a warning if fMagCalc is unavailable):
+
+```yaml
+# config.yaml — applies to dispersion, S(Q,w), and powder tasks
+calculation:
+  backend: fortran        # default: numpy
+```
+
+```python
+# Python API
+calc.calculate_dispersion(q_list, backend="fortran")
+calc.calculate_sqw(q_list, backend="fortran")
+```
+
+In **pyMagCalc Studio**, set **Tasks & Plotting → Calculation Settings →
+Compute Backend** to *Fortran (fMagCalc)*.
+
+See **TUTORIAL.md §4c** for details and troubleshooting.
 
 ## CLI Usage (New)
 
