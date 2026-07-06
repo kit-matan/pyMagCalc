@@ -20,9 +20,10 @@ final class LocalBackendController: ObservableObject {
         didSet { UserDefaults.standard.set(projectRoot, forKey: "backend.projectRoot") }
     }
 
-    /// Python interpreter used to run the server.
+    /// Python interpreter used to run the server. Keyed "v2" so installs that
+    /// persisted the pre-pyenv-aware guess re-run detection once.
     @Published var pythonPath: String {
-        didSet { UserDefaults.standard.set(pythonPath, forKey: "backend.pythonPath") }
+        didSet { UserDefaults.standard.set(pythonPath, forKey: "backend.pythonPath.v2") }
     }
 
     @Published var port: Int {
@@ -34,7 +35,7 @@ final class LocalBackendController: ObservableObject {
     init() {
         let defaults = UserDefaults.standard
         projectRoot = defaults.string(forKey: "backend.projectRoot") ?? Self.guessProjectRoot()
-        pythonPath = defaults.string(forKey: "backend.pythonPath") ?? Self.guessPython()
+        pythonPath = defaults.string(forKey: "backend.pythonPath.v2") ?? Self.guessPython()
         let savedPort = defaults.integer(forKey: "backend.port")
         port = savedPort == 0 ? 8000 : savedPort
     }
@@ -126,12 +127,26 @@ final class LocalBackendController: ObservableObject {
     }
 
     private static func guessPython() -> String {
-        let candidates = [
+        let fm = FileManager.default
+        let home = NSHomeDirectory()
+
+        // Prefer pyenv: it is typically the environment that actually has the
+        // magcalc dependencies installed. The shim resolves to the version
+        // selected by pyenv; fall back to the newest installed version.
+        var candidates = ["\(home)/.pyenv/shims/python3", "\(home)/.pyenv/shims/python"]
+        let versionsDir = "\(home)/.pyenv/versions"
+        if let versions = try? fm.contentsOfDirectory(atPath: versionsDir) {
+            for v in versions.sorted(by: >) {
+                candidates.append("\(versionsDir)/\(v)/bin/python3")
+                candidates.append("\(versionsDir)/\(v)/bin/python")
+            }
+        }
+        candidates += [
             "/opt/homebrew/bin/python3",
             "/usr/local/bin/python3",
             "/usr/bin/python3",
         ]
-        return candidates.first { FileManager.default.fileExists(atPath: $0) } ?? "/usr/bin/python3"
+        return candidates.first { fm.fileExists(atPath: $0) } ?? "/usr/bin/python3"
     }
 }
 #endif

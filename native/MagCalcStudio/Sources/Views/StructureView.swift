@@ -178,17 +178,72 @@ struct CrystalVisualizerPanel: View {
                                  atoms: data.atoms,
                                  bonds: data.bonds.filter { !model.hiddenBondKeys.contains($0.valueKey) })
                 bondLegend(data: data)
-            } else {
+            } else if model.serverReachable {
                 ContentUnavailableView(
-                    model.serverReachable ? "No structure yet" : "Backend offline",
+                    "No structure yet",
                     systemImage: "cube.transparent",
-                    description: Text(model.serverReachable
-                        ? "Add basis atoms to see the unit cell."
-                        : "Connect to a MagCalc backend in Settings to enable the 3D preview.")
+                    description: Text("Add basis atoms to see the unit cell.")
                 )
+            } else {
+                offlinePlaceholder
             }
         }
     }
+
+    private var offlinePlaceholder: some View {
+        VStack(spacing: 14) {
+            ContentUnavailableView {
+                Label("Backend offline", systemImage: "bolt.horizontal.circle")
+            } description: {
+                #if os(macOS)
+                Text("Start the bundled Python backend, or point the app at a running server in Settings.")
+                #else
+                Text("Run the backend on your Mac (MAGCALC_HOST=0.0.0.0 python gui/server.py) and set its address in Settings.")
+                #endif
+            } actions: {
+                #if os(macOS)
+                EmbeddedBackendControls(backend: model.backend) {
+                    model.startEmbeddedBackend()
+                }
+                #endif
+            }
+        }
+    }
+
+    #if os(macOS)
+    /// Observes the backend controller directly so state changes
+    /// (starting → running/failed) refresh this view.
+    private struct EmbeddedBackendControls: View {
+        @ObservedObject var backend: LocalBackendController
+        var onStart: () -> Void
+
+        var body: some View {
+            VStack(spacing: 10) {
+                if backend.state == .starting {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Starting backend… (first launch imports pymatgen and can take a minute)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Button(action: onStart) {
+                        Label("Start Backend", systemImage: "play.circle")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    if case .failed(let message) = backend.state {
+                        Text(message)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 320)
+                    }
+                    SettingsLink { Text("Open Settings…") }
+                }
+            }
+        }
+    }
+    #endif
 
     @ViewBuilder
     private func bondLegend(data: VisualizerData) -> some View {

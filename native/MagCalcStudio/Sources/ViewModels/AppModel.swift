@@ -216,6 +216,16 @@ final class AppModel: ObservableObject {
         }
     }
 
+    #if os(macOS)
+    /// Start the embedded Python backend and point the app at it.
+    func startEmbeddedBackend() {
+        backend.start()
+        let url = "http://127.0.0.1:\(backend.port)"
+        if serverURLString != url { serverURLString = url }
+        notify("Starting embedded backend…", .info)
+    }
+    #endif
+
     // MARK: CIF / fit-data import
 
     func importCIF(from url: URL) {
