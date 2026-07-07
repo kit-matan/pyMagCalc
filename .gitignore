@@ -59,3 +59,5 @@ powder_plot.png
 # Claude Code persistent memory (local context, not project code)
 memory/
 **/.DS_Store
+**/xcuserdata/
+*.xcuserstate
