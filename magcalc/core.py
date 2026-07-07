@@ -336,15 +336,32 @@ class DispersionEvaluator:
         qs = np.atleast_2d(np.asarray(q_vectors, dtype=float))
         n = self.nspins
         out = np.empty((qs.shape[0], n), dtype=float)
+        # Track the largest imaginary eigenvalue part across all q-points. A
+        # significant value signals an unstable (non-ground-state) structure.
+        # This mirrors the warning emitted by the standard per-q path
+        # (numerical.py), so the fast path does not silently hide instabilities.
+        # It is aggregated into a single warning to stay cheap in fitting loops.
+        max_imag = 0.0
+        max_imag_q = None
         for i, q in enumerate(qs):
             H = np.array(self._f(*(list(q) + base_args)), dtype=np.complex128)
             ev = np.linalg.eigvals(H)
+            imag_mag = float(np.max(np.abs(np.imag(ev)))) if ev.size else 0.0
+            if imag_mag > max_imag:
+                max_imag = imag_mag
+                max_imag_q = q
             e = np.real(np.sort(ev))[n:]
             if len(e) != n:
                 e = e[:n] if len(e) > n else np.pad(
                     e, (0, n - len(e)), constant_values=np.nan
                 )
             out[i] = e
+        if max_imag > ENERGY_IMAG_PART_THRESHOLD:
+            logger.warning(
+                "DispersionEvaluator: significant imaginary eigenvalue part "
+                f"(max {max_imag:.3g} at q={np.round(max_imag_q, 4)}); the "
+                "magnetic structure may be unstable/not a ground state."
+            )
         return out
 
 

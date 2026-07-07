@@ -393,6 +393,9 @@ class GenericSpinModel:
              
              # Extract ions
              self._ion_list = [a.get('ion', a.get('element', a.get('label', 'Fe3+'))) for a in atoms]
+
+             # Extract per-atom spin magnitudes (enables mixed-spin models).
+             self._spin_list = [float(a.get('spin_S', 0.5)) for a in atoms]
              
         elif 'atom_positions' in crystal_struct:
              # Legacy/Flat support - Assume Cartesian if only this is provided? 
@@ -416,6 +419,15 @@ class GenericSpinModel:
         """Find the atom positions in the unit cell."""
         return self._r_pos
 
+    def spin_magnitudes(self):
+        """Per-atom spin magnitudes S_i for the unit-cell atoms.
+
+        Enables mixed-spin models: the LSWT layer scales each site's
+        Holstein-Primakoff expansion by S_i. Returns a list of floats in the
+        same order as ``atom_pos()``.
+        """
+        return list(getattr(self, '_spin_list', []))
+
     def atom_pos_ouc(self):
         """Returns neighbor positions."""
         return self._atoms_ouc
@@ -424,29 +436,68 @@ class GenericSpinModel:
         """Returns list of ion names for Each atom in the unit cell."""
         return self._ion_list
 
+    def _required_neighbor_shells(self):
+        """Smallest per-axis neighbor shell that covers every explicit bond offset.
+
+        Bonds whose ``rij_offset`` reaches beyond the OUC used to be SILENTLY
+        dropped (the offset match in ``spin_interactions`` simply never fired),
+        corrupting any model with |offset| > 1 (e.g. 2nd-neighbor bonds along
+        one axis, FeI2's J3/J'2a, spiral chains). Scan both the raw config and
+        the builder-expanded interaction list and size the shell accordingly.
+        """
+        shells = [1, 1, 1]
+        items = []
+        ints = self.config.get('interactions')
+        if isinstance(ints, dict):
+            for v in ints.values():
+                if isinstance(v, list):
+                    items.extend(x for x in v if isinstance(x, dict))
+        elif isinstance(ints, list):
+            items.extend(x for x in ints if isinstance(x, dict))
+        items.extend(x for x in getattr(self, 'interactions_config', []) or []
+                     if isinstance(x, dict))
+        for it in items:
+            off = it.get('rij_offset', it.get('offset'))
+            if isinstance(off, (list, tuple)) and len(off) == 3:
+                try:
+                    for i in range(3):
+                        shells[i] = max(shells[i], abs(int(off[i])))
+                except (TypeError, ValueError):
+                    continue
+        return shells
+
     def _generate_atom_pos_ouc(self):
         """Generate neighbors (internal helper)."""
         uc = self.unit_cell()
         apos = self.atom_pos()
         apos_len = len(apos)
-        
+
         # Standard -1 to 1 supercell
         r_pos_ouc = [apos[k] for k in range(apos_len)]
-        
+
         from itertools import product
-        
+
         # Check config for dimensionality limit (default 3)
         c_struct = self.config.get('crystal_structure', {})
         dims = c_struct.get('dimensionality', 3)
         calc_settings = self.config.get('calculation_settings', {})
         neighbor_shells = calc_settings.get('neighbor_shells')
-        
+
         neighbor_offsets = []
-        
+
+        if not neighbor_shells:
+            # Auto-size the shell so every explicit bond offset is reachable.
+            required = self._required_neighbor_shells()
+            if required != [1, 1, 1]:
+                logger.info(f"Extending neighbor shell to {required} to cover bond offsets.")
+                neighbor_shells = required
+
         if neighbor_shells:
              rx = range(-neighbor_shells[0], neighbor_shells[0]+1)
              ry = range(-neighbor_shells[1], neighbor_shells[1]+1)
              rz = range(-neighbor_shells[2], neighbor_shells[2]+1)
+             if dims == 2:
+                  rz = [0]
              loop_iter = product(rx, ry, rz)
         else:
              rng = range(-1, 2)
@@ -961,41 +1012,73 @@ class GenericSpinModel:
         return HM
 
     def _compute_sia_terms(self, Sxyz: List[Any], p_rest: List[Any], param_map: Dict[str, Any] = None) -> sp.Expr:
-        """Compute Single Ion Anisotropy terms."""
+        """Compute Single Ion Anisotropy terms K (S.n)^2 for each targeted site.
+
+        The strength ``value`` may be a numeric literal, a named parameter, or a
+        parameter expression; a legacy positional fallback (consume from
+        ``p_rest``) is used only if none of those resolve. Each SIA entry is
+        applied *only* to the sites named in its ``atoms`` field (matched by
+        label), defaulting to every site when ``atoms`` is omitted -- so listing
+        one entry per site no longer multiplies the anisotropy by the site count.
+        """
         HM = 0
         N_uc = len(self.atom_pos())
+        # Map atom label -> unit-cell index (for the 'atoms' targeting field).
+        try:
+            atom_labels = [a.get('label') for a in
+                           self.config.get('crystal_structure', {}).get('atoms_uc', [])]
+        except Exception:
+            atom_labels = []
+        label_to_idx = {lbl: i for i, lbl in enumerate(atom_labels) if lbl is not None}
+
         rest_idx = 0
         for interaction in self.interactions_config:
             itype = interaction.get('type')
-            if itype == 'sia':
-                D_sia = None
-                # 1. Try named resolution
-                val_name = interaction.get('value')
-                if param_map and isinstance(val_name, str) and val_name in param_map:
-                    D_sia = param_map[val_name]
-                
-                # 2. Fallback to positional
-                if D_sia is None and rest_idx < len(p_rest):
-                    D_sia = p_rest[rest_idx]
-                    rest_idx += 1
-                
-                if D_sia is not None:
-                    
-                    axis = interaction.get('axis', [0, 0, 1])
-                    if isinstance(axis, (list, tuple, np.ndarray)) and len(axis) == 3:
-                        # Normalize axis
-                        n = np.array(axis, dtype=float)
-                        norm = np.linalg.norm(n)
-                        if norm > 0: n /= norm
-                        
-                        for i in range(N_uc):
-                             # (S . n)^2
-                             S_dot_n = Sxyz[i][0]*n[0] + Sxyz[i][1]*n[1] + Sxyz[i][2]*n[2]
-                             HM += D_sia * (S_dot_n)**2
-                    else:
-                        # Fallback to Sz^2
-                        for i in range(N_uc):
-                             HM += D_sia * (Sxyz[i][2])**2
+            if itype != 'sia':
+                continue
+
+            # --- Resolve the anisotropy strength D_sia ---
+            D_sia = None
+            val = interaction.get('value')
+            if isinstance(val, (int, float)):
+                # Numeric literal (e.g. value: 0.2). Honour it directly.
+                D_sia = val
+            elif isinstance(val, str) and param_map and val in param_map:
+                # Named parameter (e.g. value: "D").
+                D_sia = param_map[val]
+            elif isinstance(val, str):
+                # Parameter expression or numeric string.
+                try:
+                    D_sia = float(sp.sympify(val, locals=param_map or {}))
+                except Exception:
+                    D_sia = None
+            if D_sia is None and rest_idx < len(p_rest):
+                # Legacy positional fallback.
+                D_sia = p_rest[rest_idx]
+                rest_idx += 1
+            if D_sia is None:
+                continue
+
+            # --- Determine which sites this entry applies to ---
+            target_labels = interaction.get('atoms') or interaction.get('atom_labels')
+            if target_labels:
+                target_idx = [label_to_idx[l] for l in target_labels if l in label_to_idx]
+            else:
+                target_idx = list(range(N_uc))
+
+            # --- Build the anisotropy axis ---
+            axis = interaction.get('axis', [0, 0, 1])
+            if isinstance(axis, (list, tuple, np.ndarray)) and len(axis) == 3:
+                n = np.array(axis, dtype=float)
+                norm = np.linalg.norm(n)
+                if norm > 0:
+                    n /= norm
+                for i in target_idx:
+                    S_dot_n = Sxyz[i][0]*n[0] + Sxyz[i][1]*n[1] + Sxyz[i][2]*n[2]
+                    HM += D_sia * (S_dot_n)**2
+            else:
+                for i in target_idx:
+                    HM += D_sia * (Sxyz[i][2])**2
         return HM
 
     def _compute_zeeman_terms(self, Sxyz: List[Any], p_rest: List[Any], param_map: Dict[str, Any], gamma: float, mu_B: float) -> sp.Expr:
@@ -1394,9 +1477,43 @@ class GenericSpinModel:
             return self._generate_structure_from_k(struct_config)
         elif method == 'pattern':
             return self._generate_structure_from_pattern(struct_config)
+        elif method == 'spiral':
+            return self._generate_structure_spiral_local(struct_config)
         else:
              logger.warning(f"Unknown magnetic_structure type: {method}")
              return None, None
+
+    def _generate_structure_spiral_local(self, config):
+        """Local (rotating-frame) structure for a single-k spiral.
+
+        For ``type: spiral`` the interactions are transformed into the
+        rotating frame by ``_compute_rotated_interactions`` (each bond picks
+        up R(2*pi*k.r_ij) about ``axis``), so the spin directions stored on
+        the model are the LOCAL-frame ones. For a planar spiral these must
+        lie in the plane PERPENDICULAR to the rotation axis; without this the
+        LSWT is built on a non-ground state and the phason is spuriously
+        gapped. Optional ``local_directions`` (one per spin, applied
+        cyclically) sets the intra-cell pattern (e.g. a 120-degree
+        arrangement); the default is a single common direction perpendicular
+        to ``axis``.
+        """
+        atoms = self.atom_pos()
+        nspins = len(atoms)
+        axis = np.array(config.get('axis', [0, 0, 1]), dtype=float)
+        n = axis / (np.linalg.norm(axis) or 1.0)
+        dirs = config.get('local_directions', config.get('directions'))
+        if not dirs:
+            trial = np.array([1.0, 0.0, 0.0]) if abs(n[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+            u = trial - np.dot(trial, n) * n
+            u /= np.linalg.norm(u)
+            dirs = [u.tolist()]
+        thetas, phis = [], []
+        for i in range(nspins):
+            v = np.array(dirs[i % len(dirs)], dtype=float)
+            v /= np.linalg.norm(v)
+            thetas.append(float(np.arccos(np.clip(v[2], -1.0, 1.0))))
+            phis.append(float(np.arctan2(v[1], v[0])))
+        return thetas, phis
 
     def _generate_structure_explicit(self, config):
         """Parse explicit angle list."""
