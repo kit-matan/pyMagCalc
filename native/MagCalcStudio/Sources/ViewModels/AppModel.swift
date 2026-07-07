@@ -235,6 +235,7 @@ final class AppModel: ObservableObject {
             do {
                 let parsed = try await api.parseCIF(fileURL: url)
                 guard let self else { return }
+                self.config.rawImport = nil  // CIF begins a fresh designer-built structure
                 self.config.lattice = parsed.lattice
                 self.config.wyckoffAtoms = parsed.wyckoffAtoms
                 self.notify("CIF loaded: \(parsed.international) (SG \(parsed.lattice.spaceGroup))")

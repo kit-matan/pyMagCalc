@@ -148,6 +148,19 @@ function BondLine({ start, end, label, color, type, labelOffset = [0, 0, 0], onC
 }
 
 function getLatticeMatrix(lattice) {
+    // Prefer explicit lattice_vectors when present (e.g. imported example
+    // configs) so the cell is rendered exactly as the calculation uses it,
+    // instead of the a/b/c/angle fields which may still hold UI defaults.
+    // transformPos treats the returned matrix's COLUMNS as the lattice
+    // vectors, while config stores them as ROWS -> transpose here.
+    const lv = lattice && lattice.lattice_vectors
+    if (Array.isArray(lv) && lv.length === 3 && lv.every(r => Array.isArray(r) && r.length === 3)) {
+        return [
+            [lv[0][0], lv[1][0], lv[2][0]],
+            [lv[0][1], lv[1][1], lv[2][1]],
+            [lv[0][2], lv[1][2], lv[2][2]],
+        ]
+    }
     const { a, b, c, alpha, beta, gamma } = lattice
     const d2r = Math.PI / 180
     const ca = Math.cos(alpha * d2r)

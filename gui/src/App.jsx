@@ -48,6 +48,12 @@ function App() {
   const [calcStopping, setCalcStopping] = useState(false)
   // Tracks a user-initiated stop so the resulting aborted request isn't shown as an error.
   const stopRequestedRef = React.useRef(false)
+  // Holds the crystal_structure / interactions / magnetic_structure of a loaded
+  // example config verbatim, so it is sent to the backend exactly as the CLI
+  // reads it (lattice_vectors, interaction_matrix, single_ion_anisotropy,
+  // spiral/generic magnetic structures, ...) instead of being flattened into
+  // the designer's a/b/c + Heisenberg model. Cleared on reset / CIF load.
+  const rawImportRef = React.useRef(null)
 
   // Resizable layout state
   const [sidebarWidth, setSidebarWidth] = useState(280)
@@ -328,6 +334,51 @@ function App() {
     return DEMO_CONFIG;
   })
 
+  // Build the crystal_structure / interactions / magnetic_structure portion of
+  // any backend payload. When an example config was loaded via "Load YAML", its
+  // structure and interactions are passed through verbatim (so lattice_vectors,
+  // interaction_matrix, single_ion_anisotropy, DM, spiral/generic magnetic
+  // structures all reach the backend exactly as `python -m magcalc run` sees
+  // them). Otherwise the designer state is serialised as before.
+  const buildStructPayload = () => {
+    const raw = rawImportRef.current
+    if (raw && raw.crystal_structure) {
+      const cs = raw.crystal_structure
+      const atoms = cs.atoms_uc || cs.wyckoff_atoms || []
+      return {
+        crystal_structure: {
+          ...(cs.lattice_vectors
+            ? { lattice_vectors: cs.lattice_vectors }
+            : { lattice_parameters: cs.lattice_parameters || config.lattice }),
+          atoms_uc: atoms,
+          wyckoff_atoms: atoms,
+          atom_mode: cs.atom_mode || (cs.lattice_vectors ? 'explicit' : 'symmetry'),
+          magnetic_elements: cs.magnetic_elements || config.magnetic_elements || ['Cu'],
+          dimensionality: 3,
+        },
+        interactions: raw.interactions,
+        magnetic_structure: raw.magnetic_structure ?? config.magnetic_structure,
+        parameter_order: raw.parameter_order,
+      }
+    }
+    return {
+      crystal_structure: {
+        ...(config.lattice.lattice_vectors
+          ? { lattice_vectors: config.lattice.lattice_vectors }
+          : { lattice_parameters: config.lattice }),
+        wyckoff_atoms: config.wyckoff_atoms,
+        atom_mode: atomMode,
+        magnetic_elements: config.magnetic_elements || ['Cu'],
+        dimensionality: 3,
+      },
+      interactions: interactionMode === 'explicit'
+        ? { list: config.explicit_interactions || [] }
+        : { symmetry_rules: config.symmetry_interactions, single_ion_anisotropy: config.single_ion_anisotropy || [] },
+      magnetic_structure: config.magnetic_structure,
+      parameter_order: undefined,
+    }
+  }
+
   // Persistence Effect
   React.useEffect(() => {
     localStorage.setItem('magcalc_config', JSON.stringify(config));
@@ -337,18 +388,12 @@ function App() {
   React.useEffect(() => {
     const updatePreview = async () => {
       try {
+        const sp = buildStructPayload()
         const payload = {
           data: {
-            crystal_structure: {
-              lattice_parameters: config.lattice,
-              wyckoff_atoms: config.wyckoff_atoms,
-              atom_mode: atomMode
-            },
-            interactions: {
-              symmetry_rules: config.symmetry_interactions,
-              list: interactionMode === 'explicit' ? config.explicit_interactions : undefined,
-              single_ion_anisotropy: config.single_ion_anisotropy || []
-            },
+            crystal_structure: sp.crystal_structure,
+            interactions: sp.interactions,
+            magnetic_structure: sp.magnetic_structure,
             parameters: config.parameters
           }
         }
@@ -417,6 +462,7 @@ function App() {
       if (!response.ok) throw new Error('Failed to parse CIF')
 
       const data = await response.json()
+      rawImportRef.current = null  // CIF starts a fresh designer-built structure
       setConfig(prev => ({
         ...prev,
         lattice: data.lattice,
@@ -511,6 +557,7 @@ function App() {
 
   const resetToDefaults = () => {
     if (window.confirm("Are you sure you want to load the default example (aCVO)?\nCurrent changes will be lost.")) {
+      rawImportRef.current = null;
       setConfig(DEMO_CONFIG);
       setInteractionMode('symmetry');
       setAtomMode('symmetry');
@@ -544,7 +591,27 @@ function App() {
             newConfig.lattice = { ...newConfig.lattice, ...doc.crystal_structure.lattice_parameters }
           }
           if (doc.crystal_structure.lattice_vectors) {
-            newConfig.lattice.lattice_vectors = doc.crystal_structure.lattice_vectors
+            const lv = doc.crystal_structure.lattice_vectors
+            newConfig.lattice.lattice_vectors = lv
+            // Derive a/b/c/angles from the vectors so the Lattice Constants
+            // panel shows the real cell instead of the UI defaults (the 3D
+            // view uses the vectors directly).
+            if (!doc.crystal_structure.lattice_parameters &&
+                Array.isArray(lv) && lv.length === 3) {
+              const nrm = v => Math.hypot(v[0], v[1], v[2])
+              const dot = (u, v) => u[0]*v[0] + u[1]*v[1] + u[2]*v[2]
+              const ang = (u, v) => {
+                const d = nrm(u) * nrm(v)
+                return d ? Math.acos(Math.max(-1, Math.min(1, dot(u, v)/d))) * 180/Math.PI : 90
+              }
+              const r5 = x => Number(x.toFixed(5))
+              newConfig.lattice = {
+                ...newConfig.lattice,
+                a: r5(nrm(lv[0])), b: r5(nrm(lv[1])), c: r5(nrm(lv[2])),
+                alpha: r5(ang(lv[1], lv[2])), beta: r5(ang(lv[0], lv[2])), gamma: r5(ang(lv[0], lv[1])),
+                lattice_vectors: lv,
+              }
+            }
           }
 
 
@@ -644,6 +711,15 @@ function App() {
             points_per_segment: points_per_segment || 100
           }
         }
+        // Keep the raw structure/interactions/magnetic_structure so they are
+        // sent to the backend verbatim (the designer model cannot represent
+        // lattice_vectors, interaction_matrix, SIA, spiral orders, etc.).
+        rawImportRef.current = doc.crystal_structure ? {
+          crystal_structure: doc.crystal_structure,
+          interactions: doc.interactions,
+          magnetic_structure: doc.magnetic_structure,
+          parameter_order: doc.parameter_order,
+        } : null
         setConfig(newConfig)
         alert('Configuration imported successfully! Previous state cleared.')
       } catch (err) {
@@ -685,20 +761,21 @@ function App() {
     }));
 
     // 3. Structure the input for Export
+    const sp = buildStructPayload()
     let expanded = {
-      parameter_order: sortedParamKeys,
+      parameter_order: sp.parameter_order || sortedParamKeys,
       parameters: cleanParams,
-      crystal_structure: {
-        lattice_parameters: cleanLattice,
-        wyckoff_atoms: cleanAtoms,
-        atom_mode: atomMode,
-        magnetic_elements: config.magnetic_elements || ["Cu"],
-        dimensionality: 3
-      },
-      interactions: interactionMode === 'explicit' ? { list: config.explicit_interactions || [] } : {
-        symmetry_rules: config.symmetry_interactions
-      },
-      magnetic_structure: config.magnetic_structure,
+      crystal_structure: rawImportRef.current
+        ? sp.crystal_structure
+        : {
+            lattice_parameters: cleanLattice,
+            wyckoff_atoms: cleanAtoms,
+            atom_mode: atomMode,
+            magnetic_elements: config.magnetic_elements || ["Cu"],
+            dimensionality: 3
+          },
+      interactions: sp.interactions,
+      magnetic_structure: sp.magnetic_structure,
       tasks: {
         ...config.tasks,
         calculate_dispersion: config.tasks.dispersion,
@@ -1056,18 +1133,12 @@ function App() {
     setLogs([]) // Clear previous logs
 
     // Construct payload as expected by expand-config logic backend
+    const sp = buildStructPayload()
     const input = {
-      crystal_structure: {
-        lattice_parameters: config.lattice,
-        wyckoff_atoms: config.wyckoff_atoms,
-        atom_mode: atomMode,
-        dimensionality: [2, '2D', '2'].includes(config.lattice.dimensionality) ? 2 : 3,
-        magnetic_elements: config.magnetic_elements || ["Cu"]
-      },
-      interactions: interactionMode === 'explicit' ? { list: config.explicit_interactions || [] } : {
-        symmetry_rules: config.symmetry_interactions
-      },
-      magnetic_structure: config.magnetic_structure,
+      crystal_structure: sp.crystal_structure,
+      interactions: sp.interactions,
+      magnetic_structure: sp.magnetic_structure,
+      parameter_order: sp.parameter_order,
       parameters: config.parameters,
       tasks: config.tasks,
       q_path: {

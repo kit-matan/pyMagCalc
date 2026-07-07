@@ -241,6 +241,26 @@ enum YAMLConfig {
                 config.lattice.beta = lat["beta"]?.doubleValue ?? config.lattice.beta
                 config.lattice.gamma = lat["gamma"]?.doubleValue ?? config.lattice.gamma
                 if let sg = lat["space_group"]?.doubleValue { config.lattice.spaceGroup = Int(sg) }
+            } else if let lvArr = cs["lattice_vectors"]?.arrayValue, lvArr.count == 3 {
+                // Derive a/b/c/angles from explicit lattice vectors so the crystal
+                // viewer (which rebuilds the cell from a,b,c + angles in the same
+                // standard orientation) matches the calculation. All bundled
+                // example configs use that orientation.
+                let rows = lvArr.map { $0.arrayValue?.compactMap { $0.doubleValue } ?? [] }
+                if rows.allSatisfy({ $0.count == 3 }) {
+                    func nrm(_ v: [Double]) -> Double { (v[0]*v[0] + v[1]*v[1] + v[2]*v[2]).squareRoot() }
+                    func ang(_ u: [Double], _ v: [Double]) -> Double {
+                        let d = nrm(u) * nrm(v)
+                        guard d > 0 else { return 90 }
+                        return acos(max(-1, min(1, (u[0]*v[0] + u[1]*v[1] + u[2]*v[2]) / d))) * 180 / Double.pi
+                    }
+                    config.lattice.a = nrm(rows[0])
+                    config.lattice.b = nrm(rows[1])
+                    config.lattice.c = nrm(rows[2])
+                    config.lattice.alpha = ang(rows[1], rows[2])
+                    config.lattice.beta = ang(rows[0], rows[2])
+                    config.lattice.gamma = ang(rows[0], rows[1])
+                }
             }
 
             var atomsSource: [JSONValue]?
@@ -420,6 +440,16 @@ enum YAMLConfig {
             if let v = fit["method"]?.stringValue { config.fitting.method = v }
             if let v = fit["match"]?.stringValue { config.fitting.match = v }
         }
+
+        // Keep the raw structure/interactions/magnetic_structure so the backend
+        // receives them exactly as written (lattice_vectors, interaction_matrix,
+        // single_ion_anisotropy, spiral/generic orders) rather than the flattened
+        // designer view. See MagCalcConfig.payloadValue / structurePayload.
+        var rawObj: [String: JSONValue] = [:]
+        if let cs = root["crystal_structure"] { rawObj["crystal_structure"] = cs }
+        if let it = root["interactions"] { rawObj["interactions"] = it }
+        if let ms = root["magnetic_structure"] { rawObj["magnetic_structure"] = ms }
+        config.rawImport = rawObj.isEmpty ? nil : .object(rawObj)
 
         return config
     }

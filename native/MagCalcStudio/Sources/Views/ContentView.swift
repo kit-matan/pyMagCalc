@@ -37,20 +37,6 @@ struct ContentView: View {
             }
         }
         .animation(.spring(duration: 0.3), value: model.notification)
-        .fileImporter(isPresented: $showCIFImporter,
-                      allowedContentTypes: [.data, .text]) { result in
-            if case .success(let url) = result { model.importCIF(from: url) }
-        }
-        .fileImporter(isPresented: $showYAMLImporter,
-                      allowedContentTypes: [.yaml, .data, .text]) { result in
-            if case .success(let url) = result { model.importYAML(from: url) }
-        }
-        .fileExporter(isPresented: $showYAMLExporter,
-                      document: YAMLDocument(text: (try? model.exportYAML()) ?? ""),
-                      contentType: .yaml,
-                      defaultFilename: "config_designer") { result in
-            if case .success = result { model.notify("Success! Configuration exported.") }
-        }
         .confirmationDialog(
             "Are you sure you want to load the default example (aCVO)?\nCurrent changes will be lost.",
             isPresented: $showResetConfirm, titleVisibility: .visible
@@ -58,23 +44,51 @@ struct ContentView: View {
             Button("Load Defaults", role: .destructive) { model.resetToDemo() }
             Button("Cancel", role: .cancel) {}
         }
-        .fileImporter(isPresented: $showProjectImporter,
-                      allowedContentTypes: [.json]) { result in
-            if case .success(let url) = result {
-                let scoped = url.startAccessingSecurityScopedResource()
-                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                do {
-                    try model.importProject(from: Data(contentsOf: url))
-                } catch {
-                    model.notify("Failed to load project: \(error.localizedDescription)", .error)
+        // Each file importer/exporter is isolated on its own hidden view.
+        // SwiftUI does not reliably present more than one .fileImporter /
+        // .fileExporter attached to the same view -- stacking them makes all
+        // but the first silently no-op (which is why "Load YAML…" did nothing).
+        .background {
+            Color.clear.fileImporter(isPresented: $showCIFImporter,
+                                     allowedContentTypes: [.data, .text]) { result in
+                if case .success(let url) = result { model.importCIF(from: url) }
+            }
+        }
+        .background {
+            Color.clear.fileImporter(isPresented: $showYAMLImporter,
+                                     allowedContentTypes: [.yaml, .data, .text]) { result in
+                if case .success(let url) = result { model.importYAML(from: url) }
+            }
+        }
+        .background {
+            Color.clear.fileExporter(isPresented: $showYAMLExporter,
+                                     document: YAMLDocument(text: (try? model.exportYAML()) ?? ""),
+                                     contentType: .yaml,
+                                     defaultFilename: "config_designer") { result in
+                if case .success = result { model.notify("Success! Configuration exported.") }
+            }
+        }
+        .background {
+            Color.clear.fileImporter(isPresented: $showProjectImporter,
+                                     allowedContentTypes: [.json]) { result in
+                if case .success(let url) = result {
+                    let scoped = url.startAccessingSecurityScopedResource()
+                    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                    do {
+                        try model.importProject(from: Data(contentsOf: url))
+                    } catch {
+                        model.notify("Failed to load project: \(error.localizedDescription)", .error)
+                    }
                 }
             }
         }
-        .fileExporter(isPresented: $showProjectExporter,
-                      document: ProjectDocument(data: (try? model.exportProjectData()) ?? Data()),
-                      contentType: .json,
-                      defaultFilename: "MagCalcProject") { result in
-            if case .success = result { model.notify("Project saved") }
+        .background {
+            Color.clear.fileExporter(isPresented: $showProjectExporter,
+                                     document: ProjectDocument(data: (try? model.exportProjectData()) ?? Data()),
+                                     contentType: .json,
+                                     defaultFilename: "MagCalcProject") { result in
+                if case .success = result { model.notify("Project saved") }
+            }
         }
         #if os(iOS)
         .sheet(isPresented: $showSettings) {

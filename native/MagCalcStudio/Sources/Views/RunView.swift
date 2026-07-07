@@ -144,10 +144,24 @@ struct RunView: View {
         }
     }
 
+    // Observe the LogStreamClient directly (via LogConsoleSection). It is a
+    // nested ObservableObject inside AppModel, so its @Published changes do NOT
+    // propagate through `model` -- reading `model.logStream.lines` here would
+    // never re-render, leaving the console permanently empty.
     private var logConsole: some View {
+        LogConsoleSection(logStream: model.logStream)
+    }
+}
+
+/// Wraps the live-log console and observes the stream client so incoming lines
+/// and connection-state changes actually trigger re-renders.
+struct LogConsoleSection: View {
+    @ObservedObject var logStream: LogStreamClient
+
+    var body: some View {
         SectionCard(title: "Live Log",
-                    subtitle: model.logStream.isConnected ? "Streaming from backend" : "Log stream disconnected") {
-            LogConsoleView(lines: model.logStream.lines)
+                    subtitle: logStream.isConnected ? "Streaming from backend" : "Log stream disconnected") {
+            LogConsoleView(lines: logStream.lines)
                 .frame(height: 260)
         }
     }

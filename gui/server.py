@@ -103,22 +103,57 @@ def _hydrate_builder(data: Dict[str, Any]) -> 'MagCalcConfigBuilder':
     builder = MagCalcConfigBuilder()
 
     # 1. Lattice
-    lattice = data.get("crystal_structure", {}).get("lattice_parameters", {})
     struct_data = data.get("crystal_structure", {})
+    lattice = struct_data.get("lattice_parameters") or {}
+    lattice_vectors = struct_data.get("lattice_vectors")
     atom_mode = struct_data.get("atom_mode", "symmetry")
 
-    builder.set_lattice(
-        a=lattice.get("a", 1.0),
-        b=lattice.get("b", 1.0),
-        c=lattice.get("c", 1.0),
-        alpha=lattice.get("alpha", 90),
-        beta=lattice.get("beta", 90),
-        gamma=lattice.get("gamma", 90),
-        space_group=int(lattice.get("space_group")) if lattice.get("space_group") is not None else None
-    )
+    if lattice_vectors:
+        # Explicit lattice vectors (the CLI / config_loader path also accepts
+        # these). Feed them straight to the builder so symmetry detection,
+        # neighbour finding and the run config use the CORRECT cell instead of
+        # a default 1x1x1. Previously only lattice_parameters was read, so any
+        # config written with `lattice_vectors:` was silently given an identity
+        # cell in the GUI/native apps.
+        import numpy as _np
+        lv = _np.array(lattice_vectors, dtype=float)
+        builder.lattice_vectors = lv
+        builder.config["crystal_structure"]["lattice_vectors"] = lv.tolist()
+        # Derive parameters for display / any downstream a,b,c usage.
+        a, b, c = (float(_np.linalg.norm(lv[i])) for i in range(3))
+        ang = lambda u, v: float(_np.degrees(_np.arccos(
+            _np.clip(_np.dot(lv[u], lv[v]) / (_np.linalg.norm(lv[u]) * _np.linalg.norm(lv[v])), -1, 1))))
+        builder.lattice_parameters = {"a": a, "b": b, "c": c,
+                                      "alpha": ang(1, 2), "beta": ang(0, 2), "gamma": ang(0, 1)}
+        builder.config["crystal_structure"]["lattice_parameters"] = builder.lattice_parameters
+        if lattice.get("space_group") is not None:
+            try:
+                builder.space_group_number = int(lattice["space_group"])
+                builder._load_symmetry_ops(int(lattice["space_group"]))
+            except Exception:
+                pass
+    else:
+        builder.set_lattice(
+            a=lattice.get("a", 1.0),
+            b=lattice.get("b", 1.0),
+            c=lattice.get("c", 1.0),
+            alpha=lattice.get("alpha", 90),
+            beta=lattice.get("beta", 90),
+            gamma=lattice.get("gamma", 90),
+            space_group=int(lattice.get("space_group")) if lattice.get("space_group") is not None else None
+        )
 
     # 2. Basis Atoms
-    wyckoff_atoms = struct_data.get("wyckoff_atoms", [])
+    # Accept both the GUI's `wyckoff_atoms` and the CLI/config-file `atoms_uc`
+    # key so a raw example config can be passed straight through. When atoms are
+    # given as explicit unit-cell positions (atoms_uc, or lattice_vectors with
+    # no space group) default to explicit mode.
+    wyckoff_atoms = struct_data.get("wyckoff_atoms")
+    if not wyckoff_atoms and struct_data.get("atoms_uc"):
+        wyckoff_atoms = struct_data.get("atoms_uc")
+        if struct_data.get("atom_mode") is None:
+            atom_mode = "explicit"
+    wyckoff_atoms = wyckoff_atoms or []
 
     if atom_mode == "explicit":
         config_atoms = []
@@ -878,35 +913,31 @@ async def expand_config(config: Dict[str, Any]):
         builder.config["tasks"] = data.get("tasks", {})
 
         # 3. Interactions
-        if "list" in data.get("interactions", {}):
-            # Explicit interactions provided
-            final_inters = data["interactions"]["list"]
-        else:
-            # Symmetry-based expansion
-            rules = data.get("interactions", {}).get("symmetry_rules", [])
+        # The CLI/config_loader accepts several equivalent forms; preserve all
+        # of them faithfully instead of collapsing to a single Heisenberg list
+        # (which previously dropped single_ion_anisotropy, interaction_matrix,
+        # DM and bare-list interactions, so many example configs ran with the
+        # wrong -- or empty -- Hamiltonian in the apps).
+        EXPLICIT_KEYS = ["heisenberg", "dm_interaction", "single_ion_anisotropy",
+                         "interaction_matrix", "anisotropic_exchange", "kitaev"]
+
+        def _expand_rules(rules):
             for rule in rules:
                 try:
-                    # Use add_interaction_rule for simple distance-based Heisenberg
                     if rule.get("type") == "heisenberg" and not rule.get("ref_pair"):
-                        builder.add_interaction_rule(
-                            type="heisenberg",
-                            distance=rule.get("distance"),
-                            value=rule.get("value")
-                        )
+                        builder.add_interaction_rule(type="heisenberg",
+                                                     distance=rule.get("distance"),
+                                                     value=rule.get("value"))
                     else:
-                        builder.add_symmetry_interaction(
-                            type=rule.get("type", "heisenberg"),
-                            ref_pair=rule.get("ref_pair"),
-                            distance=rule.get("distance"),
-                            value=rule.get("value"),
-                            offset=rule.get("offset")
-                        )
+                        builder.add_symmetry_interaction(type=rule.get("type", "heisenberg"),
+                                                         ref_pair=rule.get("ref_pair"),
+                                                         distance=rule.get("distance"),
+                                                         value=rule.get("value"),
+                                                         offset=rule.get("offset"))
                 except KeyError as e:
                     print(f"Warning: Skipping invalid interaction rule referencing missing atom: {e}")
                 except Exception as e:
-                     print(f"Warning: Skipping rule due to error: {e}")
-            
-            # Expand rules based on current atoms_uc
+                    print(f"Warning: Skipping rule due to error: {e}")
             try:
                 builder._expand_heisenberg_rules()
                 builder._expand_dm_rules()
@@ -917,10 +948,40 @@ async def expand_config(config: Dict[str, Any]):
                 import traceback
                 traceback.print_exc()
 
-            # Filter and flatten interactions
-            final_inters = []
-            for itype in ["heisenberg", "dm_interaction", "anisotropic_exchange", "interaction_matrix", "kitaev"]:
-                final_inters.extend(builder.config["interactions"].get(itype, []))
+        interactions_in = data.get("interactions", {})
+        if isinstance(interactions_in, list):
+            # Bare explicit list, e.g. `interactions: [ {type: heisenberg, ...} ]`
+            final_inters = interactions_in
+        elif isinstance(interactions_in, dict) and "list" in interactions_in:
+            # Designer "explicit" mode
+            final_inters = interactions_in["list"]
+        else:
+            idict = interactions_in if isinstance(interactions_in, dict) else {}
+            rules = idict.get("symmetry_rules", [])
+            has_explicit = any(idict.get(k) for k in EXPLICIT_KEYS)
+            if rules and not has_explicit:
+                # Pure symmetry-designer workflow: flatten to a Heisenberg/DM/... list
+                # (unchanged behaviour for the material examples).
+                _expand_rules(rules)
+                final_inters = []
+                for itype in ["heisenberg", "dm_interaction", "anisotropic_exchange",
+                              "interaction_matrix", "kitaev"]:
+                    final_inters.extend(builder.config["interactions"].get(itype, []))
+            else:
+                # Explicit interactions (optionally alongside symmetry_rules):
+                # keep every explicit key AND fold in any expanded rules -- as a
+                # dict, which config_loader handles natively.
+                final_inters = {}
+                for k in EXPLICIT_KEYS:
+                    if idict.get(k):
+                        final_inters[k] = list(idict[k])
+                if rules:
+                    _expand_rules(rules)
+                    for itype in ["heisenberg", "dm_interaction", "anisotropic_exchange",
+                                  "interaction_matrix", "kitaev"]:
+                        exp = builder.config["interactions"].get(itype, [])
+                        if exp:
+                            final_inters.setdefault(itype, []).extend(exp)
 
         # 4. Global Parameters & Tasks
         builder.config["parameters"] = data.get("parameters", {})
@@ -976,11 +1037,22 @@ async def expand_config(config: Dict[str, Any]):
 
         # (Removed confusing applied_field injection)
 
+        # Preserve the crystal geometry faithfully. When the client supplied
+        # explicit lattice_vectors (as every example config does), emit those
+        # and drop the derived lattice_parameters so the runner uses the exact
+        # cell -- identical to `python -m magcalc run`. In the symmetry-designer
+        # workflow (lattice_parameters + space_group) keep the previous shape.
+        _had_vectors = bool(struct_data.get("lattice_vectors"))
+        _struct_out = dict(builder.config["crystal_structure"])
+        _struct_out["dimensionality"] = 3
+        if _had_vectors:
+            _struct_out["lattice_vectors"] = struct_data["lattice_vectors"]
+            _struct_out.pop("lattice_parameters", None)
+        else:
+            _struct_out.pop("lattice_vectors", None)
+
         expanded_config = {
-            "crystal_structure": {
-                 **{k: v for k, v in builder.config["crystal_structure"].items() if k != "lattice_vectors"},
-                 "dimensionality": 3
-            },
+            "crystal_structure": _struct_out,
             "interactions": final_inters,
             "magnetic_structure": data.get("magnetic_structure", {}),
             "parameters": builder.config["parameters"],
@@ -1055,31 +1127,48 @@ async def get_visualizer_data(config: Dict[str, Any]):
             "applied_field": {}
         }
         
-        if "list" in data.get("interactions", {}):
-            # Explicit List Mode
-            explicit_list = data["interactions"]["list"]
-            for item in explicit_list:
-                rtype = item.get("type", "heisenberg")
-                if rtype == "heisenberg":
-                    builder.config["interactions"]["heisenberg"].append(item)
-                elif rtype in ["dm", "dm_interaction", "dm_manual"]:
-                    builder.config["interactions"]["dm_interaction"].append(item)
-                elif rtype == "anisotropic_exchange":
-                    builder.config["interactions"]["anisotropic_exchange"].append(item)
+        # `interactions` may arrive as a bare list, a {list: [...]}, a dict of
+        # explicit type keys, and/or {symmetry_rules: [...]}. Handle them all so
+        # example configs (which use lattice_vectors + interaction_matrix, etc.)
+        # don't crash the visualiser (previously `.get()` was called on a list).
+        def _consume_explicit(items):
+            bins = {"heisenberg": "heisenberg", "dm": "dm_interaction",
+                    "dm_interaction": "dm_interaction", "dm_manual": "dm_interaction",
+                    "anisotropic_exchange": "anisotropic_exchange",
+                    "interaction_matrix": "interaction_matrix", "kitaev": "kitaev",
+                    "sia": "single_ion_anisotropy",
+                    "single_ion_anisotropy": "single_ion_anisotropy"}
+            for item in (items or []):
+                if not isinstance(item, dict):
+                    continue
+                key = bins.get(item.get("type", "heisenberg"))
+                if key:
+                    builder.config["interactions"].setdefault(key, []).append(item)
+
+        interactions_in = data.get("interactions", {})
+        if isinstance(interactions_in, list):
+            _consume_explicit(interactions_in)
+        elif isinstance(interactions_in, dict) and "list" in interactions_in:
+            _consume_explicit(interactions_in["list"])
         else:
-            # Symmetry Rules Mode
-            rules = data.get("interactions", {}).get("symmetry_rules", [])
-            for rule in rules:
-                 try:
-                     builder.add_symmetry_interaction(
-                         type=rule.get("type"),
-                         ref_pair=rule.get("ref_pair"),
-                         value=rule.get("value"),
-                         distance=rule.get("distance"),
-                         offset=rule.get("offset")
-                     )
-                 except Exception as e:
-                     print(f"Warning: Failed to add symmetry rule {rule}: {e}")
+            idict = interactions_in if isinstance(interactions_in, dict) else {}
+            for k in ["heisenberg", "dm_interaction", "single_ion_anisotropy",
+                      "interaction_matrix", "anisotropic_exchange", "kitaev"]:
+                for e in (idict.get(k) or []):
+                    if isinstance(e, dict):
+                        builder.config["interactions"].setdefault(k, []).append(
+                            {"type": e.get("type", k), **e})
+            for rule in idict.get("symmetry_rules", []):
+                try:
+                    builder.add_symmetry_interaction(
+                        type=rule.get("type"),
+                        ref_pair=rule.get("ref_pair"),
+                        value=rule.get("value"),
+                        distance=rule.get("distance"),
+                        offset=rule.get("offset")
+                    )
+                except Exception as e:
+                    print(f"Warning: Failed to add symmetry rule {rule}: {e}")
         
         # 3. Expand Rules (Only in symmetry mode)
         # We don't need _expand_*_rules anymore if using add_symmetry_interaction,
@@ -1136,7 +1225,15 @@ async def get_visualizer_data(config: Dict[str, Any]):
         for r in builder.config["interactions"]["anisotropic_exchange"]:
              r["interaction_type"] = "anisotropic"
              all_inters.append(r)
-             
+        # Full 3x3 exchange matrices (interaction_matrix) and Kitaev bonds also
+        # define pairs to draw; treat them like anisotropic exchange for display.
+        for r in builder.config["interactions"].get("interaction_matrix", []):
+             r["interaction_type"] = "matrix"
+             all_inters.append(r)
+        for r in builder.config["interactions"].get("kitaev", []):
+             r["interaction_type"] = "matrix"
+             all_inters.append(r)
+
         for rule in all_inters:
             idx_i = -1
             idx_j = -1
@@ -1235,6 +1332,26 @@ async def get_visualizer_data(config: Dict[str, Any]):
                              [0.0, eval_vec[1], 0.0],
                              [0.0, 0.0, eval_vec[2]]
                          ]
+
+                elif rule["interaction_type"] == "matrix":
+                    # Full 3x3 interaction_matrix / Kitaev bond: value is the matrix.
+                    label_text = "Matrix"
+                    params = config.get("data", {}).get("parameters", {})
+                    ctx = {k: float(v) for k, v in params.items() if isinstance(v, (int, float))}
+                    if isinstance(val, list) and len(val) == 3 and all(isinstance(row, list) for row in val):
+                        m = []
+                        for row in val:
+                            out_row = []
+                            for comp in row:
+                                if isinstance(comp, (int, float)):
+                                    out_row.append(float(comp))
+                                else:
+                                    try:
+                                        out_row.append(float(_safe_eval(comp, ctx)))
+                                    except Exception:
+                                        out_row.append(0.0)
+                            m.append(out_row)
+                        exchange_matrix = m
             except Exception as e:
                 print(f"Matrix Calc Error: {e}")
 

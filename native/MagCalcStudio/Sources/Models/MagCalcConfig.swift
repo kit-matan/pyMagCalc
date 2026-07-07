@@ -340,6 +340,14 @@ struct MagCalcConfig: Codable, Hashable {
     var atomMode = "symmetry"          // "symmetry" | "explicit"
     var interactionMode = "symmetry"   // "symmetry" | "explicit"
 
+    /// Raw crystal_structure / interactions / magnetic_structure captured when an
+    /// example config is imported. Sent to the backend verbatim so features the
+    /// designer cannot model -- lattice_vectors, interaction_matrix, single-ion
+    /// anisotropy, DM, spiral/generic magnetic orders -- run exactly as
+    /// `python -m magcalc run` does. Not part of CodingKeys, so it is neither
+    /// encoded nor decoded (custom init(from:) leaves it nil).
+    var rawImport: JSONValue? = nil
+
     enum CodingKeys: String, CodingKey {
         case lattice, parameters, tasks, plotting, minimization, calculation, fitting, output
         case wyckoffAtoms = "wyckoff_atoms"
@@ -452,16 +460,25 @@ extension MagCalcConfig {
             ? .object(["list": .array(explicitInteractions.map { $0.payloadValue })])
             : .object(["symmetry_rules": .array(symmetryInteractions.map { $0.payloadValue })])
 
+        // Prefer the verbatim structure/interactions from an imported example so
+        // lattice_vectors, interaction_matrix, SIA and spiral/generic orders
+        // reach the backend intact (the designer model cannot represent them).
+        let rawObj = rawImport?.objectValue
+        let crystalValue: JSONValue = rawObj?["crystal_structure"] ?? .object([
+            "lattice_parameters": (try? JSONValue(encoding: lattice)) ?? .object([:]),
+            "wyckoff_atoms": .array(wyckoffAtoms.map { $0.payloadValue }),
+            "atom_mode": .string(atomMode),
+            "dimensionality": .number(3),
+            "magnetic_elements": .array(magneticElements.map { .string($0) }),
+        ])
+        let interactionsFinal: JSONValue = rawObj?["interactions"] ?? interactionsValue
+        let magStructFinal: JSONValue = rawObj?["magnetic_structure"]
+            ?? ((try? JSONValue(encoding: magneticStructure)) ?? .object([:]))
+
         var input: [String: JSONValue] = [
-            "crystal_structure": .object([
-                "lattice_parameters": (try? JSONValue(encoding: lattice)) ?? .object([:]),
-                "wyckoff_atoms": .array(wyckoffAtoms.map { $0.payloadValue }),
-                "atom_mode": .string(atomMode),
-                "dimensionality": .number(3),
-                "magnetic_elements": .array(magneticElements.map { .string($0) }),
-            ]),
-            "interactions": interactionsValue,
-            "magnetic_structure": (try? JSONValue(encoding: magneticStructure)) ?? .object([:]),
+            "crystal_structure": crystalValue,
+            "interactions": interactionsFinal,
+            "magnetic_structure": magStructFinal,
             "parameters": .object(parameters),
             "tasks": tasksValue,
             "q_path": .object(qPoints),
@@ -478,26 +495,32 @@ extension MagCalcConfig {
     /// Payload for structure-only endpoints (/get-neighbors, /analyze-bonds,
     /// /get-visualizer-data).
     func structurePayload(includeInteractions: Bool = false) -> JSONValue {
+        let rawObj = rawImport?.objectValue
         var data: [String: JSONValue] = [
-            "crystal_structure": .object([
+            "crystal_structure": rawObj?["crystal_structure"] ?? .object([
                 "lattice_parameters": (try? JSONValue(encoding: lattice)) ?? .object([:]),
                 "wyckoff_atoms": .array(wyckoffAtoms.map { $0.payloadValue }),
                 "atom_mode": .string(atomMode),
             ]),
         ]
+        if let ms = rawObj?["magnetic_structure"] { data["magnetic_structure"] = ms }
         if includeInteractions {
-            // Mirrors the web app's preview payload: symmetry rules always,
-            // explicit list only in explicit mode, SIA alongside.
-            var inter: [String: JSONValue] = [
-                "symmetry_rules": .array(symmetryInteractions.map { $0.payloadValue }),
-                "single_ion_anisotropy": .array(singleIonAnisotropy.map {
-                    (try? JSONValue(encoding: $0)) ?? .object([:])
-                }),
-            ]
-            if interactionMode == "explicit" {
-                inter["list"] = .array(explicitInteractions.map { $0.payloadValue })
+            if let it = rawObj?["interactions"] {
+                data["interactions"] = it
+            } else {
+                // Mirrors the web app's preview payload: symmetry rules always,
+                // explicit list only in explicit mode, SIA alongside.
+                var inter: [String: JSONValue] = [
+                    "symmetry_rules": .array(symmetryInteractions.map { $0.payloadValue }),
+                    "single_ion_anisotropy": .array(singleIonAnisotropy.map {
+                        (try? JSONValue(encoding: $0)) ?? .object([:])
+                    }),
+                ]
+                if interactionMode == "explicit" {
+                    inter["list"] = .array(explicitInteractions.map { $0.payloadValue })
+                }
+                data["interactions"] = .object(inter)
             }
-            data["interactions"] = .object(inter)
             data["parameters"] = .object(parameters)
         }
         return .object(data)
