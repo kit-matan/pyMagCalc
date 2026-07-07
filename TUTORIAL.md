@@ -37,6 +37,9 @@ The Designer allows you to generate robust, symmetry-consistent configurations w
     This handles everything (ports, backend, frontend, browser).
 
     > **Note**: The system now uses robust symmetry analysis (Pymatgen/Spglib). CIF imports will automatically be reduced to their unique Wyckoff positions (asymmetric unit).
+
+    > **Tip**: MagCalc Studio is also available as a **native macOS & iOS app** (SwiftUI) with Metal-backed 3D rendering, embedded backend management, and keyboard shortcuts. See `native/MagCalcStudio/README.md` for build instructions.
+
 2.  **Design**:
     -   **Load CIF**: Import your crystal structure. The app will automatically detect the space group and populate only the unique basis atoms.
     -   **Define Rules**: Add Bonding Rules (e.g., "Heisenberg" or "DM"). The system automatically expands these based on the structure's space group checking against symmetry constraints.
@@ -129,19 +132,19 @@ interactions:
       value: [0, "Dy", "Dz"]
 ```
 
-#### 2. Explicit Pairs
-Define specific bonds between atom labels. Use `rij_offset` for neighbors in other cells.
+#### 3. Explicit Full 3×3 Exchange Matrices
+For bond-dependent interactions (e.g., Kitaev, anisotropic exchange with DM), specify the full 3×3 exchange matrix per bond:
 ```yaml
 interactions:
-  heisenberg:
-    - pair: ["Fe1", "Fe1"]
-      J: "J1"
-      rij_offset: [1, 0, 0]
-  single_ion_anisotropy:
-    - atom_label: "Fe1"
-      value: "D_sia"
-      axis: [0, 0, 1]
+  - type: interaction_matrix
+    pair: ["Ir0", "Ir2"]
+    rij_offset: [-1, -1, 0]
+    value:
+      - [0.51, 0.0, 0.0]
+      - [0.0, 0.51, 0.0]
+      - [0.0, 0.0, 0.51]
 ```
+The symmetric part encodes Heisenberg + anisotropic exchange, and the antisymmetric part encodes DM. Both directions of each bond must be listed (the engine does not auto-symmetrize). See `examples/spinw_tutorials/SW16_Na2IrO3_Kitaev/` for a full Kitaev honeycomb example.
 
 ### Data Export (CSV)
 To export your results to a readable CSV format (compatible with Excel/Origin):
@@ -452,6 +455,95 @@ powder = calc.calculate_powder_average(q_mags, num_samples=200, backend="fortran
 
 ---
 
+## 4d. Spiral (Rotating-Frame) Structures
+
+pyMagCalc supports incommensurate magnetic orders via a **rotating-frame**
+formulation. Instead of building a (possibly very large) magnetic supercell,
+you specify a propagation vector **k** and a rotation axis; the engine
+constructs the LSWT Hamiltonian in the rotating frame and solves for the
+central magnon branch (the phason + optical modes).
+
+### Configuration
+
+```yaml
+magnetic_structure:
+  enabled: true
+  type: spiral
+  k: [0.23, 0.0, 0.0]      # propagation vector in RLU of the unit cell
+  axis: [0.0, 0.0, 1.0]    # rotation axis (spins lie ⊥ to this)
+
+tasks:
+  minimization: false       # structure is fixed by k and axis
+  dispersion: true
+```
+
+The spins are automatically placed perpendicular to `axis` with the
+inter-site phase determined by **k**. For multi-sublattice spirals (e.g.,
+120° triangular order on kagome), add a `local_directions` pattern:
+
+```yaml
+magnetic_structure:
+  enabled: true
+  type: spiral
+  k: [0.333333, 0.333333, 0.0]
+  axis: [0.0, 0.0, 1.0]
+  local_directions:           # per-sublattice starting directions (⊥ axis)
+    - [1.0, 0.0, 0.0]
+    - [-0.5, 0.866025, 0.0]   # 120°
+    - [-0.5, -0.866025, 0.0]  # 240°
+```
+
+### Validated examples
+
+| Tutorial | Description | Validation |
+|----------|-------------|------------|
+| SW03 | Frustrated J1–J2 chain | Exact analytic helix, error ~1e-12 |
+| SW08 | √3×√3 kagome AFM | Band-by-band match with 9-site supercell (~1e-8) |
+| SW15 | Ba₃NbFe₃Si₂O₁₄ (langasite) | Chirality-dependent k_z matches tutorial |
+| SW18 | Distorted kagome | Classical E/site matches to 4 significant figures |
+
+See `examples/spinw_tutorials/` for runnable configs.
+
+> **Note**: The rotating-frame spiral gives the correct dispersion of the
+> central branch. The full neutron cross-section also has weight at ω(q±k);
+> for absolute S(Q,ω) intensities, overlay the ±k-shifted branches.
+
+---
+
+## 4e. Mixed-Spin Models
+
+pyMagCalc supports models where different magnetic sites carry **different
+spin magnitudes**. Each site's Holstein–Primakoff expansion is scaled by its
+own `spin_S`, producing bands on distinct energy scales.
+
+### Configuration
+
+Simply assign different `spin_S` values to atoms in the crystal structure:
+
+```yaml
+crystal_structure:
+  atoms_uc:
+    - { label: Cu1, pos: [0.0, 0.0, 0.0], spin_S: 0.5, ion: Cu2+ }
+    - { label: Cu2, pos: [0.5, 0.0, 0.0], spin_S: 0.5, ion: Cu2+ }
+    - { label: Fe1, pos: [0.0, 0.5, 0.0], spin_S: 2.0, ion: Fe2+ }
+    - { label: Fe2, pos: [0.5, 0.5, 0.0], spin_S: 2.0, ion: Fe2+ }
+```
+
+Interactions (Heisenberg, DM, interaction matrices) work as usual — the
+engine automatically accounts for the different spin magnitudes in the LSWT
+matrix elements.
+
+See `examples/spinw_tutorials/SW19_different_ions/config.yaml` for a
+complete example: Cu²⁺ (S=½) + Fe²⁺ (S=2) AFM chains with distinct energy
+scales (~1.4 meV vs ~4 meV).
+
+> **Limitation**: Mixed-spin *dispersions* are correct. The S(Q,ω) intensity
+> prefactor currently uses the single reference `S`, so relative intensities
+> in a mixed-spin model are approximate (per-ion form factors are still
+> applied).
+
+---
+
 ## 5. Default Python Library Usage (Advanced)
 
 For complex workflows (e.g., scanning over parameters), you can use `pyMagCalc` as a Python library.
@@ -462,7 +554,7 @@ from magcalc.generic_model import GenericSpinModel
 import yaml
 
 # Load Config
-with open("config.yaml") as f:
+with open("examples/materials/KFe3J/config_kfe3j.yaml") as f:
     config = yaml.safe_load(f)
 
 # Initialize Model
@@ -476,3 +568,44 @@ q_path = [[0,0,0], [0.5,0,0], [0.33,0.33,0]]
 energies = calc.calculate_dispersion(q_path)
 print(energies)
 ```
+
+---
+
+## 6. SpinW Tutorial Ports
+
+pyMagCalc includes **19 ported SpinW tutorials** (SW01–SW19) under
+`examples/spinw_tutorials/`. Each tutorial is a self-contained, runnable
+`config.yaml` that reproduces the physics of the corresponding
+[SpinW tutorial](https://spinw.org/tutorials/).
+
+### Running a tutorial
+
+```bash
+magcalc run examples/spinw_tutorials/SW01_FM_chain/config.yaml
+```
+
+### What is covered
+
+| Range | Topics |
+|-------|--------|
+| SW01–SW03 | FM/AFM chains, frustrated J1–J2 chain with exact spiral |
+| SW04–SW09 | Frustrated square lattice, kagome (FM, AFM, √3×√3, DM) |
+| SW10–SW11 | Constant-energy cuts, La₂CuO₄ |
+| SW12–SW15 | Triangular easy-plane, LiNiPO₄, YVO₃, langasite spiral |
+| SW16–SW19 | Na₂IrO₃ Kitaev, symbolic LSWT, distorted kagome spiral, mixed-spin |
+
+### Key conventions
+
+pyMagCalc and SpinW/Sunny differ in bookkeeping:
+
+1.  **Ordered-pair counting**: pyMagCalc uses `H = (1/2) Σ_ij`, so every
+    bond must appear in both directions. Distance-based `symmetry_rules`
+    handle this automatically.
+2.  **Explicit magnetic cells**: Incommensurate orders use either the
+    rotating-frame spiral (§4d) or an explicit supercell, not a propagation
+    vector on the chemical cell.
+3.  **q-paths in magnetic-cell RLU**: When the cell is enlarged by `n`,
+    multiply chemical-cell RLU by `n`.
+
+See `examples/spinw_tutorials/README.md` for the full status table,
+validation details, and the engine bug fixes made during porting.

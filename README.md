@@ -9,8 +9,11 @@
 
 ## Key Features
 
-*   **pyMagCalc Studio:** Interactive modern web GUI for designing models from CIF files and symmetry-based bonding rules. Provides a seamless **Design -> Save -> Run** workflow with 3D visualization.
-*   **Symmetry-Aware Mechanics:** Automatically propagates Heisenberg ($J$), DM ($D$), Anisotropic Exchange ($T$), and **Kitaev ($K$)** rules across the crystal using space-group symmetry operators (via `pymatgen` and `spglib`).
+*   **pyMagCalc Studio:** Interactive modern web GUI for designing models from CIF files and symmetry-based bonding rules. Provides a seamless **Design -> Save -> Run** workflow with 3D visualization. Also available as a **native macOS & iOS app** (SwiftUI) with Metal-backed 3D rendering and embedded backend management.
+*   **Symmetry-Aware Mechanics:** Automatically propagates Heisenberg ($J$), DM ($D$), Anisotropic Exchange ($T$), **Kitaev ($K$)**, and full 3×3 **Interaction Matrices** across the crystal using space-group symmetry operators (via `pymatgen` and `spglib`).
+*   **Mixed-Spin Models:** Supports different spin magnitudes per site (e.g., Cu²⁺ S=½ + Fe²⁺ S=2). Each site's Holstein–Primakoff expansion is scaled by its own `spin_S`.
+*   **Spiral (Rotating-Frame) Structures:** Incommensurate magnetic orders are handled via a rotating-frame formulation (`type: spiral`) with an exact local-frame construction, validated against analytic helix dispersions.
+*   **SpinW Tutorial Ports:** 19 validated SpinW tutorials (SW01–SW19) ported as runnable `magcalc run` configurations, covering FM/AFM chains, kagome lattices, Kitaev honeycomb, spirals, mixed-spin models, and more.
 *   **Robust CIF Import:** Imports crystal structures from CIF files, automatically detecting symmetry and reducing to unique Wyckoff positions.
 *   **Security & Safety:** Replaced insecure `eval()` with a SymPy-based safe evaluator for mathematical expressions in Hamiltonian parameters.
 *   **Stable Runner Engine:** Standardized task architecture with concise keys and improved error handling to prevent runtime crashes.
@@ -24,15 +27,24 @@
 
 *   `magcalc/`: Core Python package.
     *   `core.py`: Main `MagCalc` class, calculation logic, and the `DispersionEvaluator` fast dispersion engine.
-    *   `generic_model.py`: `GenericSpinModel` for YAML-based model loading.
+    *   `generic_model.py`: `GenericSpinModel` for YAML-based model loading (mixed-spin, spiral, interaction matrices).
+    *   `symbolic.py`: Symbolic Hamiltonian construction and Fourier transforms.
     *   `fitting.py`: Data-fitting engine (`run_fit`, `FitProblem`) for dispersion / S(Q,ω) / powder data.
+    *   `runner.py`: Declarative task runner (minimization → dispersion → S(Q,ω) → powder → fit → plot).
     *   `linalg.py`: Matrix operations and Bogoliubov transformation utilities.
     *   `config_loader.py`: Utilities for loading and validating configurations.
     *   `schema.py`: Pydantic V2 models for robust configuration validation.
+*   `gui/`: Web-based pyMagCalc Studio (FastAPI backend + React frontend).
+*   `native/`: Native macOS & iOS SwiftUI app (`MagCalcStudio`).
 *   `scripts/`: Executable scripts for running calculations and inspecting models (e.g., `run_magcalc.py`).
-*   `examples/`: Sample data and scripts for various materials.
-    *   `KFe3J/`: KFe3(OH)6(SO4)2 (Jarosite) - Kagome antiferromagnet.
-    *   `aCVO/`: alpha-Cu2V2O7 - Honeycomb-like antiferromagnet with Dzyaloshinskii-Moriya interactions.
+*   `examples/`: Sample data and scripts organized by category.
+    *   `materials/`: Real material studies.
+        *   `KFe3J/`: KFe₃(OH)₆(SO₄)₂ (Jarosite) — Kagome antiferromagnet.
+        *   `aCVO/`: α-Cu₂V₂O₇ — Honeycomb-like antiferromagnet with DM interactions.
+        *   `CCSF/`: Cs₂Cu₂SnF₁₂ — frustrated antiferromagnet.
+        *   `ZnCVO/`: ZnCu₂V₂O₇.
+        *   `FeI2/`: FeI₂ — triangular-lattice Ising-type antiferromagnet.
+    *   `spinw_tutorials/`: 19 ported SpinW tutorials (SW01–SW19), each a runnable `config.yaml`.
     *   `fitting/`: Example fitting configuration and synthetic data.
     *   `plots/`: Centralized directory where all example scripts save their output plots.
 *   `tests/`: Unit and integration tests ensuring package reliability.
@@ -47,8 +59,11 @@
 *   tqdm (>=4.60.0)
 *   PyYAML (>=5.4)
 *   ASE (>=3.22.0, for CIF file reading)
-*   lmfit (>=1.0, for data fitting)
+*   Typer (>=0.9, CLI framework)
+*   Pydantic (>=2.0, configuration validation)
+*   lmfit (>=1.2, for data fitting)
 *   pytest (>=7.0.0, for testing)
+*   pymatgen (>=2023.0) + spglib (>=2.0) — optional, for the GUI's symmetry analysis
 *   fMagCalc (optional compiled Fortran backend — see Installation below)
 
 ## Installation
@@ -111,9 +126,9 @@ Compute Backend** to *Fortran (fMagCalc)*.
 
 See **TUTORIAL.md §4c** for details and troubleshooting.
 
-## CLI Usage (New)
+## CLI Usage
 
-The new command-line interface makes it easy to manage calculations.
+The command-line interface makes it easy to manage calculations.
 
 ### 1. Initialize a Project
 Create a template configuration file:
@@ -170,33 +185,33 @@ This script will:
 
 The designer facilitates a seamless **Design -> Save -> Run** workflow, where the generated `config_designer.yaml` can be executed immediately using `magcalc run`.
 
-### Native macOS Application
+### Native macOS & iOS Application (SwiftUI)
 
-You can also run pyMagCalc Studio as a standalone native application on macOS (wrapper around the web app).
+MagCalc Studio is also available as a **native SwiftUI application** for macOS and iOS/iPadOS, located in `native/MagCalcStudio/`. It provides full feature parity with the web app, plus native advantages:
 
-1.  **Prerequisites**:
-    *   Build the frontend:
-        ```bash
-        cd gui
-        npm install
-        npm run build
-        cd ..
-        ```
-    *   Install additional Python dependencies:
-        ```bash
-        pip install -r requirements.txt
-        ```
+*   **Embedded backend management** (macOS) — start/stop the Python server from Settings; no terminal needed.
+*   **Metal-backed 3D rendering** — SceneKit crystal and spin-structure visualization.
+*   **Project files** — save/open models as JSON via native file panels (iCloud Drive compatible).
+*   **Keyboard shortcuts** — ⌘R runs, ⌘. stops a calculation.
+*   **iOS/iPadOS** — connects to a Mac running the backend on your network.
 
-2.  **Launch**:
-    You can use the helper script:
-    ```bash
-    ./run_native.sh
-    ```
-    
-    Or run manually:
-    ```bash
-    python gui/native_app.py
-    ```
+**Build & Run** (requires Xcode 16+ and [XcodeGen](https://github.com/yonaskolb/XcodeGen)):
+```bash
+cd native/MagCalcStudio
+xcodegen generate
+open MagCalcStudio.xcodeproj
+```
+
+See `native/MagCalcStudio/README.md` for full build instructions and feature details.
+
+#### Legacy Python-wrapped App
+
+A lightweight Python wrapper (using `pywebview`) is also available:
+```bash
+./run_native.sh
+# or: python gui/native_app.py
+```
+This requires building the frontend first (`cd gui && npm install && npm run build`).
 
 ## Basic Usage
 
@@ -206,13 +221,16 @@ The recommended way to run examples is via the CLI using the modern configuratio
 
 ```bash
 # Run the Jarosite (KFe3J) example
-magcalc run examples/KFe3J/config_kfe3j.yaml
+magcalc run examples/materials/KFe3J/config_kfe3j.yaml
 
 # Run the CVO example
-magcalc run examples/aCVO/config_acvo.yaml
+magcalc run examples/materials/aCVO/config_acvo.yaml
+
+# Run a SpinW tutorial port
+magcalc run examples/spinw_tutorials/SW01_FM_chain/config.yaml
 ```
 
-Plots are automatically saved to `examples/plots/`. You can toggle on-screen display using the `show_plot` option in the config.
+Plots are automatically saved to `examples/plots/` (or next to the config for SpinW tutorials). You can toggle on-screen display using the `show_plot` option in the config.
 
 ### Scripting with Python (Advanced)
 
@@ -224,7 +242,7 @@ from magcalc.generic_model import GenericSpinModel
 import yaml
 
 # 1. Load Model from YAML
-with open("examples/KFe3J/config_kfe3j.yaml") as f:
+with open("examples/materials/KFe3J/config_kfe3j.yaml") as f:
     config = yaml.safe_load(f)
 model = GenericSpinModel(config)
 
@@ -248,8 +266,9 @@ mc.plot_magnetic_structure(calc.sm.atom_pos(), min_res.x, show_plot=True)
 
 The core of `pyMagCalc` is the declarative YAML configuration (e.g., `config.yaml`). It defines:
 
-*   **Structure**: Lattice vectors and atoms.
-*   **Interactions**: Heisenberg ($J$), DM ($D$), Anisotropic Exchange ($K, \Gamma, \Gamma'$), Kitaev, and Single-Ion Anisotropy (SIA) with arbitrary axes.
+*   **Structure**: Lattice vectors, atoms (with per-atom `spin_S` for mixed-spin models), and optional `ion` for form factors.
+*   **Interactions**: Heisenberg ($J$), DM ($D$), Anisotropic Exchange ($K, \Gamma, \Gamma'$), Kitaev, full 3×3 Interaction Matrices, and Single-Ion Anisotropy (SIA) with arbitrary axes.
+*   **Magnetic Structure**: Collinear patterns (`generic`, `afm`, `fm`), or incommensurate spirals (`type: spiral` with `k`, `axis`).
 *   **Minimization**: Initial guess (`initial_configuration`) and method.
 *   **Plotting**: Options like `show_plot`, `plot_structure`, and axis limits.
 
@@ -268,12 +287,31 @@ The server uses a dedicated `_safe_eval` helper ensuring calculation robustness 
 
 ## Examples
 
-*   **`examples/KFe3J/`**: Kagome Antiferromagnet (Jarosite).
+Examples are organized under `examples/` in three categories:
+
+### Materials (`examples/materials/`)
+*   **`KFe3J/`**: Kagome Antiferromagnet (Jarosite).
     *   Uses `config.yaml` for a fully declarative workflow.
     *   Demonstrates `initial_configuration` for handling complex ground states (120-degree structure).
-*   **`examples/aCVO/`**: 1D Chain / Honeycomb (Cu2V2O7).
+*   **`aCVO/`**: 1D Chain / Honeycomb (α-Cu₂V₂O₇).
     *   Demonstrates handling of imaginary eigenvalues via correct ground state finding.
     *   Features complex Dzyaloshinskii-Moriya interactions.
+*   **`CCSF/`**: Cs₂Cu₂SnF₁₂ — frustrated antiferromagnet with symmetry-based configuration.
+*   **`ZnCVO/`**: ZnCu₂V₂O₇.
+*   **`FeI2/`**: FeI₂ — triangular-lattice antiferromagnet with long-range interactions (J3 at `rij_offset: [2,0,0]`).
+
+### SpinW Tutorial Ports (`examples/spinw_tutorials/`)
+19 SpinW tutorials (SW01–SW19) ported to pyMagCalc, each as a runnable `config.yaml`. These cover:
+*   FM/AFM chains (SW01–SW03), frustrated lattices (SW04), kagome models (SW05–SW09)
+*   Constant-energy cuts (SW10), real materials — La₂CuO₄, LiNiPO₄, YVO₃ (SW11, SW13, SW14)
+*   Spiral/incommensurate structures (SW03, SW08, SW15, SW18)
+*   Kitaev honeycomb with full 3×3 interaction matrices (SW16)
+*   Symbolic LSWT verification (SW17), mixed-spin models (SW19)
+
+See `examples/spinw_tutorials/README.md` for the full status table and physics conventions.
+
+### Fitting (`examples/fitting/`)
+Example fitting configurations and synthetic data for dispersion / S(Q,ω) / powder fits.
 
 ## Testing
 
@@ -285,5 +323,5 @@ pytest
 
 ## Acknowledgments
 
-This codebase was developed with the assistance of **Google Gemini**, an advanced agentic AI coding assistant.
+This codebase was developed with the assistance of **Google Gemini** and **Anthropic Claude**.
 
