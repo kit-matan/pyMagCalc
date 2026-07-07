@@ -1,0 +1,82 @@
+# =====================================================================
+# SW11 - La2CuO4
+#
+# Port of SpinW Tutorial 11 / Sunny "SW11" to pyMagCalc (LSWT).
+#   https://spinw.org/tutorials/11tutorial
+#
+#   magcalc run examples/spinw_tutorials/SW11_La2CuO4/config.yaml
+#
+# Square lattice of Cu2+ (S=1/2). Exchange parameters from R. Coldea et
+# al., PRL 86, 5377 (2001). The effective couplings absorb the ring
+# exchange Jc exactly as in the Sunny/SpinW tutorial:
+#   J1eff  = J   - Jc/2 = 138.3 - 19  = 119.3   (NN,   3.85 A)
+#   Jpeff  = Jp  - Jc/4 = 2     - 9.5 = -7.5     (diag, 5.445 A)
+#   Jpp    = Jpp        = 2                       (3rd,  7.70 A)
+# Neel order on a 2x2 magnetic cell (a=b = 2 x 3.85 = 7.70 A).
+#
+# Sunny multiplies the resulting magnon energies by a manual "quantum
+# correction" factor 1.18. pyMagCalc reports the raw LSWT energies; scale
+# the y-axis by 1.18 for a direct comparison with the reference figure.
+# =====================================================================
+
+parameter_order: [J1eff, Jpeff, Jpp]
+parameters:
+  J1eff: 119.3
+  Jpeff: -7.5
+  Jpp: 2.0
+
+crystal_structure:
+  lattice_vectors:
+    - [7.70, 0.0, 0.0]
+    - [0.0, 7.70, 0.0]
+    - [0.0, 0.0, 12.25]
+  atoms_uc:
+    - { label: A, pos: [0.0, 0.0, 0.0], spin_S: 0.5, ion: Cu2+ }
+    - { label: B, pos: [0.5, 0.0, 0.0], spin_S: 0.5, ion: Cu2+ }
+    - { label: C, pos: [0.0, 0.5, 0.0], spin_S: 0.5, ion: Cu2+ }
+    - { label: D, pos: [0.5, 0.5, 0.0], spin_S: 0.5, ion: Cu2+ }
+
+interactions:
+  symmetry_rules:
+    - { type: heisenberg, distance: 3.85,  value: "J1eff" }  # NN
+    - { type: heisenberg, distance: 5.445, value: "Jpeff" }  # diagonal
+    - { type: heisenberg, distance: 7.70,  value: "Jpp" }    # 3rd (axial)
+
+magnetic_structure:
+  enabled: true
+  type: pattern
+  pattern_type: generic     # Neel checkerboard
+  directions:
+    - [0.0, 0.0,  1.0]
+    - [0.0, 0.0, -1.0]
+    - [0.0, 0.0, -1.0]
+    - [0.0, 0.0,  1.0]
+
+tasks:
+  minimization: false
+  dispersion: true
+
+# Sunny path (chemical RLU) x2 for the 2x2 magnetic cell:
+#   P=[3/4,1/4,0] M=[1/2,1/2,0] X=[1/2,0,0] Gamma=[1,0,0]
+q_path:
+  P:      [1.5, 0.5, 0.0]
+  M:      [1.0, 1.0, 0.0]
+  X:      [1.0, 0.0, 0.0]
+  P2:     [1.5, 0.5, 0.0]
+  Gamma:  [2.0, 0.0, 0.0]
+  X2:     [1.0, 0.0, 0.0]
+  path: ["P", "M", "X", "P2", "Gamma", "X2"]
+  points_per_segment: 100
+
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  disp_plot_filename: SW11_disp.png
+  disp_title: "SW11 La2CuO4: LSWT dispersion (multiply E by 1.18 for QC)"
+
+calculation:
+  cache_mode: "none"
+
+output:
+  save_data: false

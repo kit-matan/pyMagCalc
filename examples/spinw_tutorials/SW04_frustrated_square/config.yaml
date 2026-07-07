@@ -1,0 +1,74 @@
+# =====================================================================
+# SW04 - Frustrated square lattice
+#
+# Port of SpinW Tutorial 4 / Sunny "SW04" to pyMagCalc (LSWT).
+#   https://spinw.org/tutorials/04tutorial
+#
+#   magcalc run examples/spinw_tutorials/SW04_frustrated_square/config.yaml
+#
+# Competing nearest-neighbour AFM (J1 = +1) and next-nearest-neighbour
+# (diagonal) FM (J2 = -0.1) exchange, S=1. The Neel order requires a 2x2
+# magnetic cell, built here explicitly (a=b = 2 x 3 A = 6 A) with the four
+# sites carrying the up/down/down/up checkerboard pattern.
+#
+# Chemical-cell RLU [1/2,0,0] maps to magnetic-cell [1,0,0]; the q-path
+# below reproduces Sunny's [0,0,0]->[1/2,0,0]->[1/2,1/2,0]->[0,0,0].
+# =====================================================================
+
+parameter_order: [J1, J2]
+parameters:
+  J1: 1.0
+  J2: -0.1
+
+crystal_structure:
+  lattice_vectors:
+    - [6.0, 0.0, 0.0]
+    - [0.0, 6.0, 0.0]
+    - [0.0, 0.0, 6.0]
+  atoms_uc:
+    - { label: A, pos: [0.0, 0.0, 0.0], spin_S: 1.0, ion: Cu2+ }
+    - { label: B, pos: [0.5, 0.0, 0.0], spin_S: 1.0, ion: Cu2+ }
+    - { label: C, pos: [0.0, 0.5, 0.0], spin_S: 1.0, ion: Cu2+ }
+    - { label: D, pos: [0.5, 0.5, 0.0], spin_S: 1.0, ion: Cu2+ }
+
+interactions:
+  symmetry_rules:
+    # Distance-based rules auto-expand to all equivalent bonds (both
+    # orderings). NN = 3 A; diagonal 2nd-NN = 3*sqrt(2) = 4.2426 A.
+    - { type: heisenberg, distance: 3.0,    value: "J1" }
+    - { type: heisenberg, distance: 4.2426, value: "J2" }
+
+magnetic_structure:
+  enabled: true
+  type: pattern
+  pattern_type: generic     # Neel checkerboard: A up, B/C down, D up
+  directions:
+    - [0.0, 0.0,  1.0]
+    - [0.0, 0.0, -1.0]
+    - [0.0, 0.0, -1.0]
+    - [0.0, 0.0,  1.0]
+
+tasks:
+  minimization: false
+  dispersion: true
+
+q_path:
+  Gamma:  [0.0, 0.0, 0.0]
+  X:      [1.0, 0.0, 0.0]   # chemical [1/2,0,0]
+  M:      [1.0, 1.0, 0.0]   # chemical [1/2,1/2,0]
+  Gamma2: [0.0, 0.0, 0.0]
+  path: ["Gamma", "X", "M", "Gamma2"]
+  points_per_segment: 200
+
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  disp_plot_filename: SW04_disp.png
+  disp_title: "SW04 Frustrated square lattice: dispersion"
+
+calculation:
+  cache_mode: "none"
+
+output:
+  save_data: false

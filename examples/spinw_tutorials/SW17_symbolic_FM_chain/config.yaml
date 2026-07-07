@@ -1,0 +1,51 @@
+# =====================================================================
+# SW17 - Symbolic spin-wave dispersion of the FM chain
+#
+# Port of SpinW Tutorial 17 to pyMagCalc.
+#   https://spinw.org/tutorials/17tutorial
+#
+# SpinW Tutorial 17 demonstrates SpinW's SYMBOLIC engine: it derives the
+# ANALYTIC magnon dispersion of the ferromagnetic chain rather than a
+# numeric curve. pyMagCalc likewise builds the LSWT Hamiltonian
+# symbolically (SymPy) before lambdifying it, so the closed form is
+# available directly from `MagCalc.HMat_sym`.
+#
+# This config defines the model (S symbolic, J symbolic, a=3 A chain);
+# the companion script prints the analytic dispersion:
+#
+#   python examples/spinw_tutorials/SW17_symbolic_FM_chain/sw17_symbolic.py
+#
+# Result:  E(q) = 2*S*|J|*(1 - cos(q_x * a))   (q_x Cartesian, a = 3 A),
+# i.e. 0 at the zone centre and 4*S*|J| at the zone boundary -- identical
+# to SpinW's symbolic result and to the numeric SW01 curve.
+#
+# (`magcalc run` on this config produces the equivalent NUMERIC dispersion
+# with J = -1; the symbolic form is the point of the tutorial.)
+# =====================================================================
+parameter_order: [J]
+parameters: {J: -1.0}
+crystal_structure:
+  lattice_vectors: [[3.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
+  atoms_uc:
+    - {label: A1, pos: [0.0, 0.0, 0.0], spin_S: 1.0, ion: Cu2+}
+interactions:
+  - {type: heisenberg, pair: [A1, A1], rij_offset: [1, 0, 0],  value: J}
+  - {type: heisenberg, pair: [A1, A1], rij_offset: [-1, 0, 0], value: J}
+magnetic_structure:
+  enabled: true
+  type: pattern
+  pattern_type: ferromagnetic
+  direction: [0.0, 1.0, 0.0]
+tasks: {minimization: false, dispersion: true}
+q_path:
+  G: [0.0, 0.0, 0.0]
+  H: [1.0, 0.0, 0.0]
+  path: [G, H]
+  points_per_segment: 200
+plotting:
+  save_plot: true
+  show_plot: false
+  disp_plot_filename: SW17_disp.png
+  disp_title: "SW17 FM chain: numeric dispersion (analytic form in the script)"
+calculation: {cache_mode: none}
+output: {save_data: false}

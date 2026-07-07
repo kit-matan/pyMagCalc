@@ -1,0 +1,74 @@
+# =====================================================================
+# SW01 - Ferromagnetic Heisenberg chain
+#
+# Port of SpinW Tutorial 1 / Sunny "SW01" to pyMagCalc (LSWT).
+#   https://spinw.org/tutorials/01tutorial
+#
+#   magcalc run examples/spinw_tutorials/SW01_FM_chain/config.yaml
+#
+# Tetragonal cell, one S=1 site, nearest-neighbour FM exchange J = -1 meV
+# along the short (a) axis. The Heisenberg ground state is ferromagnetic;
+# the spin-space direction is arbitrary (chosen along z here). The chain
+# dispersion is E(q) = 2|J|S(1 - cos(2 pi q_a)), rising from 0 at Gamma to
+# 4 meV at the zone boundary [1,0,0].
+#
+# Note: Sunny uses the Cu1+ magnetic form factor; pyMagCalc ships Cu2+,
+# which is used here (affects S(Q,w)/powder intensities only, not energies).
+# =====================================================================
+
+parameter_order: [J]
+parameters:
+  J: -1.0
+
+crystal_structure:
+  lattice_vectors:
+    - [3.0, 0.0, 0.0]
+    - [0.0, 8.0, 0.0]
+    - [0.0, 0.0, 8.0]
+  atoms_uc:
+    - { label: Cu, pos: [0.0, 0.0, 0.0], spin_S: 1.0, ion: Cu2+ }
+
+interactions:
+  # pyMagCalc counts H = (1/2) sum over ordered pairs, so every bond must be
+  # listed in BOTH directions (i->j and j->i) to get the full J per bond.
+  - { type: heisenberg, pair: [Cu, Cu], rij_offset: [1, 0, 0],  value: "J" }
+  - { type: heisenberg, pair: [Cu, Cu], rij_offset: [-1, 0, 0], value: "J" }
+
+magnetic_structure:
+  enabled: true
+  type: pattern
+  pattern_type: ferromagnetic
+  direction: [0.0, 0.0, 1.0]
+
+tasks:
+  minimization: false      # FM ground state supplied above
+  dispersion: true
+  powder_average: true
+
+q_path:
+  Gamma: [0.0, 0.0, 0.0]
+  H100:  [1.0, 0.0, 0.0]
+  path: ["Gamma", "H100"]
+  points_per_segment: 400
+
+powder_average:
+  q_min: 0.05
+  q_max: 2.5
+  q_count: 120
+  num_samples: 200
+
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  disp_plot_filename: SW01_disp.png
+  powder_plot_filename: SW01_powder.png
+  disp_title: "SW01 FM Heisenberg chain: dispersion"
+  powder_title: "SW01 FM Heisenberg chain: powder average"
+  broadening: 0.1
+
+calculation:
+  cache_mode: "none"
+
+output:
+  save_data: false

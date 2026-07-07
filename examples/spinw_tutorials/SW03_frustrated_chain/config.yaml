@@ -1,0 +1,122 @@
+# =====================================================================
+# SW03 - Frustrated J1-J2 chain (incommensurate spiral)
+#
+# Port of SpinW Tutorial 3 / Sunny "SW03" to pyMagCalc (LSWT).
+#   https://spinw.org/tutorials/03tutorial
+#
+#   magcalc run examples/spinw_tutorials/SW03_frustrated_chain/config.yaml
+#
+# Competing NN FM J1 = -1 and 2nd-NN AFM J2 = +2 give an INCOMMENSURATE
+# spiral ground state with pitch cos(2*pi*k) = -J1/(4 J2) = 1/8, i.e.
+# k = 0.230053... (as in the tutorial). pyMagCalc has no single-k spiral
+# LSWT that reproduces the full three-branch spiral spectrum (its
+# rotating-frame 'spiral' option gaps the phason and gives only one
+# branch). Instead this port uses the standard, exact method: a COMMENSURATE
+# SUPERCELL that approximates k. k = 3/13 = 0.23077 (closest small fraction
+# to 0.230053) -> a 13-site chain, with the spiral supplied as 13 in-plane
+# directions at angles 2*pi*(3/13)*i.
+#
+# The dispersion is the correct spiral spectrum FOLDED into 13 bands. Most
+# are zero-intensity 'ghost' modes (the same artifact Sunny notes for its
+# own supercell method in SW08); the physical envelope has the gapless
+# phason at q=0 and Goldstones at +/-k. Because 3/13 is not exactly the
+# minimizing pitch, a tiny (~0.03 meV) imaginary part appears at a few q.
+# For a clean single-branch plot, compute S(Q,w) (ghosts carry no weight).
+# =====================================================================
+parameter_order: [J1, J2]
+parameters: {J1: -1.0, J2: 2.0}
+crystal_structure:
+  lattice_vectors:
+  - [39.0, 0.0, 0.0]
+  - [0.0, 8.0, 0.0]
+  - [0.0, 0.0, 8.0]
+  atoms_uc:
+  - label: A0
+    pos: [0.0, 0.0, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+  - label: A1
+    pos: [0.07692307692307693, 0.0, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+  - label: A2
+    pos: [0.15384615384615385, 0.0, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+  - label: A3
+    pos: [0.23076923076923078, 0.0, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+  - label: A4
+    pos: [0.3076923076923077, 0.0, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+  - label: A5
+    pos: [0.38461538461538464, 0.0, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+  - label: A6
+    pos: [0.46153846153846156, 0.0, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+  - label: A7
+    pos: [0.5384615384615384, 0.0, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+  - label: A8
+    pos: [0.6153846153846154, 0.0, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+  - label: A9
+    pos: [0.6923076923076923, 0.0, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+  - label: A10
+    pos: [0.7692307692307693, 0.0, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+  - label: A11
+    pos: [0.8461538461538461, 0.0, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+  - label: A12
+    pos: [0.9230769230769231, 0.0, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+interactions:
+  symmetry_rules:
+  - {type: heisenberg, distance: 3.0, value: J1}
+  - {type: heisenberg, distance: 6.0, value: J2}
+magnetic_structure:
+  enabled: true
+  type: pattern
+  pattern_type: generic
+  directions:
+  - [1.0, 0.0, 0.0]
+  - [0.120537, 0.992709, 0.0]
+  - [-0.970942, 0.239316, 0.0]
+  - [-0.354605, -0.935016, 0.0]
+  - [0.885456, -0.464723, 0.0]
+  - [0.568065, 0.822984, 0.0]
+  - [-0.748511, 0.663123, 0.0]
+  - [-0.748511, -0.663123, 0.0]
+  - [0.568065, -0.822984, 0.0]
+  - [0.885456, 0.464723, 0.0]
+  - [-0.354605, 0.935016, 0.0]
+  - [-0.970942, -0.239316, 0.0]
+  - [0.120537, -0.992709, 0.0]
+tasks: {minimization: false, dispersion: true}
+q_path:
+  G: [0.0, 0.0, 0.0]
+  H: [13.0, 0.0, 0.0]
+  path: [G, H]
+  points_per_segment: 400
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  energy_limits_disp: [0, 4.5]
+  disp_plot_filename: SW03_disp.png
+  disp_title: SW03 frustrated J1-J2 chain (spiral, 13-site supercell)
+calculation: {cache_mode: none}
+output: {save_data: false}

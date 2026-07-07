@@ -1,0 +1,151 @@
+# =====================================================================
+# SW09 - k=0 kagome antiferromagnet with Dzyaloshinskii-Moriya
+#
+# Port of SpinW Tutorial 9 / Sunny "SW09" to pyMagCalc (LSWT).
+#   https://spinw.org/tutorials/09tutorial
+#
+#   magcalc run examples/spinw_tutorials/SW09_kagome_AFM_DM/config.yaml
+#
+# Kagome NN AFM J = 1 plus an out-of-plane DM |D| = 0.08 meV, S=1, k=0
+# 120-degree order. Each NN bond carries the full 3x3 matrix
+# J*I + dmvec(D_ij), with D_ij = +/- 0.08 z chosen so the DM circulates
+# CONSISTENTLY (counter-clockwise about +z) around every kagome triangle
+# -- this is what SpinW's P-3 symmetry propagation of dmvec([0,0,-0.08])
+# produces. (A single uniform D on every bond, or an ad-hoc bond
+# orientation, does NOT: the sign must follow the triangle circulation.)
+# The reverse bond automatically gets the transposed matrix.
+#
+# Result matches SpinW/Sunny: the DM lifts the kagome zero-energy flat
+# band to a flat band at ~0.97 meV, with a Goldstone at the 120-degree
+# ordering wavevector. The 12 NN interaction_matrix entries below were
+# emitted by a helper script (see README) that assigns the CCW sign.
+# =====================================================================
+parameter_order: []
+parameters: {}
+crystal_structure:
+  lattice_vectors:
+  - [6.0, 0.0, 0.0]
+  - [-3.0, 5.196152, 0.0]
+  - [0.0, 0.0, 8.0]
+  atoms_uc:
+  - label: K1
+    pos: [0.5, 0.0, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+  - label: K2
+    pos: [0.0, 0.5, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+  - label: K3
+    pos: [0.5, 0.5, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+interactions:
+- type: interaction_matrix
+  pair: [K1, K2]
+  rij_offset: [0, -1, 0]
+  value:
+  - [1.0, -0.08, 0.0]
+  - [0.08, 1.0, 0.0]
+  - [0.0, 0.0, 1.0]
+- type: interaction_matrix
+  pair: [K1, K3]
+  rij_offset: [0, -1, 0]
+  value:
+  - [1.0, 0.08, 0.0]
+  - [-0.08, 1.0, 0.0]
+  - [0.0, 0.0, 1.0]
+- type: interaction_matrix
+  pair: [K1, K3]
+  rij_offset: [0, 0, 0]
+  value:
+  - [1.0, 0.08, 0.0]
+  - [-0.08, 1.0, 0.0]
+  - [0.0, 0.0, 1.0]
+- type: interaction_matrix
+  pair: [K1, K2]
+  rij_offset: [1, 0, 0]
+  value:
+  - [1.0, -0.08, 0.0]
+  - [0.08, 1.0, 0.0]
+  - [0.0, 0.0, 1.0]
+- type: interaction_matrix
+  pair: [K2, K1]
+  rij_offset: [-1, 0, 0]
+  value:
+  - [1.0, 0.08, 0.0]
+  - [-0.08, 1.0, 0.0]
+  - [0.0, 0.0, 1.0]
+- type: interaction_matrix
+  pair: [K2, K3]
+  rij_offset: [-1, 0, 0]
+  value:
+  - [1.0, -0.08, 0.0]
+  - [0.08, 1.0, 0.0]
+  - [0.0, 0.0, 1.0]
+- type: interaction_matrix
+  pair: [K2, K3]
+  rij_offset: [0, 0, 0]
+  value:
+  - [1.0, -0.08, 0.0]
+  - [0.08, 1.0, 0.0]
+  - [0.0, 0.0, 1.0]
+- type: interaction_matrix
+  pair: [K2, K1]
+  rij_offset: [0, 1, 0]
+  value:
+  - [1.0, 0.08, 0.0]
+  - [-0.08, 1.0, 0.0]
+  - [0.0, 0.0, 1.0]
+- type: interaction_matrix
+  pair: [K3, K1]
+  rij_offset: [0, 0, 0]
+  value:
+  - [1.0, -0.08, 0.0]
+  - [0.08, 1.0, 0.0]
+  - [0.0, 0.0, 1.0]
+- type: interaction_matrix
+  pair: [K3, K2]
+  rij_offset: [0, 0, 0]
+  value:
+  - [1.0, 0.08, 0.0]
+  - [-0.08, 1.0, 0.0]
+  - [0.0, 0.0, 1.0]
+- type: interaction_matrix
+  pair: [K3, K1]
+  rij_offset: [0, 1, 0]
+  value:
+  - [1.0, -0.08, 0.0]
+  - [0.08, 1.0, 0.0]
+  - [0.0, 0.0, 1.0]
+- type: interaction_matrix
+  pair: [K3, K2]
+  rij_offset: [1, 0, 0]
+  value:
+  - [1.0, 0.08, 0.0]
+  - [-0.08, 1.0, 0.0]
+  - [0.0, 0.0, 1.0]
+magnetic_structure:
+  enabled: true
+  type: pattern
+  pattern_type: generic
+  directions:
+  - [1.0, 0.0, 0.0]
+  - [-0.5, 0.866025, 0.0]
+  - [-0.5, -0.866025, 0.0]
+tasks: {minimization: false, dispersion: true}
+q_path:
+  mM: [-0.5, 0.0, 0.0]
+  Gamma: [0.0, 0.0, 0.0]
+  K: [0.5, 0.5, 0.0]
+  path: [mM, Gamma, K]
+  points_per_segment: 200
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  energy_limits_disp: [0, 3]
+  disp_plot_filename: SW09_disp.png
+  disp_title: 'SW09 k=0 kagome AFM + DM: dispersion'
+calculation: {cache_mode: none}
+output: {save_data: false}

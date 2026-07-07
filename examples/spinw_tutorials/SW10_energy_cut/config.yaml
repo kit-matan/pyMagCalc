@@ -1,0 +1,58 @@
+# =====================================================================
+# SW10 - Energy cut on the square lattice (model definition)
+#
+# Port of SpinW Tutorial 10 / Sunny "SW10" to pyMagCalc (LSWT).
+#   https://spinw.org/tutorials/10tutorial
+#
+# Square-lattice NN AFM J = 1 meV, S = 1 (chemical cell a = b = 1, c = 3).
+# The Neel order lives on a 2x2 magnetic cell (a = b = 2), built here
+# explicitly with the up/down/down/up checkerboard.
+#
+# The declarative runner has no 2-D q-grid task, so the constant-energy
+# cut itself is produced by the companion script:
+#
+#   python examples/spinw_tutorials/SW10_energy_cut/sw10_energy_cut.py
+#
+# which loads THIS config, computes S(q,w) on a (H,K) grid over the
+# chemical-RLU range [0,2]^2 at L=0, and plots (i) a constant-E cut at
+# E = 3.75 meV with 0.2 meV FWHM Gaussian broadening and (ii) intensities
+# integrated over 3.5-4.01 meV, mirroring the two panels of the tutorial.
+# (Sunny uses ssf_trace there; pyMagCalc's S(q,w) is the neutron
+# perp-projected intensity, so absolute intensities differ slightly while
+# the ring geometry - the physics being demonstrated - is identical.)
+# =====================================================================
+parameter_order: [J]
+parameters: {J: 1.0}
+crystal_structure:
+  lattice_vectors: [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 3.0]]
+  atoms_uc:
+    - {label: A, pos: [0.0, 0.0, 0.0], spin_S: 1.0, ion: Cu2+}
+    - {label: B, pos: [0.5, 0.0, 0.0], spin_S: 1.0, ion: Cu2+}
+    - {label: C, pos: [0.0, 0.5, 0.0], spin_S: 1.0, ion: Cu2+}
+    - {label: D, pos: [0.5, 0.5, 0.0], spin_S: 1.0, ion: Cu2+}
+interactions:
+  symmetry_rules:
+    - {type: heisenberg, distance: 1.0, value: J}
+magnetic_structure:
+  enabled: true
+  type: pattern
+  pattern_type: generic
+  directions:
+    - [0.0, 0.0, 1.0]
+    - [0.0, 0.0, -1.0]
+    - [0.0, 0.0, -1.0]
+    - [0.0, 0.0, 1.0]
+tasks: {minimization: false, dispersion: true}
+q_path:
+  G: [0.0, 0.0, 0.0]
+  M: [2.0, 2.0, 0.0]
+  path: [G, M]
+  points_per_segment: 100
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  disp_plot_filename: SW10_disp.png
+  disp_title: "SW10 square-lattice Neel: dispersion (E_max = 4 meV)"
+calculation: {cache_mode: none}
+output: {save_data: false}

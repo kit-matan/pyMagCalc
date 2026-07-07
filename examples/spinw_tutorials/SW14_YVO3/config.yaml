@@ -1,0 +1,323 @@
+# =====================================================================
+# SW14 - YVO3
+#
+# Port of SpinW Tutorial 14 / Sunny "SW14" to pyMagCalc (LSWT).
+#   https://spinw.org/tutorials/14tutorial
+#
+#   magcalc run examples/spinw_tutorials/SW14_YVO3/config.yaml
+#
+# Model of C. Ulrich et al., PRL 91, 257202 (2003). The exchange breaks the
+# nominal Pnma symmetry, so Sunny uses spacegroup P1 (all bonds explicit);
+# this port does the same on a 2x2x1 magnetic supercell (8 V4+, S=1/2).
+# :dipole_uncorrected in Sunny == no renormalization in pyMagCalc.
+#
+# In-plane Jab = 2.6 (AFM) gives Neel order in the ab plane; the c-axis
+# bonds are the two ALTERNATING anisotropic 3x3 matrices Jc1, Jc2 (FM-like
+# diagonal -Jc(1+/-delta), a K2 term on the xx component, and an
+# antisymmetric DM part +/- d in the xz block). The reverse of every matrix
+# bond carries its transpose. A single-ion term -K1*Sx^2 is added on each V.
+#
+# Energy minimization gives the canted C-type antiferromagnet (AFM along a,
+# FM along c, spins ~along c with a +/-0.24 x-canting from the DM); that
+# structure is supplied below (minimized, then fixed). q-path is Sunny's
+# [3/4,3/4,0]->[1/2,1/2,0]->[1/2,1/2,1], scaled x2 in a,b for the supercell.
+# The bonds/sites were emitted by a helper script (see README).
+# =====================================================================
+parameter_order: [Jab]
+parameters: {Jab: 2.6}
+crystal_structure:
+  lattice_vectors:
+  - [7.470017457810925, 0.0, 0.0]
+  - [0.0, 7.939960624587504, 0.0]
+  - [0.0, 0.0, 7.5283]
+  atoms_uc:
+  - label: V000
+    pos: [0.0, 0.0, 0.0]
+    spin_S: 0.5
+    ion: V4+
+  - label: V001
+    pos: [0.0, 0.0, 0.5]
+    spin_S: 0.5
+    ion: V4+
+  - label: V100
+    pos: [0.5, 0.0, 0.0]
+    spin_S: 0.5
+    ion: V4+
+  - label: V101
+    pos: [0.5, 0.0, 0.5]
+    spin_S: 0.5
+    ion: V4+
+  - label: V010
+    pos: [0.0, 0.5, 0.0]
+    spin_S: 0.5
+    ion: V4+
+  - label: V011
+    pos: [0.0, 0.5, 0.5]
+    spin_S: 0.5
+    ion: V4+
+  - label: V110
+    pos: [0.5, 0.5, 0.0]
+    spin_S: 0.5
+    ion: V4+
+  - label: V111
+    pos: [0.5, 0.5, 0.5]
+    spin_S: 0.5
+    ion: V4+
+interactions:
+  single_ion_anisotropy:
+  - value: -0.9
+    axis: [1, 0, 0]
+    atoms: [V000, V001, V100, V101, V010, V011, V110, V111]
+  heisenberg:
+  - type: heisenberg
+    pair: [V000, V100]
+    rij_offset: [-1, 0, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V000, V010]
+    rij_offset: [0, -1, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V000, V100]
+    rij_offset: [0, 0, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V000, V010]
+    rij_offset: [0, 0, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V001, V101]
+    rij_offset: [-1, 0, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V001, V011]
+    rij_offset: [0, -1, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V001, V101]
+    rij_offset: [0, 0, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V001, V011]
+    rij_offset: [0, 0, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V100, V110]
+    rij_offset: [0, -1, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V100, V000]
+    rij_offset: [0, 0, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V100, V110]
+    rij_offset: [0, 0, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V100, V000]
+    rij_offset: [1, 0, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V101, V111]
+    rij_offset: [0, -1, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V101, V001]
+    rij_offset: [0, 0, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V101, V111]
+    rij_offset: [0, 0, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V101, V001]
+    rij_offset: [1, 0, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V010, V110]
+    rij_offset: [-1, 0, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V010, V000]
+    rij_offset: [0, 0, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V010, V110]
+    rij_offset: [0, 0, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V010, V000]
+    rij_offset: [0, 1, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V011, V111]
+    rij_offset: [-1, 0, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V011, V001]
+    rij_offset: [0, 0, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V011, V111]
+    rij_offset: [0, 0, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V011, V001]
+    rij_offset: [0, 1, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V110, V100]
+    rij_offset: [0, 0, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V110, V010]
+    rij_offset: [0, 0, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V110, V100]
+    rij_offset: [0, 1, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V110, V010]
+    rij_offset: [1, 0, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V111, V101]
+    rij_offset: [0, 0, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V111, V011]
+    rij_offset: [0, 0, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V111, V101]
+    rij_offset: [0, 1, 0]
+    value: Jab
+  - type: heisenberg
+    pair: [V111, V011]
+    rij_offset: [1, 0, 0]
+    value: Jab
+  interaction_matrix:
+  - type: interaction_matrix
+    pair: [V000, V001]
+    rij_offset: [0, 0, 0]
+    value: &id001
+    - [-3.2150000000000007, 0.0, -1.15]
+    - [0.0, -4.1850000000000005, 0.0]
+    - [1.15, 0.0, -4.1850000000000005]
+  - type: interaction_matrix
+    pair: [V001, V000]
+    rij_offset: [0, 0, 0]
+    value:
+    - [-3.2150000000000007, 0.0, 1.15]
+    - [0.0, -4.1850000000000005, 0.0]
+    - [-1.15, 0.0, -4.1850000000000005]
+  - type: interaction_matrix
+    pair: [V001, V000]
+    rij_offset: [0, 0, 1]
+    value: &id002
+    - [-1.0450000000000002, 0.0, 1.15]
+    - [0.0, -2.015, 0.0]
+    - [-1.15, 0.0, -2.015]
+  - type: interaction_matrix
+    pair: [V000, V001]
+    rij_offset: [0, 0, -1]
+    value:
+    - [-1.0450000000000002, 0.0, -1.15]
+    - [0.0, -2.015, 0.0]
+    - [1.15, 0.0, -2.015]
+  - type: interaction_matrix
+    pair: [V100, V101]
+    rij_offset: [0, 0, 0]
+    value: *id001
+  - type: interaction_matrix
+    pair: [V101, V100]
+    rij_offset: [0, 0, 0]
+    value:
+    - [-3.2150000000000007, 0.0, 1.15]
+    - [0.0, -4.1850000000000005, 0.0]
+    - [-1.15, 0.0, -4.1850000000000005]
+  - type: interaction_matrix
+    pair: [V101, V100]
+    rij_offset: [0, 0, 1]
+    value: *id002
+  - type: interaction_matrix
+    pair: [V100, V101]
+    rij_offset: [0, 0, -1]
+    value:
+    - [-1.0450000000000002, 0.0, -1.15]
+    - [0.0, -2.015, 0.0]
+    - [1.15, 0.0, -2.015]
+  - type: interaction_matrix
+    pair: [V010, V011]
+    rij_offset: [0, 0, 0]
+    value: *id001
+  - type: interaction_matrix
+    pair: [V011, V010]
+    rij_offset: [0, 0, 0]
+    value:
+    - [-3.2150000000000007, 0.0, 1.15]
+    - [0.0, -4.1850000000000005, 0.0]
+    - [-1.15, 0.0, -4.1850000000000005]
+  - type: interaction_matrix
+    pair: [V011, V010]
+    rij_offset: [0, 0, 1]
+    value: *id002
+  - type: interaction_matrix
+    pair: [V010, V011]
+    rij_offset: [0, 0, -1]
+    value:
+    - [-1.0450000000000002, 0.0, -1.15]
+    - [0.0, -2.015, 0.0]
+    - [1.15, 0.0, -2.015]
+  - type: interaction_matrix
+    pair: [V110, V111]
+    rij_offset: [0, 0, 0]
+    value: *id001
+  - type: interaction_matrix
+    pair: [V111, V110]
+    rij_offset: [0, 0, 0]
+    value:
+    - [-3.2150000000000007, 0.0, 1.15]
+    - [0.0, -4.1850000000000005, 0.0]
+    - [-1.15, 0.0, -4.1850000000000005]
+  - type: interaction_matrix
+    pair: [V111, V110]
+    rij_offset: [0, 0, 1]
+    value: *id002
+  - type: interaction_matrix
+    pair: [V110, V111]
+    rij_offset: [0, 0, -1]
+    value:
+    - [-1.0450000000000002, 0.0, -1.15]
+    - [0.0, -2.015, 0.0]
+    - [1.15, 0.0, -2.015]
+tasks: {minimization: false, dispersion: true}
+q_path:
+  A: [1.5, 1.5, 0]
+  B: [1, 1, 0]
+  C: [1, 1, 2]
+  path: [A, B, C]
+  points_per_segment: 200
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  energy_limits_disp: [0, 14]
+  disp_plot_filename: SW14_disp.png
+  disp_title: 'SW14 YVO3: canted C-type AFM dispersion'
+calculation: {cache_mode: none}
+output: {save_data: false}
+magnetic_structure:
+  enabled: true
+  type: pattern
+  pattern_type: generic
+  directions:
+  - [-0.242, 0.0, -0.97]
+  - [0.242, 0.0, -0.97]
+  - [0.242, 0.0, 0.97]
+  - [-0.242, 0.0, 0.97]
+  - [0.242, 0.0, 0.97]
+  - [-0.242, 0.0, 0.97]
+  - [-0.242, 0.0, -0.97]
+  - [0.242, 0.0, -0.97]

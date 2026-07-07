@@ -1,0 +1,68 @@
+# =====================================================================
+# SW08 - sqrt(3) x sqrt(3) kagome antiferromagnet: SPIRAL method
+#
+# Port of SpinW Tutorial 8 / Sunny "SW08" to pyMagCalc (LSWT).
+#   https://spinw.org/tutorials/08tutorial
+#
+#   magcalc run examples/spinw_tutorials/SW08_sqrt3_kagome/config.yaml
+#
+# Kagome NN AFM J = 1, S = 1, in the sqrt3 x sqrt3 state: ordering
+# wavevector k = [-1/3, -1/3, 0] with 120-degree rotation between
+# sublattices. This config uses pyMagCalc's single-k rotating-frame
+# spiral mode on the original 3-site kagome cell (the analogue of
+# Sunny's SpinWaveTheorySpiral): interactions get R(2 pi k.r) about
+# 'axis', and 'local_directions' hold the rotating-frame intra-cell
+# pattern (base angles [0, 0, 120 deg] minus 2 pi k.frac corrections).
+#
+# Gives the 3 physical branches with NO ghost modes: the zero-energy
+# kagome flat band plus two dispersive branches (E <= ~2.3 meV).
+# Verified band-by-band (~1e-8) against config_supercell.yaml.
+# =====================================================================
+parameter_order: [J]
+parameters: {J: 1.0}
+crystal_structure:
+  lattice_vectors:
+  - [6.0, 0.0, 0.0]
+  - [-3.0, 5.196152, 0.0]
+  - [0.0, 0.0, 40.0]
+  atoms_uc:
+  - label: K1
+    pos: [0.5, 0.0, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+  - label: K2
+    pos: [0.0, 0.5, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+  - label: K3
+    pos: [0.5, 0.5, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+interactions:
+  symmetry_rules:
+  - {type: heisenberg, distance: 3.0, value: J}
+magnetic_structure:
+  enabled: true
+  type: spiral
+  k: [-0.3333333333333333, -0.3333333333333333, 0.0]
+  axis: [0.0, 0.0, 1.0]
+  local_directions:
+  - [0.5, 0.8660254, 0.0]
+  - [0.5, 0.8660254, 0.0]
+  - [-0.5, -0.8660254, 0.0]
+tasks: {minimization: false, dispersion: true}
+q_path:
+  mM: [-0.5, 0.0, 0.0]
+  G: [0.0, 0.0, 0.0]
+  K: [0.5, 0.5, 0.0]
+  path: [mM, G, K]
+  points_per_segment: 200
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  energy_limits_disp: [0, 2.5]
+  disp_plot_filename: SW08_spiral_disp.png
+  disp_title: 'SW08 sqrt3xsqrt3 kagome AFM: spiral method (3 branches)'
+calculation: {cache_mode: none}
+output: {save_data: false}

@@ -28,10 +28,13 @@ examples/plots/
 **/.pytest_cache/
 **/.ipynb_checkpoints/
 *.egg-info/
-examples/sunny_examples/
 examples/future_examples/
 sunny_exsamples/
 examples/future_exmaples/
+# External tutorial source (SpinW MATLAB, Sunny.jl) kept locally for
+# cross-checking but NOT redistributed in this repo.
+examples/reference/
+examples/SpinW_examples/
 config_gui_run.yaml
 .config_gui_run.yaml
 
@@ -55,3 +58,4 @@ powder_plot.png
 
 # Claude Code persistent memory (local context, not project code)
 memory/
+**/.DS_Store

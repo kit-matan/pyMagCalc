@@ -1,0 +1,67 @@
+# =====================================================================
+# SW07 - k=0 kagome antiferromagnet
+#
+# Port of SpinW Tutorial 7 / Sunny "SW07" to pyMagCalc (LSWT).
+#   https://spinw.org/tutorials/07tutorial
+#
+#   magcalc run examples/spinw_tutorials/SW07_kagome_AFM/config.yaml
+#
+# Kagome lattice with NN AFM J1 = 1 and 2nd-NN AFM J2 = 0.11, S=1. The
+# ground state is the k=0, 120-degree coplanar order: the three sublattices
+# point along 0, 120, 240 degrees in the xy plane. This exact state is
+# supplied below (no minimization). The distance rules pick the NN bond
+# (3 A) and the 2nd-NN bond (a*sqrt(3)/2 = 5.196 A) unambiguously.
+# =====================================================================
+
+parameter_order: [J1, J2]
+parameters:
+  J1: 1.0
+  J2: 0.11
+
+crystal_structure:
+  lattice_vectors:
+    - [6.0, 0.0, 0.0]
+    - [-3.0, 5.196152, 0.0]
+    - [0.0, 0.0, 8.0]
+  atoms_uc:
+    - { label: K1, pos: [0.5, 0.0, 0.0], spin_S: 1.0, ion: Cu2+ }
+    - { label: K2, pos: [0.0, 0.5, 0.0], spin_S: 1.0, ion: Cu2+ }
+    - { label: K3, pos: [0.5, 0.5, 0.0], spin_S: 1.0, ion: Cu2+ }
+
+interactions:
+  symmetry_rules:
+    - { type: heisenberg, distance: 3.0,      value: "J1" }   # NN
+    - { type: heisenberg, distance: 5.196152, value: "J2" }   # 2nd NN
+
+magnetic_structure:
+  enabled: true
+  type: pattern
+  pattern_type: generic     # k=0 120-degree coplanar order
+  directions:
+    - [1.0,  0.0,       0.0]   # K1  0 deg
+    - [-0.5,  0.866025, 0.0]   # K2  120 deg
+    - [-0.5, -0.866025, 0.0]   # K3  240 deg
+
+tasks:
+  minimization: false
+  dispersion: true
+
+q_path:
+  mM:    [-0.5, 0.0, 0.0]
+  Gamma: [0.0, 0.0, 0.0]
+  K:     [0.5, 0.5, 0.0]
+  path: ["mM", "Gamma", "K"]
+  points_per_segment: 200
+
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  disp_plot_filename: SW07_disp.png
+  disp_title: "SW07 k=0 kagome antiferromagnet: dispersion"
+
+calculation:
+  cache_mode: "none"
+
+output:
+  save_data: false

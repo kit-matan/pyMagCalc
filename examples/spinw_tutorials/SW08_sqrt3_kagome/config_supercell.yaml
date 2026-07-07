@@ -1,0 +1,90 @@
+# =====================================================================
+# SW08 - sqrt(3) x sqrt(3) kagome antiferromagnet: SUPERCELL method
+#
+#   magcalc run examples/spinw_tutorials/SW08_sqrt3_kagome/config_supercell.yaml
+#
+# Same model as config.yaml, realized on the exact commensurate
+# sqrt3 x sqrt3 (9-site) magnetic supercell (A1 = 2a1+a2, A2 = -a1+a2)
+# with the 120-degree spiral supplied per site. Reproduces Sunny's
+# "Supercell method" panel: identical physics to the spiral method but
+# folded into 9 bands, most of which are zero-intensity ghost modes.
+# The q-path is the chemical-cell path mapped through M = [[2,1,0],
+# [-1,1,0],[0,0,1]] (q_super = M q_kagome).
+# =====================================================================
+parameter_order: [J]
+parameters: {J: 1.0}
+crystal_structure:
+  lattice_vectors:
+  - [9.0, 5.196152, 0.0]
+  - [-9.0, 5.196152, 0.0]
+  - [0.0, 0.0, 40.0]
+  atoms_uc:
+  - label: S0
+    pos: [0.8333333333333335, 0.16666666666666663, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+  - label: S1
+    pos: [0.8333333333333335, 0.6666666666666666, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+  - label: S2
+    pos: [0.0, 0.5, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+  - label: S3
+    pos: [0.16666666666666674, 0.8333333333333333, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+  - label: S4
+    pos: [0.16666666666666652, 0.3333333333333332, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+  - label: S5
+    pos: [0.33333333333333326, 0.1666666666666666, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+  - label: S6
+    pos: [0.4999999999999999, 0.4999999999999999, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+  - label: S7
+    pos: [0.5, 0.0, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+  - label: S8
+    pos: [0.6666666666666665, 0.8333333333333333, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+interactions:
+  symmetry_rules:
+  - {type: heisenberg, distance: 3.0, value: J}
+magnetic_structure:
+  enabled: true
+  type: pattern
+  pattern_type: generic
+  directions:
+  - [-0.5, 0.8660254, 0.0]
+  - [-0.5, 0.8660254, 0.0]
+  - [-0.5, -0.8660254, 0.0]
+  - [1.0, -0.0, 0.0]
+  - [1.0, -0.0, 0.0]
+  - [-0.5, 0.8660254, 0.0]
+  - [-0.5, -0.8660254, 0.0]
+  - [-0.5, -0.8660254, 0.0]
+  - [1.0, -0.0, 0.0]
+tasks: {minimization: false, dispersion: true}
+q_path:
+  mM: [-1.0, 0.5, 0.0]
+  G: [0.0, 0.0, 0.0]
+  K: [1.5, 0.0, 0.0]
+  path: [mM, G, K]
+  points_per_segment: 200
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  energy_limits_disp: [0, 2.5]
+  disp_plot_filename: SW08_supercell_disp.png
+  disp_title: 'SW08 sqrt3xsqrt3 kagome AFM: supercell method (9 bands)'
+calculation: {cache_mode: none}
+output: {save_data: false}

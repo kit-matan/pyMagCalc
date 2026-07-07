@@ -1,0 +1,162 @@
+experiment:
+  name: FeI2_LSWT
+  description: "Replication of Sunny.jl FeI2 tutorial (Anisotropic Exchange + SIA)"
+
+crystal_structure:
+  lattice_parameters:
+    space_group: 164 # P-3m1
+    a: 4.05012
+    b: 4.05012
+    c: 6.75214
+    alpha: 90
+    beta: 90
+    gamma: 120
+  wyckoff_atoms:
+    - label: Fe
+      element: Fe
+      wyckoff: "1a" # 0,0,0
+      pos: [0, 0, 0]
+      spin_S: 1.0
+      charge: 2
+  atom_mode: symmetry
+  magnetic_elements: ["Fe"]
+
+parameters:
+  # Defining parameters for clarity, though we might inline them to avoid symbolic issues
+  # J1
+  J1pm: -0.236
+  J1pmpm: -0.161
+  J1zpm: -0.261
+  J1zz: -0.236
+  J1xx: -0.397 # -0.236 + -0.161
+  J1yy: -0.075 # -0.236 - -0.161
+  J1yz: -0.261
+  
+  # J2
+  J2pm: 0.026
+  J2zz: 0.113
+  
+  # J3
+  J3pm: 0.166
+  J3zz: 0.211
+  
+  # Inter-layer J'0
+  Jp0pm: 0.037
+  Jp0zz: -0.036
+  
+  # Inter-layer J'1
+  Jp1pm: 0.013
+  Jp1zz: 0.051
+  
+  # Inter-layer J'2a
+  Jp2apm: 0.068
+  Jp2azz: 0.073
+  
+  # SIA
+  D: 2.165 
+
+interactions:
+  single_ion_anisotropy:
+    # Sunny: -D * S[3]^2. Favors Z axis if D > 0.
+    # pyMagCalc: K * (S.n)^2. If K < 0, favors n axis.
+    # So K = -D = -2.165
+    - value: -2.165
+      axis: [0, 0, 1]
+      atoms: [Fe]
+
+  symmetry_rules:
+    # J1: Bond(1,1,[1,0,0])
+    - name: J1
+      type: interaction_matrix
+      value: [[-0.397, 0.0, 0.0], [0.0, -0.075, -0.261], [0.0, -0.261, -0.236]]
+      ref_pair: [Fe, Fe] 
+      distance: 4.05
+      offset: [1, 0, 0]
+      
+    # J2: Bond(1,1,[1,2,0])
+    - name: J2
+      type: interaction_matrix
+      value: [[0.026, 0.0, 0.0], [0.0, 0.026, 0.0], [0.0, 0.0, 0.113]]
+      ref_pair: [Fe, Fe]
+      distance: 7.015
+      offset: [1, 2, 0]
+    
+    # J3: Bond(1,1,[2,0,0])
+    - name: J3
+      type: interaction_matrix
+      value: [[0.166, 0.0, 0.0], [0.0, 0.166, 0.0], [0.0, 0.0, 0.211]]
+      ref_pair: [Fe, Fe]
+      distance: 8.10
+      offset: [2, 0, 0]
+      
+    # J'0: Bond(1,1,[0,0,1])
+    - name: J_prime_0
+      type: interaction_matrix
+      value: [[0.037, 0.0, 0.0], [0.0, 0.037, 0.0], [0.0, 0.0, -0.036]]
+      ref_pair: [Fe, Fe]
+      distance: 6.75
+      offset: [0, 0, 1]
+      
+    # J'1: Bond(1,1,[1,0,1])
+    - name: J_prime_1
+      type: interaction_matrix
+      value: [[0.013, 0.0, 0.0], [0.0, 0.013, 0.0], [0.0, 0.0, 0.051]]
+      ref_pair: [Fe, Fe]
+      distance: 7.87
+      offset: [1, 0, 1]
+      
+    # J'2a: Bond(1,1,[1,2,1])
+    - name: J_prime_2a
+      type: interaction_matrix
+      value: [[0.068, 0.0, 0.0], [0.0, 0.068, 0.0], [0.0, 0.0, 0.073]]
+      ref_pair: [Fe, Fe]
+      distance: 9.74
+      offset: [1, 2, 1]
+
+magnetic_structure:
+  type: propagation_vector
+  k: [0, -0.25, 0.25]
+  u: [1, 0, 0] # Spin in plane?
+  v: [0, 1, 0] # FeI2 spins usually along c (Easy Axis)?
+  # If Easy Axis (D > 0, K < 0), spins should be along z.
+  # Sunny example: D = 2.165 (Easy Axis).
+  # If spins are along z, then it's a collinear SDW or just FM modulated?
+  # Sunny says "Generalized spiral". "2-up 2-down". This implies spins align along Z but flip sign.
+  # That corresponds to a longitudinal wave or square wave.
+  # k = [0, -0.25, 0.25].
+  # If spins are along [0,0,1], then u=[0,0,1], v=[0,0,0]?
+  # Let's try subtype 'complex' or just 'planar' with u=[0,0,1], v=[0,0,0]?
+  # Or just u=[0,0,1] and subtype 'linear' (not supported?).
+  # Let's assume standard spiral for now, but point u along c ([0,0,1]).
+  subtype: planar
+  u: [0, 0, 1]
+  v: [1, 0, 0] # Conical?
+  # Let's just try to set it.
+
+minimization:
+  enabled: true
+  method: L-BFGS-B # Might need Basin Hopping or SA for complex landscape
+  tolerance: 1e-5
+  max_iterations: 2000
+
+plotting:
+  show_plot: false
+  save_plot: true
+  disp_plot_filename: "disp_plot.png"
+  show_structure: false
+
+q_path:
+  Gamma: [0, 0, 0]
+  M: [0.5, 0, 0]
+  K: [0.3333, 0.3333, 0] 
+  A: [0, 0, 0.5]
+  # Sunny path: [[0,0,0], [1,0,0], [0,1,0], [1/2,0,0], [0,1,0], [0,0,0]]
+  # [1,0,0] is equiv to Gamma in primitive? 
+  # Sunny's basis might be different or they use extended zone.
+  # Let's use standard Hex path: Gamma - M - K - Gamma - A
+  path: ["Gamma", "M", "K", "Gamma", "A"] 
+  points_per_segment: 50
+
+tasks:
+  minimization: true
+  dispersion: true

@@ -1,0 +1,72 @@
+# =====================================================================
+# SW02 - Antiferromagnetic Heisenberg chain
+#
+# Port of SpinW Tutorial 2 / Sunny "SW02" to pyMagCalc (LSWT).
+#   https://spinw.org/tutorials/02tutorial
+#
+#   magcalc run examples/spinw_tutorials/SW02_AFM_chain/config.yaml
+#
+# Nearest-neighbour AFM exchange J = +1 meV, S=1. The Neel ground state
+# doubles the cell along the chain, so -- unlike Sunny, which uses a
+# propagation vector -- pyMagCalc builds the 2-site magnetic cell
+# explicitly: a-axis = 2 x 3 A = 6 A, with Cu1 (up) at x=0 and Cu2 (down)
+# at x=3 A (fractional [1/2,0,0]).
+#
+# Because the cell is doubled along a, chemical-cell RLU [1,0,0] maps to
+# magnetic-cell RLU [2,0,0]; the q-path below covers the same physical
+# range as Sunny's [0,0,0]->[1,0,0]. Two degenerate bands result, and the
+# dispersion is the gapless AFM spin-wave cone.
+#
+# Note: Sunny uses the Cu1+ form factor; pyMagCalc ships Cu2+ (used here).
+# =====================================================================
+
+parameter_order: [J]
+parameters:
+  J: 1.0
+
+crystal_structure:
+  lattice_vectors:
+    - [6.0, 0.0, 0.0]     # doubled chain axis (2 x 3 A)
+    - [0.0, 8.0, 0.0]
+    - [0.0, 0.0, 8.0]
+  atoms_uc:
+    - { label: Cu1, pos: [0.0, 0.0, 0.0], spin_S: 1.0, ion: Cu2+ }
+    - { label: Cu2, pos: [0.5, 0.0, 0.0], spin_S: 1.0, ion: Cu2+ }
+
+interactions:
+  # NN AFM bond, both orderings (pyMagCalc counts (1/2) sum over ordered pairs).
+  - { type: heisenberg, pair: [Cu1, Cu2], rij_offset: [0, 0, 0],  value: "J" }
+  - { type: heisenberg, pair: [Cu2, Cu1], rij_offset: [0, 0, 0],  value: "J" }
+  - { type: heisenberg, pair: [Cu2, Cu1], rij_offset: [1, 0, 0],  value: "J" }
+  - { type: heisenberg, pair: [Cu1, Cu2], rij_offset: [-1, 0, 0], value: "J" }
+
+magnetic_structure:
+  enabled: true
+  type: pattern
+  pattern_type: generic     # explicit Neel: up, down
+  directions:
+    - [0.0, 0.0,  1.0]
+    - [0.0, 0.0, -1.0]
+
+tasks:
+  minimization: false        # Neel ground state supplied above
+  dispersion: true
+
+q_path:
+  Gamma: [0.0, 0.0, 0.0]
+  H100:  [2.0, 0.0, 0.0]     # = chemical [1,0,0] in the doubled cell
+  path: ["Gamma", "H100"]
+  points_per_segment: 401
+
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  disp_plot_filename: SW02_disp.png
+  disp_title: "SW02 AFM Heisenberg chain: dispersion"
+
+calculation:
+  cache_mode: "none"
+
+output:
+  save_data: false

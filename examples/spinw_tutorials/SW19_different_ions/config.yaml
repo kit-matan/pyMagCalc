@@ -1,0 +1,76 @@
+# =====================================================================
+# SW19 - Different magnetic ions
+#
+# Port of SpinW Tutorial 19 / Sunny "SW19" to pyMagCalc (LSWT).
+#   https://spinw.org/tutorials/19tutorial
+#
+#   magcalc run examples/spinw_tutorials/SW19_different_ions/config.yaml
+#
+# Two magnetic species with DIFFERENT spin magnitudes: Cu2+ (S=1/2) and
+# Fe2+ (S=2), each forming an AFM chain along a, weakly FM-coupled between
+# chains (J_Cu_Fe = -0.1). The AFM chains double the cell along a
+# (a = 2 x 3 = 6 A). pyMagCalc now scales each site's Holstein-Primakoff
+# expansion by its own spin_S (mixed-spin support), so the Fe (S=2) band
+# reaches ~4 meV and the Cu (S=1/2) band ~1.4 meV -- the two ions sit on
+# distinct energy scales, matching SpinW/Sunny. Per-ion form factors
+# (Cu2+, Fe2+) are also honoured for S(Q,w).
+#
+# The c axis is set to 10 A (vs Sunny's 4 A) purely so the distance rules
+# do not accidentally pick up a spurious 4 A c-axis bond; the model has no
+# c-axis coupling and the [H,0,0] path lies in the L=0 plane, so nothing
+# physical changes.
+# =====================================================================
+
+parameter_order: [Jchain, JCuFe]
+parameters:
+  Jchain: 1.0     # J_Cu_Cu = J_Fe_Fe = 1 (AFM)
+  JCuFe: -0.1     # inter-species (FM)
+
+crystal_structure:
+  lattice_vectors:
+    - [6.0, 0.0, 0.0]     # doubled chain axis
+    - [0.0, 8.0, 0.0]
+    - [0.0, 0.0, 10.0]
+  atoms_uc:
+    - { label: Cu1, pos: [0.0, 0.0,  0.0], spin_S: 0.5, ion: Cu2+ }
+    - { label: Cu2, pos: [0.5, 0.0,  0.0], spin_S: 0.5, ion: Cu2+ }
+    - { label: Fe1, pos: [0.0, 0.5,  0.0], spin_S: 2.0, ion: Fe2+ }
+    - { label: Fe2, pos: [0.5, 0.5,  0.0], spin_S: 2.0, ion: Fe2+ }
+
+interactions:
+  symmetry_rules:
+    - { type: heisenberg, distance: 3.0, value: "Jchain" }  # Cu-Cu and Fe-Fe chains
+    - { type: heisenberg, distance: 4.0, value: "JCuFe" }   # Cu-Fe interchain
+
+magnetic_structure:
+  enabled: true
+  type: pattern
+  pattern_type: generic     # AFM chains, Cu||Fe on the same sublattice (FM interchain)
+  directions:
+    - [0.0, 0.0,  1.0]   # Cu1 up
+    - [0.0, 0.0, -1.0]   # Cu2 down
+    - [0.0, 0.0,  1.0]   # Fe1 up
+    - [0.0, 0.0, -1.0]   # Fe2 down
+
+tasks:
+  minimization: false
+  dispersion: true
+
+q_path:
+  Gamma: [0.0, 0.0, 0.0]
+  H100:  [2.0, 0.0, 0.0]   # chemical [1,0,0]
+  path: ["Gamma", "H100"]
+  points_per_segment: 400
+
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  disp_plot_filename: SW19_disp.png
+  disp_title: "SW19 Cu (S=1/2) + Fe (S=2) chains: dispersion"
+
+calculation:
+  cache_mode: "none"
+
+output:
+  save_data: false
