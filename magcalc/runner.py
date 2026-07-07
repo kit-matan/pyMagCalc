@@ -678,7 +678,8 @@ def run_calculation(config_file: str):
                  save_filename=plot_filename,
                  title=plot_config.get('disp_title', "Dispersion"),
                  ylim=plot_config.get('energy_limits_disp'),
-                 show_plot=plot_config.get('show_plot', False)
+                 show_plot=plot_config.get('show_plot', False),
+                 auto_scale=plot_config.get('auto_scale_disp', True)
              )
         else:
             disp_file = final_config.get('output', {}).get('disp_data_filename', 'disp_data.npz')
@@ -695,7 +696,8 @@ def run_calculation(config_file: str):
                     save_filename=plot_filename,
                     title=plot_config.get('disp_title', "Dispersion"),
                     ylim=plot_config.get('energy_limits_disp'),
-                    show_plot=plot_config.get('show_plot', False)
+                    show_plot=plot_config.get('show_plot', False),
+                    auto_scale=plot_config.get('auto_scale_disp', True)
                 )
 
     if should_plot_sqw:

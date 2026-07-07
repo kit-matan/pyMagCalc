@@ -70,6 +70,7 @@ plotting:
   show_plot: false
   disp_plot_filename: "disp_plot.png"
   disp_title: "Spin Wave Dispersion"
+  auto_scale_disp: true  # auto-scale dispersion y-axis to data (set false to use energy_limits_disp)
 
 calculation:
   cache_mode: "auto"

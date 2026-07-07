@@ -62,6 +62,8 @@ struct TasksView: View {
                 .frame(maxWidth: 200)
 
             Text("Visualization Targets").font(.caption).foregroundStyle(.secondary)
+            TaskToggleCard(title: "Auto-scale Y-Axis", subtitle: "Dispersion fits energy range (ignores Energy Min/Max)",
+                           systemImage: "arrow.up.and.down", isOn: $model.config.plotting.autoScaleDisp)
             TaskToggleCard(title: "Show Plot", subtitle: "Energy dispersion / Sq(w)",
                            systemImage: "eye", isOn: $model.config.plotting.showPlot)
             TaskToggleCard(title: "Show Structure", subtitle: "3D Crystal View",

@@ -68,10 +68,15 @@ def plot_dispersion(
     save_filename: str,
     title: str = "Spin Wave Dispersion",
     ylim: Optional[List[float]] = None,
-    show_plot: bool = False
+    show_plot: bool = False,
+    auto_scale: bool = True
 ):
     """
     Plots the spin-wave dispersion relation.
+
+    When ``auto_scale`` is True (the default) the y-axis limits are derived
+    from the computed mode energies, ignoring any ``ylim`` passed in. Set
+    ``auto_scale`` to False to honour an explicit ``ylim``.
     """
     try:
         # Calculate path length
@@ -115,6 +120,36 @@ def plot_dispersion(
         plt.title(title)
         plt.xlabel(r"Q Path Length ($\AA^{-1}$)")
         plt.ylabel("Energy (meV)")
+
+        # Auto-scale the y-axis from the mode energies unless the user asked
+        # for explicit limits (auto_scale=False with a concrete ylim).
+        if auto_scale or ylim is None:
+            all_ens = []
+            if isinstance(energies, np.ndarray):
+                all_ens = energies.flatten().tolist()
+            else:
+                for e in energies:
+                    all_ens.extend(np.asarray(e).flatten().tolist())
+
+            valid_ens = []
+            for e in all_ens:
+                if isinstance(e, complex) or type(e).__name__.startswith('complex'):
+                    if abs(e.imag) > 1e-3:
+                        continue
+                    e = e.real
+                e = float(e)
+                if np.isnan(e) or np.isinf(e):
+                    continue
+                valid_ens.append(e)
+
+            if valid_ens:
+                data_min, data_max = min(valid_ens), max(valid_ens)
+                span = data_max - data_min
+                pad = 0.05 * span if span > 0 else max(abs(data_max), 1.0) * 0.05
+                y_top = data_max + pad
+                y_bottom = min(0.0, data_min - pad)
+                ylim = [y_bottom, y_top]
+
         if ylim:
             plt.ylim(ylim)
         plt.grid(True, alpha=0.3)

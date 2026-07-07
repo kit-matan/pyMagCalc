@@ -178,6 +178,7 @@ struct PlottingSettings: Codable, Hashable {
     var broadening: Double = 0.2
     var energyResolution: Double = 0.05
     var momentumMax: Double = 4.0
+    var autoScaleDisp = true
     var savePlot = false
     var showPlot = false
     var plotStructure = false
@@ -190,6 +191,7 @@ struct PlottingSettings: Codable, Hashable {
         case broadening
         case energyResolution = "energy_resolution"
         case momentumMax = "momentum_max"
+        case autoScaleDisp = "auto_scale_disp"
         case savePlot = "save_plot"
         case showPlot = "show_plot"
         case plotStructure = "plot_structure"
@@ -207,6 +209,7 @@ struct PlottingSettings: Codable, Hashable {
         broadening = try c.decodeIfPresent(Double.self, forKey: .broadening) ?? d.broadening
         energyResolution = try c.decodeIfPresent(Double.self, forKey: .energyResolution) ?? d.energyResolution
         momentumMax = try c.decodeIfPresent(Double.self, forKey: .momentumMax) ?? d.momentumMax
+        autoScaleDisp = try c.decodeIfPresent(Bool.self, forKey: .autoScaleDisp) ?? d.autoScaleDisp
         savePlot = try c.decodeIfPresent(Bool.self, forKey: .savePlot) ?? d.savePlot
         showPlot = try c.decodeIfPresent(Bool.self, forKey: .showPlot) ?? d.showPlot
         plotStructure = try c.decodeIfPresent(Bool.self, forKey: .plotStructure) ?? d.plotStructure

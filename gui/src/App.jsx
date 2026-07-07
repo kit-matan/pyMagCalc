@@ -257,6 +257,7 @@ function App() {
       broadening: 0.2,
       energy_resolution: 0.05,
       momentum_max: 4.0,
+      auto_scale_disp: true,
       save_plot: false,
       show_plot: false,
       plot_structure: false
@@ -502,6 +503,7 @@ function App() {
       broadening: 0.2,
       energy_resolution: 0.05,
       momentum_max: 4.0,
+      auto_scale_disp: true,
       save_plot: true,
       disp_plot_filename: 'disp_plot.png',
       sqw_plot_filename: 'sqw_plot.png',
@@ -2223,6 +2225,22 @@ function App() {
                         <div className="input-group" style={{ gridColumn: '1 / -1' }}>
                           <label>Visualization Targets</label>
                           <div className="flex-col gap-sm mt-xs">
+                            <div
+                              className={`task-card ${config.plotting.auto_scale_disp !== false ? 'active' : ''}`}
+                              onClick={() => updateField('plotting', 'auto_scale_disp', !(config.plotting.auto_scale_disp !== false))}
+                            >
+                              <div className="task-icon-box">
+                                <BarChart2 size={18} />
+                              </div>
+                              <div className="task-info">
+                                <span className="task-name">Auto-scale Y-Axis</span>
+                                <span className="task-desc">Dispersion fits energy range (ignores Energy Min/Max)</span>
+                              </div>
+                              <div className="task-check">
+                                <Check size={12} strokeWidth={4} />
+                              </div>
+                            </div>
+
                             <div
                               className={`task-card ${config.plotting.show_plot !== false ? 'active' : ''}`}
                               onClick={() => updateField('plotting', 'show_plot', !(config.plotting.show_plot !== false))}
