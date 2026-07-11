@@ -23,6 +23,8 @@ tests/pckFiles/
 KFe3J/.DS_Store
 aCVO/.DS_Store
 examples/.DS_Store
+CCSF/data_fit/
+CCSF/plots/
 
 examples/plots/
 **/.pytest_cache/
