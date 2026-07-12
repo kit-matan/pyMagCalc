@@ -1,0 +1,56 @@
+# =====================================================================
+# SW26 - Spiral dispersion on a J1-J2 chain (Bravais lattice)
+#
+# Port of SpinW Tutorial 26 to pyMagCalc (LSWT).
+#   (spinw-3.2.0/tutorials/publish/tutorial26 - published without figures)
+#
+#   magcalc run examples/spinw_tutorials/SW26_spiral_chain/config.yaml
+#
+# S=1 chain along a (a=3) with AFM J1=1 (NN) and AFM J2=3 (2nd NN, the
+# SpinW bond 5 at 2a). Strong J2 frustrates the chain into an
+# incommensurate planar spiral:
+#   cos(2 pi k) = -J1/(4 J2) = -1/12  ->  k = 0.263278310687
+# (the tutorial finds the same k with optmagstr/gm_planar). Rotating-frame
+# spiral about z, spins in the xy plane, exactly as SW03.
+#
+# Analytic helix dispersion, A(q) = J1 cos(2 pi q) + J2 cos(4 pi q):
+#   w(q) = 2S sqrt( [A(q)-A(k)] [ (A(q+k)+A(q-k))/2 - A(k) ] )
+# gives w(1/4)=1.0000, w(1/2)=1.8333, max w=6.698; gapless at q=0 and
+# q=+-k. Verified against this formula (see README).
+# =====================================================================
+parameter_order: [J1, J2]
+parameters: {J1: 1.0, J2: 3.0}
+crystal_structure:
+  lattice_vectors:
+  - [3.0, 0.0, 0.0]
+  - [0.0, 4.0, 0.0]
+  - [0.0, 0.0, 4.0]
+  atoms_uc:
+  - label: A
+    pos: [0.0, 0.0, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+interactions:
+  symmetry_rules:
+  - {type: heisenberg, distance: 3.0, value: J1}   # NN along the chain (a)
+  - {type: heisenberg, distance: 6.0, value: J2}   # 2nd NN along the chain (2a)
+magnetic_structure:
+  enabled: true
+  type: spiral
+  k: [0.263278310687, 0.0, 0.0]
+  axis: [0.0, 0.0, 1.0]
+tasks: {minimization: false, dispersion: true}
+q_path:
+  G: [0.0, 0.0, 0.0]
+  H: [1.0, 0.0, 0.0]
+  path: [G, H]
+  points_per_segment: 400
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  energy_limits_disp: [0, 7]
+  disp_plot_filename: SW26_disp.png
+  disp_title: 'SW26 J1-J2 spiral chain (k=0.26328): central branch'
+calculation: {cache_mode: none}
+output: {save_data: false}

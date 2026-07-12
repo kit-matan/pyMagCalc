@@ -1,0 +1,68 @@
+# =====================================================================
+# SW36 - Anisotropic exchange on the FM chain
+#
+# Port of SpinW Tutorial 36 to pyMagCalc (LSWT).
+#   https://spinw.org/tutorials/36tutorial
+#
+#   magcalc run examples/spinw_tutorials/SW36_anisotropic_FM_chain/config.yaml
+#
+# S=1 chain along a (a=3), single fully anisotropic FM exchange
+# J = diag(-3,-4,-5) meV on the nearest-neighbour bond. The easiest axis
+# is z (largest |J| FM component), so the ground state is FM || z.
+#
+# Because the exchange is anisotropic, the magnon is GAPPED even for a
+# ferromagnet. Analytic LSWT dispersion (each bond counted once,
+# H = sum_<ij> Si.J.Sj, same convention as SpinW/pyMagCalc):
+#   w(q) = 2S sqrt( (Jx cos(2 pi q) - Jz)(Jy cos(2 pi q) - Jz) )
+#   w(0)   = 2 sqrt(2)   = 2.8284 meV   (anisotropy gap)
+#   w(1/2) = 2 sqrt(72)  = 16.9706 meV  (zone boundary)
+# The tutorial's second panel plots the Sxx/Syy/Szz correlation components;
+# here the dispersion is the ported observable (SW36_disp.png).
+# =====================================================================
+parameter_order: []
+parameters: {}
+crystal_structure:
+  lattice_vectors:
+  - [3.0, 0.0, 0.0]
+  - [0.0, 4.0, 0.0]
+  - [0.0, 0.0, 4.0]
+  atoms_uc:
+  - label: A
+    pos: [0.0, 0.0, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+interactions:
+- type: interaction_matrix
+  pair: [A, A]
+  rij_offset: [1, 0, 0]
+  value:
+  - [-3.0, 0.0, 0.0]
+  - [0.0, -4.0, 0.0]
+  - [0.0, 0.0, -5.0]
+- type: interaction_matrix
+  pair: [A, A]
+  rij_offset: [-1, 0, 0]
+  value:
+  - [-3.0, 0.0, 0.0]
+  - [0.0, -4.0, 0.0]
+  - [0.0, 0.0, -5.0]
+magnetic_structure:
+  enabled: true
+  type: pattern
+  pattern_type: ferromagnetic
+  direction: [0.0, 0.0, 1.0]
+tasks: {minimization: false, dispersion: true}
+q_path:
+  G: [0.0, 0.0, 0.0]
+  H: [1.0, 0.0, 0.0]
+  path: [G, H]
+  points_per_segment: 400
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  energy_limits_disp: [0, 18]
+  disp_plot_filename: SW36_disp.png
+  disp_title: 'SW36 anisotropic FM chain: gapped magnon, w(0)=2.83, w(1/2)=16.97'
+calculation: {cache_mode: none}
+output: {save_data: false}

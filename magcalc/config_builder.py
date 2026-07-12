@@ -100,9 +100,16 @@ class MagCalcConfigBuilder:
         # Prepare spglib cell input: (lattice, positions, numbers)
         positions = np.array([a['pos'] for a in self.atoms_uc], dtype=float)
         
-        # Numbers: assign dummy atomic numbers based on species/label
-        # Map unique species to integers
-        species_list = [a.get('species', a.get('element', a.get('label', 'X'))) for a in self.atoms_uc]
+        # Numbers: assign dummy atomic numbers based on species/element/ion.
+        # Fall back to the label with trailing digits stripped, so per-site
+        # labels (Fe0, Fe1, ...) don't degrade the detected group to P1.
+        def _species_key(a):
+            for k in ('species', 'element', 'ion'):
+                if a.get(k):
+                    return str(a[k])
+            import re
+            return re.sub(r'\d+$', '', str(a.get('label', 'X'))) or 'X'
+        species_list = [_species_key(a) for a in self.atoms_uc]
         unique_species = sorted(list(set(species_list)))
         species_map = {s: i+1 for i, s in enumerate(unique_species)}
         numbers = np.array([species_map[s] for s in species_list], dtype=int)
@@ -231,8 +238,11 @@ class MagCalcConfigBuilder:
         if best_offset is None:
              raise ValueError(f"Could not identify reference bond for {ref_pair} near distance {distance}")
 
-        # Final bond distance
-        final_dist = float(distance if distance else best_dist)
+        # Final bond distance: actual length of the chosen reference bond
+        # (an explicit `offset` skips the distance search, so it cannot be
+        # derived from the search's running minimum).
+        final_dist = float(np.linalg.norm(
+            ((pos_j_uc + best_offset) - pos_i) @ self.lattice_vectors))
 
         # Reference Bond
         ref_frac_diff = (pos_j_uc + best_offset) - pos_i # vector from i to j
@@ -431,7 +441,7 @@ class MagCalcConfigBuilder:
         
         # Deduplicate
         for entry in self.config["interactions"]["dm_interaction"]:
-            if entry["pair"] == [lbl_i, lbl_j] and entry["rij_offset"] == list(map(int, offset)):
+            if entry.get("pair") == [lbl_i, lbl_j] and entry["rij_offset"] == list(map(int, offset)):
                 return
 
         # Generic spin model expects 'pair': [lbl_i, lbl_j]
@@ -453,7 +463,7 @@ class MagCalcConfigBuilder:
     def _add_kitaev_entry(self, lbl_i, lbl_j, offset, val, bond_dir, distance=None):
         # Deduplicate
         for entry in self.config["interactions"]["kitaev"]:
-            if entry["pair"] == [lbl_i, lbl_j] and entry["rij_offset"] == list(map(int, offset)):
+            if entry.get("pair") == [lbl_i, lbl_j] and entry["rij_offset"] == list(map(int, offset)):
                 return
         
         entry = {
@@ -470,7 +480,7 @@ class MagCalcConfigBuilder:
     def _add_heisenberg_entry(self, lbl_i, lbl_j, offset, val, distance=None):
         # Deduplicate
         for entry in self.config["interactions"]["heisenberg"]:
-             if entry["pair"] == [lbl_i, lbl_j] and entry.get("rij_offset") == list(map(int, offset)):
+             if entry.get("pair") == [lbl_i, lbl_j] and entry.get("rij_offset") == list(map(int, offset)):
                  return
 
         entry = {
@@ -487,7 +497,7 @@ class MagCalcConfigBuilder:
         clean_val = [str(v) if not isinstance(v, (float, int)) else v for v in val]
         # Deduplicate
         for entry in self.config["interactions"]["anisotropic_exchange"]:
-             if entry["pair"] == [lbl_i, lbl_j] and entry.get("rij_offset") == list(map(int, offset)):
+             if entry.get("pair") == [lbl_i, lbl_j] and entry.get("rij_offset") == list(map(int, offset)):
                  return
                  
         entry = {
@@ -511,7 +521,7 @@ class MagCalcConfigBuilder:
             
         # Deduplicate
         for entry in self.config["interactions"]["interaction_matrix"]:
-             if entry["pair"] == [lbl_i, lbl_j] and entry.get("rij_offset") == list(map(int, offset)):
+             if entry.get("pair") == [lbl_i, lbl_j] and entry.get("rij_offset") == list(map(int, offset)):
                  return
 
         entry = {
@@ -854,16 +864,27 @@ class MagCalcConfigBuilder:
         positions_uc = [np.array(a["pos"]) for a in self.atoms_uc]
         labels = [a["label"] for a in self.atoms_uc]
         
-        # Neighbor offsets to check
         from itertools import product
-        offsets = list(product([-1, 0, 1], repeat=3))
-        
+
+        # Perpendicular height of the cell along each axis: bonds of length d
+        # can reach at most ceil(d / h_i) cells along axis i, so the offset
+        # search range is sized per rule (a plain +-1 shell silently misses
+        # e.g. 2nd-neighbour chain bonds at 2a).
+        lat = np.asarray(self.lattice_vectors, dtype=float)
+        volume = abs(np.linalg.det(lat))
+        heights = [volume / np.linalg.norm(np.cross(lat[(i + 1) % 3], lat[(i + 2) % 3]))
+                   for i in range(3)]
+
         expanded_rules = []
-        
+
         # For each generic rule, find all matching pairs
         for rule in generic_rules:
             target_dist = rule["distance"]
             val_sym = rule["value"]
+
+            ranges = [range(-n, n + 1) for n in
+                      (max(1, int(np.ceil((target_dist + 0.01) / h))) for h in heights)]
+            offsets = list(product(*ranges))
             
             # Find all (i, j) pairs with this distance
             for idx_i, pos_i in enumerate(positions_uc):

@@ -1,0 +1,90 @@
+# =====================================================================
+# SW35 - LuVO3: fit exchange + anisotropy to the measured magnon modes
+#
+# Port of the spinw.fitspec() part of SpinW Tutorial 35.
+#
+#   magcalc fit examples/spinw_tutorials/SW35_LuVO3/config_fit.yaml
+#
+# Same model as config.yaml, but the single-ion anisotropy is written in
+# the equivalent hard-axis form  Kxx*Sx^2 + Kyy*Sy^2  (Kxx,Kyy >= 0,
+# easy axis z), exactly the parametrization the tutorial fits
+# ('K(1,1)', 'K(2,2)' with bounds [0,1]); Jab and Jc use the tutorial
+# bounds [3,9] and [1,10]. Data: LuVO3_modes.txt (17 mode positions from
+# the tutorial's LuVO3_fitted_modes.txt, scans (0,1,L) and (0,1+K,3+K)).
+# Each point is matched to the nearest model band (the observed branch
+# switches from the upper to the lower doublet across L=2.5, as in the
+# data).
+#
+# Starting values = the tutorial's pre-fit demo set (Jab=4.24, Jc=5.95,
+# K = diag(0,-0.46,-0.48) == hard-axis (0.48, 0.02) + const).
+# =====================================================================
+parameter_order: [Jab, Jc, Kxx, Kyy]
+parameters: {Jab: 4.24, Jc: 5.95, Kxx: 0.48, Kyy: 0.02, S: 1.0}
+crystal_structure:
+  lattice_vectors:
+  - [5.2821, 0.0, 0.0]
+  - [0.0, 5.6144, 0.0]
+  - [0.0, 0.0, 7.5283]
+  atoms_uc:
+  - label: V1
+    pos: [0.5, 0.0, 0.0]
+    spin_S: 1.0
+    ion: V3+
+  - label: V2
+    pos: [0.0, 0.5, 0.0]
+    spin_S: 1.0
+    ion: V3+
+  - label: V3
+    pos: [0.5, 0.0, 0.5]
+    spin_S: 1.0
+    ion: V3+
+  - label: V4
+    pos: [0.0, 0.5, 0.5]
+    spin_S: 1.0
+    ion: V3+
+interactions:
+  single_ion_anisotropy:
+  - value: Kxx
+    axis: [1, 0, 0]
+    atoms: &allV [V1, V2, V3, V4]
+  - value: Kyy
+    axis: [0, 1, 0]
+    atoms: *allV
+  symmetry_rules:
+  - {type: heisenberg, distance: 3.76415, value: Jc}    # c-axis bond (c/2)
+  - {type: heisenberg, distance: 3.85428, value: Jab}   # in-plane diagonal
+magnetic_structure:
+  enabled: true
+  type: pattern
+  pattern_type: generic
+  directions:
+  - [0, 0, 1.0]
+  - [0, 0, -1.0]
+  - [0, 0, -1.0]
+  - [0, 0, 1.0]
+tasks: {minimization: false, fit: true, plot_fit: true}
+fitting:
+  type: dispersion
+  data_file: LuVO3_modes.txt
+  method: leastsq
+  vary: [Jab, Jc, Kxx, Kyy]
+  bounds:
+    Jab: [3.0, 9.0]
+    Jc: [1.0, 10.0]
+    Kxx: [0.0, 1.0]
+    Kyy: [0.0, 1.0]
+  match: nearest
+q_path:
+  A: [0.0, 1.0, 2.0]
+  B: [0.0, 1.0, 3.0]
+  C: [0.0, 1.5, 3.5]
+  path: [A, B, C]
+  points_per_segment: 200
+plotting:
+  fit_plot_filename: SW35_fit.png
+  show_plot: false
+  save_plot: false
+calculation: {cache_mode: none}
+output:
+  fit_report_filename: SW35_fit_report.txt
+  fit_params_filename: SW35_fit_params.yaml

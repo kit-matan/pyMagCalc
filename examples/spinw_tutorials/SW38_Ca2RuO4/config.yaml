@@ -1,0 +1,85 @@
+# =====================================================================
+# SW38 - Ca2RuO4: T and T' modes (Nat. Phys. 13, 633 (2017))
+#
+# Port of SpinW Tutorial 38 to pyMagCalc (LSWT).
+#   https://spinw.org/tutorials/38tutorial
+#
+#   magcalc run examples/spinw_tutorials/SW38_Ca2RuO4/config.yaml
+#
+# S-phase Ca2RuO4 (Pbca, a=5.3945 b=5.5999 c=11.7653), pseudospin S=1 on
+# Ru. Only the in-plane NN bond carries exchange (SpinW bond 1), so a
+# single RuO2 layer with 2 Ru per cell (checkerboard) is modelled; the
+# body-centred second layer just duplicates the spectrum.
+#
+# NN exchange matrix (tutorial Supplementary values, meV):
+#   Jmat = [J X 0; X J 0; 0 0 J-a],  J = 5.2, a = 0.10*J, X = 1.0
+# The pseudo-dipolar off-diagonal X is symmetry-ALTERNATING: +X on the
+# +-(a+b)/2 diagonals, -X on the +-(a-b)/2 diagonals. Like SpinW, the
+# matrix is given ONCE on a reference bond and propagated by the
+# detected symmetry (ref_pair rule; verified identical to the explicit
+# 8-bond list). Single-ion anisotropy
+#   Amat = diag(e, 0, E),  e = 1, E = 21.5
+# i.e. z (c-axis) is very hard -> spins order along b(y) in the
+# checkerboard AFM (the tutorial's optmagsteep result), supplied below.
+#
+# Result: the in-plane transverse T mode (gap ~14 meV at the AFM zone
+# centre M, dispersing to ~45 meV) and the out-of-plane T' mode pushed
+# to ~45-52 meV by the giant easy-plane E, reproducing the published
+# dispersion. Path (1/2,0) -> (1/2,1/2) -> (1,0) -> (0,0) -> (1/2,1/2)
+# as in the tutorial.
+# =====================================================================
+parameter_order: []
+parameters: {}
+crystal_structure:
+  lattice_vectors:
+  - [5.3945, 0.0, 0.0]
+  - [0.0, 5.5999, 0.0]
+  - [0.0, 0.0, 11.7653]
+  atoms_uc:
+  - label: RuA
+    pos: [0.0, 0.0, 0.0]
+    spin_S: 1.0
+    ion: Fe2+
+  - label: RuB
+    pos: [0.5, 0.5, 0.0]
+    spin_S: 1.0
+    ion: Fe2+
+interactions:
+  single_ion_anisotropy:
+  - {value: 1.0, axis: [1, 0, 0], atoms: &allRu [RuA, RuB]}
+  - {value: 21.5, axis: [0, 0, 1], atoms: *allRu}
+  # one reference NN matrix (+X diagonal); the engine detects the space group
+  # of the Ru sublattice and propagates it, producing -X on the (a-b)/2 family
+  symmetry_rules:
+  - type: interaction_matrix
+    ref_pair: [RuA, RuB]
+    offset: [0, 0, 0]
+    value:
+    - [5.2, 1.0, 0.0]
+    - [1.0, 5.2, 0.0]
+    - [0.0, 0.0, 4.68]
+magnetic_structure:
+  enabled: true
+  type: pattern
+  pattern_type: generic
+  directions:
+  - [0, 1.0, 0]
+  - [0, -1.0, 0]
+tasks: {minimization: false, dispersion: true}
+q_path:
+  X: [0.5, 0.0, 0.0]
+  M: [0.5, 0.5, 0.0]
+  G1: [1.0, 0.0, 0.0]
+  G: [0.0, 0.0, 0.0]
+  M2: [0.5, 0.5, 0.0]
+  path: [X, M, G1, G, M2]
+  points_per_segment: 150
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  energy_limits_disp: [0, 65]
+  disp_plot_filename: SW38_disp.png
+  disp_title: 'SW38 Ca2RuO4: T and T'' modes, (1/2,0)-(1/2,1/2)-(1,0)-(0,0)-(1/2,1/2)'
+calculation: {cache_mode: none}
+output: {save_data: false}

@@ -1,0 +1,78 @@
+# =====================================================================
+# SW29 - Easy-axis AFM chain in a longitudinal magnetic field
+#
+# Port of SpinW Tutorial 29 to pyMagCalc (LSWT).
+#   (spinw-3.2.0/tutorials/publish/tutorial29 - published without figures)
+#
+#   magcalc run examples/spinw_tutorials/SW29_AFM_chain_field/config.yaml
+#
+# Two S=1 sites at (0,0,0) and (1/2,0,0) in a=4 cell -> AFM chain along x
+# with 2 A spacing, J=1 meV, easy-axis anisotropy A=diag(0,0,-0.1)
+# (E += -0.1 (S^z)^2), field B = 7 T || z.
+#
+# pyMagCalc's effective Zeeman splitting is 2*mu_B*H_mag (calibrated on
+# this model against the exact LSWT result w0(q) +- h), i.e. H_mag = B in
+# Tesla reproduces the electron g=2 Zeeman h = g*mu_B*B. With B = 7 T:
+# h = 2*0.05788*7 = 0.8103 meV.
+#
+# Classical check (replaces the tutorial's optmagsteep): the spin-flop
+# field is h_sf = sqrt(4K(2J-K)) = 0.8718 meV = 7.53 T, so at 7 T the
+# collinear easy-axis AFM (up,down || z) is STILL the classical ground
+# state; it is supplied directly below.
+#
+# LSWT check: at B=0 the AFM chain magnon is w0(q) with zone-center gap
+#   w0(0) = sqrt(2KS(4JS+2KS)) = sqrt(0.84) = 0.9165 meV
+# and max 2S*sqrt((2J+K)^2-... ~ 2.1 meV. The field splits the two magnon
+# branches by +-h: w(q) = w0(q) +- 0.8103, so the lower branch minimum is
+# 0.9165 - 0.8103 = 0.106 meV (soft mode of the approaching spin flop).
+# Verified: engine gives 0.10622 / 1.72668 meV at q=0 (see README).
+# The tutorial plots q = 0..2 over 0-3 meV; one period 0..1 is shown.
+# =====================================================================
+parameter_order: [J, H_mag, H_dir]
+parameters:
+  J: 1.0
+  H_mag: 7.0
+  H_dir: [0, 0, 1]
+crystal_structure:
+  lattice_vectors:
+  - [4.0, 0.0, 0.0]
+  - [0.0, 4.0, 0.0]
+  - [0.0, 0.0, 6.0]
+  atoms_uc:
+  - label: A
+    pos: [0.0, 0.0, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+  - label: B
+    pos: [0.5, 0.0, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+interactions:
+  single_ion_anisotropy:
+  - value: -0.1
+    axis: [0, 0, 1]
+    atoms: [A, B]
+  symmetry_rules:
+  - {type: heisenberg, distance: 2.0, value: J}   # NN along the chain (a/2)
+magnetic_structure:
+  enabled: true
+  type: pattern
+  pattern_type: generic
+  directions:
+  - [0, 0, 1.0]
+  - [0, 0, -1.0]
+tasks: {minimization: false, dispersion: true}
+q_path:
+  G: [0.0, 0.0, 0.0]
+  H: [1.0, 0.0, 0.0]
+  path: [G, H]
+  points_per_segment: 400
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  energy_limits_disp: [0, 3]
+  disp_plot_filename: SW29_disp.png
+  disp_title: 'SW29 easy-axis AFM chain at 7 T || z: Zeeman-split branches'
+calculation: {cache_mode: none}
+output: {save_data: false}

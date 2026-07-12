@@ -1,0 +1,91 @@
+# =====================================================================
+# SW35 - LuVO3: G-type AFM, two-axis anisotropy, comparison to data
+#
+# Port of SpinW Tutorial 35 to pyMagCalc (LSWT).
+#   https://spinw.org/tutorials/35tutorial
+#
+#   magcalc run examples/spinw_tutorials/SW35_LuVO3/config.yaml
+#   magcalc fit examples/spinw_tutorials/SW35_LuVO3/config_fit.yaml
+#
+# Pnma (non-standard setting), a=5.2821 b=5.6144 c=7.5283, V3+ S=1 on 4b:
+# (1/2,0,0), (0,1/2,0), (1/2,0,1/2), (0,1/2,1/2). Exchanges (positive =
+# AFM): Jc on the c-axis bond (3.76 A, SpinW bond 1) and Jab on the
+# in-plane diagonal (3.85 A, bond 2), entered as distance rules.
+# Single-ion anisotropy in hard-axis form Kxx*Sx^2 + Kyy*Sy^2 (easy
+# axis = z||c), the same parametrization the tutorial fits.
+#
+# Magnetic structure: SpinW genmagstr k=[0,1,1], n=[0,1,0], S=[0,0,1] ->
+# k has integer components, so the magnetic cell IS the chemical cell
+# with G-type directions (+z,-z,-z,+z) (every Jc and Jab bond AFM).
+#
+# The parameters below are pyMagCalc's port of the tutorial's fitspec
+# fit (run: magcalc fit .../config_fit.yaml, see config_fit.yaml and
+# SW35_fit_report.txt): Jab=5.756(11), Jc=4.307(12), Kxx=0.663(55),
+# Kyy=0.117(36), fitted to the 17 measured mode positions in
+# LuVO3_modes.txt. Zone-center gaps at (0,1,3): 3.85 / 9.16 meV vs
+# experimental 3.92 / 8.90; the observed branch switches from the upper
+# to the lower doublet across L=2.5, exactly as in the data.
+#
+# Path: (0,1,2) -> (0,1,3) -> (0,1.5,3.5), the two scans of the data file.
+# =====================================================================
+parameter_order: [Jab, Jc, Kxx, Kyy]
+parameters: {Jab: 5.756428765956725, Jc: 4.306939231903401, Kxx: 0.6628077542122094,
+  Kyy: 0.11701816692366468}
+crystal_structure:
+  lattice_vectors:
+  - [5.2821, 0.0, 0.0]
+  - [0.0, 5.6144, 0.0]
+  - [0.0, 0.0, 7.5283]
+  atoms_uc:
+  - label: V1
+    pos: [0.5, 0.0, 0.0]
+    spin_S: 1.0
+    ion: V3+
+  - label: V2
+    pos: [0.0, 0.5, 0.0]
+    spin_S: 1.0
+    ion: V3+
+  - label: V3
+    pos: [0.5, 0.0, 0.5]
+    spin_S: 1.0
+    ion: V3+
+  - label: V4
+    pos: [0.0, 0.5, 0.5]
+    spin_S: 1.0
+    ion: V3+
+interactions:
+  single_ion_anisotropy:
+  - value: Kxx
+    axis: [1, 0, 0]
+    atoms: &allV [V1, V2, V3, V4]
+  - value: Kyy
+    axis: [0, 1, 0]
+    atoms: *allV
+  symmetry_rules:
+  - {type: heisenberg, distance: 3.76415, value: Jc}    # c-axis bond (c/2, SpinW bond 1)
+  - {type: heisenberg, distance: 3.85428, value: Jab}   # in-plane diagonal (bond 2)
+magnetic_structure:
+  enabled: true
+  type: pattern
+  pattern_type: generic
+  directions:
+  - [0, 0, 1.0]
+  - [0, 0, -1.0]
+  - [0, 0, -1.0]
+  - [0, 0, 1.0]
+tasks: {minimization: false, dispersion: true}
+q_path:
+  A: [0.0, 1.0, 2.0]
+  B: [0.0, 1.0, 3.0]
+  C: [0.0, 1.5, 3.5]
+  path: [A, B, C]
+  points_per_segment: 200
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  energy_limits_disp: [0, 45]
+  disp_plot_filename: SW35_disp.png
+  disp_title: 'SW35 LuVO3: (0,1,2)->(0,1,3)->(0,1.5,3.5)'
+calculation: {cache_mode: none}
+output: {save_data: false}

@@ -1,0 +1,64 @@
+# =====================================================================
+# SW22 - Frustrated AFM chain with easy-plane anisotropy (spiral)
+#
+# Port of SpinW Tutorial 22 to pyMagCalc (LSWT).
+#   (spinw-3.2.0/tutorials/publish/tutorial22 - published without figures)
+#
+#   magcalc run examples/spinw_tutorials/SW22_anisotropic_spiral_chain/config.yaml
+#
+# S=1 chain along a (a=3) with AFM J1=1 (NN), AFM J2=1/3 (2nd NN, the
+# SpinW bond 5 at 2a) and a hard-axis single-ion anisotropy
+# A = diag(0,0,0.1): E += 0.1 (S^z)^2, which confines the spins to the
+# xy plane (the tutorial's optmagstr search is restricted to a planar
+# spiral for the same reason). The frustration selects
+#   cos(2 pi k) = -J1/(4 J2) = -3/4  ->  k = 0.384973271919
+# Rotating-frame spiral about z (the SIA is invariant under rotations
+# about z, so the rotating frame stays exact).
+#
+# Physics checks (see README): the q=0 phason stays EXACTLY gapless (the
+# spiral breaks the remaining O(2) spin rotation), while the modes at
+# q = +-k, which tilt spins out of the easy plane, acquire a small
+# anisotropy gap ~ 2S sqrt(D * [(A(2k)+A(0))/2 - A(k)]) ~ 0.5 meV.
+# With D -> 0 the spectrum collapses onto the analytic helix dispersion.
+# The tutorial plots q = 0..2 over 0-3 meV; one period 0..1 is shown here.
+# =====================================================================
+parameter_order: [J1, J2]
+parameters: {J1: 1.0, J2: 0.3333333333333333}
+crystal_structure:
+  lattice_vectors:
+  - [3.0, 0.0, 0.0]
+  - [0.0, 4.0, 0.0]
+  - [0.0, 0.0, 4.0]
+  atoms_uc:
+  - label: A
+    pos: [0.0, 0.0, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+interactions:
+  single_ion_anisotropy:
+  - value: 0.1
+    axis: [0, 0, 1]
+    atoms: [A]
+  symmetry_rules:
+  - {type: heisenberg, distance: 3.0, value: J1}   # NN along the chain (a)
+  - {type: heisenberg, distance: 6.0, value: J2}   # 2nd NN along the chain (2a)
+magnetic_structure:
+  enabled: true
+  type: spiral
+  k: [0.384973271919, 0.0, 0.0]
+  axis: [0.0, 0.0, 1.0]
+tasks: {minimization: false, dispersion: true}
+q_path:
+  G: [0.0, 0.0, 0.0]
+  H: [1.0, 0.0, 0.0]
+  path: [G, H]
+  points_per_segment: 400
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  energy_limits_disp: [0, 3]
+  disp_plot_filename: SW22_disp.png
+  disp_title: 'SW22 easy-plane spiral chain (k=0.38497): central branch'
+calculation: {cache_mode: none}
+output: {save_data: false}

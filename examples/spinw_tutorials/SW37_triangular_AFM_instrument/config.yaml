@@ -1,0 +1,63 @@
+# =====================================================================
+# SW37 - Triangular-lattice AFM + finite instrumental resolution
+#
+# Port of SpinW Tutorial 37 to pyMagCalc (LSWT).
+#   https://spinw.org/tutorials/37tutorial
+#
+#   magcalc run examples/spinw_tutorials/SW37_triangular_AFM_instrument/config.yaml
+#
+# sw_model('triAF',1): S=1 triangular lattice, NN Heisenberg J=1 meV,
+# 120-degree order = single-site spiral with k=(1/3,1/3,0), axis z
+# (exact rotating frame). Path (0,0,0) -> (1,1,0) as in the tutorial.
+#
+# Analytic check, A(q)=J[cos(2 pi h)+cos(2 pi k)+cos(2 pi (h+k))]:
+#   w(q) = 2S sqrt( [A(q)-A(K)] [ (A(q+K)+A(q-K))/2 - A(K) ] ), K=(1/3,1/3)
+# gives the central branch: w(1/2,1/2)=1.5000, w(1/3,1/3)=0 (Goldstone),
+# max 2.6250 at q=(1/6,1/6)-type points. Verified (see README).
+#
+# The tutorial then demonstrates sw_instrument(): constant dE, an
+# energy-dependent dE polynomial, Q-resolution dQ, and Ei kinematic
+# limits. pyMagCalc supports a constant-FWHM energy broadening of the
+# S(Q,w) map (plotting.broadening_width, 0.3 meV here, tutorial's
+# "constant resolution" panel); energy-dependent resolution, dQ and
+# kinematic Ei cuts are not implemented (documented feature gap).
+# =====================================================================
+parameter_order: [J]
+parameters: {J: 1.0}
+crystal_structure:
+  lattice_vectors:
+  - [3.0, 0.0, 0.0]
+  - [-1.5, 2.598076211353316, 0.0]
+  - [0.0, 0.0, 5.0]
+  atoms_uc:
+  - label: A
+    pos: [0.0, 0.0, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
+interactions:
+  symmetry_rules:
+  - {type: heisenberg, distance: 3.0, value: J}   # triangular-lattice NN
+magnetic_structure:
+  enabled: true
+  type: spiral
+  k: [0.3333333333333333, 0.3333333333333333, 0.0]
+  axis: [0.0, 0.0, 1.0]
+tasks: {minimization: false, dispersion: true, sqw_map: true}
+q_path:
+  G: [0.0, 0.0, 0.0]
+  H: [1.0, 1.0, 0.0]
+  path: [G, H]
+  points_per_segment: 400
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  energy_limits_disp: [0, 3]
+  energy_limits_sqw: [0, 3]
+  broadening_width: 0.3
+  disp_plot_filename: SW37_disp.png
+  sqw_plot_filename: SW37_sqw.png
+  disp_title: 'SW37 triangular AFM (120 deg): central branch'
+  sqw_title: 'SW37 triangular AFM: S(Q,w), FWHM 0.3 meV'
+calculation: {cache_mode: none}
+output: {save_data: false}

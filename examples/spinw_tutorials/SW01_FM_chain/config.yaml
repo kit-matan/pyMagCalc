@@ -29,10 +29,10 @@ crystal_structure:
     - { label: Cu, pos: [0.0, 0.0, 0.0], spin_S: 1.0, ion: Cu2+ }
 
 interactions:
-  # pyMagCalc counts H = (1/2) sum over ordered pairs, so every bond must be
-  # listed in BOTH directions (i->j and j->i) to get the full J per bond.
-  - { type: heisenberg, pair: [Cu, Cu], rij_offset: [1, 0, 0],  value: "J" }
-  - { type: heisenberg, pair: [Cu, Cu], rij_offset: [-1, 0, 0], value: "J" }
+  # distance rule; expands to the NN bond in both directions (i->j and j->i),
+  # as pyMagCalc's H = (1/2) sum over ordered pairs requires.
+  symmetry_rules:
+    - { type: heisenberg, distance: 3.0, value: "J" }   # chain NN (a)
 
 magnetic_structure:
   enabled: true

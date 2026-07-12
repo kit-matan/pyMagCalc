@@ -23,108 +23,28 @@
 parameter_order: []
 parameters: {}
 crystal_structure:
-  lattice_vectors:
-  - [6.0, 0.0, 0.0]
-  - [-3.0, 5.196152, 0.0]
-  - [0.0, 0.0, 8.0]
-  atoms_uc:
-  - label: K1
+  lattice_parameters:
+    a: 6.0
+    b: 6.0
+    c: 8.0
+    alpha: 90.0
+    beta: 90.0
+    gamma: 120.0
+    space_group: 147
+  wyckoff_atoms:
+  - label: K
     pos: [0.5, 0.0, 0.0]
     spin_S: 1.0
     ion: Cu2+
-  - label: K2
-    pos: [0.0, 0.5, 0.0]
-    spin_S: 1.0
-    ion: Cu2+
-  - label: K3
-    pos: [0.5, 0.5, 0.0]
-    spin_S: 1.0
-    ion: Cu2+
 interactions:
-- type: interaction_matrix
-  pair: [K1, K2]
-  rij_offset: [0, -1, 0]
-  value:
-  - [1.0, -0.08, 0.0]
-  - [0.08, 1.0, 0.0]
-  - [0.0, 0.0, 1.0]
-- type: interaction_matrix
-  pair: [K1, K3]
-  rij_offset: [0, -1, 0]
-  value:
-  - [1.0, 0.08, 0.0]
-  - [-0.08, 1.0, 0.0]
-  - [0.0, 0.0, 1.0]
-- type: interaction_matrix
-  pair: [K1, K3]
-  rij_offset: [0, 0, 0]
-  value:
-  - [1.0, 0.08, 0.0]
-  - [-0.08, 1.0, 0.0]
-  - [0.0, 0.0, 1.0]
-- type: interaction_matrix
-  pair: [K1, K2]
-  rij_offset: [1, 0, 0]
-  value:
-  - [1.0, -0.08, 0.0]
-  - [0.08, 1.0, 0.0]
-  - [0.0, 0.0, 1.0]
-- type: interaction_matrix
-  pair: [K2, K1]
-  rij_offset: [-1, 0, 0]
-  value:
-  - [1.0, 0.08, 0.0]
-  - [-0.08, 1.0, 0.0]
-  - [0.0, 0.0, 1.0]
-- type: interaction_matrix
-  pair: [K2, K3]
-  rij_offset: [-1, 0, 0]
-  value:
-  - [1.0, -0.08, 0.0]
-  - [0.08, 1.0, 0.0]
-  - [0.0, 0.0, 1.0]
-- type: interaction_matrix
-  pair: [K2, K3]
-  rij_offset: [0, 0, 0]
-  value:
-  - [1.0, -0.08, 0.0]
-  - [0.08, 1.0, 0.0]
-  - [0.0, 0.0, 1.0]
-- type: interaction_matrix
-  pair: [K2, K1]
-  rij_offset: [0, 1, 0]
-  value:
-  - [1.0, 0.08, 0.0]
-  - [-0.08, 1.0, 0.0]
-  - [0.0, 0.0, 1.0]
-- type: interaction_matrix
-  pair: [K3, K1]
-  rij_offset: [0, 0, 0]
-  value:
-  - [1.0, -0.08, 0.0]
-  - [0.08, 1.0, 0.0]
-  - [0.0, 0.0, 1.0]
-- type: interaction_matrix
-  pair: [K3, K2]
-  rij_offset: [0, 0, 0]
-  value:
-  - [1.0, 0.08, 0.0]
-  - [-0.08, 1.0, 0.0]
-  - [0.0, 0.0, 1.0]
-- type: interaction_matrix
-  pair: [K3, K1]
-  rij_offset: [0, 1, 0]
-  value:
-  - [1.0, -0.08, 0.0]
-  - [0.08, 1.0, 0.0]
-  - [0.0, 0.0, 1.0]
-- type: interaction_matrix
-  pair: [K3, K2]
-  rij_offset: [1, 0, 0]
-  value:
-  - [1.0, 0.08, 0.0]
-  - [-0.08, 1.0, 0.0]
-  - [0.0, 0.0, 1.0]
+  symmetry_rules:
+  - type: interaction_matrix
+    ref_pair: [K0, K1]
+    offset: [0, -1, 0]
+    value:
+    - [1.0, -0.08, 0.0]
+    - [0.08, 1.0, 0.0]
+    - [0.0, 0.0, 1.0]
 magnetic_structure:
   enabled: true
   type: pattern
@@ -133,7 +53,9 @@ magnetic_structure:
   - [1.0, 0.0, 0.0]
   - [-0.5, 0.866025, 0.0]
   - [-0.5, -0.866025, 0.0]
-tasks: {minimization: false, dispersion: true}
+tasks:
+  minimization: false
+  dispersion: true
 q_path:
   mM: [-0.5, 0.0, 0.0]
   Gamma: [0.0, 0.0, 0.0]
@@ -147,5 +69,7 @@ plotting:
   energy_limits_disp: [0, 3]
   disp_plot_filename: SW09_disp.png
   disp_title: 'SW09 k=0 kagome AFM + DM: dispersion'
-calculation: {cache_mode: none}
-output: {save_data: false}
+calculation:
+  cache_mode: none
+output:
+  save_data: false

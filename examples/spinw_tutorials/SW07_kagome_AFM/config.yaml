@@ -19,14 +19,10 @@ parameters:
   J2: 0.11
 
 crystal_structure:
-  lattice_vectors:
-    - [6.0, 0.0, 0.0]
-    - [-3.0, 5.196152, 0.0]
-    - [0.0, 0.0, 8.0]
-  atoms_uc:
-    - { label: K1, pos: [0.5, 0.0, 0.0], spin_S: 1.0, ion: Cu2+ }
-    - { label: K2, pos: [0.0, 0.5, 0.0], spin_S: 1.0, ion: Cu2+ }
-    - { label: K3, pos: [0.5, 0.5, 0.0], spin_S: 1.0, ion: Cu2+ }
+  lattice_parameters: {a: 6.0, b: 6.0, c: 8.0, alpha: 90.0, beta: 90.0, gamma: 120.0,
+                       space_group: 147}
+  wyckoff_atoms:
+    - { label: K, pos: [0.5, 0.0, 0.0], spin_S: 1.0, ion: Cu2+ }   # SG-147 3e orbit -> K0,K1,K2
 
 interactions:
   symmetry_rules:

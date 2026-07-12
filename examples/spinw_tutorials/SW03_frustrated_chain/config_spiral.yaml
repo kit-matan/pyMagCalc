@@ -15,10 +15,8 @@
 # the three branches w(q), w(q+k), w(q-k) - shift the path by +-k to get
 # the other two.
 #
-# NOTE: bonds are listed explicitly (+-1, +-2 cells). Distance-based
-# symmetry_rules only search +-1 cell images and would silently miss the
-# 2-cell J2 bond; the neighbor shell itself now auto-extends to cover all
-# explicit rij_offsets (engine fix made alongside this port).
+# NOTE: the J2 distance rule needs the +-2 cell image; the rule expansion
+# auto-sizes its search range from the target distance (engine fix).
 # =====================================================================
 parameter_order: [J1, J2]
 parameters: {J1: -1.0, J2: 2.0}
@@ -33,22 +31,9 @@ crystal_structure:
     spin_S: 1.0
     ion: Cu2+
 interactions:
-- type: heisenberg
-  pair: [A, A]
-  rij_offset: [1, 0, 0]
-  value: J1
-- type: heisenberg
-  pair: [A, A]
-  rij_offset: [-1, 0, 0]
-  value: J1
-- type: heisenberg
-  pair: [A, A]
-  rij_offset: [2, 0, 0]
-  value: J2
-- type: heisenberg
-  pair: [A, A]
-  rij_offset: [-2, 0, 0]
-  value: J2
+  symmetry_rules:
+  - {type: heisenberg, distance: 3.0, value: J1}   # NN along the chain (a)
+  - {type: heisenberg, distance: 6.0, value: J2}   # 2nd NN along the chain (2a)
 magnetic_structure:
   enabled: true
   type: spiral

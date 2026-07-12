@@ -29,8 +29,8 @@ crystal_structure:
   atoms_uc:
     - {label: A1, pos: [0.0, 0.0, 0.0], spin_S: 1.0, ion: Cu2+}
 interactions:
-  - {type: heisenberg, pair: [A1, A1], rij_offset: [1, 0, 0],  value: J}
-  - {type: heisenberg, pair: [A1, A1], rij_offset: [-1, 0, 0], value: J}
+  symmetry_rules:
+  - {type: heisenberg, distance: 3.0, value: J}   # chain NN (a)
 magnetic_structure:
   enabled: true
   type: pattern

@@ -34,11 +34,10 @@ crystal_structure:
     - { label: Cu2, pos: [0.5, 0.0, 0.0], spin_S: 1.0, ion: Cu2+ }
 
 interactions:
-  # NN AFM bond, both orderings (pyMagCalc counts (1/2) sum over ordered pairs).
-  - { type: heisenberg, pair: [Cu1, Cu2], rij_offset: [0, 0, 0],  value: "J" }
-  - { type: heisenberg, pair: [Cu2, Cu1], rij_offset: [0, 0, 0],  value: "J" }
-  - { type: heisenberg, pair: [Cu2, Cu1], rij_offset: [1, 0, 0],  value: "J" }
-  - { type: heisenberg, pair: [Cu1, Cu2], rij_offset: [-1, 0, 0], value: "J" }
+  # distance rule; finds every NN bond of the 2-site magnetic cell in both
+  # orderings (pyMagCalc counts (1/2) sum over ordered pairs).
+  symmetry_rules:
+    - { type: heisenberg, distance: 3.0, value: "J" }   # chain NN (a/2)
 
 magnetic_structure:
   enabled: true
