@@ -23,10 +23,14 @@ Expanded labels are `<label>0..N` in orbit order. Fall back to explicit
 structure, and say why in a comment:
 
 - non-standard space-group settings (SW35 LuVO3);
-- explicit magnetic supercells (SW02/04/10/11/12/14/28) — the supercell breaks
-  the space group;
 - non-standard bases such as a primitive cell of a centred group (SW21 YIG),
   where the database ops (conventional basis) do not apply.
+
+For magnetic supercells, do NOT hand-write the replicated cell (the old
+SW02/04/10/11/12/14/28 style): declare the CHEMICAL cell and add
+`magnetic_supercell: [n1, n2, n3]` (or `'auto'`) under `crystal_structure` —
+see §3. Symmetry expansion runs on the chemical cell first, so
+`wyckoff_atoms`/`symmetry_rules` still work.
 
 ## 2. Interactions: `symmetry_rules`
 
@@ -97,6 +101,17 @@ Single-k extras (validated against Sunny `SpinWaveTheorySpiral` and SpinW):
 - The engine warns when the Hamiltonian is not rotationally invariant about
   `axis` (DM ∦ axis, SIA axis ∦ axis, field ∦ axis) — the rotating-frame
   method is unreliable then (`enforce_rotational_symmetry: warn|error|off`).
+- `crystal_structure.magnetic_supercell: [n1, n2, n3]` (or `'auto'` to derive
+  the minimal cell from a commensurate k) — SpinW `nExt` / Sunny
+  `resize_supercell` analogue. The chemical cell is replicated (cell-major,
+  replicas labelled `<label>@i_j_l`), interactions/SIA are remapped, and a
+  `single_k` structure becomes the real-space commensurate pattern (replicas
+  rotated by `R(2π k·c, axis)`, Sunny's `repeat_periodically_as_spiral`).
+  q_path stays in CHEMICAL RLU (bands fold); S(Q,w) is normalized per
+  chemical cell (Sunny/SpinW convention). Use for collinear k=1/2-type or
+  multi-k states; prefer the rotating-frame `single_k` for true spirals
+  (exact at incommensurate k, no ghost bands). Reference:
+  SW03 `config_supercell_auto.yaml`.
 
 The order of `directions`/`local_directions` follows `atoms_uc` /
 Wyckoff-orbit order — after switching to `wyckoff_atoms`, re-verify the

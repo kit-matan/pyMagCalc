@@ -86,6 +86,50 @@ def spiral_propagation_case(k, tol=1e-8):
     return 3
 
 
+def resolve_supercell_dims(spec, k_rlu=None, max_size=100, tol=1e-6):
+    """Resolve a magnetic_supercell spec to integer dims [n1, n2, n3].
+
+    Accepts [n1, n2, n3], {'matrix': [n1, n2, n3]}, or 'auto'. 'auto' derives
+    the minimal diagonal supercell commensurate with the propagation vector k
+    (per-component denominator, like the diagonal case of Sunny's
+    suggest_magnetic_supercell); it raises if k is incommensurate within
+    max_size.
+    """
+    from fractions import Fraction
+
+    if isinstance(spec, dict):
+        spec = spec.get('matrix', spec.get('dims'))
+    if isinstance(spec, str):
+        if spec != 'auto':
+            raise ValueError(f"Unknown magnetic_supercell spec: {spec!r}")
+        if k_rlu is None:
+            raise ValueError("magnetic_supercell: 'auto' requires a "
+                             "magnetic_structure with a propagation vector k.")
+        dims = []
+        for comp in np.asarray(k_rlu, dtype=float):
+            frac = Fraction(comp).limit_denominator(max_size)
+            if abs(float(frac) - comp) > tol:
+                raise ValueError(
+                    f"magnetic_supercell: 'auto' — k component {comp} is "
+                    f"incommensurate (no denominator <= {max_size}); use the "
+                    "rotating-frame single_k mode instead."
+                )
+            dims.append(frac.denominator)
+        return [int(d) for d in dims]
+    dims = [int(d) for d in spec]
+    if len(dims) != 3 or any(d < 1 for d in dims):
+        raise ValueError(f"magnetic_supercell must be three integers >= 1, got {spec}")
+    return dims
+
+
+def supercell_site_label(label, cell):
+    """Label of a replicated site. Cell (0,0,0) keeps the original label."""
+    i, j, l = cell
+    if (i, j, l) == (0, 0, 0):
+        return label
+    return f"{label}@{i}_{j}_{l}"
+
+
 def interactions_to_numpy(Jex_sym, DM_sym, Kex_sym):
     """Convert (possibly symbolic) interaction matrices to numeric arrays.
 
@@ -131,7 +175,7 @@ def interactions_to_numpy(Jex_sym, DM_sym, Kex_sym):
 _LEGACY_MS_WARNED = set()
 
 
-def normalize_magnetic_structure(ms_cfg):
+def normalize_magnetic_structure(ms_cfg, quiet=False):
     """Normalize the 'magnetic_structure' config onto the unified 'single_k' form.
 
     - 'spiral' (legacy rotating-frame) -> 'single_k' (pure rename: axis/n,
@@ -182,7 +226,7 @@ def normalize_magnetic_structure(ms_cfg):
             cfg['k'] = [0, 0, 0]
         k_case = spiral_propagation_case(cfg['k'])
         cfg['k_case'] = k_case
-        if k_case == 2 and not cfg.get('real_space', False):
+        if k_case == 2 and not cfg.get('real_space', False) and not quiet:
             logger.warning(
                 "single_k structure with 2k integer (k = 1/2-type, k=%s): the "
                 "helical description may double count a collinear structure; "
@@ -240,6 +284,13 @@ class GenericSpinModel:
         
         # We always attempt in-place expansion to standardize.
         self._expand_config_inplace()
+
+        # Magnetic supercell (SpinW nExt / Sunny resize_supercell analogue):
+        # replicate the chemical cell and remap interactions + magnetic
+        # structure. Must run after rule expansion (explicit pair/offset
+        # bonds) and before structure loading.
+        self.supercell_dims = [1, 1, 1]
+        self._apply_magnetic_supercell()
 
         self.crystal_config = self.config.get('crystal_structure', {})
         self.interactions_config = self.config.get('interactions', [])
@@ -481,6 +532,266 @@ class GenericSpinModel:
                 if not isinstance(item, dict):
                     logger.error(f"DEBUG: Found non-dict item in interactions at index {idx}: {item} (Type: {type(item)})")
 
+
+    def _apply_magnetic_supercell(self):
+        """Expand the chemical cell into a diagonal magnetic supercell.
+
+        SpinW nExt / Sunny resize_supercell analogue, driven by
+        ``crystal_structure.magnetic_supercell: [n1, n2, n3]`` (or ``'auto'``
+        to derive the minimal cell commensurate with the propagation vector).
+
+        Performs, in place on ``self.config``:
+        - replicates ``atoms_uc`` over the n1*n2*n3 cells (cell-major, atom
+          index fastest; cell (0,0,0) keeps the original labels, replicas are
+          labelled ``<label>@i_j_l``) and rescales the lattice;
+        - remaps explicit pair/offset interactions onto the replicated sites
+          with periodic wrapping (offsets in supercell units); distance-only
+          rules and SIA entries are expanded accordingly;
+        - converts the magnetic structure to explicit per-site directions:
+          a ``single_k`` structure becomes the commensurate real-space spin
+          pattern (replicas rotated by R(2*pi*k.c, axis) like Sunny's
+          repeat_periodically_as_spiral), so the LSWT runs on the supercell
+          with unrotated interactions (folded bands, SpinW convention).
+
+        Q-vectors remain in CHEMICAL-cell RLU: the runner converts them with
+        the chemical B-matrix (see ``chemical_unit_cell``).
+        """
+        cs = self.config.get('crystal_structure', {}) or {}
+        spec = cs.get('magnetic_supercell')
+        if not spec:
+            return
+
+        # quiet=True: the k=1/2 double-count warning is moot when the user is
+        # already requesting a real-space supercell.
+        ms_raw = normalize_magnetic_structure(self.config.get('magnetic_structure'),
+                                              quiet=True)
+        k_rlu = np.asarray(ms_raw.get('k', [0, 0, 0]), dtype=float) \
+            if ms_raw.get('type') == 'single_k' else None
+
+        dims = resolve_supercell_dims(spec, k_rlu=k_rlu)
+        if dims == [1, 1, 1]:
+            logger.info("magnetic_supercell [1,1,1]: nothing to expand.")
+            return
+        n1, n2, n3 = dims
+        n_cells = n1 * n2 * n3
+        cells = [np.array(c, dtype=int) for c in product(range(n1), range(n2), range(n3))]
+
+        atoms = cs.get('atoms_uc')
+        if not atoms:
+            raise ValueError("magnetic_supercell requires explicit or expanded "
+                             "'atoms_uc' (Wyckoff atoms are expanded first).")
+        if 'cif_file' in cs:
+            raise ValueError("magnetic_supercell is not supported with cif_file "
+                             "structures; list atoms_uc explicitly.")
+        interactions = self.config.get('interactions', [])
+        if not isinstance(interactions, list):
+            raise ValueError("magnetic_supercell requires the interactions list "
+                             "form (builder expansion should have produced it).")
+
+        n_chem = len(atoms)
+        logger.info(f"Applying magnetic supercell {dims}: {n_chem} -> "
+                    f"{n_chem * n_cells} sites.")
+
+        # --- 1. Replicate atoms (cell-major, atom index fastest) ---
+        dims_f = np.asarray(dims, dtype=float)
+        new_atoms = []
+        for cell in cells:
+            for atom in atoms:
+                rep = dict(atom)
+                rep['label'] = supercell_site_label(atom['label'], tuple(cell))
+                pos = (np.asarray(atom['pos'], dtype=float) + cell) / dims_f
+                rep['pos'] = [float(x) for x in pos]
+                new_atoms.append(rep)
+        cs['atoms_uc'] = new_atoms
+        cs.pop('wyckoff_atoms', None)
+
+        # --- 2. Rescale the lattice ---
+        if 'lattice_vectors' in cs:
+            lv = np.asarray(cs['lattice_vectors'], dtype=float)
+            cs['lattice_vectors'] = (lv * dims_f[:, None]).tolist()
+            if 'lattice_parameters' in cs:
+                # lattice_vectors takes priority in _load_structure; drop the
+                # now-inconsistent parameters to avoid ambiguity.
+                cs.pop('lattice_parameters', None)
+        elif 'lattice_parameters' in cs:
+            lp = cs['lattice_parameters']
+            for key, n in zip(('a', 'b', 'c'), dims):
+                if lp.get(key) is not None:
+                    lp[key] = float(lp[key]) * n
+            # The supercell breaks the space group; symmetry expansion already
+            # ran on the chemical cell.
+            lp.pop('space_group', None)
+        else:
+            raise ValueError("magnetic_supercell requires lattice_vectors or "
+                             "lattice_parameters.")
+
+        # --- 3. Remap interactions ---
+        new_interactions = []
+        for entry in interactions:
+            itype = entry.get('type')
+            pair = entry.get('pair')
+            offset = entry.get('rij_offset', entry.get('offset_j'))
+
+            if itype in ('sia', 'single_ion_anisotropy'):
+                rep = dict(entry)
+                targets = rep.get('atoms') or rep.get('atom_labels')
+                if targets:
+                    expanded = [supercell_site_label(lbl, tuple(c))
+                                for c in cells for lbl in targets]
+                    if 'atoms' in rep or 'atom_labels' not in rep:
+                        rep['atoms'] = expanded
+                        rep.pop('atom_labels', None)
+                    else:
+                        rep['atom_labels'] = expanded
+                new_interactions.append(rep)
+            elif pair and offset is not None:
+                m = np.asarray(offset, dtype=int)
+                for cell in cells:
+                    target = cell + m
+                    wrapped = np.mod(target, dims)
+                    new_off = np.floor_divide(target, dims)
+                    rep = dict(entry)
+                    rep['pair'] = [supercell_site_label(pair[0], tuple(cell)),
+                                   supercell_site_label(pair[1], tuple(wrapped))]
+                    rep['rij_offset'] = [int(x) for x in new_off]
+                    rep.pop('offset_j', None)
+                    new_interactions.append(rep)
+            elif pair and entry.get('distance') is not None:
+                # Pair + distance (no offset): replicate the pair labels over
+                # all cell combinations; the distance check does the matching.
+                for c_i in cells:
+                    for c_j in cells:
+                        rep = dict(entry)
+                        rep['pair'] = [supercell_site_label(pair[0], tuple(c_i)),
+                                       supercell_site_label(pair[1], tuple(c_j))]
+                        new_interactions.append(rep)
+            else:
+                # Distance-only rules (no pair) match every site pair at that
+                # distance in the supercell at runtime; keep unchanged.
+                new_interactions.append(dict(entry))
+        self.config['interactions'] = new_interactions
+
+        # --- 4. Magnetic structure -> explicit per-site directions ---
+        self._remap_magnetic_structure_supercell(ms_raw, atoms, cells, dims_f)
+
+        self.supercell_dims = dims
+
+    def _remap_magnetic_structure_supercell(self, ms_raw, chem_atoms, cells, dims_f):
+        """Convert the magnetic structure to per-supercell-site directions."""
+        mtype = ms_raw.get('type')
+        if not mtype:
+            return
+        n_chem = len(chem_atoms)
+
+        if mtype == 'single_k':
+            k = np.asarray(ms_raw.get('k', [0, 0, 0]), dtype=float)
+            axis = np.asarray(ms_raw.get('axis', [0, 0, 1]), dtype=float)
+            n_ax = axis / (np.linalg.norm(axis) or 1.0)
+            d_frac = [np.asarray(a['pos'], dtype=float) for a in chem_atoms]
+
+            # Commensurability: the pattern must be periodic in the supercell.
+            kn = k * dims_f
+            if np.max(np.abs(kn - np.round(kn))) > 1e-6:
+                logger.warning(
+                    "magnetic_supercell %s is not commensurate with k=%s "
+                    "(k*dims not integer); the spin pattern will not be "
+                    "periodic — use the rotating-frame single_k mode instead.",
+                    [int(d) for d in dims_f], k.tolist())
+
+            # Lab-frame direction of each chemical site in cell 0.
+            cone_deg = float(ms_raw.get('cone_angle_deg', 0.0) or 0.0)
+            lab0 = []
+            if ms_raw.get('S0'):
+                S0 = ms_raw['S0']
+                if len(S0) == 1:
+                    S0 = S0 * n_chem
+                lab0 = [np.asarray(s, dtype=float) for s in S0]
+            else:
+                # local_directions / u,v basis / default -> lab frame via the
+                # full-position phase (CLAUDE.md convention).
+                if ms_raw.get('local_directions') or ms_raw.get('directions'):
+                    dirs = ms_raw.get('local_directions', ms_raw.get('directions'))
+                    u_loc = [np.asarray(dirs[i % len(dirs)], dtype=float)
+                             for i in range(n_chem)]
+                elif ms_raw.get('u') is not None or ms_raw.get('v') is not None:
+                    u_vec = np.asarray(ms_raw.get('u', [1, 0, 0]), dtype=float)
+                    v_vec = np.asarray(ms_raw.get('v', [0, 1, 0]), dtype=float)
+                    u_loc = []
+                    for i in range(n_chem):
+                        ph = 2 * np.pi * float(d_frac[i] @ k)
+                        u_loc.append(rotation_about_axis(-ph, n_ax) @ (
+                            u_vec * np.cos(ph) + v_vec * np.sin(ph)))
+                else:
+                    trial = np.array([1.0, 0.0, 0.0]) if abs(n_ax[0]) < 0.9 \
+                        else np.array([0.0, 1.0, 0.0])
+                    u0 = trial - np.dot(trial, n_ax) * n_ax
+                    u0 /= np.linalg.norm(u0)
+                    u_loc = [u0.copy() for _ in range(n_chem)]
+                if cone_deg > 0.0:
+                    c = np.radians(cone_deg)
+                    coned = []
+                    for v in u_loc:
+                        u_in = v - np.dot(v, n_ax) * n_ax
+                        nrm = np.linalg.norm(u_in)
+                        if nrm < 1e-12:
+                            raise ValueError("Conical structure needs a non-zero "
+                                             "in-plane component.")
+                        coned.append(np.cos(c) * n_ax + np.sin(c) * (u_in / nrm))
+                    u_loc = coned
+                for i in range(n_chem):
+                    ph = 2 * np.pi * float(d_frac[i] @ k)
+                    lab0.append(rotation_about_axis(ph, n_ax) @ u_loc[i])
+
+            # Replicas: rotate by R(2*pi*k.cell) — Sunny's
+            # repeat_periodically_as_spiral cell-offset convention.
+            directions = []
+            for cell in cells:
+                R_cell = rotation_about_axis(2 * np.pi * float(cell @ k), n_ax)
+                for i in range(n_chem):
+                    v = R_cell @ lab0[i]
+                    nrm = np.linalg.norm(v)
+                    if nrm > 1e-12:
+                        v = v / nrm
+                    directions.append([float(x) for x in v])
+
+            self.config['magnetic_structure'] = {
+                'enabled': True, 'type': 'pattern', 'pattern_type': 'generic',
+                'directions': directions,
+            }
+            logger.info(
+                "single_k + magnetic_supercell: converted to a real-space "
+                "commensurate pattern (%d sites); LSWT runs on the supercell "
+                "with unrotated interactions (folded bands).", len(directions))
+        elif mtype == 'pattern':
+            rep = dict(ms_raw)
+            dirs = rep.get('directions')
+            if dirs:
+                rep['directions'] = [dirs[i % len(dirs)] for _ in cells
+                                     for i in range(n_chem)]
+            self.config['magnetic_structure'] = rep
+        elif mtype == 'explicit':
+            entries = ms_raw.get('explicit_list', ms_raw.get('configuration', []))
+            new_entries = []
+            for ci, _cell in enumerate(cells):
+                for item in entries:
+                    idx = item.get('atom_index')
+                    if idx is None or not (0 <= idx < n_chem):
+                        continue
+                    rep = dict(item)
+                    rep['atom_index'] = ci * n_chem + idx
+                    new_entries.append(rep)
+            self.config['magnetic_structure'] = {
+                'enabled': True, 'type': 'explicit', 'explicit_list': new_entries,
+            }
+        # other/absent types: leave unchanged
+
+    def chemical_unit_cell(self):
+        """Lattice vectors of the CHEMICAL cell (rows), undoing any magnetic
+        supercell scaling. Q-vectors in configs are interpreted in chemical
+        RLU (SpinW/Sunny convention)."""
+        uc = np.asarray(self.unit_cell(), dtype=float)
+        dims = np.asarray(self.supercell_dims, dtype=float)
+        return uc / dims[:, None]
 
     def _load_structure(self):
         """

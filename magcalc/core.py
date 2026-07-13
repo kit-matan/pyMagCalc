@@ -684,6 +684,13 @@ class MagCalc:
                 logger.exception("Error getting nspins from spin_model.atom_pos()")
                 raise RuntimeError("Failed to determine nspins from spin model.") from e
 
+        # --- Magnetic supercell normalization ---
+        # Sunny/SpinW normalize S(q,w) per CHEMICAL cell (Avec Avec'/Ncells);
+        # with a magnetic_supercell of N cells the raw intensities are N times
+        # larger, so divide them back for size-independent output.
+        self.supercell_ncells: int = int(np.prod(
+            getattr(self.sm, 'supercell_dims', [1, 1, 1])))
+
         # --- Single-k (propagation vector) structure attributes ---
         # Populated when the spin model carries a rotating-frame single-k
         # magnetic structure (GenericSpinModel 'single_k' type). Used for
@@ -1918,6 +1925,9 @@ class MagCalc:
             else:
                 fortran_result = self._calculate_sqw_fortran(q_vectors_list, ion_list)
                 if fortran_result is not None:
+                    if self.supercell_ncells > 1:
+                        fortran_result.intensities = (
+                            fortran_result.intensities / self.supercell_ncells)
                     return fortran_result
 
         if use_single_k:
@@ -1987,10 +1997,15 @@ class MagCalc:
             f"Run-time for S(q,w) calculation: {np.round((end_time - start_t) / 60, 2)} min."
         )
 
+        intensities_arr = np.array(intensities_out)
+        if self.supercell_ncells > 1:
+            # Per-chemical-cell normalization (Sunny/SpinW convention).
+            intensities_arr = intensities_arr / self.supercell_ncells
+
         return SqwResult(
             q_vectors=np.array(q_vectors_out),
             energies=np.array(energies_out),
-            intensities=np.array(intensities_out)
+            intensities=intensities_arr
         )
 
     def calculate_powder_average(

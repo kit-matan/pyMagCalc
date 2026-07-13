@@ -1,0 +1,55 @@
+# =====================================================================
+# SW03 - Frustrated J1-J2 chain: commensurate supercell, AUTO-EXPANDED
+#
+#   magcalc run examples/spinw_tutorials/SW03_frustrated_chain/config_supercell_auto.yaml
+#
+# Same physics as config.yaml (hand-written 13-site supercell), but the
+# supercell is generated automatically: the CHEMICAL 1-site cell is
+# declared and 'magnetic_supercell: auto' derives the [13, 1, 1] cell
+# commensurate with k = 3/13 (SpinW nExt / Sunny resize_supercell +
+# repeat_periodically_as_spiral analogue). The single_k structure is
+# converted to the real-space 13-site spiral; interactions are replicated
+# and wrapped automatically. Bands agree with config.yaml to ~1e-11.
+#
+# q_path stays in CHEMICAL-cell RLU (a = 3 A): the 13 folded bands are
+# plotted against the same path as the 1-site spiral configs. S(Q,w) is
+# normalized per chemical cell; ghost folded bands carry no weight.
+# For the EXACT incommensurate pitch use config_spiral.yaml (rotating
+# frame, k = 0.2300534561, three-branch satellites).
+# =====================================================================
+parameter_order: [J1, J2]
+parameters: {J1: -1.0, J2: 2.0}
+crystal_structure:
+  lattice_vectors:
+  - [3.0, 0.0, 0.0]
+  - [0.0, 8.0, 0.0]
+  - [0.0, 0.0, 8.0]
+  atoms_uc:
+  - {label: A, pos: [0.0, 0.0, 0.0], spin_S: 1.0, ion: Cu2+}
+  magnetic_supercell: auto
+interactions:
+  symmetry_rules:
+  - {type: heisenberg, distance: 3.0, value: J1}   # NN along the chain (a)
+  - {type: heisenberg, distance: 6.0, value: J2}   # 2nd NN along the chain (2a)
+magnetic_structure:
+  enabled: true
+  type: single_k
+  k: [0.23076923076923078, 0.0, 0.0]   # 3/13, closest small fraction to 0.230053
+  axis: [0.0, 0.0, 1.0]
+tasks: {minimization: false, dispersion: true, sqw_map: true}
+q_path:
+  G: [0.0, 0.0, 0.0]
+  H: [1.0, 0.0, 0.0]
+  path: [G, H]
+  points_per_segment: 200
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  energy_limits_disp: [0, 5]
+  disp_plot_filename: SW03_supercell_disp.png
+  sqw_plot_filename: SW03_supercell_sqw.png
+  disp_title: 'SW03 supercell (auto [13,1,1], k=3/13): folded bands'
+  sqw_title: 'SW03 supercell S(Q,w): spiral branches, ghosts dark'
+calculation: {cache_mode: none}
+output: {save_data: false}

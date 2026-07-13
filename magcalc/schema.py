@@ -32,6 +32,11 @@ class CrystalStructure(BaseModel):
     atoms_uc: Optional[List[AtomUC]] = None
     wyckoff_atoms: Optional[List[WyckoffAtom]] = None
     atom_mode: Optional[str] = "symmetry"
+    # Magnetic supercell (SpinW nExt / Sunny resize_supercell): [n1, n2, n3],
+    # {'matrix': [n1, n2, n3]}, or 'auto' (minimal diagonal cell commensurate
+    # with magnetic_structure.k). Chemical cell is replicated; q_path stays in
+    # chemical RLU.
+    magnetic_supercell: Optional[Union[List[int], Dict[str, Any], str]] = None
 
 class Interaction(BaseModel):
     model_config = ConfigDict(extra='allow')

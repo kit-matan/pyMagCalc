@@ -10,8 +10,17 @@ from magcalc.plotting import plot_dispersion, plot_sqw_map
 logger = logging.getLogger(__name__)
 
 def compute_b_matrix(spin_model):
-    """Compute the reciprocal lattice B-matrix from the spin model's unit cell."""
-    uc = spin_model.unit_cell()
+    """Compute the reciprocal lattice B-matrix from the spin model's unit cell.
+
+    When a magnetic supercell is active, the CHEMICAL cell is used so that
+    q_path entries stay in chemical-cell RLU (SpinW/Sunny convention) and the
+    supercell merely folds the bands.
+    """
+    if getattr(spin_model, 'supercell_dims', [1, 1, 1]) != [1, 1, 1] and \
+            hasattr(spin_model, 'chemical_unit_cell'):
+        uc = spin_model.chemical_unit_cell()
+    else:
+        uc = spin_model.unit_cell()
     a1, a2, a3 = uc[0], uc[1], uc[2]
     V = np.dot(a1, np.cross(a2, a3))
     return np.array([

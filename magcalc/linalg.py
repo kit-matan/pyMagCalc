@@ -285,173 +285,115 @@ def _match_and_reorder_minus_q(
         np.vstack((eigvecs_m_ortho[nspins:nspins2, :], eigvecs_m_ortho[0:nspins, :]))
     )
 
-    matched_original_m_indices: Set[int] = set()  # To track used original -q indices
+    def _swap_conj_inverse(v):
+        # Undo the block-swap + conjugation (the operation is an involution).
+        return np.conj(np.concatenate((v[nspins:nspins2], v[0:nspins])))
 
-    # Loop 1: Match first nspins of +q (eigvecs_p_ortho[:, i_p])
-    # with last nspins of -q (Vm_orig_swap_conj[:, j_m_orig_idx])
-    for i_p in range(nspins):
-        target_Vp_col = eigvecs_p_ortho[:, i_p]  # This is e_vec[:, i] in magcalc_origin
-        norm_target_Vp_col_sq = np.real(np.vdot(target_Vp_col, target_Vp_col))
-        if (
-            norm_target_Vp_col_sq < zero_tol_comp_phase**2
-        ):  # Check against squared tolerance
-            logger.warning(
-                f"Target +q vector {i_p} has near-zero norm at {q_vector_label}. Skipping match."
-            )
-            continue
-        
-        # --- NEW LOGIC: Collect all projections and pick best ---
-        projections = []
-        
-        for j_m_orig_idx in range(
-            nspins, nspins2
-        ):  # Original -q indices for the second block (j in magcalc_origin)
-            if j_m_orig_idx in matched_original_m_indices:
+    matched_count = 0
+
+    def _match_block(target_indices, candidate_indices, reordered_offset):
+        """Match +q eigenvectors against a block of -q eigenvectors.
+
+        For non-degenerate bands the swapped-conjugated -q eigenvector is
+        parallel (up to phase) to its +q partner, and this reduces to the
+        original best-|overlap| match. Inside a DEGENERATE eigenspace,
+        however, the two independent diagonalizations mix the subspace by an
+        arbitrary unitary, so no single -q column matches; there the +q
+        target is PROJECTED onto the degenerate -q subspace (orthogonalized
+        against partners already constructed from the same subspace), which
+        is an equally valid -q eigenbasis aligned with +q by construction.
+        Without this, degenerate bands (e.g. collinear two-sublattice AFM
+        with anisotropy) silently lose all S(q,w) weight.
+        """
+        nonlocal matched_count
+
+        # Group candidates into degenerate subspaces by eigenvalue.
+        groups = []  # each: {'idx': [...], 'eig': value, 'assigned': [vecs]}
+        for j in candidate_indices:
+            ev = eigvals_m_sorted[j]
+            for g in groups:
+                if abs(ev - g['eig']) < DEGENERACY_THRESHOLD * max(1.0, abs(g['eig'])):
+                    g['idx'].append(j)
+                    break
+            else:
+                groups.append({'idx': [j], 'eig': ev, 'assigned': []})
+
+        for i_p in target_indices:
+            target_Vp_col = eigvecs_p_ortho[:, i_p]
+            norm_target = np.sqrt(np.real(np.vdot(target_Vp_col, target_Vp_col)))
+            if norm_target < zero_tol_comp_phase:
+                logger.warning(
+                    f"Target +q vector {i_p} has near-zero norm at {q_vector_label}. Skipping match."
+                )
                 continue
 
-            source_Vm_swap_conj_col = Vm_orig_swap_conj[
-                :, j_m_orig_idx
-            ]  # This is evecmswap[:,j]
-            norm_source_Vm_swap_conj_col_sq = np.real(
-                np.vdot(source_Vm_swap_conj_col, source_Vm_swap_conj_col)
-            )
-            if norm_source_Vm_swap_conj_col_sq < zero_tol_comp_phase**2:
-                continue
-            
-            proj = np.abs(np.vdot(target_Vp_col, source_Vm_swap_conj_col))
-            threshold = np.sqrt(norm_target_Vp_col_sq * norm_source_Vm_swap_conj_col_sq) - match_tol
-            
-            if proj > threshold:
-                projections.append((proj, j_m_orig_idx))
-        
-        if projections:
-             # Sort by projection strength descending
-             projections.sort(key=lambda x: x[0], reverse=True)
-             best_match = projections[0]
-             j_m_orig_idx = best_match[1]
-             
-             # Apply success logic
-             reordered_m_idx = (
-                 i_p + nspins
-             )  # As per magcalc_origin.py logic for this loop
-             eigenvectors_minus_q_reordered[:, reordered_m_idx] = eigvecs_m_ortho[
-                 :, j_m_orig_idx
-             ]
-             eigenvalues_minus_q_reordered[reordered_m_idx] = eigvals_m_sorted[
-                 j_m_orig_idx
-             ]
+            # Project the target onto each group's remaining subspace.
+            best = None  # (norm, group, projected_vector)
+            for g in groups:
+                if len(g['assigned']) >= len(g['idx']):
+                    continue  # subspace exhausted
+                proj = np.zeros(nspins2, dtype=complex)
+                for j in g['idx']:
+                    col = Vm_orig_swap_conj[:, j]
+                    proj += np.vdot(col, target_Vp_col) * col
+                for assigned in g['assigned']:
+                    proj -= np.vdot(assigned, proj) * assigned
+                nP = np.sqrt(np.real(np.vdot(proj, proj)))
+                if best is None or nP > best[0]:
+                    best = (nP, g, proj)
 
-             # Phase factor calculation based on magcalc_origin.py
-             source_Vm_swap_conj_col = Vm_orig_swap_conj[:, j_m_orig_idx]
-             comp_Vp_for_phase = target_Vp_col[
-                 np.abs(target_Vp_col) > zero_tol_comp_phase
-             ]
-             comp_Vm_swap_for_phase = source_Vm_swap_conj_col[
-                 np.abs(source_Vm_swap_conj_col) > zero_tol_comp_phase
-             ]
-             phase_term = 1.0 + 0.0j
-             if (
-                 len(comp_Vp_for_phase) > 0
-                 and len(comp_Vm_swap_for_phase) > 0
-                 and np.abs(comp_Vm_swap_for_phase[0])
-                 > zero_tol_comp_phase  # Check divisor
-             ):
-                 phase_term = comp_Vp_for_phase[0] / comp_Vm_swap_for_phase[0]
-             else:
-                 logger.warning(
-                     f"Could not determine phase for +q vec {i_p} and -q vec {j_m_orig_idx} (original index) at {q_vector_label}. Using phase=1."
-                 )
-
-             alpha_m_reordered_diag_elements[reordered_m_idx] = np.conj(
-                 alpha_p[i_p, i_p] * phase_term
-             )
-             matched_original_m_indices.add(j_m_orig_idx)
-             
-        else:
-            logger.warning(
-                f"No matching -q eigenvector found for +q eigenvector index {i_p} in first block at {q_vector_label}"
-            )
-
-    # Loop 2: Match last nspins of +q (eigvecs_p_ortho[:, i_p])
-    # with first nspins of -q (Vm_orig_swap_conj[:, j_m_orig_idx])
-    for i_p in range(nspins, nspins2):
-        target_Vp_col = eigvecs_p_ortho[:, i_p]
-        norm_target_Vp_col_sq = np.real(np.vdot(target_Vp_col, target_Vp_col))
-        if norm_target_Vp_col_sq < zero_tol_comp_phase**2:
-            logger.warning(
-                f"Target +q vector {i_p} has near-zero norm at {q_vector_label}. Skipping match."
-            )
-            continue
-
-        projections = []
-        for j_m_orig_idx in range(nspins):  # Original -q indices for the first block
-            if j_m_orig_idx in matched_original_m_indices:
+            if best is None or best[0] < norm_target - match_tol:
+                logger.warning(
+                    f"No matching -q eigenvector subspace found for +q eigenvector "
+                    f"index {i_p} at {q_vector_label}"
+                    + (f" (best projection {best[0]:.6f})" if best else "")
+                )
                 continue
 
-            source_Vm_swap_conj_col = Vm_orig_swap_conj[:, j_m_orig_idx]
-            norm_source_Vm_swap_conj_col_sq = np.real(
-                np.vdot(source_Vm_swap_conj_col, source_Vm_swap_conj_col)
+            nP, group, proj = best
+            v_new_swap_conj = proj / nP  # unit vector aligned with the target
+            group['assigned'].append(v_new_swap_conj)
+
+            reordered_m_idx = i_p + reordered_offset
+            eigenvectors_minus_q_reordered[:, reordered_m_idx] = _swap_conj_inverse(
+                v_new_swap_conj
             )
-            if norm_source_Vm_swap_conj_col_sq < zero_tol_comp_phase**2:
-                continue
-            
-            proj = np.abs(np.vdot(target_Vp_col, source_Vm_swap_conj_col))
-            threshold = np.sqrt(norm_target_Vp_col_sq * norm_source_Vm_swap_conj_col_sq) - match_tol
-            
-            if proj > threshold:
-                projections.append((proj, j_m_orig_idx))
+            eigenvalues_minus_q_reordered[reordered_m_idx] = group['eig']
 
-        if projections:
-             # Sort by projection strength descending
-             projections.sort(key=lambda x: x[0], reverse=True)
-             best_match = projections[0]
-             j_m_orig_idx = best_match[1]
+            # Phase factor between the target and its constructed partner
+            # (aligned by construction, so this is ~1; kept for exactness and
+            # consistency with the original component-ratio convention).
+            comp_Vp_for_phase = target_Vp_col[
+                np.abs(target_Vp_col) > zero_tol_comp_phase
+            ]
+            comp_Vm_swap_for_phase = v_new_swap_conj[
+                np.abs(v_new_swap_conj) > zero_tol_comp_phase
+            ]
+            phase_term = 1.0 + 0.0j
+            if (
+                len(comp_Vp_for_phase) > 0
+                and len(comp_Vm_swap_for_phase) > 0
+                and np.abs(comp_Vm_swap_for_phase[0]) > zero_tol_comp_phase
+            ):
+                phase_term = comp_Vp_for_phase[0] / comp_Vm_swap_for_phase[0]
+            else:
+                logger.warning(
+                    f"Could not determine phase for +q vec {i_p} at {q_vector_label}. Using phase=1."
+                )
 
-             # Apply success logic
-             reordered_m_idx = (
-                 i_p - nspins
-             )  # As per magcalc_origin.py logic for this loop
-             eigenvectors_minus_q_reordered[:, reordered_m_idx] = eigvecs_m_ortho[
-                 :, j_m_orig_idx
-             ]
-             eigenvalues_minus_q_reordered[reordered_m_idx] = eigvals_m_sorted[
-                 j_m_orig_idx
-             ]
-             
-             source_Vm_swap_conj_col = Vm_orig_swap_conj[:, j_m_orig_idx]
-
-             # Phase factor calculation
-             comp_Vp_for_phase = target_Vp_col[
-                 np.abs(target_Vp_col) > zero_tol_comp_phase
-             ]
-             comp_Vm_swap_for_phase = source_Vm_swap_conj_col[
-                 np.abs(source_Vm_swap_conj_col) > zero_tol_comp_phase
-             ]
-             phase_term = 1.0 + 0.0j
-             if (
-                 len(comp_Vp_for_phase) > 0
-                 and len(comp_Vm_swap_for_phase) > 0
-                 and np.abs(comp_Vm_swap_for_phase[0]) > zero_tol_comp_phase
-             ):
-                 phase_term = comp_Vp_for_phase[0] / comp_Vm_swap_for_phase[0]
-             else:
-                 logger.warning(
-                     f"Could not determine phase for +q vec {i_p} and -q vec {j_m_orig_idx} (original index) at {q_vector_label}. Using phase=1."
-                 )
-
-             alpha_m_reordered_diag_elements[reordered_m_idx] = np.conj(
-                 alpha_p[i_p, i_p] * phase_term
-             )
-             matched_original_m_indices.add(j_m_orig_idx)
-             
-        else:
-            logger.warning(
-                f"No matching -q eigenvector found for +q eigenvector index {i_p} in second block at {q_vector_label}"
+            alpha_m_reordered_diag_elements[reordered_m_idx] = np.conj(
+                alpha_p[i_p, i_p] * phase_term
             )
+            matched_count += 1
 
-    if len(matched_original_m_indices) != nspins2:
+    # Loop 1: first nspins of +q against the second -q block.
+    _match_block(range(nspins), range(nspins, nspins2), +nspins)
+    # Loop 2: last nspins of +q against the first -q block.
+    _match_block(range(nspins, nspins2), range(nspins), -nspins)
+
+    if matched_count != nspins2:
         logger.warning(
-            f"Number of matched original -q vectors ({len(matched_original_m_indices)}) does not equal {nspins2} at {q_vector_label}"
+            f"Number of matched -q vectors ({matched_count}) does not equal {nspins2} at {q_vector_label}"
         )
 
     alpha_matrix_minus_q_reordered = np.diag(alpha_m_reordered_diag_elements)
