@@ -13,7 +13,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # Import KFe3J example
-examples_dir = os.path.join(project_root, "examples", "KFe3J")
+examples_dir = os.path.join(project_root, "examples", "materials", "KFe3J")
 if examples_dir not in sys.path:
     sys.path.append(examples_dir)
 

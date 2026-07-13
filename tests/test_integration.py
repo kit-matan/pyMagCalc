@@ -6,7 +6,7 @@ import sys
 # Ensure magcalc is in path (it should be if installed or running from root)
 # Add KFe3J example directory to path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-examples_dir = os.path.join(project_root, "examples", "KFe3J")
+examples_dir = os.path.join(project_root, "examples", "materials", "KFe3J")
 if examples_dir not in sys.path:
     sys.path.append(examples_dir)
 

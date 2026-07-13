@@ -10,7 +10,7 @@ import pytest
 # Add project root to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 # Add examples to path for spin_model
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../examples/KFe3J')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../examples/materials/KFe3J')))
 
 import spin_model as sm_orig
 from magcalc.generic_model import GenericSpinModel

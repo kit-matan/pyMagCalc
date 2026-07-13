@@ -54,6 +54,7 @@ from .symbolic import (
 from .numerical import (
     process_calc_disp,
     process_calc_Sqw,
+    process_calc_Sqw_single_k,
     _init_worker,
     DispersionResult,
     SqwResult,
@@ -64,6 +65,19 @@ from .numerical import (
     # substitute_expr, # Not used in core.py presumably
 )
 # --- End Modularized Imports ---
+
+
+def reciprocal_b_matrix(unit_cell: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+    """Reciprocal-lattice B-matrix (rows b1, b2, b3, with 2*pi) from real-space
+    lattice vectors given as rows a1, a2, a3."""
+    uc = np.asarray(unit_cell, dtype=float)
+    a1, a2, a3 = uc[0], uc[1], uc[2]
+    V = np.dot(a1, np.cross(a2, a3))
+    return np.array([
+        2 * np.pi * np.cross(a2, a3) / V,
+        2 * np.pi * np.cross(a3, a1) / V,
+        2 * np.pi * np.cross(a1, a2) / V,
+    ])
 
 
 # --- Imports for Configuration-Driven Model (with fallback for direct script execution) ---
@@ -669,6 +683,33 @@ class MagCalc:
             except Exception as e:
                 logger.exception("Error getting nspins from spin_model.atom_pos()")
                 raise RuntimeError("Failed to determine nspins from spin model.") from e
+
+        # --- Single-k (propagation vector) structure attributes ---
+        # Populated when the spin model carries a rotating-frame single-k
+        # magnetic structure (GenericSpinModel 'single_k' type). Used for
+        # satellite (q +/- k) dispersion branches and the three-channel
+        # incommensurate S(q,w).
+        self.k_rlu: Optional[npt.NDArray[np.float64]] = None
+        self.k_cart: Optional[npt.NDArray[np.float64]] = None
+        self.spiral_axis: Optional[npt.NDArray[np.float64]] = None
+        self.k_case: Optional[int] = None
+        try:
+            if getattr(self.sm, 'use_rotating_frame', False):
+                k_rlu = getattr(self.sm, 'k_rlu', None)
+                if k_rlu is not None:
+                    self.k_rlu = np.asarray(k_rlu, dtype=float)
+                    B = reciprocal_b_matrix(np.array(self.sm.unit_cell(), dtype=float))
+                    self.k_cart = self.k_rlu @ B
+                    self.spiral_axis = np.asarray(self.sm.spiral_axis, dtype=float)
+                    self.k_case = int(self.sm.k_case)
+                    logger.info(
+                        f"Single-k structure active: k={self.k_rlu.tolist()} (RLU), "
+                        f"axis={np.round(self.spiral_axis, 6).tolist()}, k_case={self.k_case}."
+                    )
+        except Exception:
+            logger.exception("Failed to extract single-k structure attributes; "
+                             "satellite branches disabled.")
+            self.k_rlu = self.k_cart = self.spiral_axis = self.k_case = None
 
         # --- Consolidation ---
         def _flatten(l):
@@ -1312,6 +1353,7 @@ class MagCalc:
         processes: Optional[int] = None,
         serial: bool = False,
         backend: str = "numpy",
+        satellites: Optional[bool] = None,
     ) -> Optional[DispersionResult]:
         """
         Calculate the spin-wave dispersion relation over a list of q-points.
@@ -1325,11 +1367,42 @@ class MagCalc:
             backend (str): "numpy" (default) uses the in-process multiprocessing
                 path. "fortran" uses the external fMagCalc backend if available,
                 transparently falling back to NumPy otherwise.
+            satellites (Optional[bool]): For a single-k structure, also compute
+                the satellite branches omega(q -/+ k) by evaluating the same
+                rotating-frame Hamiltonian at the shifted momenta (SpinW/Sunny
+                three-branch convention). The result then has 3*nspins energy
+                columns, channel-major [q-k | q | q+k]. Default False
+                (central branch only, matching the previous behavior). Ignored
+                when no single-k structure is active.
 
         Returns:
             Optional[DispersionResult]: A result object containing energies and q-vectors.
             Returns None if the calculation fails to start.
         """
+        if satellites and self.k_cart is not None:
+            # Expand each q into its three channels and reuse the plain path;
+            # the numerical cache key follows the expanded q-list automatically.
+            if isinstance(q_vectors_list, np.ndarray) and q_vectors_list.ndim == 1:
+                q_vectors_list = [q_vectors_list]
+            q_orig = [np.asarray(q, dtype=float) for q in q_vectors_list]
+            q_expanded: List[npt.NDArray[np.float64]] = []
+            for q in q_orig:
+                q_expanded.extend([q - self.k_cart, q, q + self.k_cart])
+            res = self.calculate_dispersion(
+                q_expanded, processes=processes, serial=serial, backend=backend,
+                satellites=False,
+            )
+            if res is None:
+                return None
+            nq = len(q_orig)
+            E = np.asarray(res.energies).reshape(nq, 3, self.nspins)
+            energies = np.concatenate([E[:, 0, :], E[:, 1, :], E[:, 2, :]], axis=1)
+            labels = (["q-k"] * self.nspins + ["q"] * self.nspins
+                      + ["q+k"] * self.nspins)
+            return DispersionResult(
+                q_vectors=np.array(q_orig), energies=energies, branch_labels=labels
+            )
+
         start_time = timeit.default_timer()
         if self.HMat_sym is None:  # Should be caught by __init__
             logger.error("Symbolic matrix HMat_sym not available.")
@@ -1787,6 +1860,7 @@ class MagCalc:
         self,
         q_vectors: Union[List[npt.NDArray[np.float64]], npt.NDArray[np.float64]],
         backend: str = "numpy",
+        satellites: Optional[bool] = None,
     ) -> Optional[SqwResult]:
         """
         Calculate the dynamical structure factor S(q,w) over a list of q-points.
@@ -1798,6 +1872,13 @@ class MagCalc:
             backend (str): "numpy" (default) uses the in-process multiprocessing
                 path. "fortran" uses the external fMagCalc backend if available,
                 transparently falling back to NumPy otherwise.
+            satellites (Optional[bool]): For a single-k structure, compute the
+                full incommensurate cross-section: the three channels at
+                q-k, q, q+k with the rotating-frame projection tensors (Toth &
+                Lake 2015; SpinW/Sunny convention). The result then has
+                3*nspins modes per q, channel-major [q-k | q | q+k]. Defaults
+                to True when a single-k structure is active (that IS the
+                physical cross-section), False otherwise.
 
         Returns:
             Optional[SqwResult]: Object containing q_vectors, energies, and intensities.
@@ -1809,6 +1890,13 @@ class MagCalc:
         if self.HMat_sym is None or self.Ud_numeric is None:
             logger.error("Symbolic matrices not initialized. Cannot calculate S(q,w).")
             return None
+
+        # Resolve the single-k (incommensurate) mode. k_case 1 (k integer)
+        # means the three channels coincide; use the commensurate path.
+        single_k_active = self.k_cart is not None and self.k_case in (2, 3)
+        if satellites is None:
+            satellites = single_k_active
+        use_single_k = bool(satellites) and single_k_active
 
         # Convert q_vectors to list of arrays if it's a 2D array
         if isinstance(q_vectors, np.ndarray) and q_vectors.ndim == 2:
@@ -1825,21 +1913,46 @@ class MagCalc:
 
         # Opt-in Fortran backend (falls back to NumPy on any unavailability).
         if backend == "fortran":
-            fortran_result = self._calculate_sqw_fortran(q_vectors_list, ion_list)
-            if fortran_result is not None:
-                return fortran_result
+            if use_single_k:
+                logger.info("Single-k S(q,w) not available in the Fortran backend; using NumPy.")
+            else:
+                fortran_result = self._calculate_sqw_fortran(q_vectors_list, ion_list)
+                if fortran_result is not None:
+                    return fortran_result
 
-        task_args = [
-            (
-                self.Ud_numeric,
-                q,
-                self.nspins,
-                self.spin_magnitude,
-                list(self.hamiltonian_params),
-                ion_list,
+        if use_single_k:
+            logger.info(
+                "Computing incommensurate S(q,w): three channels q-k, q, q+k "
+                f"(k={self.k_rlu.tolist()} RLU, k_case={self.k_case})."
             )
-            for q in q_vectors_list
-        ]
+            worker_func = process_calc_Sqw_single_k
+            task_args = [
+                (
+                    self.Ud_numeric,
+                    q,
+                    self.nspins,
+                    self.spin_magnitude,
+                    list(self.hamiltonian_params),
+                    ion_list,
+                    self.k_cart,
+                    self.spiral_axis,
+                    self.k_case,
+                )
+                for q in q_vectors_list
+            ]
+        else:
+            worker_func = process_calc_Sqw
+            task_args = [
+                (
+                    self.Ud_numeric,
+                    q,
+                    self.nspins,
+                    self.spin_magnitude,
+                    list(self.hamiltonian_params),
+                    ion_list,
+                )
+                for q in q_vectors_list
+            ]
 
         try:
              with Pool(
@@ -1850,7 +1963,7 @@ class MagCalc:
                 # Use imap to report progress with tqdm. imap preserves order.
                 results = list(
                     tqdm(
-                        pool.imap(process_calc_Sqw, task_args),
+                        pool.imap(worker_func, task_args),
                         total=len(task_args),
                         desc="S(q,w)",
                         unit="q-point",

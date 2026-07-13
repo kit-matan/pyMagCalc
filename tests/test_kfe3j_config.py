@@ -24,7 +24,7 @@ import magcalc as mc
 
 from sympy import Matrix as sp_Matrix  # For type hinting
 # Helper to import KFe3J.spin_model from examples
-sys.path.insert(0, os.path.join(project_root_dir, 'examples'))
+sys.path.insert(0, os.path.join(project_root_dir, 'examples', 'materials'))
 import KFe3J.spin_model as kfe3j_hardcoded_spin_model  # Original model
 
 logging.basicConfig(
@@ -61,7 +61,9 @@ if __name__ == "__main__":
     params_val_original_model = [3.23, 0.11, 0.218, -0.195, 0.0]
 
     # Use declarative config as it works with GenericSpinModel
-    config_file_path = os.path.join(project_root_dir, "examples", "KFe3J", "KFe3J_declarative.yaml")
+    # KFe3J_declarative.yaml no longer exists; config_kfe3j.yaml is the
+    # declarative (GenericSpinModel) config in the reorganized examples tree.
+    config_file_path = os.path.join(project_root_dir, "examples", "materials", "KFe3J", "config_kfe3j.yaml")
 
     q_vectors_test = generate_q_vectors_for_test()
     logger.info(f"Testing with {len(q_vectors_test)} q-points.")

@@ -188,7 +188,7 @@ if __name__ == "__main__":
     # --- 1. Configuration-driven KFe3J ---
     print("Loading Configuration-driven KFe3J model...")
     # Config file is KFe3J_config.yaml and located in pyMagCalc_dir (one level up from current_script_dir)
-    config_file_path = os.path.join(pyMagCalc_dir, "examples", "KFe3J", "config_kfe3j.yaml")
+    config_file_path = os.path.join(pyMagCalc_dir, "examples", "materials", "KFe3J", "config_kfe3j.yaml")
     print(f"Attempting to load config from: {config_file_path}")
 
     config_data = load_spin_model_config(config_file_path)

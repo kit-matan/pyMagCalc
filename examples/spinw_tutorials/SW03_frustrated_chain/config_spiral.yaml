@@ -11,9 +11,11 @@
 #   w(q) = 2S sqrt( [A(q)-A(k)] [ (A(q+k)+A(q-k))/2 - A(k) ] ),
 #   A(q) = J1 cos(2 pi q) + J2 cos(4 pi q)
 # to ~1e-12 at all q (gapless phason at q=0 and Goldstones at q=+-k).
-# This plot shows the CENTRAL branch w(q); the SpinW/Sunny figure overlays
-# the three branches w(q), w(q+k), w(q-k) - shift the path by +-k to get
-# the other two.
+# 'satellites: true' (below) overlays the three branches w(q-k), w(q),
+# w(q+k) like the SpinW/Sunny figure; S(Q,w) additionally applies the
+# Toth & Lake three-channel projection for the satellite intensities
+# (validated against Sunny's SpinWaveTheorySpiral). Set
+# 'minimization: {enabled: true, optimize_k: true}' to find k automatically.
 #
 # NOTE: the J2 distance rule needs the +-2 cell image; the rule expansion
 # auto-sizes its search range from the target distance (engine fix).
@@ -36,9 +38,10 @@ interactions:
   - {type: heisenberg, distance: 6.0, value: J2}   # 2nd NN along the chain (2a)
 magnetic_structure:
   enabled: true
-  type: spiral
+  type: single_k
   k: [0.23005345616261588, 0.0, 0.0]
   axis: [0.0, 0.0, 1.0]
+  satellites: true
 tasks: {minimization: false, dispersion: true}
 q_path:
   G: [0.0, 0.0, 0.0]
@@ -51,6 +54,6 @@ plotting:
   plot_structure: false
   energy_limits_disp: [0, 5]
   disp_plot_filename: SW03_spiral_disp.png
-  disp_title: 'SW03 spiral (rotating frame, exact k=0.230053): central branch'
+  disp_title: 'SW03 spiral (single_k, exact k=0.230053): w(q-k), w(q), w(q+k)'
 calculation: {cache_mode: none}
 output: {save_data: false}

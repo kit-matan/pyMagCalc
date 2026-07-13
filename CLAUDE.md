@@ -78,14 +78,31 @@ derivable from crystal symmetry:
 
 - collinear / k=0 patterns: `type: pattern` with `pattern_type:
   ferromagnetic` (+ `direction`) or `generic` (+ per-site `directions`);
-- incommensurate: `type: spiral` with `k`, `axis`, and (multi-site cells)
-  `local_directions`.
+- incommensurate / propagation-vector: `type: single_k` with `k` (RLU),
+  `axis` (rotation axis, Cartesian), and spin directions given as ONE of
+  `local_directions` (rotating frame), `S0` (lab-frame cell-0 directions,
+  SpinW/Sunny convention — the engine back-rotates them per site), or a
+  `u`/`v` basis. `type: spiral` is a deprecated alias (same fields).
+
+Single-k extras (validated against Sunny `SpinWaveTheorySpiral` and SpinW):
+
+- `satellites: true` (in `magnetic_structure` or `tasks`) adds the ω(q±k)
+  branches: dispersion/S(Q,w) then have `3·nspins` modes, channel-major
+  `[q−k | q | q+k]`. Default: on for S(Q,w), off for dispersion. S(Q,w) uses
+  the Toth & Lake three-channel projection (correct satellite intensities).
+- `minimization: {enabled: true, optimize_k: true}` optimizes (k, spin
+  directions) — Sunny `minimize_spiral_energy!` analogue — with a
+  Luttinger-Tisza initial guess (`lt_guess`, `k_grid`), optional
+  `optimize_axis: true`, and writes `optimized_structure.yaml`.
+- The engine warns when the Hamiltonian is not rotationally invariant about
+  `axis` (DM ∦ axis, SIA axis ∦ axis, field ∦ axis) — the rotating-frame
+  method is unreliable then (`enforce_rotational_symmetry: warn|error|off`).
 
 The order of `directions`/`local_directions` follows `atoms_uc` /
 Wyckoff-orbit order — after switching to `wyckoff_atoms`, re-verify the
 spectrum to catch ordering mismatches. pyMagCalc's spiral phases use FULL
-atomic positions (`2π k·(r_j−r_i)`); SpinW `S0` values must be back-rotated
-per site: `n_i = R(−2π k·d_i, axis)·S0_i`.
+atomic positions (`2π k·(r_j−r_i)`); SpinW `S0` values are back-rotated
+per site `n_i = R(−2π k·d_i, axis)·S0_i` — automatic with the `S0` field.
 
 ## 4. Compact YAML form — always
 

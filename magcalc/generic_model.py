@@ -57,6 +57,141 @@ def RotZ(angle):
 # User might prefer defining it explicitly in YAML if it's non-standard.
 # But providing these standard ones is helpful.
 
+def rotation_about_axis(theta, axis):
+    """Numeric Rodrigues rotation matrix: rotate by ``theta`` (rad) about ``axis``."""
+    n = np.asarray(axis, dtype=float)
+    norm = np.linalg.norm(n)
+    if norm < 1e-12:
+        raise ValueError("Rotation axis must be non-zero.")
+    n = n / norm
+    K = np.array([
+        [0.0, -n[2], n[1]],
+        [n[2], 0.0, -n[0]],
+        [-n[1], n[0], 0.0],
+    ])
+    return np.eye(3) + np.sin(theta) * K + (1.0 - np.cos(theta)) * (K @ K)
+
+
+def spiral_propagation_case(k, tol=1e-8):
+    """Classify a propagation vector like Sunny's spiral_propagation_case.
+
+    Returns 1 if every component of k is an integer, 2 if every component of
+    2k is an integer (k = 1/2-type), else 3 (generic, incommensurate).
+    """
+    k = np.asarray(k, dtype=float)
+    if np.linalg.norm(k - np.round(k)) < tol:
+        return 1
+    if np.linalg.norm(2 * k - np.round(2 * k)) < 2 * tol:
+        return 2
+    return 3
+
+
+def interactions_to_numpy(Jex_sym, DM_sym, Kex_sym):
+    """Convert (possibly symbolic) interaction matrices to numeric arrays.
+
+    Returns (Jex (N, N_ouc), DM (N, N_ouc, 3), Kex (N, N_ouc, 3, 3)).
+    """
+    if hasattr(Jex_sym, 'tolist'):
+        Jex = np.array(Jex_sym.tolist(), dtype=float)
+    else:
+        Jex = np.array(Jex_sym, dtype=float)
+
+    N, N_ouc = Jex.shape
+
+    DM = np.zeros((N, N_ouc, 3))
+    for i in range(N):
+        for j in range(N_ouc):
+            val = DM_sym[i][j]
+            if val is not None:
+                if hasattr(val, 'tolist'):
+                    val = np.array(val.tolist(), dtype=float).flatten()
+                elif hasattr(val, 'evalf'):
+                    val = np.array(val.evalf()).flatten().astype(float)
+                DM[i, j] = val
+
+    Kex = np.zeros((N, N_ouc, 3, 3))
+    for i in range(N):
+        for j in range(N_ouc):
+            val = Kex_sym[i][j]
+            if val is not None:
+                if hasattr(val, 'tolist'):
+                    val = np.array(val.tolist(), dtype=float)
+                elif hasattr(val, 'evalf'):
+                    val = np.array(val.evalf().tolist(), dtype=float)
+                val_flat = val.flatten()
+                if val_flat.size == 9:
+                    Kex[i, j] = val_flat.reshape(3, 3)
+                elif val_flat.size == 3:
+                    Kex[i, j] = np.diag(val_flat)
+                else:
+                    logger.warning(f"Unexpected Kex size {val_flat.size} at ({i},{j})")
+    return Jex, DM, Kex
+
+
+_LEGACY_MS_WARNED = set()
+
+
+def normalize_magnetic_structure(ms_cfg):
+    """Normalize the 'magnetic_structure' config onto the unified 'single_k' form.
+
+    - 'spiral' (legacy rotating-frame) -> 'single_k' (pure rename: axis/n,
+      local_directions pass through unchanged).
+    - 'propagation_vector' (legacy real-space generator) -> 'single_k' with
+      real_space: true (angles are generated in the lab frame from the u/v
+      basis with the corrected 2*pi*k.r_frac phases; interactions are NOT
+      rotated, preserving the legacy semantics).
+    - 'single_k' passes through with defaults filled ('axis' from alias 'n').
+    - Other types ('explicit', 'pattern', ...) pass through untouched.
+    """
+    if not ms_cfg or not isinstance(ms_cfg, dict):
+        return {}
+    cfg = dict(ms_cfg)
+    mtype = cfg.get('type')
+
+    if mtype == 'spiral':
+        if 'spiral' not in _LEGACY_MS_WARNED:
+            _LEGACY_MS_WARNED.add('spiral')
+            logger.warning(
+                "magnetic_structure type 'spiral' is deprecated; use "
+                "'single_k' (same fields; 'axis' unchanged). Proceeding with "
+                "the unified single_k path."
+            )
+        cfg['type'] = 'single_k'
+    elif mtype == 'propagation_vector':
+        if 'propagation_vector' not in _LEGACY_MS_WARNED:
+            _LEGACY_MS_WARNED.add('propagation_vector')
+            logger.warning(
+                "magnetic_structure type 'propagation_vector' is deprecated; "
+                "use 'single_k'. Mapping to single_k with real_space: true "
+                "(lab-frame angles from the u/v basis; note the phase "
+                "convention is now the corrected 2*pi*k.r_frac)."
+            )
+        cfg['type'] = 'single_k'
+        if cfg.get('real_space') is None:
+            cfg['real_space'] = True
+        if cfg.get('u') is None:
+            cfg['u'] = [1, 0, 0]
+        if cfg.get('v') is None:
+            cfg['v'] = [0, 1, 0]
+
+    if cfg.get('type') == 'single_k':
+        # Treat explicit None (e.g. from pydantic model_dump) as missing.
+        if cfg.get('axis') is None:
+            cfg['axis'] = cfg['n'] if cfg.get('n') is not None else [0, 0, 1]
+        if cfg.get('k') is None:
+            cfg['k'] = [0, 0, 0]
+        k_case = spiral_propagation_case(cfg['k'])
+        cfg['k_case'] = k_case
+        if k_case == 2 and not cfg.get('real_space', False):
+            logger.warning(
+                "single_k structure with 2k integer (k = 1/2-type, k=%s): the "
+                "helical description may double count a collinear structure; "
+                "consider an explicit magnetic supercell if the structure is "
+                "collinear.", cfg['k']
+            )
+    return cfg
+
+
 def safe_eval(expr, context):
     """Safely evaluate a mathematical expression using sympy/numpy symbols."""
     # Allow simple math
@@ -148,7 +283,49 @@ class GenericSpinModel:
                 pass
         except ImportError:
             logger.warning("Could not import MagCalcConfig schema. Validation skipped.")
-        
+
+        # Normalized magnetic-structure config (legacy 'spiral' /
+        # 'propagation_vector' types are mapped onto the unified 'single_k'
+        # form). All downstream code reads this instead of the raw dict.
+        self.mag_struct_cfg = normalize_magnetic_structure(
+            self.config.get('magnetic_structure')
+        )
+
+    @property
+    def is_single_k(self):
+        """True when the model carries a single-k (propagation-vector) structure."""
+        return (self.mag_struct_cfg.get('type') == 'single_k'
+                and self.mag_struct_cfg.get('enabled', True))
+
+    @property
+    def use_rotating_frame(self):
+        """True when interactions must be transformed into the rotating frame."""
+        return self.is_single_k and not self.mag_struct_cfg.get('real_space', False)
+
+    @property
+    def k_rlu(self):
+        """Propagation vector in RLU, or None if not a single-k structure."""
+        if not self.is_single_k:
+            return None
+        return np.asarray(self.mag_struct_cfg.get('k', [0, 0, 0]), dtype=float)
+
+    @property
+    def spiral_axis(self):
+        """Unit rotation axis (normal to the polarization plane), or None."""
+        if not self.is_single_k:
+            return None
+        axis = np.asarray(self.mag_struct_cfg.get('axis', [0, 0, 1]), dtype=float)
+        norm = np.linalg.norm(axis)
+        return axis / norm if norm > 1e-12 else np.array([0.0, 0.0, 1.0])
+
+    @property
+    def k_case(self):
+        """Sunny-style propagation case (1: k integer, 2: 2k integer, 3: generic)."""
+        if not self.is_single_k:
+            return None
+        return self.mag_struct_cfg.get('k_case',
+                                       spiral_propagation_case(self.k_rlu))
+
     def _expand_config_inplace(self):
         """
         Use MagCalcConfigBuilder to expand Wyckoff atoms and symmetry rules.
@@ -614,7 +791,23 @@ class GenericSpinModel:
 
     def spin_interactions(self, p):
         """
-        Generates interaction matrices (Heisenberg, DM, Anisotropic) based on the configuration.
+        Generates interaction matrices (Heisenberg, DM, Anisotropic) based on the
+        configuration. For a single-k (spiral) structure the lab-frame matrices
+        are transformed into the rotating frame.
+        """
+        Jex, DM, Kex = self._spin_interactions_lab(p)
+
+        if self.use_rotating_frame:
+            logger.info("Single-k magnetic structure detected. Computing effective rotated interactions...")
+            self._check_rotational_symmetry(Jex, DM, Kex)
+            Jex, DM, Kex = self._compute_rotated_interactions(Jex, DM, Kex, self.mag_struct_cfg)
+
+        return Jex, DM, Kex
+
+    def _spin_interactions_lab(self, p):
+        """
+        Generates the lab-frame interaction matrices (Heisenberg, DM, Anisotropic)
+        based on the configuration, without any rotating-frame transformation.
         """
         apos = self.atom_pos()
         N_atom = len(apos)
@@ -747,14 +940,103 @@ class GenericSpinModel:
                 if DM[i][j] is None: DM[i][j] = dnull_vec
                 if Kex[i][j] is None: Kex[i][j] = dnull_mat
 
-        # 5. Incommensurate/Spiral Mode Check
-        # If magnetic_structure type is 'spiral', we perform the effective interaction rotation here.
-        mag_struct = self.config.get('magnetic_structure') or {}
-        if mag_struct.get('type') == 'spiral':
-            logger.info("Spiral Magnetic Structure detected. Computing Effective Rotated Interactions...")
-            Jex, DM, Kex = self._compute_rotated_interactions(Jex, DM, Kex, mag_struct)
-
         return Jex, DM, Kex
+
+    def _check_rotational_symmetry(self, Jex, DM, Kex, theta=0.01):
+        """Verify the Hamiltonian is invariant under rotations about the spiral axis.
+
+        Mirrors Sunny's check_rotational_symmetry: the single-k rotating-frame
+        method is only exact when every bond matrix satisfies R^T J R = J for
+        rotations R about the axis (DM vectors parallel to the axis, exchange
+        matrices uniaxial about it), single-ion anisotropy axes are parallel to
+        it, and any external field is parallel to it. Symbolic entries are
+        tested at random parameter values. Behavior on failure follows
+        magnetic_structure.enforce_rotational_symmetry: 'warn' (default),
+        'error', or 'off'.
+        """
+        mode = self.mag_struct_cfg.get('enforce_rotational_symmetry', 'warn')
+        if mode == 'off':
+            return
+
+        n = self.spiral_axis
+        R = rotation_about_axis(theta, n)
+        problems = []
+
+        apos = self.atom_pos()
+        N_atom = len(apos)
+        N_ouc = len(self.atom_pos_ouc())
+        rng = np.random.default_rng(seed=7)
+
+        def _to_numeric(mat):
+            """Evaluate a (possibly symbolic) sympy matrix at random param values."""
+            m = sp.Matrix(mat)
+            syms = list(m.free_symbols)
+            if syms:
+                subs = {s: float(rng.uniform(0.5, 1.5)) for s in syms}
+                m = m.subs(subs)
+            return np.array(m.evalf().tolist(), dtype=complex).real
+
+        checked = 0
+        for i in range(N_atom):
+            for j in range(N_ouc):
+                D_vec = DM[i][j]
+                K_mat = Kex[i][j]
+                d_nonzero = not (hasattr(D_vec, 'is_zero_matrix') and D_vec.is_zero_matrix)
+                k_nonzero = not (hasattr(K_mat, 'is_zero_matrix') and K_mat.is_zero_matrix)
+                if not d_nonzero and not k_nonzero:
+                    continue
+                if checked > 200:  # enough bonds to trust the pattern
+                    break
+                checked += 1
+                # J_global = Jex*I + skew(D) + Kex; the isotropic part is
+                # always invariant, so only test the DM + matrix part.
+                J_aniso = np.zeros((3, 3))
+                if d_nonzero:
+                    d = _to_numeric(D_vec).flatten()
+                    J_aniso = J_aniso + np.array([
+                        [0.0, d[2], -d[1]],
+                        [-d[2], 0.0, d[0]],
+                        [d[1], -d[0], 0.0],
+                    ])
+                if k_nonzero:
+                    km = _to_numeric(K_mat)
+                    if km.size == 3:
+                        km = np.diag(km.flatten())
+                    J_aniso = J_aniso + km.reshape(3, 3)
+                if np.max(np.abs(R.T @ J_aniso @ R - J_aniso)) > 1e-8:
+                    problems.append(
+                        f"bond ({i},{j}): interaction matrix not invariant "
+                        f"under rotation about axis {np.round(n, 6).tolist()}"
+                    )
+
+        # Single-ion anisotropy axes must be parallel to the spiral axis.
+        for interaction in self.interactions_config:
+            if interaction.get('type') != 'sia':
+                continue
+            axis_sia = np.asarray(interaction.get('axis', [0, 0, 1]), dtype=float)
+            nrm = np.linalg.norm(axis_sia)
+            if nrm > 1e-12 and np.linalg.norm(np.cross(axis_sia / nrm, n)) > 1e-8:
+                problems.append(
+                    f"single-ion anisotropy axis {axis_sia.tolist()} not parallel to spiral axis"
+                )
+
+        # External field must be parallel to the spiral axis.
+        params = self.config.get('parameters') or {}
+        h_dir = params.get('H_dir')
+        h_mag = next((params.get(k) for k in ('H', 'H_mag', 'H_field') if k in params), None)
+        if h_mag is not None and isinstance(h_mag, (int, float)) and abs(h_mag) > 1e-12:
+            h_vec = np.asarray(h_dir, dtype=float) if h_dir is not None else np.array([0.0, 0.0, 1.0])
+            nrm = np.linalg.norm(h_vec)
+            if nrm > 1e-12 and np.linalg.norm(np.cross(h_vec / nrm, n)) > 1e-8:
+                problems.append("external field not parallel to spiral axis")
+
+        if problems:
+            msg = ("Single-k rotating-frame Hamiltonian is NOT invariant under "
+                   "rotations about the spiral axis; the spiral LSWT result is "
+                   "unreliable:\n  - " + "\n  - ".join(problems[:5]))
+            if mode == 'error':
+                raise ValueError(msg)
+            logger.warning(msg)
 
     def _compute_rotated_interactions(self, Jex, DM, Kex, mag_struct):
         """
@@ -808,27 +1090,17 @@ class GenericSpinModel:
         # Full interaction K_{total} = J*I + S(D) + Kex
         # We transform K_{total}.
         
+        # Phase convention: k in RLU, positions Cartesian (Angstrom), so
+        # phase = 2*pi * k . r_frac with r_frac = r_cart @ inv(uc).
+        # NOTE: pyMagCalc uses FULL atomic positions here (2*pi*k.(r_j - r_i)),
+        # not just cell offsets; see CLAUDE.md section 3.
+        inv_uc = la.inv(self.unit_cell())
+
         for i in range(N_atom):
             for j in range(N_ouc):
                 r_vec = apos_ouc[j] - apos[i]
-                phase = float(np.dot(k_vec, r_vec) * 2 * np.pi) # k in rlu? r in Angstrom?
-                # Check units!
-                # Usual convention: k in r.l.u, r in cell units?
-                # generic_model apos are Cartesian (Angstroms).
-                # k is likely RLU. We need to convert k to Cartesian (Inverse Angstroms)?
-                # phase = k_cart . r_cart = (k_rlu . B) . (A . r_frac) = k_rlu . 2pi . r_frac
-                # Wait: k . r = 2pi * (h*x + k*y + l*z).
-                # If we have r_cart, we need to convert back to frac or convert k to cart.
-                
-                # Convert r_cart to r_frac
-                # uc = [a, b, c] rows. 
-                # r_frac = r_cart @ inv(uc).
-                
-                # Or just use GenericSpinModel util if available.
-                # Let's compute phase carefully.
-                inv_uc = la.inv(self.unit_cell())
                 r_frac = r_vec @ inv_uc # vector * matrix_inv
-                
+
                 phase = 2 * np.pi * np.dot(k_vec, r_frac)
                 
                 R_rel = get_rot_matrix(phase, axis)
@@ -1250,47 +1522,12 @@ class GenericSpinModel:
             return
 
         logger.info("Minimization Enabled. Finding classical ground state...")
-        
+
         # Get numerical interaction matrices
         Jex_sym, DM_sym, Kex_sym = self.spin_interactions(p_num)
-        
-        # Convert Jex to numpy float array
-        if hasattr(Jex_sym, 'tolist'):
-            Jex = np.array(Jex_sym.tolist(), dtype=float)
-        else:
-            # Fallback list of lists
-            Jex = np.array(Jex_sym, dtype=float)
-            
+        Jex, DM, Kex = interactions_to_numpy(Jex_sym, DM_sym, Kex_sym)
         N = Jex.shape[0]
         N_ouc = Jex.shape[1]
-        
-        # Convert DM to numpy (N, N_ouc, 3)
-        DM = np.zeros((N, N_ouc, 3))
-        for i in range(N):
-            for j in range(N_ouc):
-                val = DM_sym[i][j]
-                if val is not None:
-                    if hasattr(val, 'tolist'): val = np.array(val.tolist(), dtype=float).flatten()
-                    elif hasattr(val, 'evalf'): val = np.array(val.evalf()).flatten().astype(float)
-                    DM[i, j] = val
-                    
-        # Convert Kex to numpy (N, N_ouc, 3, 3)
-        Kex = np.zeros((N, N_ouc, 3, 3))
-        for i in range(N):
-            for j in range(N_ouc):
-                val = Kex_sym[i][j]
-                if val is not None:
-                     if hasattr(val, 'tolist'): val = np.array(val.tolist(), dtype=float)
-                     elif hasattr(val, 'evalf'): val = np.array(val.evalf().tolist(), dtype=float)
-                     
-                     val_flat = val.flatten()
-                     if val_flat.size == 9:
-                         Kex[i, j] = val_flat.reshape(3, 3)
-                     elif val_flat.size == 3:
-                         # Diagonal only
-                         Kex[i, j] = np.diag(val_flat)
-                     else:
-                         logger.warning(f"Unexpected Kex size {val_flat.size} at ({i},{j})")
 
         # Prepare params
         params_dict = self._resolve_param_map(p_num)
@@ -1466,13 +1703,15 @@ class GenericSpinModel:
         Returns:
             (thetas, phis): Lists of angles, or (None, None) if config missing.
         """
-        struct_config = self.config.get('magnetic_structure')
+        struct_config = self.mag_struct_cfg or self.config.get('magnetic_structure')
         if not struct_config:
             return None, None
 
         method = struct_config.get('type')
         if method == 'explicit':
             return self._generate_structure_explicit(struct_config)
+        elif method == 'single_k':
+            return self._generate_structure_single_k(struct_config)
         elif method == 'propagation_vector':
             return self._generate_structure_from_k(struct_config)
         elif method == 'pattern':
@@ -1482,6 +1721,107 @@ class GenericSpinModel:
         else:
              logger.warning(f"Unknown magnetic_structure type: {method}")
              return None, None
+
+    def _generate_structure_single_k(self, config):
+        """Structure angles for the unified single-k (propagation-vector) type.
+
+        Spin-direction input, exactly one of:
+          - ``local_directions``: rotating-frame directions (legacy 'spiral'
+            semantics), applied cyclically over the sites;
+          - ``S0``: lab-frame directions of the cell-0 spins (SpinW genmagstr
+            'helical' / Sunny convention). Back-rotated per site by
+            R(-2*pi*k.r_frac_i, axis) into the rotating frame;
+          - ``u``/``v`` basis (legacy 'propagation_vector' semantics):
+            S0_i = u*cos(phi_i) + v*sin(phi_i), phi_i = 2*pi*k.r_frac_i.
+        ``cone_angle_deg`` > 0 makes a conical structure:
+        S = cos(c)*axis + sin(c)*u_i with u_i the in-plane component.
+
+        Returns lab-frame angles when ``real_space: true`` (no rotating frame,
+        legacy propagation_vector semantics); rotating-frame angles otherwise.
+        """
+        atoms = self.atom_pos()
+        nspins = len(atoms)
+        inv_uc = la.inv(self.unit_cell())
+        r_frac = np.asarray(atoms, dtype=float) @ inv_uc
+
+        k = np.asarray(config.get('k', [0, 0, 0]), dtype=float)
+        axis = np.asarray(config.get('axis', [0, 0, 1]), dtype=float)
+        n = axis / (np.linalg.norm(axis) or 1.0)
+        do_normalize = config.get('normalize', True)
+        real_space = bool(config.get('real_space', False))
+        phases = 2.0 * np.pi * (r_frac @ k)
+
+        # --- Resolve per-site rotating-frame directions u_i ---
+        local_dirs = None
+        if config.get('local_directions') or config.get('directions'):
+            dirs = config.get('local_directions', config.get('directions'))
+            local_dirs = [np.asarray(dirs[i % len(dirs)], dtype=float) for i in range(nspins)]
+        elif config.get('S0'):
+            S0 = config['S0']
+            if len(S0) == 1:
+                S0 = S0 * nspins
+            if len(S0) != nspins:
+                raise ValueError(
+                    f"magnetic_structure.S0 must list 1 or {nspins} directions, got {len(S0)}"
+                )
+            local_dirs = [
+                rotation_about_axis(-phases[i], n) @ np.asarray(S0[i], dtype=float)
+                for i in range(nspins)
+            ]
+        elif config.get('u') is not None or config.get('v') is not None:
+            u_vec = np.asarray(config.get('u', [1, 0, 0]), dtype=float)
+            v_vec = np.asarray(config.get('v', [0, 1, 0]), dtype=float)
+            S0 = [u_vec * np.cos(phases[i]) + v_vec * np.sin(phases[i]) for i in range(nspins)]
+            local_dirs = [rotation_about_axis(-phases[i], n) @ S0[i] for i in range(nspins)]
+        else:
+            # Default: one common in-plane direction perpendicular to the axis.
+            trial = np.array([1.0, 0.0, 0.0]) if abs(n[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+            u = trial - np.dot(trial, n) * n
+            u /= np.linalg.norm(u)
+            local_dirs = [u.copy() for _ in range(nspins)]
+
+        # --- Cone angle (deviation from the axis) ---
+        cone_deg = float(config.get('cone_angle_deg', 0.0))
+        if cone_deg > 0.0:
+            c = np.radians(cone_deg)
+            coned = []
+            for v in local_dirs:
+                u_in = v - np.dot(v, n) * n  # in-plane component
+                nrm = np.linalg.norm(u_in)
+                if nrm < 1e-12:
+                    raise ValueError(
+                        "Conical single_k structure needs directions with a "
+                        "non-zero in-plane component."
+                    )
+                coned.append(np.cos(c) * n + np.sin(c) * (u_in / nrm))
+            local_dirs = coned
+        elif not real_space:
+            # Planar spiral: rotating-frame directions must be perpendicular to
+            # the axis, otherwise LSWT is built on a non-ground state and the
+            # phason mode is spuriously gapped.
+            for i, v in enumerate(local_dirs):
+                nrm = np.linalg.norm(v)
+                if nrm > 1e-12 and abs(np.dot(v / nrm, n)) > 1e-6:
+                    logger.warning(
+                        "single_k: direction for site %d is not perpendicular "
+                        "to the rotation axis; the phason mode will be "
+                        "spuriously gapped.", i
+                    )
+
+        # --- Emit angles ---
+        thetas, phis = [], []
+        for i in range(nspins):
+            v = local_dirs[i]
+            if real_space:
+                # Lab-frame structure: apply the k.r phase to each site.
+                v = rotation_about_axis(phases[i], n) @ v
+            if do_normalize:
+                nrm = np.linalg.norm(v)
+                if nrm > 1e-12:
+                    v = v / nrm
+            thetas.append(float(np.arccos(np.clip(v[2], -1.0, 1.0))))
+            phis.append(float(np.arctan2(v[1], v[0])))
+        return thetas, phis
 
     def _generate_structure_spiral_local(self, config):
         """Local (rotating-frame) structure for a single-k spiral.

@@ -251,7 +251,52 @@ def run_calculation(config_file: str):
     q_vectors = None
     do_minimization = tasks.get('minimization', False)
     
-    if do_minimization:
+    min_config_section_early = final_config.get('minimization', {}) or {}
+    if do_minimization and min_config_section_early.get('optimize_k') \
+            and isinstance(spin_model, GenericSpinModel):
+        # Spiral (single-k) ground-state search: optimize k, the spin
+        # directions, and optionally the rotation axis (Sunny
+        # minimize_spiral_energy! / SpinW optmagstr analogue). Commits the
+        # optimum to the model, so the MagCalc built below bakes in the
+        # optimized k; the plain angle-only minimization is skipped.
+        from magcalc import spiral_opt
+        logger.info("Minimization with optimize_k: running spiral (single-k) optimizer...")
+        try:
+            sp_res = spiral_opt.optimize_spiral(
+                spin_model, params_val, min_config_section_early, S_val=S_val)
+            logger.info(sp_res.message)
+
+            out_cfg = final_config.get('output', {})
+            opt_file = out_cfg.get('optimized_structure_filename', 'optimized_structure.yaml')
+            if not os.path.isabs(opt_file):
+                opt_file = os.path.join(config_dir, opt_file)
+            try:
+                _safe_makedirs(opt_file)
+                with open(opt_file, 'w') as f:
+                    yaml.safe_dump({'magnetic_structure': {
+                        'enabled': True,
+                        'type': 'single_k',
+                        'k': [float(c) for c in sp_res.k_rlu],
+                        'axis': [float(c) for c in sp_res.axis],
+                        'local_directions': [[float(c) for c in d]
+                                             for d in spin_model.mag_struct_cfg['local_directions']],
+                    }, 'energy_per_site': float(sp_res.energy_per_site)}, f,
+                        default_flow_style=None, sort_keys=False)
+                logger.info(f"Optimized single-k structure written to {opt_file}")
+            except Exception as e:
+                logger.warning(f"Could not write optimized structure file: {e}")
+
+            if _resolve_plot_structure_flag(tasks, final_config.get('plotting', {})):
+                spin_angles = np.ravel(np.column_stack([sp_res.thetas, sp_res.phis]))
+                _plot_structure_outputs(
+                    spin_model, spin_angles, sp_res.energy, final_config, config_file,
+                    title=f"Optimized spiral k={np.round(sp_res.k_rlu, 5).tolist()} "
+                          f"({os.path.basename(config_file)})"
+                )
+        except Exception as e:
+            logger.error(f"Spiral (optimize_k) minimization failed: {e}")
+            raise
+    elif do_minimization:
         # Check if python model provides minimization
         if spin_model and hasattr(spin_model, 'minimize'):
             logger.info("Minimization handled by custom spin model 'minimize' method.")
@@ -506,6 +551,24 @@ def run_calculation(config_file: str):
                     line = f"{q[0]:.6f},{q[1]:.6f},{q[2]:.6f}," + ",".join([f"{e:.6f}" for e in en])
                     f.write(line + "\n")
 
+    # Satellite (q +/- k) branches for single-k structures. Config surface:
+    # magnetic_structure.satellites, overridable by tasks.satellites.
+    # Defaults: S(Q,w) True when a single-k structure is active (that is the
+    # physical cross-section), dispersion False (preserves prior output shape).
+    single_k_active = getattr(calculator, 'k_cart', None) is not None
+    ms_cfg_norm = getattr(spin_model, 'mag_struct_cfg', None) or \
+        (final_config.get('magnetic_structure') or {})
+    sat_flag = ms_cfg_norm.get('satellites')
+    if tasks.get('satellites') is not None:
+        sat_flag = tasks.get('satellites')
+    disp_satellites = bool(sat_flag) if sat_flag is not None else False
+    sqw_satellites = bool(sat_flag) if sat_flag is not None else True
+    if single_k_active:
+        logger.info(
+            f"Single-k structure: satellites for dispersion={disp_satellites}, "
+            f"S(Q,w)={sqw_satellites}."
+        )
+
     # 2. Dispersion
     do_dispersion = tasks.get('dispersion', False)
     # When S(Q,w) is also requested it returns identical energies on the same
@@ -528,10 +591,13 @@ def run_calculation(config_file: str):
                 B_matrix = compute_b_matrix(spin_model)
                 q_vectors_cart = np.dot(np.array(q_vectors), B_matrix)
 
-                if tasks.get('sqw_map', False) and tasks.get('calculate_sqw_map', True):
+                can_reuse_sqw = (not single_k_active) or (disp_satellites == sqw_satellites)
+                if tasks.get('sqw_map', False) and tasks.get('calculate_sqw_map', True) \
+                        and can_reuse_sqw:
                     # S(Q,w) (computed next, same q-path) yields identical
                     # energies; defer and reuse them. Skips a full eigensolve
-                    # pass and its worker-pool spin-up.
+                    # pass and its worker-pool spin-up. Only valid when both
+                    # use the same satellite setting (mode counts match).
                     dispersion_pending = (q_vectors_cart, disp_file)
                     logger.info(
                         "Dispersion deferred to reuse S(Q,w) energies "
@@ -539,7 +605,8 @@ def run_calculation(config_file: str):
                     )
                 else:
                     logger.info(f"Calculating dispersion... (backend={backend})")
-                    disp_res = calculator.calculate_dispersion(q_vectors_cart, backend=backend)
+                    disp_res = calculator.calculate_dispersion(
+                        q_vectors_cart, backend=backend, satellites=disp_satellites)
                     _emit_dispersion(q_vectors_cart, disp_res.energies, disp_file)
             else:
                 logger.warning("No Q-vectors.")
@@ -563,7 +630,8 @@ def run_calculation(config_file: str):
                 q_vectors_cart = np.dot(q_vectors, B_matrix)
 
                 logger.info(f"Calculating S(Q,w)... (backend={backend})")
-                sqw_res = calculator.calculate_sqw(q_vectors_cart, backend=backend)
+                sqw_res = calculator.calculate_sqw(
+                    q_vectors_cart, backend=backend, satellites=sqw_satellites)
                 q_out = sqw_res.q_vectors
                 en_out = sqw_res.energies
                 int_out = sqw_res.intensities
@@ -609,7 +677,8 @@ def run_calculation(config_file: str):
             logger.info("Dispersion reused from S(Q,w) result (no extra eigensolve).")
         else:
             logger.info(f"S(Q,w) result unavailable; computing dispersion directly. (backend={backend})")
-            disp_res = calculator.calculate_dispersion(q_cart_disp, backend=backend)
+            disp_res = calculator.calculate_dispersion(
+                q_cart_disp, backend=backend, satellites=disp_satellites)
             _emit_dispersion(q_cart_disp, disp_res.energies, disp_file_disp)
 
     # 4. Powder Average
