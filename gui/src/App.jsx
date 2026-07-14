@@ -273,10 +273,15 @@ function App() {
       directions: []
     },
     minimization: {
-      num_starts: 1000,
+      // Monte-Carlo annealing (SpinW `anneal` / Sunny LocalSampler) is the default:
+      // it crosses barriers, so it does not get trapped the way multistart gradient
+      // descent does. On SW20-in-field the gradient path reached the true minimum in
+      // only 3 of 200 starts; anneal finds it in a single run.
+      method: "anneal",
+      num_starts: 4,
+      n_sweeps: 2000,
       n_workers: 8,
-      early_stopping: 10,
-      method: "L-BFGS-B"
+      early_stopping: 10
     },
     calculation: {
       // 'auto' reuses the cached symbolic matrix (gen_HM) across runs; it is
@@ -284,7 +289,13 @@ function App() {
       // needlessly costs seconds of cold-start time. Measured ~79x faster on a
       // 9-spin model. Cache auto-invalidates when the model structure changes.
       cache_mode: 'auto',
-      backend: 'numpy'
+      backend: 'numpy',
+      // LSWT is an expansion about a classical energy MINIMUM. If the magnetic
+      // structure is not one, the spectrum is meaningless -- so the run FAILS by
+      // default rather than drawing a plausible-looking plot. 'warn' is for
+      // structures that are knowingly metastable (e.g. a commensurate approximation
+      // to an incommensurate spiral).
+      on_imaginary: 'error'
     },
     powder_average: {
       q_min: 0.1,
@@ -524,10 +535,15 @@ function App() {
       directions: []
     },
     minimization: {
-      num_starts: 1000,
+      // Monte-Carlo annealing (SpinW `anneal` / Sunny LocalSampler) is the default:
+      // it crosses barriers, so it does not get trapped the way multistart gradient
+      // descent does. On SW20-in-field the gradient path reached the true minimum in
+      // only 3 of 200 starts; anneal finds it in a single run.
+      method: "anneal",
+      num_starts: 4,
+      n_sweeps: 2000,
       n_workers: 8,
-      early_stopping: 10,
-      method: "L-BFGS-B"
+      early_stopping: 10
     },
     powder_average: {
       q_min: 0.1,
@@ -541,7 +557,13 @@ function App() {
       // needlessly costs seconds of cold-start time. Measured ~79x faster on a
       // 9-spin model. Cache auto-invalidates when the model structure changes.
       cache_mode: 'auto',
-      backend: 'numpy'
+      backend: 'numpy',
+      // LSWT is an expansion about a classical energy MINIMUM. If the magnetic
+      // structure is not one, the spectrum is meaningless -- so the run FAILS by
+      // default rather than drawing a plausible-looking plot. 'warn' is for
+      // structures that are knowingly metastable (e.g. a commensurate approximation
+      // to an incommensurate spiral).
+      on_imaginary: 'error'
     },
     fitting: {
       type: 'dispersion',
@@ -1044,6 +1066,32 @@ function App() {
       ...prev,
       [section]: { ...prev[section], [field]: value }
     }))
+  }
+
+  // Monte-Carlo methods ('anneal', 'steep') and the gradient multistart methods take
+  // completely different budgets: `num_starts` means "annealing runs" (a handful) for
+  // the former and "random restarts" (hundreds) for the latter, and early_stopping /
+  // n_workers apply only to the latter. Carrying one method's numbers over to the
+  // other is how you get either an absurdly slow run or a silently wrong ground state,
+  // so retune them whenever the method changes.
+  const isAnnealMethod = (m) => m === 'anneal' || m === 'monte_carlo' || m === 'steep'
+
+  const onMinimizationMethodChange = (method) => {
+    setConfig(prev => {
+      const wasAnneal = isAnnealMethod(prev.minimization.method)
+      const nowAnneal = isAnnealMethod(method)
+      const next = { ...prev.minimization, method }
+      if (wasAnneal !== nowAnneal) {
+        if (nowAnneal) {
+          next.num_starts = 4          // independent annealing runs
+          next.n_sweeps = next.n_sweeps ?? 2000
+        } else {
+          next.num_starts = 1000       // random restarts
+          next.early_stopping = 10
+        }
+      }
+      return { ...prev, minimization: next }
+    })
   }
 
   const addRuleFromVisualizer = (type) => {
@@ -2283,35 +2331,61 @@ function App() {
                       <h3>Minimization Parameters</h3>
                       <div className="grid-form mt-md">
                         <div className="input-group">
-                          <label>Num Starts</label>
-                          <input type="number" value={config.minimization.num_starts} className="minimal-input"
-                            onChange={(e) => updateField('minimization', 'num_starts', parseInt(e.target.value))} />
-                        </div>
-                        <div className="input-group">
-                          <label>N Workers</label>
-                          <input type="number" value={config.minimization.n_workers} className="minimal-input"
-                            onChange={(e) => updateField('minimization', 'n_workers', parseInt(e.target.value))} />
-                        </div>
-                        <div className="input-group">
-                          <label>Early Stopping</label>
-                          <input type="number" value={config.minimization.early_stopping} className="minimal-input"
-                            onChange={(e) => updateField('minimization', 'early_stopping', parseInt(e.target.value))} />
-                          <div className="text-xs text-warning mt-1" style={{ gridColumn: "1 / -1" }}>
-                            &ge; 10 to ensure accurate magnetic structure.
-                          </div>
-                        </div>
-                        <div className="input-group">
                           <label>Method</label>
                           <select
                             className="minimal-select"
                             value={config.minimization.method}
-                            onChange={(e) => updateField('minimization', 'method', e.target.value)}
+                            onChange={(e) => onMinimizationMethodChange(e.target.value)}
                           >
-                            <option value="L-BFGS-B">L-BFGS-B</option>
-                            <option value="TNC">TNC</option>
-                            <option value="SLSQP">SLSQP</option>
+                            <option value="anneal">Monte-Carlo annealing (recommended)</option>
+                            <option value="steep">Steepest descent (local field)</option>
+                            <option value="L-BFGS-B">L-BFGS-B (gradient multistart)</option>
+                            <option value="TNC">TNC (gradient multistart)</option>
+                            <option value="SLSQP">SLSQP (gradient multistart)</option>
                           </select>
+                          <div className="text-xs text-secondary mt-1" style={{ gridColumn: "1 / -1" }}>
+                            {isAnnealMethod(config.minimization.method)
+                              ? (config.minimization.method === 'steep'
+                                  ? 'Aligns each spin with its local field (SpinW optmagsteep). Fast, but it only goes downhill \u2014 it cannot escape a local minimum.'
+                                  : 'Metropolis + cooling (SpinW anneal / Sunny LocalSampler), then a gradient polish. Crosses barriers, so it does not get trapped.')
+                              : 'Random multistart in (\u03b8, \u03c6). Gets trapped on frustrated systems \u2014 prefer annealing.'}
+                          </div>
                         </div>
+
+                        <div className="input-group">
+                          <label>{isAnnealMethod(config.minimization.method) ? 'Runs' : 'Num Starts'}</label>
+                          <input type="number" value={config.minimization.num_starts} className="minimal-input"
+                            onChange={(e) => updateField('minimization', 'num_starts', parseInt(e.target.value))} />
+                        </div>
+
+                        {config.minimization.method === 'anneal' && (
+                          <div className="input-group">
+                            <label>Sweeps</label>
+                            <input type="number" value={config.minimization.n_sweeps ?? 2000} className="minimal-input"
+                              onChange={(e) => updateField('minimization', 'n_sweeps', parseInt(e.target.value))} />
+                            <div className="text-xs text-secondary mt-1" style={{ gridColumn: "1 / -1" }}>
+                              Cooling steps; each attempts one move per spin.
+                            </div>
+                          </div>
+                        )}
+
+                        {!isAnnealMethod(config.minimization.method) && (
+                          <>
+                            <div className="input-group">
+                              <label>N Workers</label>
+                              <input type="number" value={config.minimization.n_workers} className="minimal-input"
+                                onChange={(e) => updateField('minimization', 'n_workers', parseInt(e.target.value))} />
+                            </div>
+                            <div className="input-group">
+                              <label>Early Stopping</label>
+                              <input type="number" value={config.minimization.early_stopping} className="minimal-input"
+                                onChange={(e) => updateField('minimization', 'early_stopping', parseInt(e.target.value))} />
+                              <div className="text-xs text-warning mt-1" style={{ gridColumn: "1 / -1" }}>
+                                Stop after N starts hit the same minimum. Use &ge; 2 &times; the number of magnetic sites; too low silently returns a LOCAL minimum.
+                              </div>
+                            </div>
+                          </>
+                        )}
                       </div>
                     </div>
 
@@ -2376,6 +2450,39 @@ function App() {
                             'Fortran' uses the fMagCalc backend for S(Q,ω) and powder
                             (much faster); falls back to NumPy if it isn't installed.
                           </p>
+                        </div>
+
+                        <div className="input-group">
+                          <label>Ground-State Check</label>
+                          <select
+                            value={config.calculation.on_imaginary || 'error'}
+                            className="minimal-input"
+                            onChange={(e) => updateField('calculation', 'on_imaginary', e.target.value)}
+                          >
+                            <option value="error">Fail the run (default)</option>
+                            <option value="warn">Warn only (metastable structure)</option>
+                            <option value="off">Disable</option>
+                          </select>
+                          <p className="text-xs opacity-50 mt-xs">
+                            Spin waves are an expansion about a classical energy <em>minimum</em>;
+                            about anything else the spectrum is meaningless. The run is checked
+                            for imaginary magnon energies and for a lower-energy relaxation, and
+                            fails if either fires.
+                          </p>
+                          {config.calculation.on_imaginary === 'warn' && (
+                            <p className="text-xs text-warning mt-xs">
+                              Use only when the structure is <strong>knowingly</strong> metastable —
+                              e.g. a commensurate approximation to an incommensurate spiral, or a
+                              state the reference calculation also treats as non-minimal. Otherwise
+                              you are silently computing the wrong physics.
+                            </p>
+                          )}
+                          {config.calculation.on_imaginary === 'off' && (
+                            <p className="text-xs text-warning mt-xs">
+                              Both ground-state guards are disabled. A wrong ground state will now
+                              produce a plausible-looking but meaningless spectrum, with no warning.
+                            </p>
+                          )}
                         </div>
                       </div>
 

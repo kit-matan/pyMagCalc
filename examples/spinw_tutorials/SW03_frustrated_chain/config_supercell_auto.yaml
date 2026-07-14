@@ -17,26 +17,39 @@
 # For the EXACT incommensurate pitch use config_spiral.yaml (rotating
 # frame, k = 0.2300534561, three-branch satellites).
 # =====================================================================
+# on_imaginary: warn -- same commensurate-approximation caveat as config.yaml.
 parameter_order: [J1, J2]
-parameters: {J1: -1.0, J2: 2.0}
+parameters:
+  J1: -1.0
+  J2: 2.0
 crystal_structure:
   lattice_vectors:
   - [3.0, 0.0, 0.0]
   - [0.0, 8.0, 0.0]
   - [0.0, 0.0, 8.0]
   atoms_uc:
-  - {label: A, pos: [0.0, 0.0, 0.0], spin_S: 1.0, ion: Cu2+}
+  - label: A
+    pos: [0.0, 0.0, 0.0]
+    spin_S: 1.0
+    ion: Cu2+
   magnetic_supercell: auto
 interactions:
   symmetry_rules:
-  - {type: heisenberg, distance: 3.0, value: J1}   # NN along the chain (a)
-  - {type: heisenberg, distance: 6.0, value: J2}   # 2nd NN along the chain (2a)
+  - type: heisenberg
+    distance: 3.0
+    value: J1
+  - type: heisenberg
+    distance: 6.0
+    value: J2
 magnetic_structure:
   enabled: true
   type: single_k
-  k: [0.23076923076923078, 0.0, 0.0]   # 3/13, closest small fraction to 0.230053
+  k: [0.23076923076923078, 0.0, 0.0]
   axis: [0.0, 0.0, 1.0]
-tasks: {minimization: false, dispersion: true, sqw_map: true}
+tasks:
+  minimization: false
+  dispersion: true
+  sqw_map: true
 q_path:
   G: [0.0, 0.0, 0.0]
   H: [1.0, 0.0, 0.0]
@@ -51,5 +64,8 @@ plotting:
   sqw_plot_filename: SW03_supercell_sqw.png
   disp_title: 'SW03 supercell (auto [13,1,1], k=3/13): folded bands'
   sqw_title: 'SW03 supercell S(Q,w): spiral branches, ghosts dark'
-calculation: {cache_mode: none}
-output: {save_data: false}
+calculation:
+  cache_mode: none
+  on_imaginary: warn
+output:
+  save_data: false

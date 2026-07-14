@@ -168,9 +168,20 @@ class MagCalcConfigBuilder:
         :param value: The interaction value (e.g. D vector [Dx, Dy, Dz] or matrix).
         :param offset: Optional explicit offset [u, v, w] for the reference bond j relative to i.
         """
+        if ref_pair is None:
+            raise ValueError(
+                f"symmetry rule type '{type}' requires a `ref_pair` (one reference bond, "
+                f"propagated over the detected space group). Only `type: heisenberg` may be "
+                f"given as a bare `distance` rule; a non-scalar rule without `ref_pair` would "
+                f"otherwise expand to zero bonds and silently drop the interaction."
+            )
+
         if not self.symmetry_ops:
-             logger.warning("No symmetry operations loaded. Cannot propagate.")
-             return
+            raise ValueError(
+                f"No symmetry operations loaded, cannot propagate the '{type}' rule for "
+                f"{ref_pair}. Provide a `space_group` in `lattice_parameters`, or list the "
+                f"bonds explicitly."
+            )
 
         # 1. Identify Reference Bond Vector
         def _resolve_atom_idx(lbl):
@@ -196,12 +207,8 @@ class MagCalcConfigBuilder:
 
             raise KeyError(f"Atom '{lbl}' not found in unit cell (keys: {list(self._atom_label_to_idx.keys())})")
 
-        try:
-            idx_i = _resolve_atom_idx(ref_pair[0])
-            idx_j = _resolve_atom_idx(ref_pair[1])
-        except KeyError as e:
-            logger.error(f"Could not find atom {e} in unit cell for interaction rule.")
-            return
+        idx_i = _resolve_atom_idx(ref_pair[0])
+        idx_j = _resolve_atom_idx(ref_pair[1])
 
         pos_i = np.array(self.atoms_uc[idx_i]["pos"])
         pos_j_uc = np.array(self.atoms_uc[idx_j]["pos"])
@@ -214,9 +221,10 @@ class MagCalcConfigBuilder:
             # We need the relative vector r_ij in CARTESIAN to check distance, but fractional for symmetry.
             # Let's search nearest images.
             best_dist = 1e9
-            
-            from itertools import product
-            offsets_to_check = list(product([-1, 0, 1], repeat=3))
+
+            # Sized from the target distance so a reference bond beyond one
+            # cell image is still found (an explicit `offset` skips this).
+            offsets_to_check = self._offset_shell(distance)
 
             for off in offsets_to_check:
                 off_vec = np.array(off)
@@ -844,6 +852,29 @@ class MagCalcConfigBuilder:
         """Set magnetic structure (e.g. type='pattern', directions=[...])."""
         self.config["magnetic_structure"] = kwargs
 
+    def _offset_shell(self, target_dist: Optional[float] = None) -> List[Tuple[int, int, int]]:
+        """Cell-image offsets that can hold a bond of length `target_dist`.
+
+        A bond of length d reaches at most ceil(d / h_i) cells along axis i,
+        where h_i is the cell's perpendicular height along that axis. Sizing the
+        shell from the distance (rather than a fixed +-1) is what lets rules
+        find 2nd-neighbour bonds (a chain bond at 2a, FeI2's J3 at [2,0,0]).
+
+        With no target distance, falls back to the +-1 shell.
+        """
+        from itertools import product
+
+        if not target_dist:
+            return list(product([-1, 0, 1], repeat=3))
+
+        lat = np.asarray(self.lattice_vectors, dtype=float)
+        volume = abs(np.linalg.det(lat))
+        heights = [volume / np.linalg.norm(np.cross(lat[(i + 1) % 3], lat[(i + 2) % 3]))
+                   for i in range(3)]
+        ranges = [range(-n, n + 1) for n in
+                  (max(1, int(np.ceil((target_dist + 0.01) / h))) for h in heights)]
+        return list(product(*ranges))
+
     def _expand_heisenberg_rules(self):
         """
         Expand distance-based Heisenberg rules into explicit pair interactions.
@@ -864,17 +895,6 @@ class MagCalcConfigBuilder:
         positions_uc = [np.array(a["pos"]) for a in self.atoms_uc]
         labels = [a["label"] for a in self.atoms_uc]
         
-        from itertools import product
-
-        # Perpendicular height of the cell along each axis: bonds of length d
-        # can reach at most ceil(d / h_i) cells along axis i, so the offset
-        # search range is sized per rule (a plain +-1 shell silently misses
-        # e.g. 2nd-neighbour chain bonds at 2a).
-        lat = np.asarray(self.lattice_vectors, dtype=float)
-        volume = abs(np.linalg.det(lat))
-        heights = [volume / np.linalg.norm(np.cross(lat[(i + 1) % 3], lat[(i + 2) % 3]))
-                   for i in range(3)]
-
         expanded_rules = []
 
         # For each generic rule, find all matching pairs
@@ -882,10 +902,9 @@ class MagCalcConfigBuilder:
             target_dist = rule["distance"]
             val_sym = rule["value"]
 
-            ranges = [range(-n, n + 1) for n in
-                      (max(1, int(np.ceil((target_dist + 0.01) / h))) for h in heights)]
-            offsets = list(product(*ranges))
-            
+            offsets = self._offset_shell(target_dist)
+            n_before = len(expanded_rules)
+
             # Find all (i, j) pairs with this distance
             for idx_i, pos_i in enumerate(positions_uc):
                 for idx_j, pos_j in enumerate(positions_uc):
@@ -920,7 +939,16 @@ class MagCalcConfigBuilder:
                                 "distance": float(dist)
                             }
                             expanded_rules.append(new_rule)
-        
+
+            if len(expanded_rules) == n_before:
+                raise ValueError(
+                    f"Heisenberg rule {rule} matched no bonds: no pair of sites is "
+                    f"{target_dist} A apart (within 0.01 A) anywhere in the searched "
+                    f"{len(offsets)} cell images. Check the distance against the actual "
+                    f"bond lengths -- a rule that matches nothing would silently drop "
+                    f"the interaction from the Hamiltonian."
+                )
+
         # Combine
         self.config["interactions"]["heisenberg"] = explicit_rules + expanded_rules
         logger.info(f"Expanded {len(generic_rules)} generic rules into {len(expanded_rules)} explicit Heisenberg pairs.")
@@ -1114,18 +1142,16 @@ class MagCalcConfigBuilder:
 
         # Start fresh for expansion (preserving explicit ones)
         self.config["interactions"]["anisotropic_exchange"] = explicit_rules
-        
-        # Neighbor offsets
-        from itertools import product
-        offsets = list(product([-1, 0, 1], repeat=3))
-            
+
         labels = [a["label"] for a in self.atoms_uc]
         positions = [np.array(a["pos"]) for a in self.atoms_uc]
 
         for rule in generic_rules:
             target_dist = rule["distance"]
             value = rule["value"]
-            
+
+            offsets = self._offset_shell(target_dist)
+
             # Find all potential bonds at this distance
             pool = []
             for i, pos_i in enumerate(positions):
@@ -1137,7 +1163,16 @@ class MagCalcConfigBuilder:
                         dist = np.linalg.norm(d_cart)
                         if abs(dist - target_dist) < 0.05:
                             pool.append((labels[i], labels[j], tuple(off)))
-            
+
+            if not pool:
+                raise ValueError(
+                    f"Distance rule {rule} matched no bonds: no pair of sites is "
+                    f"{target_dist} A apart (within 0.05 A) anywhere in the searched "
+                    f"{len(offsets)} cell images. Check the distance against the actual "
+                    f"bond lengths -- a rule that matches nothing would silently drop "
+                    f"the interaction from the Hamiltonian."
+                )
+
             # Group into orbits via symmetry
             while pool:
                 ref_i, ref_j, ref_off = pool[0]
@@ -1168,18 +1203,16 @@ class MagCalcConfigBuilder:
 
         # Start fresh
         self.config["interactions"]["interaction_matrix"] = explicit_rules
-        
-        # Neighbor offsets
-        from itertools import product
-        offsets = list(product([-1, 0, 1], repeat=3))
-            
+
         labels = [a["label"] for a in self.atoms_uc]
         positions = [np.array(a["pos"]) for a in self.atoms_uc]
 
         for rule in generic_rules:
             target_dist = rule.get("distance", 0.0)
             value = rule.get("value") # Expecting 3x3 list of lists
-            
+
+            offsets = self._offset_shell(target_dist)
+
             # Find all potential bonds at this distance
             pool = []
             for i, pos_i in enumerate(positions):
@@ -1191,7 +1224,16 @@ class MagCalcConfigBuilder:
                         dist = np.linalg.norm(d_cart)
                         if abs(dist - target_dist) < 0.05:
                             pool.append((labels[i], labels[j], tuple(off)))
-            
+
+            if not pool:
+                raise ValueError(
+                    f"Distance rule {rule} matched no bonds: no pair of sites is "
+                    f"{target_dist} A apart (within 0.05 A) anywhere in the searched "
+                    f"{len(offsets)} cell images. Check the distance against the actual "
+                    f"bond lengths -- a rule that matches nothing would silently drop "
+                    f"the interaction from the Hamiltonian."
+                )
+
             # Group into orbits via symmetry
             while pool:
                 ref_i, ref_j, ref_off = pool[0]
@@ -1233,11 +1275,7 @@ class MagCalcConfigBuilder:
 
         # Start fresh for expansion (preserving explicit ones)
         self.config["interactions"]["dm_interaction"] = explicit_rules
-        
-        # Neighbor offsets
-        from itertools import product
-        offsets = list(product([-1, 0, 1], repeat=3))
-            
+
         labels = [a["label"] for a in self.atoms_uc]
         positions = [np.array(a["pos"]) for a in self.atoms_uc]
 
@@ -1245,10 +1283,14 @@ class MagCalcConfigBuilder:
             # Skip invalid rules
             if "distance" not in rule:
                 continue
-                
+
             target_dist = rule.get("distance", 0.0)
             value = rule.get("value", ["0","0","0"])
-            
+
+            # Sized from the target distance, not a fixed +-1 shell (which
+            # silently found nothing for bonds beyond one cell image).
+            offsets = self._offset_shell(target_dist)
+
             # Find all potential bonds at this distance
             pool = []
             for i, pos_i in enumerate(positions):
@@ -1260,7 +1302,16 @@ class MagCalcConfigBuilder:
                         dist = np.linalg.norm(d_cart)
                         if abs(dist - target_dist) < 0.05:
                             pool.append((labels[i], labels[j], tuple(off)))
-            
+
+            if not pool:
+                raise ValueError(
+                    f"Distance rule {rule} matched no bonds: no pair of sites is "
+                    f"{target_dist} A apart (within 0.05 A) anywhere in the searched "
+                    f"{len(offsets)} cell images. Check the distance against the actual "
+                    f"bond lengths -- a rule that matches nothing would silently drop "
+                    f"the interaction from the Hamiltonian."
+                )
+
             # Group into orbits via symmetry
             while pool:
                 ref_i, ref_j, ref_off = pool[0]

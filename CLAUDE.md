@@ -40,11 +40,13 @@ Two rule kinds:
 ```yaml
 interactions:
   symmetry_rules:
-  # (a) distance rule: scalar Heisenberg on EVERY bond of that length
+  # (a) distance rule: scalar Heisenberg on EVERY bond of that length.
+  #     `distance` WITHOUT `ref_pair` is valid ONLY for type: heisenberg.
   - {type: heisenberg, distance: 3.0, value: J1}
   # (b) ref_pair rule: one reference bond, propagated by the detected
   #     space group (J' = R J R^T; DM parts transform as axial vectors).
-  #     Use for 3x3 matrices / DM, and for same-length but
+  #     REQUIRED for every non-scalar type (dm, interaction_matrix,
+  #     anisotropic_exchange, kitaev), and for same-length but
   #     symmetry-INEQUIVALENT bond families that need different values.
   - type: interaction_matrix
     ref_pair: [Yb0, Yb4]
@@ -57,8 +59,28 @@ interactions:
 
 Rules expand to **both bond directions** automatically (required by
 pyMagCalc's `H = (1/2) Σ_ordered`); never list reverse bonds by hand alongside
-rules. Distance rules auto-size their cell-image search from the target
-distance, so 2nd-neighbour (2a) bonds are found.
+rules.
+
+Two rules the engine now **enforces with a hard error** (they used to be silent
+failures — a WARNING plus a Hamiltonian quietly missing a term):
+
+1. **`distance` without `ref_pair` is valid only for `type: heisenberg`.** A
+   non-scalar rule (`dm`, `interaction_matrix`, `anisotropic_exchange`,
+   `kitaev`) needs a `ref_pair`; without one it raises. (The bare-`distance`
+   form *does* work if the entry is placed under `interactions.dm_interaction` /
+   `interaction_matrix` / `anisotropic_exchange` directly rather than under
+   `symmetry_rules` — a separate symmetry-aware expander handles those — but
+   prefer `ref_pair`, which is the tested route.)
+
+2. **A rule that matches no bonds raises.** If no pair of sites sits at the
+   given `distance`, you get an error naming the rule instead of a Hamiltonian
+   silently missing that interaction. Check the distance against the real bond
+   lengths.
+
+Cell-image searches are sized from the target distance everywhere (Heisenberg,
+DM, matrix, anisotropic, and the `ref_pair` reference-bond lookup), so
+2nd-neighbour bonds and bonds reaching past one cell image are found. Passing an
+explicit `offset:` on a `ref_pair` rule skips the search entirely.
 
 Keep explicit bond lists ONLY when the coupling genuinely breaks the detected
 crystal symmetry, with a comment saying so:
@@ -144,3 +166,216 @@ python -m magcalc run examples/spinw_tutorials/SWxx_name/config.yaml
 Zeeman convention: `parameters: {H_mag: <B in Tesla>, H_dir: [...]}` (with
 both listed in `parameter_order`) reproduces the electron g=2 Zeeman —
 the engine's splitting is `2·μB·H_mag`.
+
+## 5b. Hamiltonian terms beyond bilinear exchange
+
+All of these live under `interactions:` (dict form) and are validated by
+`tests/test_hamiltonian_terms.py` against exact identities / Sunny.
+
+```yaml
+interactions:
+  # Full 3x3 single-ion anisotropy tensor (only the symmetric part matters).
+  sia_matrix:
+  - {matrix: [[Axx, 0, 0], [0, Ayy, 0], [0, 0, Azz]], atoms: [Fe0]}
+
+  # Crystal field: sum_kq B_k^q O_k^q. Classical (large-s) Stevens polynomials,
+  # Sunny `stevens_matrices(Inf)` convention. k in {2,4,6} (even: time reversal),
+  # -k <= q <= k. THE ROUTE FOR RARE EARTHS.
+  stevens:
+  - {B: {'2,0': B20, '4,0': B40, '4,3': B43}, atoms: [Yb0]}
+
+  # Biquadratic B (S_i.S_j)^2. Genuine operator -- valid for NON-collinear
+  # structures too (unlike SW28's collinear J_eff = J +/- dJ workaround).
+  # Both bond directions, like heisenberg.
+  biquadratic:
+  - {pair: [A, B], rij_offset: [0, 0, 0], value: -0.037}
+
+  # Long-range dipolar coupling. Two methods:
+  dipole_dipole: {method: ewald}                  # EXACT -- prefer this
+  # dipole_dipole: {method: truncated, cutoff: 20.0}   # real-space sum, Angstrom
+  #
+  # The dipolar sum is only CONDITIONALLY convergent: a truncated sum depends on the
+  # cutoff and on the (fictitious) sample shape. `ewald` sums it exactly -- real-space
+  # + reciprocal-space + the surface/demagnetisation term (`demag:`, default I/3, a
+  # sphere in vacuum). Matches Sunny's `enable_dipole_dipole!` to 1e-8; the truncated
+  # sum converges to it as the cutoff grows. With `truncated`, RAISE THE CUTOFF until
+  # your answer stops moving.
+  #
+  # Ewald's A(q) is an infinite lattice sum, so it is NOT a bond list: it is added to
+  # H(q) numerically, and to the classical energy via A(0) (so the minimiser optimises
+  # the same Hamiltonian LSWT diagonalises). Not yet supported with a single-k
+  # rotating-frame structure (each q +/- k channel needs its own A(q)) -- it raises
+  # rather than quietly using the wrong one; use a magnetic_supercell instead.
+  # g comes from the per-site `g`, else 2.
+```
+
+**Per-site g-tensor** goes on the atom, not in `interactions`:
+
+```yaml
+crystal_structure:
+  atoms_uc:
+  - {label: Yb0, pos: [...], spin_S: 0.5,
+     g: {g_par: 1.8, g_perp: 4.32, axis: [1, 1, 1]}}   # uniaxial about a LOCAL axis
+  # also accepted:  g: 2.0  |  g: [gxx, gyy, gzz]  |  g: [[3x3]]
+```
+
+The Zeeman is then `mu_B * B . g_i . S_i`. If NO atom declares `g`, the legacy
+global isotropic term is used unchanged; an explicit isotropic `g: 2.0` reduces
+to it exactly (that is the SW29 calibration, and it is asserted in the tests).
+
+**Multi-k** (`magnetic_structure`) is REAL-SPACE and needs a commensurate cell:
+
+```yaml
+crystal_structure: {magnetic_supercell: auto}   # per-axis LCM over all k
+magnetic_structure:
+  type: multi_k
+  components:
+  - {k: [0.5, 0, 0], m: [0, 0, 1], phase_deg: 0}   # S_i = sum_m m_m cos(2pi k_m.r_i + phi_m)
+  - {k: [0, 0.5, 0], m: [1, 0, 0]}
+  normalize: true      # rescale each site to |S| = 1 (default)
+```
+
+There is no rotating-frame multi-k theory (SpinW and Sunny also require a
+supercell), so every k must be commensurate.
+
+Caveat that bit once: an on-site/bond term that matches **no** bonds, or an
+unsupported Stevens order, RAISES -- it is never silently dropped.
+
+### The ground state is the #1 source of silently wrong physics
+
+LSWT is an expansion about a classical energy MINIMUM. Expand about anything else
+and the spectrum is meaningless -- but it will still *look* like a spectrum. The
+engine now refuses to do that: **two independent guards run before any task**, and
+a failure is a hard error, not a warning.
+
+```yaml
+calculation:
+  on_imaginary: error        # error (default) | warn | off  -- controls BOTH guards
+  imaginary_tolerance: 1.0e-4   # meV
+  energy_tolerance: 1.0e-6      # meV
+```
+
+1. **Imaginary-energy check** (`max_imaginary_energy`) -- a non-minimum with
+   anomalous terms gives imaginary magnons. This is the SW20-in-field class.
+2. **Energy audit** (`relax_from_current`) -- nudge the structure and relax; if the
+   energy drops, it was not a minimum. This catches what guard 1 provably CANNOT:
+   a stationary *maximum* (e.g. a `ferromagnetic` pattern supplied for an
+   antiferromagnet) keeps the Bogoliubov problem diagonal, so `process_calc_disp`
+   sorts the ±ω pairs, returns the upper half, and hands back a real, positive,
+   entirely plausible spectrum. Neither guard alone is sufficient.
+
+Set `on_imaginary: warn` **only** when the instability is understood and intended
+(SW03's commensurate approximation to an incommensurate spiral; SW23, where the
+tutorial itself uses `hermit=false`). Say why in a comment.
+
+### Finding the ground state: use `method: anneal`
+
+**Prefer Monte-Carlo annealing over multistart gradient descent.** It is both more
+reliable and cheaper:
+
+```yaml
+minimization: {enabled: true, method: anneal, num_starts: 4, n_sweeps: 2000, seed: 0}
+```
+
+Methods:
+
+* `anneal` (= `monte_carlo`) -- **the default choice.** Metropolis with a geometric
+  cooling schedule (SpinW `anneal`; Sunny `LocalSampler`'s uniform / flip / delta
+  proposal mix), then an L-BFGS polish so the answer is a true stationary point.
+  Crosses barriers, so it does not get trapped. Optional: `n_sweeps`, `T_start`,
+  `T_end` (meV; defaults derived from the coupling scale), `polish`.
+* `steep` (= `optmagsteep`) -- iteratively align each spin with its local field
+  (SpinW `optmagsteep`). Very fast. **Monotone: it cannot escape a local minimum**,
+  so it is a polisher, not a global search. Good as a cheap first look.
+* `L-BFGS-B` / `TNC` / ... -- the legacy random-multistart path. Works, but it
+  optimizes in (theta, phi), whose coordinate singularities at the poles make it far
+  weaker than it looks. On SW20 in field it reached the true minimum in only
+  **3 of 200 starts**; annealing reaches it in **1 run out of 1**.
+
+The SW20-in-field numbers (16 sites = 32 angles), true minimum -5.716074 meV:
+
+| method | budget | result |
+|---|---|---|
+| L-BFGS-B | 24 starts, early_stopping 10 | **-5.338112 (WRONG)** -- imaginary modes at every q |
+| L-BFGS-B | 200 starts, early_stopping 40 | -5.716074, hit by only 3/200 starts, ~2 s |
+| **anneal** | **1 run x 500 sweeps** | **-5.716074, ~0.8 s** |
+| anneal | 4 runs x 2000 sweeps | -5.716074, 4/4 runs, reproducible across seeds |
+
+All methods report `hits` (how many runs reached the best energy) and warn when
+`hits == 1`. `early_stopping` (multistart only) now defaults to
+`max(10, 2 x n_sites)` instead of a flat 10. **Accept a ground state only when the
+energy is reproducible across several `seed`s** -- and the guards above will catch
+you if it is not.
+
+## 6. Intensity / experiment layer
+
+Applies to S(Q,ω), powder, energy-cut **and FITTING** intensities (never to energies).
+`magcalc fit` reads the SAME `calculation:` block as `magcalc run`, so a fit and a
+forward run model the experiment identically; `fitting:` may override any key locally.
+
+```yaml
+calculation:
+  temperature: 5.0                       # K -> Bose factor per mode
+  domains: {axis: [0, 0, 1], n_fold: 3}  # twins
+  cross_section: perp                    # | trace | chiral | sf+ | sf- | xx | zz | xy ...
+```
+
+**Polarized / chiral.** With the polarization along q (longitudinal SF/NSF) all magnetic
+scattering is spin-flip and the beams differ by the chiral term:
+`M_ch = i q̂·[Σ ε_abc S^ab]`, `σ_SF^± = S_perp ∓ M_ch`. `cross_section: chiral` returns the
+signed M_ch (it vanishes identically for any collinear structure, and for a cycloid when
+q ⊥ the rotation axis). Sign convention pinned to Sunny — `tests/test_polarized.py`.
+
+**Absolute normalization caveat:** pyMagCalc's S(Q,ω) is **3/4 of Sunny's**. This is a
+pre-existing convention difference that affects every channel identically (verified on
+`perp`), so ratios and fitted parameters are unaffected — a fit's free `scale` absorbs it.
+Do not compare ABSOLUTE intensities with Sunny without this factor.
+
+**Ignoring temperature biases fits.** Not a rounding effect: on a ferrimagnet, fitting
+40 K data with a T=0 model returns J = 1.07 instead of 1.30 (a 17% error), because the
+Bose factor reweights the acoustic and optic branches *relative to each other* and a free
+`scale` cannot absorb that. (On a simple AFM chain no bias is even possible: I ~ 1/(J f(q)),
+so J only rescales the intensity and it carries no information about J at all.)
+
+**Mixed spin.** The S(Q,ω) prefactor is √(S_i/2) **per site**. It used to be a single
+global √(S/2), making every site whose S differed from the reference wrong by √(S_i/S_ref)
+— a 60% error on a Cu(½)+Fe(2) model. The Fortran backend still applies the global
+factor, so it now falls back to NumPy for mixed-spin S(Q,ω).
+
+
+Applies to S(Q,ω), powder, and energy-cut intensities (never to energies):
+
+```yaml
+calculation:
+  temperature: 5.0                       # K -> Bose factor per mode
+  domains: {axis: [0, 0, 1], n_fold: 3}  # twins; or explicit list of
+                                         #   {axis, angle, weight} (include angle 0)
+  cross_section: perp                    # | trace | xx | zz | xy ...
+plotting:
+  resolution:
+    de_fwhm: [-0.0125, 0.107143, -0.141071, 0.059286]  # polyval FWHM(E),
+                                         #   highest power first; or a scalar
+    shape: gaussian                      # default gaussian when de_fwhm given
+    dq_fwhm: 0.05                        # |Q| smoothing (1/A)
+    ei: 25.0                             # direct-geometry kinematics (meV)
+    two_theta: [5, 130]                  # detector coverage; masks powder maps
+  energy_grid_step: 0.01                 # map energy grid (default 0.05)
+```
+
+Caveats: domains work only with `cross_section: perp|trace` (lab-frame
+components of a rotated crystal would need tensor rotation — the engine
+raises); powder ignores domains (spherical average is rotation-invariant);
+dispersion and fitting stay single-domain. Constant-energy cuts on a 2-D
+q grid: `tasks: {energy_cut: true}` +
+
+```yaml
+energy_cut:
+  origin: [0, 0, 0]
+  axis1: {vec: [4, 0, 0], points: 121}   # RLU span from origin
+  axis2: {vec: [0, 4, 0], points: 121}
+  cuts:
+  - {center: 3.75, fwhm: 0.25}           # Gaussian energy window
+  - {band: [3.5, 4.01]}                  # hard integration window
+```
+
+Reference: SW10 (energy_cut), SW37 (resolution polynomial).

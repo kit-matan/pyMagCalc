@@ -121,12 +121,15 @@ class _FakeCalc:
     def update_hamiltonian_params(self, p):
         self.hamiltonian_params = list(p)
 
-    def calculate_sqw(self, q_cart, backend="numpy"):
+    def calculate_sqw(self, q_cart, backend="numpy", **kwargs):
+        # **kwargs absorbs the measurement model (temperature / domains /
+        # cross_section) that FitProblem now forwards to the real MagCalc.
         self.n_sqw_calls += 1
         return SimpleNamespace(q_vectors=np.asarray(q_cart),
                                energies=self._e, intensities=self._i)
 
-    def calculate_powder_average(self, q_mags, num_samples=50, backend="numpy"):
+    def calculate_powder_average(self, q_mags, num_samples=50, backend="numpy",
+                                 **kwargs):
         self.n_sqw_calls += 1
         return SimpleNamespace(q_vectors=np.asarray(q_mags),
                                energies=self._e, intensities=self._i)

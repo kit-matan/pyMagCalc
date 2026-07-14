@@ -231,14 +231,42 @@ struct MagneticStructureSettings: Codable, Hashable {
 }
 
 struct MinimizationSettings: Codable, Hashable {
-    var numStarts = 1000
+    /// Monte-Carlo annealing (SpinW `anneal` / Sunny LocalSampler) is the default: it
+    /// crosses barriers, so it does not get trapped the way multistart gradient descent
+    /// does. On SW20-in-field the gradient path reached the true minimum in only 3 of
+    /// 200 starts; anneal finds it in a single run.
+    var method = "anneal"
+    /// Annealing runs (a handful) for `anneal`/`steep`; random restarts (hundreds) for
+    /// the gradient methods. See `applyMethodDefaults`.
+    var numStarts = 4
+    /// Cooling steps for `anneal`; each attempts one move per spin.
+    var nSweeps = 2000
     var nWorkers = 8
     var earlyStopping = 10
-    var method = "L-BFGS-B"
+
+    var isAnnealMethod: Bool {
+        method == "anneal" || method == "monte_carlo" || method == "steep"
+    }
+
+    /// The two families take completely different budgets, and carrying one method's
+    /// numbers over to the other gives either an absurdly slow run or a silently wrong
+    /// ground state. Retune whenever the method changes.
+    mutating func applyMethodDefaults(previousMethod: String) {
+        let wasAnneal = previousMethod == "anneal" || previousMethod == "monte_carlo"
+            || previousMethod == "steep"
+        guard wasAnneal != isAnnealMethod else { return }
+        if isAnnealMethod {
+            numStarts = 4
+        } else {
+            numStarts = 1000
+            earlyStopping = 10
+        }
+    }
 
     enum CodingKeys: String, CodingKey {
         case method
         case numStarts = "num_starts"
+        case nSweeps = "n_sweeps"
         case nWorkers = "n_workers"
         case earlyStopping = "early_stopping"
     }
@@ -247,10 +275,17 @@ struct MinimizationSettings: Codable, Hashable {
 struct CalculationSettings: Codable, Hashable {
     var cacheMode = "auto"
     var backend = "numpy"
+    /// LSWT is an expansion about a classical energy MINIMUM. If the magnetic structure
+    /// is not one, the spectrum is meaningless — so the run FAILS by default rather than
+    /// drawing a plausible-looking plot. Use "warn" only for structures that are
+    /// knowingly metastable (e.g. a commensurate approximation to an incommensurate
+    /// spiral).
+    var onImaginary = "error"
 
     enum CodingKeys: String, CodingKey {
         case backend
         case cacheMode = "cache_mode"
+        case onImaginary = "on_imaginary"
     }
 }
 

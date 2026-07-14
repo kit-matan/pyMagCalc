@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 import logging
 import os
-from typing import Optional, List, Union
+from typing import Optional, List, Tuple, Union
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +12,7 @@ def broaden_spectrum(
     centers: np.ndarray,
     weights: np.ndarray,
     eval_grid: np.ndarray,
-    width: float = 0.2,
+    width: Union[float, np.ndarray] = 0.2,
     kind: str = "lorentzian",
 ) -> np.ndarray:
     """
@@ -28,7 +28,9 @@ def broaden_spectrum(
         centers: (M,) mode energies for one Q-point. NaN/complex entries are dropped.
         weights: (M,) spectral weights (intensities) for those modes.
         eval_grid: (G,) energies at which to evaluate the broadened spectrum.
-        width: full-width parameter (FWHM) of the line-shape, in meV.
+        width: full-width parameter (FWHM) of the line-shape, in meV. Either a
+            scalar (same width for every mode) or an (M,) array of per-mode
+            widths (energy-dependent instrument resolution).
         kind: "lorentzian" (default, matches the S(Q,w) map) or "gaussian".
 
     Returns:
@@ -44,22 +46,81 @@ def broaden_spectrum(
     if centers.size == 0:
         return out
 
-    valid = ~np.isnan(centers) & ~np.isnan(weights)
+    width_arr = np.asarray(width, dtype=float)
+    if width_arr.ndim == 0:
+        width_arr = np.full(centers.shape, float(width_arr))
+    else:
+        width_arr = np.broadcast_to(width_arr.ravel(), centers.shape).copy()
+
+    valid = ~np.isnan(centers) & ~np.isnan(weights) & ~np.isnan(width_arr)
     centers = centers[valid]
     weights = weights[valid]
+    width_arr = width_arr[valid]
     if centers.size == 0:
         return out
 
-    width = max(float(width), 1e-9)
+    width_arr = np.maximum(width_arr, 1e-9)
     delta = eval_grid[:, None] - centers[None, :]  # (G, M)
     if kind == "gaussian":
-        sigma = width / 2.3548200450309493  # FWHM -> sigma
+        sigma = width_arr[None, :] / 2.3548200450309493  # FWHM -> sigma
         shape = np.exp(-0.5 * (delta / sigma) ** 2) / (sigma * np.sqrt(2.0 * np.pi))
     else:  # lorentzian
-        hwhm = width / 2.0
+        hwhm = width_arr[None, :] / 2.0
         shape = (1.0 / np.pi) * hwhm / (delta ** 2 + hwhm ** 2)
 
     return (shape * weights[None, :]).sum(axis=1)
+
+
+# E(meV) = HBAR2_2M * k^2(1/A^2) for a neutron.
+HBAR2_2M_MEV_A2 = 2.0721
+
+
+def kinematic_q_bounds(
+    e_transfer: np.ndarray,
+    ei_mev: float,
+    two_theta_deg: Tuple[float, float] = (0.0, 180.0),
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Accessible |Q| range for a direct-geometry spectrometer.
+
+    For incident energy Ei and energy transfer w, ki = sqrt(Ei/C),
+    kf = sqrt((Ei-w)/C) with C = 2.0721 meV A^2, and the detector coverage
+    two_theta_deg limits |Q| to
+        Q(w, tth) = sqrt(ki^2 + kf^2 - 2 ki kf cos(tth)).
+    Returns (q_min, q_max) arrays; both are NaN where w > Ei (kinematically
+    forbidden).
+    """
+    w = np.asarray(e_transfer, dtype=float)
+    ei = float(ei_mev)
+    ki = np.sqrt(ei / HBAR2_2M_MEV_A2)
+    with np.errstate(invalid="ignore"):
+        kf = np.sqrt(np.where(w <= ei, (ei - w) / HBAR2_2M_MEV_A2, np.nan))
+    tth_lo, tth_hi = np.deg2rad(two_theta_deg[0]), np.deg2rad(two_theta_deg[1])
+    q_lo = np.sqrt(np.maximum(ki**2 + kf**2 - 2 * ki * kf * np.cos(tth_lo), 0.0))
+    q_hi = np.sqrt(np.maximum(ki**2 + kf**2 - 2 * ki * kf * np.cos(tth_hi), 0.0))
+    return np.minimum(q_lo, q_hi), np.maximum(q_lo, q_hi)
+
+
+def resolve_de_fwhm(
+    energies: np.ndarray,
+    resolution: Optional[dict],
+    default_width: float,
+) -> Union[float, np.ndarray]:
+    """Per-mode energy FWHM from a plotting.resolution block.
+
+    resolution['de_fwhm'] may be a scalar (constant FWHM) or a polynomial
+    coefficient list evaluated with numpy.polyval (HIGHEST power first — the
+    SpinW sw_instrument 'dE' convention): FWHM(E) = polyval(coeffs, E).
+    Falls back to default_width when absent. Non-positive evaluations are
+    clipped to 1e-4 meV.
+    """
+    if not resolution or resolution.get("de_fwhm") is None:
+        return default_width
+    de = resolution["de_fwhm"]
+    if np.isscalar(de):
+        return float(de)
+    coeffs = np.asarray(de, dtype=float)
+    widths = np.polyval(coeffs, np.asarray(energies, dtype=float))
+    return np.maximum(widths, 1e-4)
 
 
 def plot_dispersion(
@@ -179,10 +240,27 @@ def plot_sqw_map(
     ylim: Optional[List[float]] = None,
     broadening_width: float = 0.2,
     cmap: str = 'PuBu_r',
-    show_plot: bool = False
+    show_plot: bool = False,
+    resolution: Optional[dict] = None,
+    x_is_qmag: bool = False,
+    energy_grid_step: float = 0.05
 ):
     """
     Plots the S(Q,w) intensity map with Gaussian/Lorentzian broadening.
+
+    resolution (optional dict) models the instrument (SpinW sw_instrument
+    analogue):
+      de_fwhm: scalar FWHM (meV) or polyval coefficient list (highest power
+          first) for an energy-dependent FWHM(E). Overrides broadening_width.
+      shape: 'gaussian' | 'lorentzian'. Defaults to gaussian when de_fwhm is
+          given (instrument resolution), else the legacy lorentzian.
+      dq_fwhm: Gaussian FWHM (1/A) smoothing along the x axis (q path length
+          or |Q| — both are in 1/A).
+      ei: incident energy (meV, direct geometry). Masks energy transfer > Ei.
+      two_theta: [min, max] detector coverage (deg). With ei, and when the x
+          axis is |Q| (x_is_qmag=True, i.e. powder maps), masks |Q| outside
+          the kinematically accessible range at each energy.
+    Masked cells are NaN (blank in the map).
     """
     try:
         # 1. Path Length
@@ -219,9 +297,16 @@ def plot_sqw_map(
              ylim = [y_min, y_max]
         
         y_min, y_max = ylim
-        dy = 0.05 # Energy resolution
+        dy = float(energy_grid_step) # Energy grid step
         y_grid = np.arange(y_min, y_max + dy, dy)
-        
+
+        # Line shape: instrument resolution blocks default to gaussian,
+        # the legacy constant-width path stays lorentzian.
+        shape_kind = (resolution or {}).get('shape')
+        if shape_kind is None:
+            shape_kind = 'gaussian' if (resolution or {}).get('de_fwhm') is not None \
+                else 'lorentzian'
+
         # 3. Broadening (shared line-shape with the intensity-fitting residuals)
         intensity_matrix = np.zeros((len(y_grid), len(x_vals)))
 
@@ -232,15 +317,42 @@ def plot_sqw_map(
             # Handle None or NaN
             if ens is None or ints is None: continue
 
+            widths = resolve_de_fwhm(np.asarray(ens, dtype=float).ravel(),
+                                     resolution, broadening_width)
             intensity_matrix[:, i_q] = broaden_spectrum(
-                ens, ints, y_grid, width=broadening_width, kind="lorentzian"
+                ens, ints, y_grid, width=widths, kind=shape_kind
             )
+
+        # 3b. Instrument effects: dQ smoothing and Ei kinematic masking.
+        if resolution:
+            dq_fwhm = resolution.get('dq_fwhm')
+            if dq_fwhm and len(x_vals) > 1:
+                from scipy.ndimage import gaussian_filter1d
+                dx = float(np.median(np.diff(x_vals)))
+                if dx > 0:
+                    sigma_px = (float(dq_fwhm) / 2.3548200450309493) / dx
+                    intensity_matrix = gaussian_filter1d(
+                        intensity_matrix, sigma_px, axis=1, mode='nearest')
+
+            ei = resolution.get('ei')
+            if ei is not None:
+                ei = float(ei)
+                intensity_matrix[y_grid > ei, :] = np.nan
+                two_theta = resolution.get('two_theta')
+                if two_theta is not None and x_is_qmag:
+                    q_lo, q_hi = kinematic_q_bounds(
+                        y_grid, ei, (float(two_theta[0]), float(two_theta[1])))
+                    x_arr = np.asarray(x_vals, dtype=float)[None, :]
+                    forbidden = (x_arr < q_lo[:, None]) | (x_arr > q_hi[:, None]) \
+                        | ~np.isfinite(q_lo)[:, None]
+                    intensity_matrix[forbidden] = np.nan
 
         # 4. Plotting
         plt.figure(figsize=(10, 6))
-        
+
         # Robust Vmin/Vmax
-        pos_vals = intensity_matrix[intensity_matrix > 1e-6]
+        finite = np.isfinite(intensity_matrix)
+        pos_vals = intensity_matrix[finite & (intensity_matrix > 1e-6)]
         if len(pos_vals) > 0:
             vmin = np.min(pos_vals)
             vmax = np.max(pos_vals)
@@ -254,7 +366,7 @@ def plot_sqw_map(
                              
         plt.colorbar(pcm, label="Intensity (arb. units)")
         plt.title(title)
-        plt.xlabel(r"Q Path Length ($\AA^{-1}$)")
+        plt.xlabel(r"$|Q|$ ($\AA^{-1}$)" if x_is_qmag else r"Q Path Length ($\AA^{-1}$)")
         plt.ylabel("Energy (meV)")
         plt.ylim(ylim)
         plt.xlim(min(x_vals), max(x_vals))
@@ -273,6 +385,52 @@ def plot_sqw_map(
 
     except Exception as e:
         logger.error(f"Failed to plot S(Q,w): {e}")
+        raise e
+
+
+def plot_energy_cuts(
+    coords1: np.ndarray,
+    coords2: np.ndarray,
+    panels: List[np.ndarray],
+    labels: List[str],
+    save_filename: str,
+    axis_labels: Tuple[str, str] = ("axis 1 (r.l.u.)", "axis 2 (r.l.u.)"),
+    title: str = "Constant-energy cuts",
+    cmap: str = "viridis",
+    show_plot: bool = False,
+):
+    """Plot one panel per constant-energy cut on a 2-D q grid.
+
+    coords1/coords2 are the grid axis coordinates (n1,) and (n2,); each panel
+    is an (n1, n2) intensity array (axis 0 <-> coords1). Color scale is capped
+    at the 97th percentile of the positive values, like the SW10 reference.
+    """
+    try:
+        n_panels = max(len(panels), 1)
+        fig, axes = plt.subplots(
+            1, n_panels, figsize=(5.5 * n_panels, 4.6),
+            constrained_layout=True, squeeze=False)
+        for ax, Z, label in zip(axes[0], panels, labels):
+            Zp = np.asarray(Z, dtype=float)
+            finite_pos = Zp[np.isfinite(Zp) & (Zp > 0)]
+            vmax = np.percentile(finite_pos, 97) if finite_pos.size else 1.0
+            pm = ax.pcolormesh(coords1, coords2, Zp.T, shading="auto",
+                               cmap=cmap, vmin=0.0, vmax=vmax)
+            ax.set_xlabel(axis_labels[0])
+            ax.set_ylabel(axis_labels[1])
+            ax.set_title(label)
+            fig.colorbar(pm, ax=ax, shrink=0.85)
+        fig.suptitle(title)
+
+        if save_filename:
+            os.makedirs(os.path.dirname(os.path.abspath(save_filename)), exist_ok=True)
+            fig.savefig(save_filename, dpi=150, bbox_inches="tight", pad_inches=0.1)
+            logger.info(f"Energy-cut plot saved to {save_filename}")
+        if show_plot:
+            plt.show()
+        plt.close(fig)
+    except Exception as e:
+        logger.error(f"Failed to plot energy cuts: {e}")
         raise e
 
 

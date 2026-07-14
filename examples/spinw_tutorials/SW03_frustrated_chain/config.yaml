@@ -23,8 +23,15 @@
 # minimizing pitch, a tiny (~0.03 meV) imaginary part appears at a few q.
 # For a clean single-branch plot, compute S(Q,w) (ghosts carry no weight).
 # =====================================================================
+# on_imaginary: warn -- this is the COMMENSURATE 13-site approximation to an
+# incommensurate spiral (k = 0.23006, vs 3/13 = 0.23077). The imposed spiral is
+# therefore not exactly the minimum of the 13-site cell and LSWT shows small
+# imaginary parts (~3e-2 meV). Use config_spiral.yaml (rotating frame) for the
+# exact treatment -- it is stable and validated to ~1e-12 against the analytic helix.
 parameter_order: [J1, J2]
-parameters: {J1: -1.0, J2: 2.0}
+parameters:
+  J1: -1.0
+  J2: 2.0
 crystal_structure:
   lattice_vectors:
   - [39.0, 0.0, 0.0]
@@ -85,8 +92,12 @@ crystal_structure:
     ion: Cu2+
 interactions:
   symmetry_rules:
-  - {type: heisenberg, distance: 3.0, value: J1}
-  - {type: heisenberg, distance: 6.0, value: J2}
+  - type: heisenberg
+    distance: 3.0
+    value: J1
+  - type: heisenberg
+    distance: 6.0
+    value: J2
 magnetic_structure:
   enabled: true
   type: pattern
@@ -105,7 +116,9 @@ magnetic_structure:
   - [-0.354605, 0.935016, 0.0]
   - [-0.970942, -0.239316, 0.0]
   - [0.120537, -0.992709, 0.0]
-tasks: {minimization: false, dispersion: true}
+tasks:
+  minimization: false
+  dispersion: true
 q_path:
   G: [0.0, 0.0, 0.0]
   H: [13.0, 0.0, 0.0]
@@ -118,5 +131,8 @@ plotting:
   energy_limits_disp: [0, 4.5]
   disp_plot_filename: SW03_disp.png
   disp_title: SW03 frustrated J1-J2 chain (spiral, 13-site supercell)
-calculation: {cache_mode: none}
-output: {save_data: false}
+calculation:
+  cache_mode: none
+  on_imaginary: warn
+output:
+  save_data: false

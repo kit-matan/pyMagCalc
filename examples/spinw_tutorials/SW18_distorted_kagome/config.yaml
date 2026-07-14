@@ -20,8 +20,19 @@
 # were obtained by minimizing the classical energy at that k. pyMagCalc's
 # rotating-frame spiral mode then gives the spin-wave spectrum.
 # =====================================================================
+# on_imaginary: warn -- the spiral uses the TUTORIAL's k = [0.785902, 0, 0.107049],
+# but this model's own classical minimum is at k_x = 0.7873 (E/site -0.7838 vs
+# -0.78338; see the status table). Imposing the reference k therefore expands LSWT
+# about a state that is not quite the minimum, and the acoustic branch acquires a
+# small imaginary part (~0.09 meV, 1.8% of the bandwidth). Faithful to the
+# tutorial, not a bug. Use minimization with `optimize_k: true` to relax k instead.
 parameter_order: [J, Jp, Ja, Jab, Jip]
-parameters: {J: -2.0, Jp: -1.0, Ja: 2.280303, Jab: 0.75, Jip: 0.01}
+parameters:
+  J: -2.0
+  Jp: -1.0
+  Ja: 2.280303
+  Jab: 0.75
+  Jip: 0.01
 crystal_structure:
   lattice_vectors:
   - [10.2, 0.0, 0.0]
@@ -289,7 +300,9 @@ magnetic_structure:
   - [-0.5871324411029091, -0.8094908872893747, 0.0]
   - [-0.5871326991982798, -0.8094907000899654, 0.0]
   - [-0.5871325865797439, -0.8094907817734428, 0.0]
-tasks: {minimization: false, dispersion: true}
+tasks:
+  minimization: false
+  dispersion: true
 q_path:
   G: [0, 0, 0]
   H: [1, 0, 0]
@@ -302,5 +315,8 @@ plotting:
   energy_limits_disp: [0, 7]
   disp_plot_filename: SW18_disp.png
   disp_title: 'SW18 distorted kagome KCu3As2O7(OD)3: spiral spectrum [H,0,0]'
-calculation: {cache_mode: none}
-output: {save_data: false}
+calculation:
+  cache_mode: none
+  on_imaginary: warn
+output:
+  save_data: false

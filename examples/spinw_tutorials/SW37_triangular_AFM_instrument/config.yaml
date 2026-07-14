@@ -15,12 +15,16 @@
 # gives the central branch: w(1/2,1/2)=1.5000, w(1/3,1/3)=0 (Goldstone),
 # max 2.6250 at q=(1/6,1/6)-type points. Verified (see README).
 #
-# The tutorial then demonstrates sw_instrument(): constant dE, an
-# energy-dependent dE polynomial, Q-resolution dQ, and Ei kinematic
-# limits. pyMagCalc supports a constant-FWHM energy broadening of the
-# S(Q,w) map (plotting.broadening_width, 0.3 meV here, tutorial's
-# "constant resolution" panel); energy-dependent resolution, dQ and
-# kinematic Ei cuts are not implemented (documented feature gap).
+# The tutorial then demonstrates sw_instrument() energy resolution three
+# ways: (i) constant dE = 0.3 meV; (ii) tabulated points EN=[0 1 2 3 4],
+# dE=[0.05 0.05 0.05 0.3 0.4] meV fitted with a cubic ('polDeg' 3);
+# (iii) a user function a+b*exp(-x). pyMagCalc's plotting.resolution
+# covers (i) (scalar de_fwhm) and (ii) (polynomial de_fwhm, polyval
+# convention = SpinW's polyfit — used below with the cubic fitted to the
+# tutorial's table); arbitrary-function dE like (iii) is not expressible
+# in YAML (use plot_sqw_map + broaden_spectrum with per-mode widths from
+# Python for that). resolution.dq_fwhm / ei / two_theta model
+# sw_instrument's dQ and kinematic cuts (not used by this tutorial).
 # =====================================================================
 parameter_order: [J]
 parameters: {J: 1.0}
@@ -54,10 +58,18 @@ plotting:
   plot_structure: false
   energy_limits_disp: [0, 3]
   energy_limits_sqw: [0, 3]
-  broadening_width: 0.3
+  broadening_width: 0.3     # tutorial's constant-dE panel (used if the
+                            # resolution block below is removed)
+  # Energy-dependent FWHM(E): cubic fitted (numpy.polyfit, = SpinW polyfit)
+  # to the tutorial's table EN=[0 1 2 3 4], dE=[0.05 0.05 0.05 0.3 0.4] meV.
+  # Coefficients in polyval order (highest power first).
+  resolution:
+    de_fwhm: [-0.0125, 0.107143, -0.141071, 0.059286]
+    shape: gaussian
+  energy_grid_step: 0.01    # fine grid so the sharp low-E lines stay smooth
   disp_plot_filename: SW37_disp.png
   sqw_plot_filename: SW37_sqw.png
   disp_title: 'SW37 triangular AFM (120 deg): central branch'
-  sqw_title: 'SW37 triangular AFM: S(Q,w), FWHM 0.3 meV'
+  sqw_title: 'SW37 triangular AFM: S(Q,w), sw_instrument cubic dE(E)'
 calculation: {cache_mode: none}
 output: {save_data: false}

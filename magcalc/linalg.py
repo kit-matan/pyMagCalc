@@ -1,6 +1,6 @@
 
 import logging
-from typing import Tuple, Optional, Set
+from typing import List, Optional, Set, Tuple
 import numpy as np
 import numpy.typing as npt
 from scipy import linalg as la  # Matches magcalc.py usage
@@ -14,6 +14,29 @@ ALPHA_MATRIX_ZERO_NORM_WARNING_THRESHOLD: float = 1e-14
 EIGENVECTOR_MATCHING_THRESHOLD: float = 1e-4
 # PROJECTION_CHECK_TOLERANCE: float = 1e-5 # Not clearly used in extracted block, can add if needed.
 I = 1j  # Use pure complex for numerical arrays
+
+def rotation_matrix(
+    axis: npt.NDArray[np.float64], angle_deg: float
+) -> npt.NDArray[np.float64]:
+    """Rodrigues rotation matrix for a rotation of angle_deg about axis.
+
+    axis is a Cartesian 3-vector (need not be normalized). Used for
+    domain/twin averaging, where each domain is the crystal rotated in the
+    laboratory frame.
+    """
+    a = np.asarray(axis, dtype=float)
+    norm = np.linalg.norm(a)
+    if norm < 1e-12:
+        raise ValueError(f"Rotation axis must be non-zero, got {axis}.")
+    a = a / norm
+    theta = np.deg2rad(float(angle_deg))
+    K = np.array([
+        [0.0, -a[2], a[1]],
+        [a[2], 0.0, -a[0]],
+        [-a[1], a[0], 0.0],
+    ])
+    return np.eye(3) + np.sin(theta) * K + (1.0 - np.cos(theta)) * (K @ K)
+
 
 def gram_schmidt(x: npt.NDArray[np.complex128]) -> npt.NDArray[np.complex128]:
     """
@@ -407,6 +430,27 @@ def _match_and_reorder_minus_q(
     )
 
 
+def _spin_prefactor_vector(
+    spin_magnitude: float,
+    nspins: int,
+    spin_magnitudes: Optional[List[float]] = None,
+) -> npt.NDArray[np.float64]:
+    """Row scaling sqrt(S_i / 2) for the 3N spin components of K / Kd.
+
+    The Holstein-Primakoff map for site i carries sqrt(S_i/2), so a MIXED-SPIN model
+    needs a per-site factor here -- a single global sqrt(S/2) makes every relative
+    intensity wrong by sqrt(S_i/S_ref). (The dispersion was already correct: gen_HM
+    scales each site's HP expansion by its own spin_S.)
+
+    Applying it to the 3N rows is exact: Ud is block-diagonal in the sites (its 3x3
+    block rotates site i's local frame to the lab), so a per-site scalar commutes
+    through it.
+    """
+    if not spin_magnitudes or len(spin_magnitudes) != nspins:
+        return np.full(3 * nspins, np.sqrt(spin_magnitude / 2.0))
+    return np.repeat(np.sqrt(np.asarray(spin_magnitudes, dtype=float) / 2.0), 3)
+
+
 def _calculate_K_Kd(
     Ud_numeric: npt.NDArray[np.complex128],
     spin_magnitude: float,
@@ -414,6 +458,7 @@ def _calculate_K_Kd(
     inv_T_p: npt.NDArray[np.complex128],
     inv_T_m_reordered: npt.NDArray[np.complex128],
     zero_threshold: float,
+    spin_magnitudes: Optional[List[float]] = None,
 ) -> Tuple[npt.NDArray[np.complex128], npt.NDArray[np.complex128]]:
     """
     Calculate the K and Kd matrices for S(q,w) intensity calculation.
@@ -444,12 +489,12 @@ def _calculate_K_Kd(
         Udd_local_boson_map[3 * i, i + nspins] = 1.0
         Udd_local_boson_map[3 * i + 1, i] = 1.0 / I
         Udd_local_boson_map[3 * i + 1, i + nspins] = -1.0 / I
-    prefactor: float = np.sqrt(spin_magnitude / 2.0)
+    pref = _spin_prefactor_vector(spin_magnitude, nspins, spin_magnitudes)[:, None]
     K_matrix: npt.NDArray[np.complex128] = (
-        prefactor * Ud_numeric @ Udd_local_boson_map @ inv_T_p
+        pref * (Ud_numeric @ Udd_local_boson_map @ inv_T_p)
     )
     Kd_matrix: npt.NDArray[np.complex128] = (
-        prefactor * Ud_numeric @ Udd_local_boson_map @ inv_T_m_reordered
+        pref * (Ud_numeric @ Udd_local_boson_map @ inv_T_m_reordered)
     )
     K_matrix[np.abs(K_matrix) < zero_threshold] = 0
     Kd_matrix[np.abs(Kd_matrix) < zero_threshold] = 0
@@ -463,6 +508,7 @@ def KKdMatrix(
     Ud_numeric: npt.NDArray[np.complex128],
     q_vector: npt.NDArray[np.float64],
     nspins: int,
+    spin_magnitudes: Optional[List[float]] = None,
 ) -> Tuple[
     npt.NDArray[np.complex128], npt.NDArray[np.complex128], npt.NDArray[np.complex128]
 ]:
@@ -567,11 +613,11 @@ def KKdMatrix(
     Udd_local_boson_map[3 * indices + 1, indices] = -1j # 1/j = -j
     Udd_local_boson_map[3 * indices + 1, indices + nspins] = 1j # -1/j = j
 
-    prefactor = np.sqrt(spin_magnitude / 2.0)
-    
-    # Matrix multiplications
-    K_matrix = prefactor * Ud_numeric @ Udd_local_boson_map @ inv_T_p
-    Kd_matrix = prefactor * Ud_numeric @ Udd_local_boson_map @ inv_T_m_reordered
+    pref = _spin_prefactor_vector(spin_magnitude, nspins, spin_magnitudes)[:, None]
+
+    # Matrix multiplications (per-site sqrt(S_i/2) row scaling -- mixed spin)
+    K_matrix = pref * (Ud_numeric @ Udd_local_boson_map @ inv_T_p)
+    Kd_matrix = pref * (Ud_numeric @ Udd_local_boson_map @ inv_T_m_reordered)
 
     # Thresholding
     K_matrix[np.abs(K_matrix) < ZERO_MATRIX_ELEMENT_THRESHOLD] = 0

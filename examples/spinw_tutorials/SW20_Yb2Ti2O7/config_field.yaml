@@ -1,0 +1,234 @@
+# =====================================================================
+# SW20 -- Yb2Ti2O7 in an applied field (SpinW tutorial 20, in-field panels).
+#
+# The tutorial's in-field spectra need an ANISOTROPIC g-tensor that is
+# uniaxial about each site's OWN local <111> axis (Ross et al., PRX 1,
+# 021002) -- something a single global isotropic Zeeman cannot express:
+#
+#     g_par (|| local <111>) = 1.8      g_perp = 4.32
+#
+# Each Yb site therefore carries `g: {g_par, g_perp, axis}`. The four local
+# axes were derived geometrically from the structure (site -> centre of its
+# tetrahedron); the 16d sites fall into four groups of four:
+#     Yb0-3   [ 1, 1, 1]      Yb8-11  [ 1,-1, 1]
+#     Yb4-7   [ 1,-1,-1]      Yb12-15 [ 1, 1,-1]
+# Only the axis DIRECTION matters (g enters as g_par*zz^T + g_perp*(1-zz^T)).
+#
+# Field: B = 5 T along [1 -1 0]. H_mag is in Tesla; with an explicit
+# g-tensor the Zeeman is mu_B * B . g_i . S_i, which reduces exactly to the
+# legacy calibrated term at g = 2 (tests/test_hamiltonian_terms.py).
+#
+# GROUND STATE -- read this before changing `minimization`.
+# This is a frustrated pyrochlore: 16 sites = 32 angles, and the energy
+# landscape has local minima that are NOT the ground state but still look
+# plausible. With too few starts the minimizer settles in one of them and
+# LSWT is then built about a non-minimum, which shows up as IMAGINARY magnon
+# energies at every q. `num_starts: 200` + `early_stopping: 40` reaches the
+# true minimum, E = -5.716074 meV/cell -- reproducible from seeds 0/1/7/123,
+# with zero imaginary modes. (num_starts 24 / early_stopping 10 gave
+# -5.338 meV and imaginary modes everywhere.) If you retune this model,
+# check the energy is reproducible across seeds AND that no imaginary-part
+# warnings appear -- either one alone is not sufficient.
+#
+# Result: a fully gapped spectrum (no Goldstone -- the field breaks every
+# continuous symmetry), gap 0.413 meV, bands to 1.109 meV. Field dependence
+# is monotonic in energy (0/2/5 T -> -2.220 / -3.430 / -5.716 meV) with the
+# gap softening near 2 T as the splayed FM reorients toward the field.
+#
+# The zero-field model lives in config.yaml (identical exchange; the
+# g-tensor is inert at B = 0 since it only enters the Zeeman).
+# =====================================================================
+parameter_order: [H_mag, H_dir]
+parameters:
+  H_mag: 5.0
+  H_dir: [0.7071067811865476, -0.7071067811865476, 0.0]
+crystal_structure:
+  lattice_vectors:
+  - [10.0307, 0, 0]
+  - [0, 10.0307, 0]
+  - [0, 0, 10.0307]
+  atoms_uc:
+  - label: Yb0
+    pos: [0.5, 0.5, 0.5]
+    spin_S: 0.5
+    ion: Cu2+
+    g:
+      g_par: 1.8
+      g_perp: 4.32
+      axis: &id001 [1, 1, 1]
+  - label: Yb1
+    pos: [0.5, 0.0, 0.0]
+    spin_S: 0.5
+    ion: Cu2+
+    g:
+      g_par: 1.8
+      g_perp: 4.32
+      axis: *id001
+  - label: Yb2
+    pos: [0.0, 0.5, 0.0]
+    spin_S: 0.5
+    ion: Cu2+
+    g:
+      g_par: 1.8
+      g_perp: 4.32
+      axis: *id001
+  - label: Yb3
+    pos: [0.0, 0.0, 0.5]
+    spin_S: 0.5
+    ion: Cu2+
+    g:
+      g_par: 1.8
+      g_perp: 4.32
+      axis: *id001
+  - label: Yb4
+    pos: [0.5, 0.25, 0.25]
+    spin_S: 0.5
+    ion: Cu2+
+    g:
+      g_par: 1.8
+      g_perp: 4.32
+      axis: &id002 [1, -1, -1]
+  - label: Yb5
+    pos: [0.5, 0.75, 0.75]
+    spin_S: 0.5
+    ion: Cu2+
+    g:
+      g_par: 1.8
+      g_perp: 4.32
+      axis: *id002
+  - label: Yb6
+    pos: [0.0, 0.25, 0.75]
+    spin_S: 0.5
+    ion: Cu2+
+    g:
+      g_par: 1.8
+      g_perp: 4.32
+      axis: *id002
+  - label: Yb7
+    pos: [0.0, 0.75, 0.25]
+    spin_S: 0.5
+    ion: Cu2+
+    g:
+      g_par: 1.8
+      g_perp: 4.32
+      axis: *id002
+  - label: Yb8
+    pos: [0.25, 0.5, 0.25]
+    spin_S: 0.5
+    ion: Cu2+
+    g:
+      g_par: 1.8
+      g_perp: 4.32
+      axis: &id003 [1, -1, 1]
+  - label: Yb9
+    pos: [0.25, 0.0, 0.75]
+    spin_S: 0.5
+    ion: Cu2+
+    g:
+      g_par: 1.8
+      g_perp: 4.32
+      axis: *id003
+  - label: Yb10
+    pos: [0.75, 0.5, 0.75]
+    spin_S: 0.5
+    ion: Cu2+
+    g:
+      g_par: 1.8
+      g_perp: 4.32
+      axis: *id003
+  - label: Yb11
+    pos: [0.75, 0.0, 0.25]
+    spin_S: 0.5
+    ion: Cu2+
+    g:
+      g_par: 1.8
+      g_perp: 4.32
+      axis: *id003
+  - label: Yb12
+    pos: [0.25, 0.25, 0.5]
+    spin_S: 0.5
+    ion: Cu2+
+    g:
+      g_par: 1.8
+      g_perp: 4.32
+      axis: &id004 [1, 1, -1]
+  - label: Yb13
+    pos: [0.25, 0.75, 0.0]
+    spin_S: 0.5
+    ion: Cu2+
+    g:
+      g_par: 1.8
+      g_perp: 4.32
+      axis: *id004
+  - label: Yb14
+    pos: [0.75, 0.25, 0.0]
+    spin_S: 0.5
+    ion: Cu2+
+    g:
+      g_par: 1.8
+      g_perp: 4.32
+      axis: *id004
+  - label: Yb15
+    pos: [0.75, 0.75, 0.5]
+    spin_S: 0.5
+    ion: Cu2+
+    g:
+      g_par: 1.8
+      g_perp: 4.32
+      axis: *id004
+interactions:
+  symmetry_rules:
+  - type: interaction_matrix
+    ref_pair: [Yb0, Yb4]
+    offset: [0, 0, 0]
+    value:
+    - [-0.22, 0.01, 0.01]
+    - [-0.01, -0.09, -0.29]
+    - [-0.01, -0.29, -0.09]
+magnetic_structure:
+  enabled: true
+  type: pattern
+  pattern_type: generic
+  directions:
+  - [0.25001219343669, 0.2500121934366901, 0.9354078288457661]
+  - [0.25001219343669, 0.2500121934366901, 0.9354078288457661]
+  - [0.25001219343669, 0.2500121934366901, 0.9354078288457661]
+  - [0.25001219343669, 0.2500121934366901, 0.9354078288457661]
+  - [-0.25001219343669, -0.25001219343669, 0.9354078288457661]
+  - [-0.25001219343669, -0.25001219343669, 0.9354078288457661]
+  - [-0.25001219343669, -0.25001219343669, 0.9354078288457661]
+  - [-0.25001219343669, -0.25001219343669, 0.9354078288457661]
+  - [-0.25001219343669, 0.2500121934366899, 0.9354078288457661]
+  - [-0.25001219343669, 0.2500121934366899, 0.9354078288457661]
+  - [-0.25001219343669, 0.2500121934366899, 0.9354078288457661]
+  - [-0.25001219343669, 0.2500121934366899, 0.9354078288457661]
+  - [0.25001219343669007, -0.25001219343668984, 0.9354078288457661]
+  - [0.25001219343669007, -0.25001219343668984, 0.9354078288457661]
+  - [0.25001219343669007, -0.25001219343668984, 0.9354078288457661]
+  - [0.25001219343669007, -0.25001219343668984, 0.9354078288457661]
+tasks:
+  minimization: true
+  dispersion: true
+  sqw_map: false
+q_path:
+  A: [-0.5, -0.5, -0.5]
+  B: [2.0, 2.0, 2.0]
+  path: [A, B]
+  points_per_segment: 250
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  energy_limits_disp: [0, 1.0]
+  disp_plot_filename: SW20_field_disp.png
+  disp_title: SW20 Yb2Ti2O7, B = 5 T || [1-10], anisotropic g (g_xy=4.32, g_z=1.8)
+calculation:
+  cache_mode: none
+output:
+  save_data: false
+minimization:
+  enabled: true
+  method: anneal
+  num_starts: 4
+  n_sweeps: 2000
+  seed: 0

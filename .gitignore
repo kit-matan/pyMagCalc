@@ -63,3 +63,6 @@ memory/
 **/.DS_Store
 **/xcuserdata/
 *.xcuserstate
+
+# generated 3D-structure JSON written next to plots by runs
+examples/materials/plots/

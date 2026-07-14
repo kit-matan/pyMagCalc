@@ -18,6 +18,9 @@ class AtomUC(BaseModel):
     pos: List[float]
     spin_S: float
     species: Optional[str] = None
+    # Per-site g-tensor: scalar | [gxx,gyy,gzz] | 3x3 | {g_par, g_perp, axis}.
+    # Absent on every atom => legacy global isotropic Zeeman.
+    g: Optional[Union[float, str, List[Any], Dict[str, Any]]] = None
 
 class WyckoffAtom(BaseModel):
     model_config = ConfigDict(extra='allow')
@@ -53,6 +56,12 @@ class InteractionsDict(BaseModel):
     interaction_matrix: Optional[List[Dict[str, Any]]] = []
     kitaev: Optional[List[Dict[str, Any]]] = []
     symmetry_rules: Optional[List[Dict[str, Any]]] = []
+    # Higher-order / on-site terms (see CLAUDE.md 'Hamiltonian terms').
+    sia_matrix: Optional[List[Dict[str, Any]]] = []       # full 3x3 anisotropy tensor
+    stevens: Optional[List[Dict[str, Any]]] = []          # crystal field B_k^q O_k^q
+    biquadratic: Optional[List[Dict[str, Any]]] = []      # B (S_i.S_j)^2
+    # Long-range dipolar coupling: {cutoff: <Angstrom>, g: <optional>}
+    dipole_dipole: Optional[Dict[str, Any]] = None
 
 class SingleKStructure(BaseModel):
     """Unified propagation-vector magnetic structure (SpinW genmagstr 'helical' /
@@ -81,6 +90,28 @@ class SingleKStructure(BaseModel):
         if self.axis is None and self.n is not None:
             self.axis = self.n
         return self
+
+class MultiKComponent(BaseModel):
+    model_config = ConfigDict(extra='allow')
+    k: List[float]                 # propagation vector, chemical RLU
+    m: List[float]                 # amplitude vector, Cartesian
+    phase_deg: float = 0.0
+
+
+class MultiKStructure(BaseModel):
+    """Real-space multi-k structure: S_i = sum_m m_m cos(2 pi k_m . r_i + phi_m).
+
+    Requires a magnetic supercell commensurate with every k (use
+    crystal_structure.magnetic_supercell: 'auto', which takes the per-axis LCM of
+    the k denominators). There is no rotating-frame multi-k theory -- SpinW and
+    Sunny likewise require a supercell -- so all k must be commensurate.
+    """
+    model_config = ConfigDict(extra='allow')
+    type: Literal['multi_k']
+    components: List[MultiKComponent]
+    normalize: bool = True         # rescale each site to |S| = 1
+    enabled: bool = True
+
 
 class ExplicitStructure(BaseModel):
     model_config = ConfigDict(extra='allow')
@@ -119,7 +150,7 @@ class LegacyPropKStructure(BaseModel):
     enabled: bool = True
 
 MagneticStructure = Annotated[
-    Union[SingleKStructure, ExplicitStructure, PatternStructure,
+    Union[SingleKStructure, MultiKStructure, ExplicitStructure, PatternStructure,
           LegacySpiralStructure, LegacyPropKStructure],
     Field(discriminator='type'),
 ]
@@ -139,3 +170,6 @@ class MagCalcConfig(BaseModel):
     magnetic_structure: Optional[Union[MagneticStructure, Dict[str, Any]]] = {}
     fitting: Optional[Dict[str, Any]] = {}
     powder_average: Optional[Dict[str, Any]] = {}
+    # 2-D q-grid constant-energy cuts (tasks: {energy_cut: true}):
+    # origin/axis1/axis2 define the grid in RLU, cuts list the energy windows.
+    energy_cut: Optional[Dict[str, Any]] = {}

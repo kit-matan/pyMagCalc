@@ -69,7 +69,8 @@ Open `config.yaml` and define your physics.
 -   `minimization`: Settings for finding the ground state.
     -   `initial_configuration`: **Crucial** for complex systems to avoid local minima. define `theta` and `phi` for each atom.
     -   `n_workers`: Number of CPU cores for parallel minimization (default: 1).
-    -   `early_stopping`: Stop after finding the same ground state N times (default: 3).
+    -   `method`: **`anneal`** (Monte-Carlo, recommended), `steep`, or a gradient method. See §4e2.
+    -   `early_stopping`: (gradient multistart only) stop after finding the same ground state N times; defaults to `max(10, 2 x n_sites)`.
 -   `plotting`: Control output behavior.
     -   `show_plot`: Set to `true` to see plots on screen, `false` to save only.
     -   `plot_structure`: Visualize the minimized magnetic state.
@@ -164,9 +165,21 @@ output:
 ## 4. Best Practices & Troubleshooting
 
 ### Avoiding Imaginary Energies
-If you see **imaginary energy eigenvalues** (warnings in the log), your system is likely in a saddle point or local minimum, not the true ground state.
+Imaginary energy eigenvalues mean the magnetic structure is **not the classical
+ground state** — the spin-wave expansion is about the wrong state and the spectrum
+is meaningless. The engine now **fails the run** in this case rather than writing a
+plausible-looking plot (`calculation.on_imaginary: error`, the default; see §4f).
 
-**Solution**: Use `initial_configuration` in the `minimization` section to guide the solver.
+**Solution**: use the Monte-Carlo annealer, which is built to escape local minima:
+
+```yaml
+tasks: {minimization: true}
+minimization: {method: anneal, num_starts: 4, n_sweeps: 2000, seed: 0}
+```
+
+See **§4e2** for the method comparison. Guiding the solver by hand with
+`initial_configuration` is still supported and can help, but it is no longer the
+primary answer.
 *   For a 120-degree structure (e.g., Kagome), initialize spins at 0, 120, and 240 degrees.
 *   Example (from `KFe3J/config_kfe3j.yaml`):
 
@@ -541,6 +554,113 @@ scales (~1.4 meV vs ~4 meV).
 > prefactor currently uses the single reference `S`, so relative intensities
 > in a mixed-spin model are approximate (per-ion form factors are still
 > applied).
+
+---
+
+## 4e2. Finding the Ground State (`method: anneal`)
+
+LSWT is an expansion about a classical energy **minimum**. Expand about anything
+else and the spectrum is meaningless — so the ground-state search matters as much
+as the Hamiltonian.
+
+```yaml
+tasks: {minimization: true}
+minimization:
+  method: anneal        # Monte-Carlo annealing -- the recommended choice
+  num_starts: 4         # independent annealing runs
+  n_sweeps: 2000        # temperature steps (each = one attempted move per spin)
+  seed: 0
+  # optional: T_start / T_end (meV; default from the coupling scale), polish: true
+```
+
+| method | what it is | when |
+|---|---|---|
+| `anneal` (`monte_carlo`) | Metropolis + geometric cooling (SpinW `anneal`, Sunny `LocalSampler`), then an L-BFGS polish | **default choice** — crosses barriers, does not get trapped |
+| `steep` (`optmagsteep`) | align each spin with its local field (SpinW `optmagsteep`) | fast polisher; **monotone**, so it cannot escape a local minimum |
+| `L-BFGS-B`, `TNC`, … | legacy random multistart in (θ, φ) | compatibility; weaker than it looks (polar coordinate singularities) |
+
+**Why this matters.** On SW20 in field (16 sites = 32 free angles, true minimum
+−5.716074 meV), multistart L-BFGS with 24 starts returned −5.338112 — a local
+minimum — and the spectrum came out with imaginary magnon energies at every q.
+Annealing finds the true minimum in a **single run in under a second**.
+
+The engine now **fails the run** if the structure is not a minimum
+(`calculation.on_imaginary: error`, the default) — see §4f. Accept a ground state
+only when the energy is reproducible across several `seed` values; every method
+reports `hits` (how many runs reached the best energy) and warns when `hits == 1`.
+
+---
+
+## 4f. Modeling the Measurement (temperature, twins, resolution, cuts)
+
+These options shape the computed **intensities** (never the mode energies) so
+S(Q,ω), powder and constant-energy-cut outputs can be compared directly with
+inelastic-neutron-scattering data.
+
+### Sample environment (`calculation:`)
+
+```yaml
+calculation:
+  # Finite temperature: every mode intensity is multiplied by the thermal
+  # Bose prefactor |1/(1 - exp(-E/kT))| (energy loss: n+1; gain: n).
+  temperature: 5.0            # Kelvin
+
+  # Magnetic/structural domains (twins). Shorthand for an n-fold axis:
+  domains: {axis: [0, 0, 1], n_fold: 3}
+  # ... or an explicit, COMPLETE list (include the angle-0 domain):
+  # domains:
+  #   - {axis: [0, 0, 1], angle: 0,   weight: 1}
+  #   - {axis: [0, 0, 1], angle: 120, weight: 1}
+  #   - {axis: [0, 0, 1], angle: 240, weight: 1}
+
+  # Cross-section: 'perp' (unpolarized default), 'trace', or a lab-frame
+  # tensor component 'xx' | 'yy' | 'zz' | 'xy' | ... (signed, real part).
+  cross_section: perp
+```
+
+Domain averaging samples the unrotated model at `R^T q` per domain — exact for
+`perp`/`trace` (the polarization projector transforms covariantly) and
+rejected for tensor components. Modes are concatenated domain-major, so a
+3-domain S(Q,ω) has `3 × n_modes` columns per q. Powder averages skip domains
+(a spherical average is rotation-invariant); dispersion and fitting remain
+single-domain.
+
+### Instrument resolution (`plotting.resolution`)
+
+```yaml
+plotting:
+  resolution:
+    # FWHM(E): scalar, or numpy.polyval coefficients (HIGHEST power first —
+    # the SpinW sw_instrument 'dE' polyfit convention).
+    de_fwhm: [-0.0125, 0.107143, -0.141071, 0.059286]
+    shape: gaussian           # default gaussian when de_fwhm is given
+    dq_fwhm: 0.05             # Gaussian smoothing along the q axis (1/A)
+    ei: 25.0                  # direct geometry: mask E > Ei ...
+    two_theta: [5, 130]       # ... and |Q| outside detector coverage
+                              #     (powder maps only)
+  energy_grid_step: 0.01      # energy grid of the map (default 0.05 meV)
+```
+
+See `examples/spinw_tutorials/SW37_.../config.yaml` for the tutorial's cubic
+dE(E). For an arbitrary dE function (not a polynomial), call
+`magcalc.plotting.broaden_spectrum` with per-mode `width=` from Python.
+
+### Constant-energy cuts on a 2-D q grid (`tasks.energy_cut`)
+
+```yaml
+tasks: {energy_cut: true}
+energy_cut:
+  origin: [0.0, 0.0, 0.0]                  # RLU corner of the grid
+  axis1: {vec: [4.0, 0.0, 0.0], points: 121}
+  axis2: {vec: [0.0, 4.0, 0.0], points: 121}
+  cuts:
+    - {center: 3.75, fwhm: 0.25}           # Gaussian energy window
+    - {band: [3.5, 4.01]}                  # hard integration window
+```
+
+Writes `energy_cut_data.npz` (grid, panels, labels) and a panel figure
+(`plotting.energy_cut_plot_filename`). Intensities inherit `temperature`,
+`domains` and `cross_section`. See SW10 for the worked example.
 
 ---
 
