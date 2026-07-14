@@ -25,16 +25,34 @@ Tests: `tests/test_sun.py`.
   canted structure. Seeding SU(N) with the dipole ground state would simply be wrong.
 
 ### Still to do
-- **FeI2 itself is NOT yet reproduced.** Sunny gives E/site = -2.35592338 with a canted
-  stripe (0, +/-0.204, +/-0.974) in a 4-site cell; the attempt here lands on -2.39/site
-  with a collinear state. The engine is not suspected -- it passes all three gates plus
-  the bridge -- the fault is in the FeI2 setup: its magnetic cell needs the NON-DIAGONAL
-  supercell `[1 0 0; 0 1 -2; 0 1 2]`, which pyMagCalc does not support (diagonal only),
-  so the exchange orbits were propagated by hand instead of by pyMagCalc's validated
-  `ref_pair` machinery. Two bugs were already found and fixed that way (a transposed
-  fractional->Cartesian rotation; total-vs-per-site energy), and a third remains.
-  **The right fix is to add non-diagonal magnetic supercells so the validated
-  propagation can be used, rather than to keep hand-rolling it.**
+- **FeI2 itself is NOT yet reproduced — and the cause is now pinned down.**
+
+  Sunny (`:SUN`, 4-site cell): `E/site = -2.35592338`, canted stripe `(0, ±0.204, ±0.974)`.
+
+  Diagnosis (decisive test: evaluate SUNNY'S OWN ground state in our bond list):
+  it gives `-2.35390` — a real 2e-3/site error. So the **Hamiltonian** is wrong, not
+  the ground-state search. The engine is not suspected: it passes all three gates plus
+  the config bridge.
+
+  Root cause: FeI2's magnetic cell needs the NON-DIAGONAL supercell
+  `[1 0 0; 0 1 -2; 0 1 2]`, which pyMagCalc does not support (diagonal only), so the
+  exchange orbits were propagated by a hand-rolled point group instead of by
+  pyMagCalc's validated spglib `ref_pair` machinery. That hand-rolling gets the bond
+  ORBITS wrong. `print_symmetry_table` on the Fe-only crystal shows the six nearest
+  neighbours splitting into **three classes of coordination 2**, not one orbit of six —
+  Sunny's example builds the crystal *with the iodines* and then `subcrystal`s it, which
+  retains the full P-3m1 symmetry. The parameter name `J′2a` likewise implies a `J′2b`
+  class that our group merges into it.
+
+  Three bugs have already come out of this hand-rolling (a transposed
+  fractional→Cartesian rotation; total-vs-per-site energy; the orbit merge above).
+  **Do not keep hand-rolling it.** The fix is:
+
+  1. add non-diagonal magnetic supercells (`magnetic_supercell: {matrix: [[...]]}`), then
+  2. define FeI2 as an ordinary config (chemical cell + `ref_pair` rules) and let the
+     existing, validated symmetry propagation build the bonds, and
+  3. re-run the comparison. Sunny's E/site is the gate.
+
 - Runner integration (`mode: SUN`) and SU(N) intensities.
 
 
