@@ -63,24 +63,85 @@ class SUNCalculator:
             # the CP^(N-1) search find the ground state. It MUST be found in SU(N) --
             # with an anisotropy a coherent state has <Sz^2> != (S n_z)^2, so the SU(N)
             # ground state differs from the dipole one.
-            nsite = _n_sites(spin_model, supercell)
-            directions = [[0.0, 0.0, 1.0]] * nsite
+            directions = [[0.0, 0.0, 1.0]] * _n_sites(spin_model, supercell)
+            seeded = True
+        else:
+            seeded = False
+
+        nsite = _n_sites(spin_model, supercell)
+        if len(directions) != nsite:
+            raise ValueError(
+                f"SU(N): the magnetic structure has {len(directions)} directions but the "
+                f"model has {nsite} sites"
+                + (f" ({len(spin_model.atom_pos())} chemical x "
+                   f"{nsite // max(len(spin_model.atom_pos()), 1)} cells)"
+                   if supercell is not None else "")
+                + ". Give one direction per site of the MAGNETIC cell, or set "
+                  "`tasks: {minimization: true}` and let the CP^(N-1) search find it.")
 
         self.model = SUNModel.from_generic_model(
             spin_model, params=self.hamiltonian_params,
             directions=directions, supercell=supercell)
 
-        # The SU(N) ground state is NOT the dipole one when an anisotropy is present
-        # (a coherent state has <Sz^2> != (S n_z)^2), so it must be found in SU(N).
-        if (config.get("tasks", {}) or {}).get("minimization", False) or directions is None:
+        minimize = bool((config.get("tasks", {}) or {}).get("minimization", False))
+        if minimize or seeded:
             E = self.model.minimize_energy(
                 n_restarts=int(min_cfg.get("num_starts", 20)),
                 seed=int(min_cfg.get("seed", 0) or 0))
             logger.info(f"SU(N) ground state: E/site = {E / self.model.L:.8f} meV "
                         f"({self.model.L} sites, {self.model.M} bosons/site)")
+        else:
+            self._audit_supplied_state(config)
 
         self.nspins = self.model.L
         self.spin_magnitude = self.model.S[0]
+
+    def _audit_supplied_state(self, config):
+        """A hand-supplied SU(N) reference state must actually BE the SU(N) ground state.
+
+        This is the trap: the SU(N) ground state differs from the dipole one whenever an
+        anisotropy is present, because a coherent state has <Sz^2> != (S n_z)^2. A user
+        who runs the model in dipole mode, pastes the resulting `magnetic_structure` into
+        the config and flips `mode: SUN` is expanding about the WRONG state -- and the
+        imaginary-mode check CANNOT see it, because that state is typically a perfectly
+        good LOCAL minimum (verified: |Im w| ~ 5e-16 on FeI2's collinear stripe, which is
+        0.048 meV/site above the true ground state). The spectrum comes out real,
+        plausible, and wrong. Only an ENERGY audit catches it.
+        """
+        calc_cfg = config.get("calculation", {}) or {}
+        action = str(calc_cfg.get("on_imaginary", "error")).lower()
+        if action == "off":
+            return
+        tol = float(calc_cfg.get("energy_tolerance", 1e-6))
+
+        e_now = self.model.energy_per_site()
+        Z = [z.copy() for z in self.model.Z]
+        e_rel = self.model.minimize_energy(n_restarts=12, seed=7) / self.model.L
+        self.model.Z = Z
+        self.model._prepare()
+
+        if e_rel < e_now - max(tol, 1e-9 * abs(e_now)):
+            msg = (
+                f"The supplied magnetic structure is NOT the SU(N) ground state: relaxing "
+                f"the coherent states lowers the energy from {e_now:.8f} to {e_rel:.8f} "
+                f"meV/site.\n"
+                f"NOTE this will NOT show up as imaginary magnon energies -- such a state "
+                f"is usually a perfectly good LOCAL minimum, so the spectrum comes out "
+                f"real and plausible and wrong.\n"
+                f"  * The SU(N) ground state DIFFERS from the dipole one whenever an "
+                f"anisotropy is present (a coherent state has <Sz^2> != (S n_z)^2), so a "
+                f"structure taken from a dipole-mode run is generally NOT valid here.\n"
+                f"  * Fix: set `tasks: {{minimization: true}}` and let the CP^(N-1) search "
+                f"find it, or supply the SU(N) ground state.\n"
+                f"  * `calculation: {{on_imaginary: warn}}` downgrades this to a warning."
+            )
+            if action == "error":
+                raise ValueError(msg)
+            logger.warning(msg)
+        else:
+            logger.info(
+                f"SU(N) supplied structure verified as a minimum "
+                f"(E/site = {e_now:.8f} meV).")
 
     # -- the runner's calls -------------------------------------------------
     def calculate_dispersion(self, q_vectors, backend="numpy", satellites=None, **_):

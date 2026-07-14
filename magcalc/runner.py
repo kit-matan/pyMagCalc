@@ -149,6 +149,39 @@ def _plot_structure_outputs(spin_model, spin_angles, energy, final_config, confi
         logger.error(f"Failed to plot magnetic structure: {e_plot}")
 
 
+
+def _advise_sun_mode(spin_model):
+    """Warn when a model has single-ion physics that dipole LSWT structurally CANNOT see.
+
+    Dipole LSWT expands each spin as ONE boson, so it has no transitions between an ion's
+    local crystal-field levels. Whenever S >= 1 AND there is an on-site anisotropy, those
+    single-ion (multipolar) excitations exist and are simply ABSENT from the spectrum --
+    silently. FeI2's bound state is the textbook case. Nothing about the output looks
+    wrong; entire bands are just missing.
+
+    Only fires when it can actually matter (S >= 1 and an anisotropy present), so it is
+    not noise: an S=1/2 model has no multipolar levels, and without anisotropy the
+    multipolar modes carry no weight.
+    """
+    try:
+        mags = spin_model.spin_magnitudes()
+        inters = spin_model.interactions_config
+    except Exception:
+        return
+    if not mags or max(float(m) for m in mags) < 1.0:
+        return
+    kinds = {'sia', 'sia_matrix', 'anisotropy_matrix', 'stevens'}
+    if not any((i.get('type') in kinds) for i in inters if isinstance(i, dict)):
+        return
+    logger.warning(
+        "This model has S >= 1 AND a single-ion anisotropy, so it has single-ion "
+        "(multipolar) excitations -- and dipole LSWT structurally cannot represent them: "
+        "those bands will be MISSING from the spectrum, with nothing to indicate it. "
+        "If they matter (FeI2's bound state is the classic example), use "
+        "`calculation: {mode: SUN}`. See CLAUDE.md 5c."
+    )
+
+
 def run_calculation(config_file: str):
     """
     Main execution logic for running a MagCalc calculation.
@@ -491,6 +524,9 @@ def run_calculation(config_file: str):
     if mode not in ('DIPOLE', 'SUN'):
         raise ValueError(
             f"calculation.mode must be 'dipole' or 'SUN', got {calc_config.get('mode')!r}.")
+
+    if mode == 'DIPOLE':
+        _advise_sun_mode(spin_model)
 
     logger.info(f"Initializing {'SU(N)' if mode == 'SUN' else 'MagCalc'} "
                 f"for LSWT Calculation...")

@@ -332,6 +332,24 @@ N-1 bosons per site and the single-ion (multipolar) bands appear -- with intensi
   dipole engine refuses them rather than silently using the chemical cell.
 * Not yet: powder averaging, domain averaging.
 
+### The two SU(N) traps, and what stops you
+
+**1. Running a model in dipole mode that NEEDS SU(N).** With S >= 1 and an anisotropy, the
+single-ion bands simply are not in the dipole spectrum -- nothing looks wrong, whole bands
+are just absent. The runner now **warns** whenever S >= 1 AND an on-site anisotropy is
+present (and stays quiet otherwise: S=1/2 has no multipolar levels, and without anisotropy
+those modes carry no weight).
+
+**2. Seeding SU(N) with a DIPOLE ground state.** This one is nastier, and the
+imaginary-mode check is BLIND to it: such a state is normally a perfectly good LOCAL
+minimum, so the magnons come out real and the spectrum looks plausible. (Measured on FeI2:
+the collinear stripe is 0.048 meV/site above the true ground state and has
+|Im w| ~ 5e-16.) Only an ENERGY audit catches it, so SU(N) always runs one on a supplied
+structure and refuses by default. Two further barriers:
+* a non-diagonal magnetic cell cannot express per-site directions in the config at all, so
+  you are structurally forced through the CP^(N-1) search;
+* a direction count that does not match the magnetic cell is a hard error naming the fix.
+
 **Reference caveat, learned the hard way:** Sunny's own published FeI2 example converges
 to a LOCAL minimum (E/site = -2.35592338, one `minimize_energy!` after
 `randomize_spins!`). The true ground state is -2.91893118. A published reference number

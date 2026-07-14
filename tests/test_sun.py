@@ -437,3 +437,109 @@ def test_runner_rejects_unknown_mode(tmp_path):
     p.write_text(yaml.safe_dump(cfg))
     with pytest.raises(ValueError, match="mode"):
         run_calculation(str(p))
+
+
+# ================================================================== the traps
+def test_wrong_sun_reference_state_is_INVISIBLE_to_the_imaginary_check():
+    """Documents WHY the SU(N) energy audit is not optional.
+
+    A structure taken from a DIPOLE run is generally not the SU(N) ground state (a
+    coherent state has <Sz^2> != (S n_z)^2). But such a state is typically a perfectly
+    good LOCAL minimum -- so the magnons come out REAL, the spectrum looks plausible, and
+    the imaginary-mode check sees nothing. Only an energy comparison catches it.
+    """
+    import yaml
+
+    MSUPER = [[1, 0, 0], [0, 1, -2], [0, 1, 2]]
+    cfg = yaml.safe_load(open("examples/materials/FeI2/config_fei2.yaml"))
+    m = GenericSpinModel(cfg)
+    lat = np.array(m.config["crystal_structure"]["lattice_vectors"], float)
+
+    true = SUNModel.from_generic_model(m, supercell=MSUPER, directions=[[0, 0, 1]] * 4)
+    e_true = true.minimize_energy(n_restarts=40, seed=1) / true.L
+
+    # plausible-but-wrong: a purely COLLINEAR stripe (what a hand guess or a dipole run
+    # would hand you), instead of the true canted one
+    wrong = SUNModel.from_generic_model(
+        m, supercell=MSUPER,
+        directions=[[0, 0, 1], [0, 0, -1], [0, 0, -1], [0, 0, 1]])
+    e_wrong = wrong.energy_per_site()
+
+    assert e_wrong > e_true + 1e-3                      # genuinely the wrong state
+
+    q = np.array([0.25, 0, 0]) @ (2 * np.pi * np.linalg.inv(lat).T)
+    assert wrong.max_imaginary(q) < 1e-8                # ... yet PERFECTLY STABLE
+
+    # only the energy audit sees it
+    assert wrong.minimize_energy(n_restarts=20, seed=3) / wrong.L < e_wrong - 1e-3
+
+
+def test_sun_refuses_a_structure_with_the_wrong_number_of_sites(tmp_path):
+    """For a non-diagonal magnetic cell the config cannot express per-site directions, so
+    the user is structurally FORCED through the CP^(N-1) search rather than pasting in a
+    dipole-derived structure."""
+    import yaml
+
+    from magcalc.runner import run_calculation
+
+    cfg = yaml.safe_load(open("examples/materials/FeI2/config_fei2.yaml"))
+    cfg["crystal_structure"]["magnetic_supercell"] = {
+        "matrix": [[1, 0, 0], [0, 1, -2], [0, 1, 2]]}
+    cfg["calculation"] = {"mode": "SUN", "cache_mode": "none"}
+    cfg["magnetic_structure"] = {"type": "pattern", "pattern_type": "ferromagnetic",
+                                 "direction": [0, 0, 1]}
+    cfg["tasks"] = {"minimization": False, "dispersion": True}
+    cfg["q_path"] = {"G": [0, 0, 0], "M": [0.5, 0, 0], "path": ["G", "M"],
+                     "points_per_segment": 3}
+    cfg["plotting"] = {"save_plot": False, "show_plot": False, "plot_structure": False}
+    cfg["output"] = {"save_data": False}
+    p = tmp_path / "c.yaml"
+    p.write_text(yaml.safe_dump(cfg))
+
+    with pytest.raises(ValueError, match="one direction per site"):
+        run_calculation(str(p))
+
+
+def test_dipole_mode_warns_when_single_ion_bands_would_be_missing(caplog):
+    """The mistake a user cannot otherwise detect: running a model with S >= 1 AND an
+    anisotropy in dipole mode silently DROPS its multipolar bands. Nothing in the output
+    looks wrong -- whole bands are just absent."""
+    import logging
+
+    import yaml
+
+    from magcalc.runner import _advise_sun_mode
+
+    cfg = yaml.safe_load(open("examples/materials/FeI2/config_fei2.yaml"))
+    m = GenericSpinModel(cfg)
+    with caplog.at_level(logging.WARNING):
+        _advise_sun_mode(m)
+    assert "mode: SUN" in caplog.text and "MISSING" in caplog.text
+
+
+def test_advisory_is_quiet_when_su_n_cannot_matter():
+    """No noise: S=1/2 has no multipolar levels, and with no anisotropy the multipolar
+    modes carry no weight."""
+    import logging
+
+    from magcalc.runner import _advise_sun_mode
+
+    cfg = {
+        "crystal_structure": {"lattice_vectors": LAT, "atoms_uc": [
+            {"label": "Cu", "pos": [0.0, 0.0, 0.0], "spin_S": 0.5, "ion": "Cu2+"}]},
+        "interactions": {"symmetry_rules": [
+            {"type": "heisenberg", "distance": A, "value": -1.0}]},
+        "parameters": {}, "parameter_order": [],
+        "magnetic_structure": {"type": "pattern", "pattern_type": "ferromagnetic",
+                               "direction": [0, 0, 1]},
+    }
+    logger = logging.getLogger("magcalc.runner")
+    recs = []
+    h = logging.Handler()
+    h.emit = recs.append
+    logger.addHandler(h)
+    try:
+        _advise_sun_mode(GenericSpinModel(cfg))          # S=1/2, no anisotropy
+    finally:
+        logger.removeHandler(h)
+    assert not [r for r in recs if r.levelno >= logging.WARNING]
