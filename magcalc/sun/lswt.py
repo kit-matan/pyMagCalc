@@ -64,6 +64,7 @@ class SUNModel:
         self.onsite = [(int(i), np.asarray(A, dtype=complex))
                        for (i, A) in (onsite or [])]
 
+        self.pos = None          # site positions (set by the bridge; needed for S(q,w))
         self.L = len(self.S)
         self.Ns = [int(round(2 * s)) + 1 for s in self.S]
         if len(set(self.Ns)) != 1:
@@ -226,7 +227,11 @@ class SUNModel:
 
         new_onsite = [(ci * L_chem + i, A)
                       for ci in range(ncell) for (i, A) in onsite]
-        return new_bonds, new_onsite, [spins[i % L_chem] for i in range(ncell * L_chem)]
+        new_pos = [(ni @ lat_chem) + (pos_frac[i] @ lat_chem)
+                   for ni in cells for i in range(L_chem)]
+        return (new_bonds, new_onsite,
+                [spins[i % L_chem] for i in range(ncell * L_chem)],
+                np.array(new_pos))
 
     @classmethod
     def from_generic_model(cls, model, params=None, directions=None, supercell=None):
@@ -250,6 +255,7 @@ class SUNModel:
         apos = _np.asarray(model.atom_pos(), dtype=float)
         aouc = _np.asarray(model.atom_pos_ouc(), dtype=float)
         L = len(apos)
+        positions = apos.copy()
         spins = [float(s) for s in model.spin_magnitudes()]
 
         def _num(x):
@@ -332,7 +338,7 @@ class SUNModel:
                               dtype=float)
             pf = _np.asarray([a["pos"] for a in
                               model.config["crystal_structure"]["atoms_uc"]], dtype=float)
-            bonds, onsite, spins = cls._replicate(
+            bonds, onsite, spins, positions = cls._replicate(
                 bonds, onsite, spins, L, lat, pf, supercell)
 
         if directions is None:
@@ -347,7 +353,9 @@ class SUNModel:
                 reps = len(spins) // len(directions)
                 directions = directions * reps
 
-        return cls.from_directions(spins, directions, bonds, onsite)
+        mdl = cls.from_directions(spins, directions, bonds, onsite)
+        mdl.pos = _np.asarray(positions, dtype=float)
+        return mdl
 
     # ------------------------------------------------- CP^(N-1) ground state
     def local_field(self, i: int, s0: np.ndarray) -> np.ndarray:
@@ -436,3 +444,73 @@ class SUNModel:
         return np.array([[float(np.real(self.Z[i].conj()
                                         @ spin_matrices(self.S[i])[a] @ self.Z[i]))
                           for a in range(3)] for i in range(self.L)])
+
+    # ---------------------------------------------------------------- intensities
+    def _bogoliubov(self, q_cart):
+        """Colpa diagonalisation of H(q). Returns (omega, T) with Psi = T Phi,
+        Psi = (b, b^dag), Phi = (beta, beta^dag), and omega the L*M positive energies."""
+        D = self.L * self.M
+        g = np.diag([1.0] * D + [-1.0] * D)
+        H2 = g @ self.hamiltonian(q_cart)        # hamiltonian() returns g*H2
+        H2 = 0.5 * (H2 + H2.conj().T)            # symmetrise away round-off
+
+        try:
+            C = np.linalg.cholesky(H2).conj().T   # H2 = C^dag C
+        except np.linalg.LinAlgError as exc:
+            raise np.linalg.LinAlgError(
+                "SU(N) H(q) is not positive definite: the reference state is not a "
+                "minimum (imaginary magnons). Minimise first.") from exc
+
+        W = C @ g @ C.conj().T
+        W = 0.5 * (W + W.conj().T)
+        vals, U = np.linalg.eigh(W)
+        # eigh gives ascending; we want the D positive ones first (descending), then the
+        # D negative ones -- Colpa's ordering, so that E' = g E is all positive.
+        order = np.concatenate([np.argsort(-vals)[:D], np.argsort(vals)[:D]])
+        vals, U = vals[order], U[:, order]
+        Ep = np.abs(vals)                         # = g E, all positive
+        T = np.linalg.inv(C) @ U @ np.diag(np.sqrt(Ep))
+        return Ep[:D], T
+
+    def structure_factor(self, q_cart, ion=None, cross_section="perp"):
+        """(omega, intensity) per magnon band at q.
+
+        The one-magnon matrix element. Keeping only the LINEAR part of the spin operator,
+
+            S^a(q) = sum_i e^{i q.r_i} [ sum_m t^a_i[m] b_im + tb^a_i[m] b^dag_im ]
+
+        so in the Nambu basis Psi = (b, b^dag) it is a row vector v_a. With Psi = T Phi,
+        the amplitude to create magnon nu is (v_a T)[D + nu], and
+
+            S^{ab}(q, w_nu) = conj(M^a_nu) M^b_nu.
+
+        Because the observables here are the FULL N x N spin operators, the multipolar
+        (single-ion) bands carry weight -- which is exactly what dipole LSWT cannot do.
+        """
+        from ..numerical import contract_cross_section
+
+        D = self.L * self.M
+        w, T = self._bogoliubov(q_cart)
+
+        v = np.zeros((3, 2 * D), dtype=complex)
+        for i in range(self.L):
+            ph = np.exp(1j * float(np.dot(q_cart, self.pos[i]))) if self.pos is not None \
+                else 1.0
+            for a in range(3):
+                v[a, i * self.M:(i + 1) * self.M] = ph * self.t[i, a]
+                v[a, D + i * self.M:D + (i + 1) * self.M] = ph * self.tb[i, a]
+
+        M = (v @ T)[:, D:]                        # (3, D): amplitude per band
+        # Normalise PER SITE, as Sunny's ssf does (without this the intensities come out
+        # a factor L too large -- a constant factor, easy to mistake for "close enough").
+        spin_corr = np.einsum("am,bm->abm", M.conj(), M) / self.L
+
+        inten, clamp = contract_cross_section(spin_corr, q_cart, cross_section)
+        inten = np.real(inten)
+        if clamp:
+            inten[inten < 0] = 0.0
+
+        if ion:
+            from ..form_factors import get_form_factor
+            inten = inten * get_form_factor(ion, float(np.linalg.norm(q_cart))) ** 2
+        return w, inten

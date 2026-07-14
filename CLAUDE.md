@@ -307,6 +307,36 @@ All methods report `hits` (how many runs reached the best energy) and warn when
 energy is reproducible across several `seed`s** -- and the guards above will catch
 you if it is not.
 
+## 5c. SU(N) mode (single-ion / multipolar excitations)
+
+```yaml
+calculation:
+  mode: SUN                      # default: dipole
+crystal_structure:
+  magnetic_supercell: {matrix: [[1, 0, 0], [0, 1, -2], [0, 1, 2]]}   # may be NON-diagonal
+tasks: {minimization: true}      # the SU(N) ground state must be found in SU(N)
+```
+
+Dipole LSWT expands each spin as ONE boson about a classical direction, and structurally
+cannot represent transitions between an ion's local crystal-field levels. SU(N) gives each
+site an N-level Hilbert space (N = 2S+1) with a coherent reference state, so there are
+N-1 bosons per site and the single-ion (multipolar) bands appear -- with intensity.
+
+* **FeI2** is the canonical case: `examples/materials/FeI2/config_fei2_sun.yaml`. Its
+  bound state is the upper band group (3.5-4.7 meV). Validated against Sunny `:SUN`:
+  E/site and all 8 bands AND their intensities match to < 1e-4.
+* **The ground state differs from the dipole one** whenever an anisotropy is present: a
+  coherent state has `<Sz^2> != (S n_z)^2`. Never seed SU(N) from a dipole ground state --
+  run the CP^(N-1) search (`tasks.minimization: true`).
+* Non-diagonal `magnetic_supercell` matrices are **only** supported in SU(N) mode; the
+  dipole engine refuses them rather than silently using the chemical cell.
+* Not yet: powder averaging, domain averaging.
+
+**Reference caveat, learned the hard way:** Sunny's own published FeI2 example converges
+to a LOCAL minimum (E/site = -2.35592338, one `minimize_energy!` after
+`randomize_spins!`). The true ground state is -2.91893118. A published reference number
+is not automatically a converged one -- check it before trusting it.
+
 ## 6. Intensity / experiment layer
 
 Applies to S(Q,ω), powder, energy-cut **and FITTING** intensities (never to energies).

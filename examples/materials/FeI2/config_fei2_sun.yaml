@@ -1,0 +1,150 @@
+# =====================================================================
+# FeI2 in SU(3) -- `calculation: {mode: SUN}`.
+#
+# FeI2 is THE reason SU(N) exists. Its single-ion (multipolar) bound state --
+# the upper band group near 3.5-4.7 meV -- is a transition between the local
+# crystal-field levels of the S=1 Fe. Dipole LSWT expands each spin as ONE
+# boson about a classical direction and structurally cannot represent it: run
+# this model in dipole mode and those bands simply are not there.
+#
+# The magnetic cell (k = (0,-1/4,1/4)) is NON-DIAGONAL, [1 0 0; 0 1 -2; 0 1 2],
+# which only the SU(N) path supports.
+#
+# Validated against Sunny 0.8.1 (:SUN): E/site = -2.91893118, and all 8 bands
+# AND their intensities match to <1e-4.  NB Sunny's own published FeI2 example
+# converges to a LOCAL minimum (-2.35592338) -- these are the CONVERGED values.
+# =====================================================================
+experiment:
+  name: FeI2_LSWT
+  description: Replication of Sunny.jl FeI2 tutorial (Anisotropic Exchange + SIA)
+crystal_structure:
+  lattice_parameters:
+    space_group: 164
+    a: 4.05012
+    b: 4.05012
+    c: 6.75214
+    alpha: 90
+    beta: 90
+    gamma: 120
+  wyckoff_atoms:
+  - label: Fe
+    element: Fe
+    wyckoff: 1a
+    pos: [0, 0, 0]
+    spin_S: 1.0
+    charge: 2
+  atom_mode: symmetry
+  magnetic_elements: [Fe]
+  magnetic_supercell:
+    matrix:
+    - [1, 0, 0]
+    - [0, 1, -2]
+    - [0, 1, 2]
+parameters:
+  J1pm: -0.236
+  J1pmpm: -0.161
+  J1zpm: -0.261
+  J1zz: -0.236
+  J1xx: -0.397
+  J1yy: -0.075
+  J1yz: -0.261
+  J2pm: 0.026
+  J2zz: 0.113
+  J3pm: 0.166
+  J3zz: 0.211
+  Jp0pm: 0.037
+  Jp0zz: -0.036
+  Jp1pm: 0.013
+  Jp1zz: 0.051
+  Jp2apm: 0.068
+  Jp2azz: 0.073
+  D: 2.165
+interactions:
+  single_ion_anisotropy:
+  - value: -2.165
+    axis: [0, 0, 1]
+    atoms: [Fe]
+  symmetry_rules:
+  - name: J1
+    type: interaction_matrix
+    value:
+    - [-0.397, 0.0, 0.0]
+    - [0.0, -0.075, -0.261]
+    - [0.0, -0.261, -0.236]
+    ref_pair: [Fe, Fe]
+    distance: 4.05
+    offset: [1, 0, 0]
+  - name: J2
+    type: interaction_matrix
+    value:
+    - [0.026, 0.0, 0.0]
+    - [0.0, 0.026, 0.0]
+    - [0.0, 0.0, 0.113]
+    ref_pair: [Fe, Fe]
+    distance: 7.015
+    offset: [1, 2, 0]
+  - name: J3
+    type: interaction_matrix
+    value:
+    - [0.166, 0.0, 0.0]
+    - [0.0, 0.166, 0.0]
+    - [0.0, 0.0, 0.211]
+    ref_pair: [Fe, Fe]
+    distance: 8.1
+    offset: [2, 0, 0]
+  - name: J_prime_0
+    type: interaction_matrix
+    value:
+    - [0.037, 0.0, 0.0]
+    - [0.0, 0.037, 0.0]
+    - [0.0, 0.0, -0.036]
+    ref_pair: [Fe, Fe]
+    distance: 6.75
+    offset: [0, 0, 1]
+  - name: J_prime_1
+    type: interaction_matrix
+    value:
+    - [0.013, 0.0, 0.0]
+    - [0.0, 0.013, 0.0]
+    - [0.0, 0.0, 0.051]
+    ref_pair: [Fe, Fe]
+    distance: 7.87
+    offset: [1, 0, 1]
+  - name: J_prime_2a
+    type: interaction_matrix
+    value:
+    - [0.068, 0.0, 0.0]
+    - [0.0, 0.068, 0.0]
+    - [0.0, 0.0, 0.073]
+    ref_pair: [Fe, Fe]
+    distance: 9.74
+    offset: [1, 2, 1]
+minimization:
+  enabled: true
+  num_starts: 30
+  seed: 1
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  energy_limits_disp: [0, 6]
+  energy_limits_sqw: [0, 6]
+  broadening_width: 0.3
+  disp_plot_filename: FeI2_SUN_disp.png
+  sqw_plot_filename: FeI2_SUN_sqw.png
+  disp_title: 'FeI2 SU(3): magnons + single-ion bound state'
+  sqw_title: 'FeI2 SU(3): S(Q,w)'
+q_path:
+  G: [0.0, 0.0, 0.0]
+  M: [0.5, 0.0, 0.0]
+  path: [G, M]
+  points_per_segment: 60
+tasks:
+  minimization: true
+  dispersion: true
+  sqw_map: true
+calculation:
+  mode: SUN
+  cache_mode: none
+output:
+  save_data: false

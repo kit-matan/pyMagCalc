@@ -482,17 +482,32 @@ def run_calculation(config_file: str):
                 logger.warning(f"Failed to apply manual magnetic structure: {e}")
 
     # Initialize Main MagCalc (Heavyweight)
-    logger.info("Initializing MagCalc for LSWT Calculation...")
+    # Engine: 'dipole' (default) or 'SUN'. SU(N) carries an N-level local Hilbert space
+    # per site, so it represents SINGLE-ION (multipolar) excitations -- FeI2's bound
+    # state, for instance -- which dipole LSWT structurally cannot. Everything else
+    # (structure, symmetry propagation, q-path, tasks, plotting, the ground-state
+    # guards) is unchanged; only the LSWT engine is swapped.
+    mode = str(calc_config.get('mode', 'dipole')).upper()
+    if mode not in ('DIPOLE', 'SUN'):
+        raise ValueError(
+            f"calculation.mode must be 'dipole' or 'SUN', got {calc_config.get('mode')!r}.")
+
+    logger.info(f"Initializing {'SU(N)' if mode == 'SUN' else 'MagCalc'} "
+                f"for LSWT Calculation...")
     try:
-        calculator = mc.MagCalc(
-            spin_model_module=spin_model,
-            spin_magnitude=S_val,
-            hamiltonian_params=params_val,
-            cache_file_base=cache_base,
-            cache_mode=cache_mode,
-        )
+        if mode == 'SUN':
+            from magcalc.sun.adapter import SUNCalculator
+            calculator = SUNCalculator(spin_model, final_config, params_val)
+        else:
+            calculator = mc.MagCalc(
+                spin_model_module=spin_model,
+                spin_magnitude=S_val,
+                hamiltonian_params=params_val,
+                cache_file_base=cache_base,
+                cache_mode=cache_mode,
+            )
     except Exception as e:
-        logger.error(f"Failed to initialize MagCalc: {e}")
+        logger.error(f"Failed to initialize the LSWT engine: {e}")
         # Explicitly re-raise to stop execution and show error in UI
         raise e
 

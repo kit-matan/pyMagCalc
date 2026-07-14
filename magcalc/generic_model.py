@@ -708,6 +708,20 @@ class GenericSpinModel:
         if not spec:
             return
 
+        # A NON-DIAGONAL (3x3) supercell is applied by the SU(N) engine, which handles
+        # it natively (SUNModel._replicate); the dipole engine cannot express it, so
+        # refuse rather than silently fall back to the chemical cell.
+        _mat = spec.get('matrix') if isinstance(spec, dict) else spec
+        if _mat is not None and np.asarray(_mat, dtype=object).shape == (3, 3):
+            mode = str((self.config.get('calculation') or {}).get('mode', 'dipole')).upper()
+            if mode != 'SUN':
+                raise ValueError(
+                    "A non-diagonal magnetic_supercell (3x3 matrix) is only supported by "
+                    "the SU(N) engine. Set `calculation: {mode: SUN}`, or give a diagonal "
+                    "[n1, n2, n3].")
+            logger.info("Non-diagonal magnetic_supercell: applied by the SU(N) engine.")
+            return
+
         # quiet=True: the k=1/2 double-count warning is moot when the user is
         # already requesting a real-space supercell.
         ms_raw = normalize_magnetic_structure(self.config.get('magnetic_structure'),

@@ -272,11 +272,11 @@ def test_nondiagonal_supercell_replication():
 
     M = [[2, 0, 0], [0, 1, -1], [0, 1, 1]]          # non-diagonal, |det| = 4
     lat = np.array(LAT, float)
-    nb, no, sp = SUNModel._replicate(bonds, onsite, [1.0], 1, lat,
-                                     np.zeros((1, 3)), M)
+    nb, no, sp, pos_sup = SUNModel._replicate(bonds, onsite, [1.0], 1, lat,
+                                              np.zeros((1, 3)), M)
     sup = SUNModel.from_directions(sp, [[0, 0, 1]] * len(sp), nb, no)
 
-    assert len(sp) == 4 and len(nb) == 4 * len(bonds)
+    assert len(sp) == 4 and len(nb) == 4 * len(bonds) and len(pos_sup) == 4
     # FM energy per site is cell-independent
     assert abs(sup.energy_per_site() - chem.energy_per_site()) < 1e-9
 
@@ -339,3 +339,101 @@ def test_fei2_su3_matches_sunny():
     for q, want in SUNNY_BANDS.items():
         got = np.sort(mdl.dispersion(np.array(q) @ Bchem))
         assert np.allclose(got, np.sort(want), atol=1e-4), f"q={q}: {got} vs {want}"
+
+
+def test_fei2_su3_intensities_match_sunny():
+    """SU(N) S(Q,w). The payoff: the SINGLE-ION bands carry real spectral weight
+    (0.164 and 0.315 below) because the observables are the full N x N spin operators.
+    Dipole LSWT cannot produce those bands at all, let alone their intensity.
+
+    Reference: Sunny 0.8.1, ssf_perp(apply_g=false), no form factor, at the CONVERGED
+    ground state (see test_fei2_su3_matches_sunny for why that caveat matters).
+    Intensities are normalised PER SITE, as Sunny's ssf is.
+    """
+    import yaml
+
+    sunny = {
+        (0.25, 0.0, 0.0): [(2.396852, 0.334222), (2.564621, 0.025628),
+                           (2.785340, 0.003398), (2.847166, 0.012676),
+                           (3.544117, 0.163667), (3.671892, 0.022211),
+                           (3.921634, 0.005248), (4.113893, 0.039216)],
+        (0.5, 0.0, 0.0): [(2.898688, 0.063290), (2.915719, 0.0),
+                          (2.945225, 0.019711), (2.959550, 0.0),
+                          (4.305223, 0.314738), (4.389777, 0.0),
+                          (4.618768, 0.089920), (4.712272, 0.0)],
+    }
+    MSUPER = [[1, 0, 0], [0, 1, -2], [0, 1, 2]]
+
+    cfg = yaml.safe_load(open("examples/materials/FeI2/config_fei2.yaml"))
+    m = GenericSpinModel(cfg)
+    lat = np.array(m.config["crystal_structure"]["lattice_vectors"], float)
+    mdl = SUNModel.from_generic_model(m, supercell=MSUPER, directions=[[0, 0, 1]] * 4)
+    mdl.minimize_energy(n_restarts=40, seed=1)
+
+    Bm = 2 * np.pi * np.linalg.inv(lat).T
+    for q, ref in sunny.items():
+        w, I = mdl.structure_factor(np.array(q) @ Bm)
+        p = np.argsort(w)
+        w, I = w[p], I[p]
+        for k, (e_ref, i_ref) in enumerate(ref):
+            assert abs(w[k] - e_ref) < 1e-4, f"q={q} band {k}: E {w[k]} vs {e_ref}"
+            assert abs(I[k] - i_ref) < 1e-4, f"q={q} band {k}: I {I[k]} vs {i_ref}"
+
+    # ... and the single-ion group really does carry weight
+    w, I = mdl.structure_factor(np.array((0.5, 0.0, 0.0)) @ Bm)
+    upper = I[w > 4.0]
+    assert np.max(upper) > 0.3, "single-ion bands should carry weight"
+
+
+# ----------------------------------------------------------------- runner integration
+def test_runner_mode_sun_end_to_end(tmp_path):
+    """`calculation: {mode: SUN}` swaps the LSWT engine; everything else (structure,
+    symmetry propagation, q-path, tasks, plotting, the ground-state guards) is unchanged.
+
+    Also covers the NON-DIAGONAL magnetic supercell, which only the SU(N) path supports.
+    """
+    import yaml
+
+    from magcalc.runner import run_calculation
+
+    cfg = yaml.safe_load(open("examples/materials/FeI2/config_fei2.yaml"))
+    cfg.pop("magnetic_structure", None)
+    cfg["crystal_structure"]["magnetic_supercell"] = {
+        "matrix": [[1, 0, 0], [0, 1, -2], [0, 1, 2]]}
+    cfg["calculation"] = {"mode": "SUN", "cache_mode": "none"}
+    cfg["tasks"] = {"minimization": True, "dispersion": True}
+    cfg["minimization"] = {"enabled": True, "num_starts": 25, "seed": 1}
+    cfg["q_path"] = {"G": [0.0, 0.0, 0.0], "M": [0.5, 0.0, 0.0],
+                     "path": ["G", "M"], "points_per_segment": 3}
+    cfg["plotting"] = {"save_plot": False, "show_plot": False, "plot_structure": False}
+    cfg["output"] = {"save_data": False}
+    p = tmp_path / "sun.yaml"
+    p.write_text(yaml.safe_dump(cfg))
+
+    run_calculation(str(p))          # must not raise; the guard must pass
+
+
+def test_nondiagonal_supercell_refused_in_dipole_mode(tmp_path):
+    """A 3x3 supercell is inexpressible in the dipole engine. Refuse it rather than
+    silently fall back to the chemical cell (which would give wrong physics quietly)."""
+    import yaml
+
+    cfg = yaml.safe_load(open("examples/materials/FeI2/config_fei2.yaml"))
+    cfg["crystal_structure"]["magnetic_supercell"] = {
+        "matrix": [[1, 0, 0], [0, 1, -2], [0, 1, 2]]}
+    cfg["calculation"] = {"cache_mode": "none"}          # dipole (default)
+    with pytest.raises(ValueError, match="SU\\(N\\)"):
+        GenericSpinModel(cfg)
+
+
+def test_runner_rejects_unknown_mode(tmp_path):
+    import yaml
+
+    from magcalc.runner import run_calculation
+    cfg = yaml.safe_load(open("examples/materials/FeI2/config_fei2.yaml"))
+    cfg["calculation"] = {"mode": "quantum", "cache_mode": "none"}
+    cfg["tasks"] = {"dispersion": False}
+    p = tmp_path / "bad.yaml"
+    p.write_text(yaml.safe_dump(cfg))
+    with pytest.raises(ValueError, match="mode"):
+        run_calculation(str(p))
