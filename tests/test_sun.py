@@ -290,3 +290,52 @@ def test_nondiagonal_supercell_replication():
     for (I, J, dr, _) in nb:
         f = (pos[J] - pos[I] - dr) @ np.linalg.inv(Asuper)
         assert np.max(np.abs(f - np.round(f))) < 1e-6
+
+
+# ----------------------------------------------------------------- FeI2 (the target)
+def test_fei2_su3_matches_sunny():
+    """FeI2 in SU(3) -- the whole reason SU(N) exists.
+
+    S=1 triangular Fe, six ANISOTROPIC exchange matrices + strong easy-axis anisotropy.
+    Its single-ion bound state (the upper band group) is invisible to dipole LSWT.
+
+    Built from the ordinary config: pyMagCalc's spglib `ref_pair` propagation supplies the
+    exchange orbits (verified against Sunny's print_symmetry_table: 6/2/6/12/6/6, including
+    the J'2a-vs-J'2b split at 9.7366 A) and only the NON-DIAGONAL magnetic cell
+    [1 0 0; 0 1 -2; 0 1 2] is applied on top.
+
+    REFERENCE CAVEAT: Sunny's own published example converges to a LOCAL minimum
+    (E/site = -2.35592338) -- it does a single `minimize_energy!` after `randomize_spins!`.
+    The true ground state, which Sunny reaches given 60 restarts, is -2.91893118. The
+    numbers below are the CONVERGED ones. Validating against the example's published value
+    would be validating against a non-converged reference -- exactly the ground-state trap
+    this codebase keeps falling into.
+    """
+    import yaml
+
+    SUNNY_E = -2.91893118
+    SUNNY_BANDS = {
+        (0.0, 0.0, 0.0): [2.527031, 2.748462, 2.815282, 2.818867,
+                          3.629406, 3.862642, 4.005065, 4.051832],
+        (0.5, 0.0, 0.0): [2.898688, 2.915719, 2.945225, 2.959550,
+                          4.305223, 4.389777, 4.618768, 4.712272],
+        (0.25, 0.0, 0.0): [2.396852, 2.564621, 2.785340, 2.847166,
+                           3.544117, 3.671892, 3.921634, 4.113893],
+    }
+    MSUPER = [[1, 0, 0], [0, 1, -2], [0, 1, 2]]
+
+    cfg = yaml.safe_load(open("examples/materials/FeI2/config_fei2.yaml"))
+    m = GenericSpinModel(cfg)
+    lat = np.array(m.config["crystal_structure"]["lattice_vectors"], float)
+
+    mdl = SUNModel.from_generic_model(m, supercell=MSUPER,
+                                      directions=[[0, 0, 1]] * 4)
+    assert mdl.L == 4 and mdl.M == 2          # 4 sites x 2 bosons = 8 bands
+
+    mdl.minimize_energy(n_restarts=40, seed=1)
+    assert abs(mdl.energy_per_site() - SUNNY_E) < 1e-6, mdl.energy_per_site()
+
+    Bchem = 2 * np.pi * np.linalg.inv(lat).T
+    for q, want in SUNNY_BANDS.items():
+        got = np.sort(mdl.dispersion(np.array(q) @ Bchem))
+        assert np.allclose(got, np.sort(want), atol=1e-4), f"q={q}: {got} vs {want}"

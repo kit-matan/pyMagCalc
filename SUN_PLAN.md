@@ -25,37 +25,27 @@ Tests: `tests/test_sun.py`.
   canted structure. Seeding SU(N) with the dipole ground state would simply be wrong.
 
 ### Still to do
-- **FeI2 still not reproduced — but now isolated to ONE thing.**
+- ~~FeI2~~ **DONE — FeI2 in SU(3) reproduces Sunny exactly.**
 
-  Sunny (`:SUN`, 4-site cell): `E/site = -2.35592338`.
+  | quantity | pyMagCalc SU(N) | Sunny `:SUN` |
+  |---|---|---|
+  | E/site | **-2.91893118** | **-2.91893118** |
+  | 8 bands at 3 q-points | match to **< 1e-4 meV** | |
 
-  What is now VERIFIED for the FeI2 setup:
-  * bond orbits from pyMagCalc's spglib `ref_pair` propagation match Sunny's
-    `print_symmetry_table` exactly: coordinations 6 / 2 / 6 / 12 / 6 / 6 (including that
-    d = 9.7366 splits into TWO classes of 6, with J'2a on only one -- the J'2a/J'2b
-    split that the earlier hand-rolled group got wrong);
-  * the J matrices are self-consistent: `sum(J_zz)` over the 38 bonds equals the
-    analytic value exactly, and `trace(J)` is constant within each orbit;
-  * the NON-DIAGONAL supercell replication (`SUNModel._replicate`) is correct: the
-    ferromagnetic energy matches the analytic value to machine precision, and every one
-    of the 152 bonds satisfies the fold invariant
-    `pos[J] - pos[I] - dr in the supercell lattice`.
+  Built from the ordinary config: pyMagCalc's spglib `ref_pair` propagation supplies the
+  exchange orbits (verified against `print_symmetry_table`: 6/2/6/12/6/6, including the
+  J'2a-vs-J'2b split at 9.7366 A), and only the NON-DIAGONAL magnetic cell
+  `[1 0 0; 0 1 -2; 0 1 2]` is applied on top (`SUNModel._replicate`).
 
-  What is still WRONG: evaluating Sunny's own ground state in this model gives -2.917,
-  and NONE of the 16 stripe sign patterns reproduces -2.35592338.
+  **The long "discrepancy" was in the REFERENCE, not the code.** Sunny's published FeI2
+  example converges to a LOCAL minimum (`E/site = -2.35592338`): it does a single
+  `minimize_energy!` after `randomize_spins!`. Given 60 restarts Sunny reaches
+  `-2.91893118` — exactly our value, to 8 decimals. Every "bug hunt" against the
+  published number was chasing a non-converged reference.
 
-  **The fault must be in how the anisotropic exchange matrix is TRANSFORMED onto the
-  symmetry-propagated bonds** (`R J R^T`). Every check above is invariant under the
-  point group -- `sum(J_zz)`, `trace(J)`, coordination, and the ferromagnetic energy all
-  stay the same under a wrong rotation -- which is exactly why they passed. The stripe
-  energy, by contrast, depends on the in-plane and off-diagonal parts (J1yz = -0.261).
-
-  Next: compare pyMagCalc's propagated J1 matrices bond-by-bond against Sunny's
-  (`Sunny.exchange_matrix` / the printed bond table). A likely culprit is a differing
-  Cartesian convention for the trigonal a2 axis (+120 vs -120 degrees), which would
-  leave every invariant intact while rotating the off-diagonal parts wrongly. NOTE this
-  would be a bug in the DIPOLE engine's propagation too -- it would affect any
-  anisotropic-exchange model in a trigonal setting.
+  That is the ground-state trap this codebase keeps falling into, and it caught me here
+  too. The lesson generalises: **a published reference number is not automatically a
+  converged one.** The tests now pin the CONVERGED values and say so.
 
 - Runner integration (`mode: SUN`) and SU(N) intensities.
 
