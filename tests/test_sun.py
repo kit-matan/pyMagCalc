@@ -211,3 +211,43 @@ def test_bridge_carries_anisotropic_exchange_matrices():
     assert len(mdl.bonds) == 2
     got = mdl.bonds[0][3]
     assert np.allclose(np.sort(np.abs(got).ravel()), np.sort(np.abs(np.array(Jm)).ravel()))
+
+
+def test_energy_per_site_is_cell_independent():
+    """REGRESSION: `classical_energy` is the TOTAL cell energy, not per site. That
+    distinction is invisible on a one-site cell -- which every validation gate happened
+    to use -- so it silently looked correct until a 4-site model came along. Use
+    `energy_per_site` when comparing with Sunny."""
+    Sz = spin_matrices(1.0)[2]
+    aniso = -0.6 * (Sz @ Sz)
+
+    b1 = [(0, 0, np.array([A, 0, 0]), -np.eye(3)),
+          (0, 0, np.array([-A, 0, 0]), -np.eye(3))]
+    m1 = SUNModel.from_directions([1.0], [[0, 0, 1]], b1, [(0, aniso)])
+
+    b2 = []
+    for i in (0, 1):
+        j = 1 - i
+        b2 += [(i, j, np.array([A / 2, 0, 0]), -np.eye(3)),
+               (i, j, np.array([-A / 2, 0, 0]), -np.eye(3))]
+    m2 = SUNModel.from_directions([1.0] * 2, [[0, 0, 1]] * 2, b2,
+                                  [(i, aniso) for i in (0, 1)])
+
+    assert abs(m1.energy_per_site() - (-1.6)) < 1e-9          # Sunny
+    assert abs(m2.energy_per_site() - (-1.6)) < 1e-9          # same physics, 2-site cell
+    assert abs(m2.classical_energy() - 2 * m1.classical_energy()) < 1e-9
+
+
+def test_cpn_ground_state_search_finds_the_minimum():
+    """The CP^(N-1) search (self-consistent local-field diagonalisation -- the SU(N)
+    analogue of optmagsteep). It must NOT be seeded from the dipole ground state: with
+    anisotropy present a coherent state has <Sz^2> != (S n_z)^2, so the SU(N) and dipole
+    classical energies genuinely differ for a canted structure."""
+    Sz = spin_matrices(1.0)[2]
+    bonds = [(0, 0, np.array([A, 0, 0]), -np.eye(3)),
+             (0, 0, np.array([-A, 0, 0]), -np.eye(3))]
+    mdl = SUNModel.from_directions([1.0], [[1, 0, 0]], bonds,   # deliberately wrong start
+                                   [(0, -0.6 * (Sz @ Sz))])
+    E = mdl.minimize_energy(n_restarts=6, seed=0)
+    assert abs(E / mdl.L - (-1.6)) < 1e-8
+    assert abs(abs(mdl.dipoles[0][2]) - 1.0) < 1e-6      # easy axis -> spins along z

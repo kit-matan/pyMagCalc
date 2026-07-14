@@ -14,15 +14,28 @@ Implemented: `magcalc/sun/operators.py` (N x N spin + Stevens matrices, coherent
 states), `magcalc/sun/lswt.py` (`SUNModel`: H(q), dispersion, classical energy).
 Tests: `tests/test_sun.py`.
 
+### Done since
+- **Config bridge**: `SUNModel.from_generic_model(model)` reuses the whole existing
+  front end (structure, space-group propagation of exchange matrices, supercells) and
+  swaps only the engine. Reproduces Sunny on the GATE 3 model to 4.7e-07.
+- **CP^(N-1) ground state**: `SUNModel.minimize_energy` -- self-consistent local-field
+  diagonalisation (the SU(N) analogue of `optmagsteep`) with random restarts. This is a
+  genuine requirement, not a nicety: with anisotropy a coherent state has
+  `<Sz^2> != (S n_z)^2`, so the SU(N) and dipole classical energies **differ** for a
+  canted structure. Seeding SU(N) with the dipole ground state would simply be wrong.
+
 ### Still to do
-- **Coherent-state ground state on CP^(N-1).** Reference states currently come from
-  `SUNModel.from_directions` (the spin coherent state pointing along a classical
-  dipole), which covers collinear/dipolar orders -- including FeI2's. A genuine
-  CP^(N-1) optimisation is needed for states with no dipolar analogue (spin-nematic).
-  Generalise `magcalc/annealing.py` (it currently optimises directions on S^2) and keep
-  the interface so the ground-state guards still apply.
-- **Config / runner integration** (`mode: SUN`), intensities, and the FeI2 example
-  itself (needs general anisotropic pair couplings).
+- **FeI2 itself is NOT yet reproduced.** Sunny gives E/site = -2.35592338 with a canted
+  stripe (0, +/-0.204, +/-0.974) in a 4-site cell; the attempt here lands on -2.39/site
+  with a collinear state. The engine is not suspected -- it passes all three gates plus
+  the bridge -- the fault is in the FeI2 setup: its magnetic cell needs the NON-DIAGONAL
+  supercell `[1 0 0; 0 1 -2; 0 1 2]`, which pyMagCalc does not support (diagonal only),
+  so the exchange orbits were propagated by hand instead of by pyMagCalc's validated
+  `ref_pair` machinery. Two bugs were already found and fixed that way (a transposed
+  fractional->Cartesian rotation; total-vs-per-site energy), and a third remains.
+  **The right fix is to add non-diagonal magnetic supercells so the validated
+  propagation can be used, rather than to keep hand-rolling it.**
+- Runner integration (`mode: SUN`) and SU(N) intensities.
 
 
 ## Why

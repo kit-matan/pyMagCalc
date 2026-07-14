@@ -104,8 +104,18 @@ class SUNModel:
             self.QA[i] += At[1:, 1:] - np.eye(M) * At[0, 0]
 
     # ---------------------------------------------------------------- energy
+    def energy_per_site(self) -> float:
+        """Classical energy PER SITE (compare with Sunny's `energy_per_site`)."""
+        return self.classical_energy() / self.L
+
     def classical_energy(self) -> float:
-        """E = (1/2) sum_ordered <S_i> J <S_j> + sum_i <A_i>."""
+        """TOTAL classical energy of the magnetic cell:
+        E = (1/2) sum_ordered <S_i> J <S_j> + sum_i <A_i>.
+
+        NOTE this is the total, not per site -- divide by L (or use `energy_per_site`)
+        when comparing with Sunny. The two coincide only for a one-site cell, which is
+        why the single-site validation gates did not catch the difference.
+        """
         E = 0.0
         for (i, j, dr, J) in self.bonds:
             E += 0.5 * float(np.real(self.s0[i] @ J @ self.s0[j]))
@@ -276,3 +286,91 @@ class SUNModel:
                           for t, p in zip(th, ph)]
 
         return cls.from_directions(spins, directions, bonds, onsite)
+
+    # ------------------------------------------------- CP^(N-1) ground state
+    def local_field(self, i: int, s0: np.ndarray) -> np.ndarray:
+        """The local N x N Hamiltonian felt by site i, given the current expectations.
+
+        E = (1/2) sum_bonds <S_i> J <S_j> + sum_i <A_i>, and with both bond directions
+        listed (and J_ji = J_ij^T) the derivative collapses to
+
+            h_i = sum_{bonds starting at i} sum_ab J_ab <S_j>^b S^a  +  A_i
+        """
+        Sxyz = spin_matrices(self.S[i])
+        h = np.zeros((self.N, self.N), dtype=complex)
+        for (bi, bj, dr, J) in self.bonds:
+            if bi != i:
+                continue
+            for a in range(3):
+                for b in range(3):
+                    if J[a, b]:
+                        h += J[a, b] * np.real(s0[bj, b]) * Sxyz[a]
+        for (k, A) in self.onsite:
+            if k == i:
+                h += A
+        return h
+
+    def minimize_energy(self, n_restarts: int = 8, max_iter: int = 400,
+                        tol: float = 1e-12, seed: int = 0):
+        """Ground state on CP^(N-1) by self-consistent local-field diagonalisation.
+
+        The SU(N) analogue of SpinW's `optmagsteep`: for a fixed environment the optimal
+        |Z_i> is simply the LOWEST EIGENVECTOR of the local field h_i, so iterate that to
+        self-consistency. Random restarts give the global search.
+
+        This is NOT the same as the dipole ground state whenever an anisotropy is
+        present: a coherent state has <Sz^2> != (S n_z)^2, so the two theories have
+        genuinely different classical energies for a canted structure (FeI2's, for
+        instance). Using the dipole ground state in SU(N) would be simply wrong.
+        """
+        rng = np.random.default_rng(seed)
+        best_E, best_Z = np.inf, None
+
+        for r in range(max(int(n_restarts), 1)):
+            if r == 0:
+                Z = [z.copy() for z in self.Z]                 # current state as a seed
+            else:
+                Z = []
+                for i in range(self.L):
+                    v = rng.normal(size=self.N) + 1j * rng.normal(size=self.N)
+                    Z.append(v / np.linalg.norm(v))
+
+            E_prev = np.inf
+            for _ in range(max_iter):
+                s0 = np.array([[Zi.conj() @ spin_matrices(self.S[i])[a] @ Zi
+                                for a in range(3)] for i, Zi in enumerate(Z)])
+                for i in range(self.L):
+                    h = self.local_field(i, s0)
+                    w, v = np.linalg.eigh(h)
+                    Z[i] = v[:, int(np.argmin(w))]
+                    s0[i] = [Z[i].conj() @ spin_matrices(self.S[i])[a] @ Z[i]
+                             for a in range(3)]
+                E = self._energy_of(Z)
+                if abs(E_prev - E) < tol:
+                    break
+                E_prev = E
+
+            E = self._energy_of(Z)
+            if E < best_E - 1e-12:
+                best_E, best_Z = E, [z.copy() for z in Z]
+
+        self.Z = best_Z
+        self._prepare()
+        return best_E
+
+    def _energy_of(self, Z) -> float:
+        s0 = np.array([[Z[i].conj() @ spin_matrices(self.S[i])[a] @ Z[i]
+                        for a in range(3)] for i in range(self.L)])
+        E = 0.0
+        for (i, j, dr, J) in self.bonds:
+            E += 0.5 * float(np.real(s0[i] @ J @ s0[j]))
+        for (i, A) in self.onsite:
+            E += float(np.real(Z[i].conj() @ A @ Z[i]))
+        return E
+
+    @property
+    def dipoles(self) -> np.ndarray:
+        """<S_i> for the current coherent states."""
+        return np.array([[float(np.real(self.Z[i].conj()
+                                        @ spin_matrices(self.S[i])[a] @ self.Z[i]))
+                          for a in range(3)] for i in range(self.L)])
