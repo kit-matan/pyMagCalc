@@ -1,0 +1,166 @@
+"""SU(N) (generalized) spin-wave theory.
+
+The validation gates from SUN_PLAN.md, in order of how loudly they fail:
+
+  GATE 1  S=1/2 (N=2): SU(N) is IDENTICAL to dipole LSWT. One boson per site, so it is
+          literally the same theory -- any convention error (phase, Bogoliubov metric,
+          factor of 2, on-site mean field) shows up here as a hard mismatch.
+  GATE 2  With no single-ion terms, the DIPOLE band must be reproduced exactly for any
+          S, with the extra SU(N) bands being the flat multipolar (Dm >= 2) modes.
+  GATE 3  With single-ion anisotropy, match Sunny :SUN mode by mode -- including the
+          quadrupolar band that dipole LSWT cannot represent at all.
+"""
+import numpy as np
+import pytest
+
+import magcalc as mc
+from magcalc.generic_model import GenericSpinModel
+from magcalc.sun import SUNModel, coherent_from_direction, spin_matrices, stevens_matrices
+
+A = 4.0
+LAT = [[A, 0, 0], [0, 9.0, 0], [0, 0, 9.0]]
+B = 2 * np.pi * np.linalg.inv(np.array(LAT, float)).T
+QS = [np.array([h, 0, 0]) @ B for h in (0.1, 0.27, 0.45)]
+
+
+# ----------------------------------------------------------------- operators
+def test_spin_matrices_match_sunny():
+    assert np.allclose(np.real(spin_matrices(0.5)[2]), [[0.5, 0], [0, -0.5]])
+    assert np.allclose(np.real(spin_matrices(1.0)[0]),
+                       [[0, 0.707107, 0], [0.707107, 0, 0.707107], [0, 0.707107, 0]],
+                       atol=1e-5)
+    # commutator algebra: [Sx, Sy] = i Sz
+    for S in (0.5, 1.0, 1.5, 2.0):
+        Sx, Sy, Sz = spin_matrices(S)
+        assert np.allclose(Sx @ Sy - Sy @ Sx, 1j * Sz, atol=1e-10)
+
+
+def test_stevens_matrices_match_sunny():
+    """These are the N x N MATRICES, a different object from the classical polynomials
+    in magcalc/stevens.py (which are the s -> inf limit used by dipole LSWT)."""
+    assert np.allclose(np.real(stevens_matrices(1.0, 2, 0)),
+                       [[1, 0, 0], [0, -2, 0], [0, 0, 1]], atol=1e-8)
+    assert np.allclose(np.real(stevens_matrices(2.0, 4, 0)),
+                       np.diag([12, -48, 72, -48, 12]), atol=1e-8)
+    assert np.allclose(np.real(stevens_matrices(2.0, 4, 3)),
+                       [[0, 0, 0, 3, 0], [0, 0, 0, 0, -3], [0, 0, 0, 0, 0],
+                        [3, 0, 0, 0, 0], [0, -3, 0, 0, 0]], atol=1e-8)
+
+
+def test_coherent_state_reproduces_the_classical_dipole():
+    for S in (0.5, 1.0, 2.0):
+        for d in ([0, 0, 1], [1, 0, 0], [1, 1, 1]):
+            Z = coherent_from_direction(S, d)
+            Sxyz = spin_matrices(S)
+            exp = np.array([np.real(Z.conj() @ Sxyz[a] @ Z) for a in range(3)])
+            want = S * np.asarray(d, float) / np.linalg.norm(d)
+            assert np.allclose(exp, want, atol=1e-9)
+
+
+# ----------------------------------------------------------------- helpers
+def _dipole(S, J, directions, sia=None):
+    n = len(directions)
+    atoms = [{"label": f"S{i}", "pos": [i / n, 0.0, 0.0], "spin_S": S, "ion": "Fe2+"}
+             for i in range(n)]
+    inter = {"symmetry_rules": [{"type": "heisenberg", "distance": A / n, "value": J}]}
+    if sia is not None:
+        inter["single_ion_anisotropy"] = [
+            {"type": "sia", "value": sia, "axis": [0, 0, 1]}]
+    cfg = {
+        "crystal_structure": {"lattice_vectors": LAT, "atoms_uc": atoms},
+        "interactions": inter,
+        "parameters": {}, "parameter_order": [],
+        "magnetic_structure": {"type": "pattern", "pattern_type": "generic",
+                               "directions": directions},
+    }
+    m = GenericSpinModel(cfg)
+    th, ph = m.generate_magnetic_structure()
+    m.set_magnetic_structure(th, ph)
+    calc = mc.MagCalc(spin_model_module=m, spin_magnitude=S, cache_mode="none",
+                      cache_file_base="sun_dip", hamiltonian_params=[])
+    return np.sort(np.real(calc.calculate_dispersion(QS).energies), axis=1)
+
+
+def _sun(S, J, directions, sia=None):
+    n = len(directions)
+    d = A / n
+    bonds = []
+    for i in range(n):
+        j = (i + 1) % n
+        bonds.append((i, j, np.array([d, 0, 0]), J * np.eye(3)))
+        bonds.append((j, i, np.array([-d, 0, 0]), J * np.eye(3)))
+    onsite = None
+    if sia is not None:
+        Sz = spin_matrices(S)[2]
+        onsite = [(i, sia * (Sz @ Sz)) for i in range(n)]
+    mdl = SUNModel.from_directions([S] * n, directions, bonds, onsite)
+    return mdl, np.array([mdl.dispersion(q) for q in QS])
+
+
+# ----------------------------------------------------------------- GATE 1
+@pytest.mark.parametrize("J,dirs", [
+    (-1.0, [[0, 0, 1]]),                       # FM chain
+    (+1.0, [[0, 0, 1], [0, 0, -1]]),           # Neel chain
+])
+def test_gate1_spin_half_is_identical_to_dipole_lswt(J, dirs):
+    """THE load-bearing test. At S=1/2 there is one boson per site, so SU(N) and dipole
+    LSWT are the same theory and must agree to machine precision."""
+    dip = _dipole(0.5, J, dirs)
+    _, sun = _sun(0.5, J, dirs)
+    assert np.allclose(np.sort(dip, axis=1), np.sort(sun, axis=1), atol=1e-10)
+
+
+# ----------------------------------------------------------------- GATE 2
+@pytest.mark.parametrize("S,J,dirs", [
+    (1.0, -1.0, [[0, 0, 1]]),
+    (1.0, +1.0, [[0, 0, 1], [0, 0, -1]]),
+    (2.0, -1.0, [[0, 0, 1]]),
+])
+def test_gate2_dipole_band_is_reproduced_and_extras_are_multipolar(S, J, dirs):
+    """Without single-ion terms the DIPOLE bands must appear exactly among the SU(N)
+    bands. The extras are flat Dm >= 2 modes: the spin operators cannot connect states
+    differing by more than one unit of m, so those modes do not disperse."""
+    dip = _dipole(S, J, dirs)
+    _, sun = _sun(S, J, dirs)
+    for iq in range(len(QS)):
+        for e in dip[iq]:
+            assert np.min(np.abs(sun[iq] - e)) < 1e-8, f"dipole band {e} missing"
+    # the extra bands are flat in q
+    extra = sun.shape[1] - dip.shape[1]
+    assert extra > 0
+    flat = np.sort(sun, axis=1)[:, -extra:]
+    assert np.allclose(flat, flat[0], atol=1e-8), "multipolar modes should be flat"
+
+
+# ----------------------------------------------------------------- GATE 3
+def test_gate3_single_ion_physics_matches_sunny_SUN():
+    """S=1 FM chain with EASY-AXIS anisotropy. The Dm=2 (quadrupolar) level hybridises
+    with the magnon -- the mechanism behind FeI2's single-ion bound state, and something
+    dipole LSWT cannot represent at all.
+
+    Reference: Sunny 0.8.1, :SUN mode.
+    """
+    sunny = {0.10: [0.981966, 4.0], 0.27: [2.850666, 4.0], 0.45: [4.0, 4.502113]}
+    mdl, sun = _sun(1.0, -1.0, [[0, 0, 1]], sia=-0.6)
+
+    assert abs(mdl.classical_energy() - (-1.6)) < 1e-9      # Sunny energy_per_site
+
+    for iq, h in enumerate((0.10, 0.27, 0.45)):
+        assert np.allclose(np.sort(sun[iq]), np.sort(sunny[h]), atol=1e-5), \
+            f"q={h}: {sun[iq]} vs {sunny[h]}"
+
+
+def test_gate3_dipole_mode_misses_the_single_ion_band():
+    """The point of the whole exercise: dipole LSWT has only ONE band here and simply
+    does not contain the quadrupolar excitation."""
+    dip = _dipole(1.0, -1.0, [[0, 0, 1]], sia=-0.6)
+    _, sun = _sun(1.0, -1.0, [[0, 0, 1]], sia=-0.6)
+    assert dip.shape[1] == 1
+    assert sun.shape[1] == 2
+    # and the extra SU(N) band is nowhere near the dipole one
+    assert np.min(np.abs(sun[0] - dip[0][0])) > 0.5
+
+
+def test_sun_rejects_mixed_spin_for_now():
+    with pytest.raises(NotImplementedError, match="same N"):
+        SUNModel.from_directions([0.5, 1.0], [[0, 0, 1], [0, 0, 1]], [])

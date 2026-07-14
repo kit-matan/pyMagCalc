@@ -1,7 +1,29 @@
 # SU(N) mode — implementation plan
 
-Branch: `feature/sun-mode`. Nothing is implemented yet; this is the spec and, more
-importantly, the **validation gate**.
+Branch: `feature/sun-mode`.
+
+**STATUS: the engine is implemented and all three validation gates pass.**
+
+| gate | result |
+|---|---|
+| 1. S=1/2 (N=2) must be IDENTICAL to dipole LSWT | **exact, 0.0e+00** (FM and Neel chains) |
+| 2. no single-ion terms: dipole bands reproduced for any S | **exact**; extras are the flat Dm>=2 multipolar modes, at k x the local exchange field |
+| 3. single-ion anisotropy vs Sunny `:SUN`, mode by mode | **4.7e-07**, incl. the quadrupolar band dipole mode misses entirely; classical energy matches exactly |
+
+Implemented: `magcalc/sun/operators.py` (N x N spin + Stevens matrices, coherent
+states), `magcalc/sun/lswt.py` (`SUNModel`: H(q), dispersion, classical energy).
+Tests: `tests/test_sun.py`.
+
+### Still to do
+- **Coherent-state ground state on CP^(N-1).** Reference states currently come from
+  `SUNModel.from_directions` (the spin coherent state pointing along a classical
+  dipole), which covers collinear/dipolar orders -- including FeI2's. A genuine
+  CP^(N-1) optimisation is needed for states with no dipolar analogue (spin-nematic).
+  Generalise `magcalc/annealing.py` (it currently optimises directions on S^2) and keep
+  the interface so the ground-state guards still apply.
+- **Config / runner integration** (`mode: SUN`), intensities, and the FeI2 example
+  itself (needs general anisotropic pair couplings).
+
 
 ## Why
 
