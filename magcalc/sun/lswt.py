@@ -34,7 +34,8 @@ from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from .operators import coherent_from_direction, local_basis, spin_matrices
+from .operators import (coherent_from_direction, local_basis, spin_matrices,
+                        stevens_matrices)
 
 
 class SUNModel:
@@ -165,3 +166,113 @@ class SUNModel:
     def max_imaginary(self, q_cart: np.ndarray) -> float:
         ev = np.linalg.eigvals(self.hamiltonian(q_cart))
         return float(np.max(np.abs(np.imag(ev))))
+
+    # ------------------------------------------------------- host bridge
+    @classmethod
+    def from_generic_model(cls, model, params=None, directions=None):
+        """Build an SU(N) model from a pyMagCalc `GenericSpinModel`.
+
+        This reuses the whole existing front end -- CIF/Wyckoff structure, space-group
+        symmetry propagation of the exchange matrices, magnetic supercells -- and only
+        swaps the LSWT engine. The bond list is taken from the SAME (Jex, DM, Kex)
+        matrices the dipole engine uses, so a model that runs in dipole mode runs here.
+
+        The reference state is the spin coherent state pointing along each site's
+        classical direction (from the model's magnetic structure, or `directions`).
+        That covers dipolar orders -- including FeI2's -- but not genuinely non-dipolar
+        (spin-nematic) states, which need a CP^(N-1) search.
+        """
+        import numpy as _np
+
+        params = list(params if params is not None else [])
+        Jex, DM, Kex = model.spin_interactions(params)
+
+        apos = _np.asarray(model.atom_pos(), dtype=float)
+        aouc = _np.asarray(model.atom_pos_ouc(), dtype=float)
+        L = len(apos)
+        spins = [float(s) for s in model.spin_magnitudes()]
+
+        def _num(x):
+            import sympy as _sp
+            return float(_sp.N(x)) if hasattr(x, "free_symbols") else float(x)
+
+        bonds = []
+        for i in range(L):
+            for j in range(len(aouc)):
+                J = _np.zeros((3, 3), dtype=float)
+                jv = Jex[i, j]
+                if jv != 0:
+                    J += _num(jv) * _np.eye(3)
+                D = DM[i][j]
+                if D is not None and not (hasattr(D, "is_zero_matrix")
+                                          and D.is_zero_matrix):
+                    dx, dy, dz = (_num(D[0]), _num(D[1]), _num(D[2]))
+                    # D . (S_i x S_j) = S_i^T M S_j
+                    J += _np.array([[0.0, dz, -dy], [-dz, 0.0, dx], [dy, -dx, 0.0]])
+                K = Kex[i][j]
+                if K is not None and not (hasattr(K, "is_zero_matrix")
+                                          and K.is_zero_matrix):
+                    Km = _np.asarray(K, dtype=object)
+                    if Km.shape == (3, 3):
+                        J += _np.array([[_num(Km[a, b]) for b in range(3)]
+                                        for a in range(3)])
+                    else:                      # diagonal anisotropic exchange
+                        J += _np.diag([_num(Km[a]) for a in range(3)])
+                if _np.any(J):
+                    bonds.append((i, j % L, aouc[j] - apos[i], J))
+
+        # --- on-site terms: SIA, 3x3 anisotropy tensor, Stevens ---------------
+        onsite = []
+        Sops = {s: spin_matrices(s) for s in set(spins)}
+        pmap = model._resolve_param_map(params)
+        for inter in model.interactions_config:
+            t = inter.get("type")
+            if t not in ("sia", "sia_matrix", "anisotropy_matrix", "stevens"):
+                continue
+            labels = inter.get("atoms") or inter.get("atom_labels")
+            atoms_uc = model.config["crystal_structure"]["atoms_uc"]
+            lab2i = {a["label"]: k for k, a in enumerate(atoms_uc)}
+            targets = [lab2i[l] for l in labels if l in lab2i] if labels else range(L)
+
+            for i in targets:
+                Sx, Sy, Sz = Sops[spins[i]]
+                if t == "sia":
+                    val = model._resolve_scalar(inter.get("value"), pmap)
+                    n = _np.asarray(inter.get("axis", [0, 0, 1]), dtype=float)
+                    n = n / _np.linalg.norm(n)
+                    nS = n[0] * Sx + n[1] * Sy + n[2] * Sz
+                    onsite.append((i, _num(val) * (nS @ nS)))
+                elif t in ("sia_matrix", "anisotropy_matrix"):
+                    Amat = inter.get("matrix", inter.get("value"))
+                    A = _np.zeros_like(Sx)
+                    Svec = [Sx, Sy, Sz]
+                    for a in range(3):
+                        for b in range(3):
+                            c = _num(model._resolve_scalar(Amat[a][b], pmap))
+                            if c:
+                                A = A + c * (Svec[a] @ Svec[b])
+                    onsite.append((i, A))
+                elif t == "stevens":
+                    terms = {}
+                    if "B" in inter:
+                        for key, v in (inter["B"] or {}).items():
+                            k_, q_ = str(key).replace(" ", "").split(",")
+                            terms[(int(k_), int(q_))] = v
+                    else:
+                        terms[(int(inter["k"]), int(inter.get("q", 0)))] = \
+                            inter.get("value")
+                    A = _np.zeros_like(Sx)
+                    for (k_, q_), v in terms.items():
+                        B = _num(model._resolve_scalar(v, pmap))
+                        A = A + B * stevens_matrices(spins[i], k_, q_)
+                    onsite.append((i, A))
+
+        if directions is None:
+            th, ph = model.generate_magnetic_structure()
+            if th is None:
+                raise ValueError("SU(N): the model has no magnetic_structure and no "
+                                 "`directions` were given.")
+            directions = [[_np.sin(t) * _np.cos(p), _np.sin(t) * _np.sin(p), _np.cos(t)]
+                          for t, p in zip(th, ph)]
+
+        return cls.from_directions(spins, directions, bonds, onsite)

@@ -164,3 +164,50 @@ def test_gate3_dipole_mode_misses_the_single_ion_band():
 def test_sun_rejects_mixed_spin_for_now():
     with pytest.raises(NotImplementedError, match="same N"):
         SUNModel.from_directions([0.5, 1.0], [[0, 0, 1], [0, 0, 1]], [])
+
+
+# ----------------------------------------------------------------- config bridge
+def test_bridge_from_generic_model_matches_sunny():
+    """SU(N) built from a pyMagCalc CONFIG -- reusing the whole existing front end
+    (structure, symmetry propagation of the exchange matrices, supercells) and only
+    swapping the LSWT engine. Same model as GATE 3, so it must land on the same Sunny
+    numbers; if the bridge drops or mis-signs a bond or an on-site term, it diverges."""
+    sunny = {0.10: [0.981966, 4.0], 0.27: [2.850666, 4.0], 0.45: [4.0, 4.502113]}
+    cfg = {
+        "crystal_structure": {"lattice_vectors": LAT, "atoms_uc": [
+            {"label": "Fe", "pos": [0.0, 0.0, 0.0], "spin_S": 1.0, "ion": "Fe2+"}]},
+        "interactions": {
+            "symmetry_rules": [{"type": "heisenberg", "distance": A, "value": -1.0}],
+            "single_ion_anisotropy": [
+                {"type": "sia", "value": -0.6, "axis": [0, 0, 1]}],
+        },
+        "parameters": {}, "parameter_order": [],
+        "magnetic_structure": {"type": "pattern", "pattern_type": "ferromagnetic",
+                               "direction": [0, 0, 1]},
+    }
+    mdl = SUNModel.from_generic_model(GenericSpinModel(cfg))
+    assert abs(mdl.classical_energy() - (-1.6)) < 1e-9
+    for h, want in sunny.items():
+        got = mdl.dispersion(np.array([h, 0, 0]) @ B)
+        assert np.allclose(np.sort(got), np.sort(want), atol=1e-5)
+
+
+def test_bridge_carries_anisotropic_exchange_matrices():
+    """FeI2-style: full 3x3 exchange must survive the bridge (it is what makes the
+    single-ion bound state hybridise)."""
+    Jm = [[0.3, 0.0, 0.0], [0.0, 0.1, -0.2], [0.0, -0.2, 0.5]]
+    cfg = {
+        "crystal_structure": {"lattice_vectors": LAT, "atoms_uc": [
+            {"label": "Fe", "pos": [0.0, 0.0, 0.0], "spin_S": 1.0, "ion": "Fe2+"}]},
+        "interactions": {"interaction_matrix": [
+            {"pair": ["Fe", "Fe"], "rij_offset": [1, 0, 0], "value": Jm},
+            {"pair": ["Fe", "Fe"], "rij_offset": [-1, 0, 0], "value": Jm},
+        ]},
+        "parameters": {}, "parameter_order": [],
+        "magnetic_structure": {"type": "pattern", "pattern_type": "ferromagnetic",
+                               "direction": [0, 0, 1]},
+    }
+    mdl = SUNModel.from_generic_model(GenericSpinModel(cfg))
+    assert len(mdl.bonds) == 2
+    got = mdl.bonds[0][3]
+    assert np.allclose(np.sort(np.abs(got).ravel()), np.sort(np.abs(np.array(Jm)).ravel()))
