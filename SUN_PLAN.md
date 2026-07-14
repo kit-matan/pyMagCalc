@@ -25,33 +25,37 @@ Tests: `tests/test_sun.py`.
   canted structure. Seeding SU(N) with the dipole ground state would simply be wrong.
 
 ### Still to do
-- **FeI2 itself is NOT yet reproduced — and the cause is now pinned down.**
+- **FeI2 still not reproduced — but now isolated to ONE thing.**
 
-  Sunny (`:SUN`, 4-site cell): `E/site = -2.35592338`, canted stripe `(0, ±0.204, ±0.974)`.
+  Sunny (`:SUN`, 4-site cell): `E/site = -2.35592338`.
 
-  Diagnosis (decisive test: evaluate SUNNY'S OWN ground state in our bond list):
-  it gives `-2.35390` — a real 2e-3/site error. So the **Hamiltonian** is wrong, not
-  the ground-state search. The engine is not suspected: it passes all three gates plus
-  the config bridge.
+  What is now VERIFIED for the FeI2 setup:
+  * bond orbits from pyMagCalc's spglib `ref_pair` propagation match Sunny's
+    `print_symmetry_table` exactly: coordinations 6 / 2 / 6 / 12 / 6 / 6 (including that
+    d = 9.7366 splits into TWO classes of 6, with J'2a on only one -- the J'2a/J'2b
+    split that the earlier hand-rolled group got wrong);
+  * the J matrices are self-consistent: `sum(J_zz)` over the 38 bonds equals the
+    analytic value exactly, and `trace(J)` is constant within each orbit;
+  * the NON-DIAGONAL supercell replication (`SUNModel._replicate`) is correct: the
+    ferromagnetic energy matches the analytic value to machine precision, and every one
+    of the 152 bonds satisfies the fold invariant
+    `pos[J] - pos[I] - dr in the supercell lattice`.
 
-  Root cause: FeI2's magnetic cell needs the NON-DIAGONAL supercell
-  `[1 0 0; 0 1 -2; 0 1 2]`, which pyMagCalc does not support (diagonal only), so the
-  exchange orbits were propagated by a hand-rolled point group instead of by
-  pyMagCalc's validated spglib `ref_pair` machinery. That hand-rolling gets the bond
-  ORBITS wrong. `print_symmetry_table` on the Fe-only crystal shows the six nearest
-  neighbours splitting into **three classes of coordination 2**, not one orbit of six —
-  Sunny's example builds the crystal *with the iodines* and then `subcrystal`s it, which
-  retains the full P-3m1 symmetry. The parameter name `J′2a` likewise implies a `J′2b`
-  class that our group merges into it.
+  What is still WRONG: evaluating Sunny's own ground state in this model gives -2.917,
+  and NONE of the 16 stripe sign patterns reproduces -2.35592338.
 
-  Three bugs have already come out of this hand-rolling (a transposed
-  fractional→Cartesian rotation; total-vs-per-site energy; the orbit merge above).
-  **Do not keep hand-rolling it.** The fix is:
+  **The fault must be in how the anisotropic exchange matrix is TRANSFORMED onto the
+  symmetry-propagated bonds** (`R J R^T`). Every check above is invariant under the
+  point group -- `sum(J_zz)`, `trace(J)`, coordination, and the ferromagnetic energy all
+  stay the same under a wrong rotation -- which is exactly why they passed. The stripe
+  energy, by contrast, depends on the in-plane and off-diagonal parts (J1yz = -0.261).
 
-  1. add non-diagonal magnetic supercells (`magnetic_supercell: {matrix: [[...]]}`), then
-  2. define FeI2 as an ordinary config (chemical cell + `ref_pair` rules) and let the
-     existing, validated symmetry propagation build the bonds, and
-  3. re-run the comparison. Sunny's E/site is the gate.
+  Next: compare pyMagCalc's propagated J1 matrices bond-by-bond against Sunny's
+  (`Sunny.exchange_matrix` / the printed bond table). A likely culprit is a differing
+  Cartesian convention for the trigonal a2 axis (+120 vs -120 degrees), which would
+  leave every invariant intact while rotating the off-diagonal parts wrongly. NOTE this
+  would be a bug in the DIPOLE engine's propagation too -- it would affect any
+  anisotropic-exchange model in a trigonal setting.
 
 - Runner integration (`mode: SUN`) and SU(N) intensities.
 

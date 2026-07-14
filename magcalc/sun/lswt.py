@@ -32,6 +32,8 @@ dipole LSWT -- the load-bearing test.
 """
 from typing import List, Optional, Sequence, Tuple
 
+from itertools import product as _product
+
 import numpy as np
 
 from .operators import (coherent_from_direction, local_basis, spin_matrices,
@@ -178,8 +180,56 @@ class SUNModel:
         return float(np.max(np.abs(np.imag(ev))))
 
     # ------------------------------------------------------- host bridge
+    @staticmethod
+    def _replicate(bonds, onsite, spins, L_chem, lat_chem, pos_frac, M):
+        """Replicate a chemical-cell bond list into a (possibly NON-DIAGONAL) supercell.
+
+        `M` has the new lattice vectors as COLUMNS, in units of the chemical ones
+        (Sunny's `reshape_supercell` convention): A_super = M^T @ A_chem.
+
+        pyMagCalc's own `magnetic_supercell` only supports DIAGONAL cells, but FeI2's
+        magnetic cell is [1 0 0; 0 1 -2; 0 1 2]. Doing the replication here keeps the
+        (validated) symmetry propagation of the exchange matrices upstream and only
+        rearranges sites -- which is the whole point: hand-rolling the symmetry is what
+        went wrong before.
+        """
+        M = np.asarray(M, dtype=int)
+        ncell = int(round(abs(np.linalg.det(M))))
+        Minv = np.linalg.inv(M)
+
+        # the chemical cells that lie inside the supercell
+        R = int(np.max(np.abs(M))) + 2
+        cells = [np.array(n) for n in _product(range(-R, R + 1), repeat=3)
+                 if all(-1e-9 <= x < 1 - 1e-9 for x in Minv @ np.asarray(n, float))]
+        if len(cells) != ncell:
+            raise ValueError(
+                f"supercell matrix {M.tolist()} has |det| = {ncell} but "
+                f"{len(cells)} cells were enumerated.")
+
+        def fold(n):
+            """Fold a chemical cell index back into the supercell; return its slot."""
+            base = np.floor(Minv @ np.asarray(n, float) + 1e-9)
+            n_in = np.asarray(n, int) - (M @ base).astype(int)
+            for k, c in enumerate(cells):
+                if np.array_equal(c, n_in):
+                    return k
+            raise ValueError(f"cell {n} did not fold into the supercell")
+
+        inv_lat = np.linalg.inv(lat_chem)
+        new_bonds = []
+        for (ci, ni) in enumerate(cells):
+            for (i, j, dr, J) in bonds:
+                # recover the integer chemical-cell offset of this bond
+                off = np.round((dr + (pos_frac[i] - pos_frac[j]) @ lat_chem) @ inv_lat)
+                cj = fold(ni + off.astype(int))
+                new_bonds.append((ci * L_chem + i, cj * L_chem + j, dr, J))
+
+        new_onsite = [(ci * L_chem + i, A)
+                      for ci in range(ncell) for (i, A) in onsite]
+        return new_bonds, new_onsite, [spins[i % L_chem] for i in range(ncell * L_chem)]
+
     @classmethod
-    def from_generic_model(cls, model, params=None, directions=None):
+    def from_generic_model(cls, model, params=None, directions=None, supercell=None):
         """Build an SU(N) model from a pyMagCalc `GenericSpinModel`.
 
         This reuses the whole existing front end -- CIF/Wyckoff structure, space-group
@@ -277,6 +327,14 @@ class SUNModel:
                         A = A + B * stevens_matrices(spins[i], k_, q_)
                     onsite.append((i, A))
 
+        if supercell is not None:
+            lat = _np.asarray(model.config["crystal_structure"]["lattice_vectors"],
+                              dtype=float)
+            pf = _np.asarray([a["pos"] for a in
+                              model.config["crystal_structure"]["atoms_uc"]], dtype=float)
+            bonds, onsite, spins = cls._replicate(
+                bonds, onsite, spins, L, lat, pf, supercell)
+
         if directions is None:
             th, ph = model.generate_magnetic_structure()
             if th is None:
@@ -284,6 +342,10 @@ class SUNModel:
                                  "`directions` were given.")
             directions = [[_np.sin(t) * _np.cos(p), _np.sin(t) * _np.sin(p), _np.cos(t)]
                           for t, p in zip(th, ph)]
+            if supercell is not None:
+                # the chemical structure repeated; the CP^(N-1) search will relax it
+                reps = len(spins) // len(directions)
+                directions = directions * reps
 
         return cls.from_directions(spins, directions, bonds, onsite)
 

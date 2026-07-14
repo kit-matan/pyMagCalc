@@ -251,3 +251,42 @@ def test_cpn_ground_state_search_finds_the_minimum():
     E = mdl.minimize_energy(n_restarts=6, seed=0)
     assert abs(E / mdl.L - (-1.6)) < 1e-8
     assert abs(abs(mdl.dipoles[0][2]) - 1.0) < 1e-6      # easy axis -> spins along z
+
+
+def test_nondiagonal_supercell_replication():
+    """SUNModel._replicate: pyMagCalc's own magnetic_supercell is DIAGONAL only, but
+    FeI2's magnetic cell is [1 0 0; 0 1 -2; 0 1 2]. Replicating here keeps the (validated)
+    symmetry propagation of the exchange matrices upstream and only rearranges sites.
+
+    Two invariants:
+      * a ferromagnetic state has the same energy per site in any supercell;
+      * every bond must satisfy pos[J] - pos[I] - dr in the supercell lattice.
+    """
+    import itertools
+
+    Sz = spin_matrices(1.0)[2]
+    bonds = [(0, 0, np.array([A, 0, 0]), -np.eye(3)),
+             (0, 0, np.array([-A, 0, 0]), -np.eye(3))]
+    onsite = [(0, -0.6 * (Sz @ Sz))]
+    chem = SUNModel.from_directions([1.0], [[0, 0, 1]], bonds, onsite)
+
+    M = [[2, 0, 0], [0, 1, -1], [0, 1, 1]]          # non-diagonal, |det| = 4
+    lat = np.array(LAT, float)
+    nb, no, sp = SUNModel._replicate(bonds, onsite, [1.0], 1, lat,
+                                     np.zeros((1, 3)), M)
+    sup = SUNModel.from_directions(sp, [[0, 0, 1]] * len(sp), nb, no)
+
+    assert len(sp) == 4 and len(nb) == 4 * len(bonds)
+    # FM energy per site is cell-independent
+    assert abs(sup.energy_per_site() - chem.energy_per_site()) < 1e-9
+
+    # fold invariant
+    Mn = np.array(M)
+    Asuper = Mn.T @ lat
+    Minv = np.linalg.inv(Mn)
+    cells = [np.array(n) for n in itertools.product(range(-4, 5), repeat=3)
+             if all(-1e-9 <= x < 1 - 1e-9 for x in Minv @ np.asarray(n, float))]
+    pos = [c @ lat for c in cells]
+    for (I, J, dr, _) in nb:
+        f = (pos[J] - pos[I] - dr) @ np.linalg.inv(Asuper)
+        assert np.max(np.abs(f - np.round(f))) < 1e-6
