@@ -18,9 +18,23 @@
 #
 # Magnetic structure: collinear +/- c antiferromagnet (spins along the c-axis,
 # beta-90 deg from z), alternating up/down -- physics input, given explicitly in
-# Wyckoff-orbit order. The tiny G cants the true minimum ~0.03 meV off pure +/- c
-# (like SW03/SW23), so the ground-state ENERGY audit is set to `warn`; the
-# spectrum itself is clean and real.
+# Wyckoff-orbit order.
+#
+# EXPECTED WARNING (not an error): on running, the ground-state ENERGY audit
+# reports the +/- c structure is metastable by ~0.030 meV/cell (0.0038 meV/site).
+# The tiny G leaves the moment direction WITHIN the easy plane nearly soft, so
+# relaxing cants it very slightly downhill. This is why `on_imaginary: warn` is
+# set (as in SW03/SW23) -- the run proceeds and the spectrum is clean and real.
+# Two intended modes:
+#   * AS SHIPPED (recommended): LSWT about the EXPERIMENTAL +/- c structure. This
+#     is exactly what the reference disp_ZnCVO.py assumes, hence the ~5e-5 meV
+#     match. Keep the explicit magnetic_structure below and leave the warning.
+#   * MODEL'S CLASSICAL MINIMUM: if you instead want LSWT about this model's own
+#     energy minimum, drop `magnetic_structure` and set
+#       tasks: {minimization: true}
+#       minimization: {enabled: true, method: anneal, num_starts: 20, n_sweeps: 4000, seed: 0}
+#     This gives a slightly canted state and shifts bands by up to ~0.2 meV, so
+#     it DEPARTS from the reference (a soft-direction effect, not a bug).
 # =====================================================================
 crystal_structure:
   lattice_parameters:
