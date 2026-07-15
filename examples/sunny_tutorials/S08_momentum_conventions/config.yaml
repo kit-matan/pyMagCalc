@@ -1,0 +1,77 @@
+# =====================================================================
+# S08 - Momentum-transfer conventions (1D chain, DM + Ising)
+#
+# Port of Sunny tutorial 08_Momentum_Conventions.jl (LSWT part) to pyMagCalc.
+#
+#   magcalc run examples/sunny_tutorials/S08_momentum_conventions/config.yaml
+#
+# A 1D chain (spins on a3 = c) with competing Dzyaloshinskii-Moriya and Ising
+# couplings:  H = D * sum_j (S_j x S_{j+1}) - J sum_j S^z_j S^z_{j+1},  D = 0.2,
+# J = 1, D || z.  The bond exchange matrix on Bond(A,A,[0,0,1]) is therefore
+#     dmvec(D z) - J z z^T = [[0, D, 0], [-D, 0, 0], [0, 0, -J]].
+# The reverse bond [0,0,-1] carries the TRANSPOSE (DM is antisymmetric).
+#
+# The strong Ising term pins a z-polarised ferromagnet (energy = -J s^2). Its
+# single magnon has the EXACT analytic dispersion
+#     w(q) = 2 s [ J +/- D sin(2 pi q_c) ] = 3 +/- 0.6 sin(2 pi q_c)   (s = 3/2)
+# so w(0) = 3.0 meV (Ising gap) and w(q) != w(-q): the +/- D sin term makes the
+# spectrum ASYMMETRIC in q_c. That asymmetry -- and its sign -- is the whole
+# point of the tutorial (SpinW uses the opposite q-sign convention to Sunny).
+# =====================================================================
+
+parameter_order: []
+parameters: {}
+
+crystal_structure:
+  # Chain along c. Explicit vectors + P1-style single atom (no symmetry
+  # propagation is wanted: the DM+Ising bond deliberately breaks reflection).
+  lattice_vectors:
+  - [4.0, 0.0, 0.0]
+  - [0.0, 4.0, 0.0]
+  - [0.0, 0.0, 1.0]
+  atoms_uc:
+  - {label: A, pos: [0.0, 0.0, 0.0], spin_S: 1.5, ion: Cu2+}
+
+interactions:
+# forward chain bond (+c): dmvec(0.2 z) - 1.0 z z^T
+- type: interaction_matrix
+  pair: [A, A]
+  rij_offset: [0, 0, 1]
+  value:
+  - [0.0, 0.2, 0.0]
+  - [-0.2, 0.0, 0.0]
+  - [0.0, 0.0, -1.0]
+# reverse chain bond (-c): the transpose (DM flips sign)
+- type: interaction_matrix
+  pair: [A, A]
+  rij_offset: [0, 0, -1]
+  value:
+  - [0.0, -0.2, 0.0]
+  - [0.2, 0.0, 0.0]
+  - [0.0, 0.0, -1.0]
+
+magnetic_structure:
+  enabled: true
+  type: pattern
+  pattern_type: ferromagnetic
+  direction: [0.0, 0.0, 1.0]     # z-polarised (Ising easy axis)
+
+tasks: {minimization: false, dispersion: true}
+
+q_path:
+  mL: [0.0, 0.0, -0.5]
+  G:  [0.0, 0.0,  0.0]
+  pL: [0.0, 0.0,  0.5]
+  path: [mL, G, pL]
+  points_per_segment: 200
+
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  energy_limits_disp: [0, 5]
+  disp_plot_filename: S08_disp.png
+  disp_title: "S08 DM+Ising chain: w(q)=3 +/- 0.6 sin(2 pi q_c), asymmetric in q"
+
+calculation: {cache_mode: none}
+output: {save_data: false}
