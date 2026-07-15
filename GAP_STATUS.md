@@ -8,12 +8,14 @@ Reference oracle: **Sunny.jl 0.8.1** is checked out in-repo at
 `../Sunny.jl-main`, and Julia 1.12 + Sunny 0.8.1 are installed. Use them (and textbook
 analytic results) to validate every new feature — see "How things were validated" below.
 
-Branches (both pushed to `origin`):
-- `feature/gap-closure-ewald` — Gap 1, Gap 2, and Ewald (Gap 3 #7).
-- `feature/sun-mode` — SU(N) (Gap 3 #1), 1/S corrections (#8), mCIF (#12), Studio GUI.
-  These two overlap in intent and should be consolidated before merge.
+Status: **merged to `master`** (PR #2). All of the below — Gap 1, Gap 2, Ewald
+(Gap 3 #7), SU(N) (Gap 3 #1), 1/S corrections (#8), mCIF (#12), the Studio web +
+native apps, and the Sunny.jl tutorial ports — now live on the default branch. The
+two former development branches (`feature/sun-mode`, `feature/gap-closure-ewald`)
+have been consolidated and retired; `feature/gap-closure-ewald` was fully contained
+in the merge and is deleted.
 
-Test suite: 184 passing (`python -m pytest tests`). Every new feature has a test that
+Test suite: 196 tests (`python -m pytest tests`). Every new feature has a test that
 pins it to an **independent reference** (Sunny, or an exact analytic identity), never a
 self-generated golden number.
 
