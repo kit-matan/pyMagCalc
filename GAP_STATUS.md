@@ -13,7 +13,7 @@ Branches (both pushed to `origin`):
 - `feature/sun-mode` — SU(N) (Gap 3 #1), 1/S corrections (#8), mCIF (#12), Studio GUI.
   These two overlap in intent and should be consolidated before merge.
 
-Test suite: 181 passing (`python -m pytest tests`). Every new feature has a test that
+Test suite: 185 passing (`python -m pytest tests`). Every new feature has a test that
 pins it to an **independent reference** (Sunny, or an exact analytic identity), never a
 self-generated golden number.
 
