@@ -300,7 +300,23 @@ class GenericSpinModel:
     def __init__(self, config, base_path="."):
         self.config = config
         self.base_path = base_path
-        
+
+        # A declarative model needs `crystal_structure` at the TOP level. Fail here with
+        # an actionable message rather than crashing later with a bare
+        # KeyError('crystal_structure') deep inside expansion. The usual causes:
+        #   * the config keys are nested one level down (e.g. everything under a
+        #     `cvo_model:` wrapper) -- a fragment meant to be embedded, not run;
+        #   * it is a LEGACY python-model config that belongs at the runner level via
+        #     `python_model_file:` / `spin_model_module:` (those never reach here).
+        if not isinstance(config, dict) or 'crystal_structure' not in config:
+            top = list(config.keys()) if isinstance(config, dict) else type(config).__name__
+            raise ValueError(
+                "Config has no top-level `crystal_structure`. A declarative model needs "
+                "`crystal_structure` (lattice + atoms) at the top level. "
+                f"Found top-level keys: {top}. If your model keys are nested under another "
+                "key, un-nest them; if this is a legacy `python_model_file` config, that is "
+                "handled by the runner, not GenericSpinModel.")
+
         # We always attempt in-place expansion to standardize.
         self._expand_config_inplace()
 

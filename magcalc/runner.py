@@ -384,8 +384,15 @@ def run_calculation(config_file: str):
             logger.error(f"Spiral (optimize_k) minimization failed: {e}")
             raise
     elif do_minimization:
-        # Check if python model provides minimization
-        if spin_model and hasattr(spin_model, 'minimize'):
+        # Check if python model provides minimization. NB `hasattr(model, 'minimize')`
+        # alone is a trap: a legacy model that does `from scipy.optimize import minimize`
+        # exposes that imported function in its namespace, so the check spuriously matched
+        # and the runner called scipy.optimize.minimize(config) -> "missing argument x0".
+        # A genuine custom minimizer is DEFINED in the model module, not imported.
+        _mfn = getattr(spin_model, 'minimize', None) if spin_model else None
+        _custom_minimize = (callable(_mfn) and
+                            getattr(_mfn, '__module__', None) == getattr(spin_model, '__name__', None))
+        if _custom_minimize:
             logger.info("Minimization handled by custom spin model 'minimize' method.")
             try:
                 min_res = spin_model.minimize(config) # Pass full config for flexibility

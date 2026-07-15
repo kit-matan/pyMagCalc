@@ -1,52 +1,66 @@
-# ... (other configurations in your main config.yaml) ...
+# =====================================================================
+# alpha-Cu2V2O7 (aCVO) LSWT -- LEGACY python-model workflow.
+#
+# This drives spin_model.py (the hand-written aCVO Hamiltonian: J1/J2/J3
+# Heisenberg + G1 anisotropic exchange + a DM vector) through the runner's
+# `python_model_file` path. It is the counterpart to the fully declarative
+# config_acvo.yaml in this directory -- same material, different route:
+#   * config_acvo.yaml -> declarative crystal_structure + symmetry_rules;
+#   * config.yaml (this file) -> the legacy spin_model.py module.
+#
+# WHY THIS FILE WAS BROKEN (and is now fixed): it used to be a nested
+# fragment with every key one level down under a `cvo_model:` wrapper, using
+# ratio parameters (J2_ratio/J3_ratio) that spin_model.py does not read, and
+# no q_path. The runner saw an empty top level and crashed with a bare
+# KeyError('crystal_structure'). It is now a valid TOP-LEVEL legacy config;
+# the runner also now (a) reports a clear error for such malformed configs
+# and (b) no longer mistakes an imported scipy `minimize` for a custom one.
+#
+# Field along c (H // c). parameter_order matches spin_model.spin_interactions:
+# [J1, J2, J3, G1, Dx, Dy, D3, H_dir, H_mag].
+# =====================================================================
+python_model_file: spin_model.py
 
-# Configuration for aCVO LSWT calculation
-cvo_model:
-  python_model_file: "spin_model.py"
-  # Options: "ha" (H || a), "hc" (H || c)
-  model_params:
-    S: 0.5
-    J1: 2.49
-    J2_ratio: 1.12 # J2 = J2_ratio * J1
-    J3_ratio: 2.03 # J3 = J3_ratio * J1
-    G1: 0.28
-    Dx: 2.67 # Uniform DM vector along a-axis for J3
-    Dy: 0 # DM vector component in bc-plane for J1
-    D3: 0
-    H_dir: [0.0, 0.0, 1.0] # Field Direction (H//c)
-    H_mag: 20.0
-    # H: 20.0 # Legacy scalar field
-  calculation:
-    cache_mode: "w" # 'r' to read, 'w' to write MagCalc's internal cache
-    cache_file_base_prefix: "CVO_model_cache" # Base prefix for MagCalc's internal cache files.
-                                             # Script should append params like H (e.g., CVO_model_cache_H40.0)
-  output:
-    disp_data_filename: "../../cache/data/CVO_disp_data.npz" # File to save calculated dispersion data
-    sqw_data_filename: "../../cache/data/CVO_sqw_data.npz"   # File to save calculated S(Q,w) data
-  plotting:
-    save_plot: true
-    plot_structure: false # Enable plotting of minimized magnetic structure
-    disp_plot_filename: "../plots/CVO_disp_plot.png" # Filename for saved dispersion plot
-    combined_plot_filename: "../plots/CVO_combined_plot.png" # Filename for combined plot
-    sqw_plot_filename: "../plots/CVO_sqw_plot.png"    # Filename for saved S(Q,w) map plot
-    energy_limits_disp: [0, 10] # Energy limits for dispersion plot
-    energy_limits_sqw: [0, 10]  # Energy limits for S(Q,w) map plot
-    q_limits_disp: [1, 3]       # q-limits for the plot (in r.l.u. as per original script)
-    q_limits_sqw: [1, 3]       # q-limits for S(Q,w) map plot (in r.l.u.)
-    q_ticks_disp: [1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0] # q-ticks for the plot
-    q_ticks_sqw: [1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0] # q-ticks for S(Q,w) map plot
-    disp_title: "CVO Spin Wave Dispersion (Calculated)"
-    sqw_title: "CVO S(Q,ω) Intensity Map (Calculated)"
-    show_plot: true
-    adjust_height_to_screen: true  # Set to true to enable dynamic height
-    screen_height_fraction: 0.85   # Optional: Fraction of screen height to use (default 0.85)
-  tasks:
-    dispersion: true             # Master switch for dispersion calculation and plotting
-    minimization: true # Toggle energy minimization
+parameter_order: [J1, J2, J3, G1, Dx, Dy, D3, H_dir, H_mag]
+parameters:
+  S: 0.5
+  J1: 2.67
+  J2: 2.99          # absolute (was J2_ratio * J1 in the old fragment)
+  J3: 5.42          # absolute (was J3_ratio * J1)
+  G1: 0.282
+  Dx: 2.79          # DM component along a
+  Dy: 0.0
+  D3: 0.0
+  H_dir: [0.0, 0.0, 1.0]   # H // c
+  H_mag: 20.0
 
-    sqw_map: true                # Master switch for S(q,w) map calculation and plotting
-    sqw_energy_step: 0.03            # Energy step for S(Q,w) map convolution
-    sqw_q_step: 0.01                 # Q step for S(Q,w) map calculation (in r.l.u.)
-    sqw_resolution_width: 0.1        # Resolution width for S(Q,w) map convolution
+tasks:
+  minimization: true
+  dispersion: true
+  sqw_map: false
 
-# ... (other configurations) ...
+minimization:
+  enabled: true
+  method: anneal            # Monte-Carlo annealing (robust for the canted AFM)
+  num_starts: 8
+  seed: 0
+
+q_path:
+  Gamma: [1.0, 0.0, 0.0]
+  M:     [3.0, 0.0, 0.0]
+  path: [Gamma, M]
+  points_per_segment: 60
+
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  energy_limits_disp: [0, 10]
+  disp_plot_filename: aCVO_Hc_disp.png
+  disp_title: "alpha-Cu2V2O7 (H // c): dispersion (legacy spin_model.py)"
+
+output:
+  save_data: false
+
+calculation:
+  cache_mode: none

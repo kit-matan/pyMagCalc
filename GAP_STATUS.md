@@ -109,7 +109,7 @@ guard refuses). Never silently wrong.
 |---|---|---|---|
 | 13 | GS search sees q≠0 instabilities | ⚠️ partial | imaginary-mode check does; anneal/energy-audit optimize only within the cell |
 | 14 | Expose symmetry analyzer as CLI | ❌ | `get_bond_constraints` exists (GUI/tests only); `magcalc symmetry` would be ~free |
-| 15 | Broken `examples/materials/aCVO/config.yaml` | ❌ | pre-existing (`KeyError: crystal_structure`), unrelated to this work |
+| 15 | Broken `examples/materials/aCVO/config.yaml` | ✅ | was a nested legacy fragment; rewritten as a valid top-level legacy config. Also fixed 2 general runner bugs (clear error for missing `crystal_structure`; `hasattr(model,'minimize')` no longer matches imported scipy). `tests/test_config_robustness.py` |
 
 ---
 
