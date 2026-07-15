@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @EnvironmentObject var model: AppModel
     @State private var showCIFImporter = false
+    @State private var showMCIFImporter = false
     @State private var showYAMLImporter = false
     @State private var showYAMLExporter = false
     @State private var showProjectImporter = false
@@ -52,6 +53,12 @@ struct ContentView: View {
             Color.clear.fileImporter(isPresented: $showCIFImporter,
                                      allowedContentTypes: [.data, .text]) { result in
                 if case .success(let url) = result { model.importCIF(from: url) }
+            }
+        }
+        .background {
+            Color.clear.fileImporter(isPresented: $showMCIFImporter,
+                                     allowedContentTypes: [.data, .text]) { result in
+                if case .success(let url) = result { model.importMCIF(from: url) }
             }
         }
         .background {
@@ -112,7 +119,8 @@ struct ContentView: View {
     @ViewBuilder
     private var detailView: some View {
         switch model.selectedTab {
-        case .structure: StructureView(showCIFImporter: $showCIFImporter)
+        case .structure: StructureView(showCIFImporter: $showCIFImporter,
+                                       showMCIFImporter: $showMCIFImporter)
         case .interactions: InteractionsView()
         case .environment: EnvironmentView()
         case .tasks: TasksView()
@@ -137,6 +145,11 @@ struct ContentView: View {
                     showCIFImporter = true
                 } label: {
                     Label("Load CIF…", systemImage: "square.and.arrow.up")
+                }
+                Button {
+                    showMCIFImporter = true
+                } label: {
+                    Label("Load mCIF…", systemImage: "square.and.arrow.up.on.square")
                 }
                 Button {
                     showYAMLImporter = true

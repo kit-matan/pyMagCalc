@@ -245,6 +245,32 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Import a magnetic CIF (mCIF): the backend expands the magnetic space group
+    /// into the full magnetic cell, so we get EXPLICIT atoms (P1) plus a per-site
+    /// `generic` magnetic structure (the spin directions). The user still supplies
+    /// the interactions.
+    func importMCIF(from url: URL) {
+        guard let api else { return notify("Connect to a backend first", .error) }
+        Task { [weak self] in
+            do {
+                let parsed = try await api.parseMCIF(fileURL: url)
+                guard let self else { return }
+                self.config.rawImport = nil            // mCIF begins a fresh explicit structure
+                self.config.lattice = parsed.lattice
+                self.config.wyckoffAtoms = parsed.wyckoffAtoms
+                self.config.magneticElements = parsed.magneticElements
+                self.config.atomMode = "explicit"      // magnetic cell is already fully expanded
+                self.config.magneticStructure = parsed.magneticStructure
+                self.selectedTab = .magneticStructure
+                let plural = parsed.nSites == 1 ? "" : "s"
+                self.notify("mCIF loaded: \(parsed.nSites) magnetic site\(plural). "
+                    + "Spin directions imported — now add interactions.")
+            } catch {
+                self?.notify("mCIF import failed: \(error.localizedDescription)", .error)
+            }
+        }
+    }
+
     func uploadFitData(from url: URL) {
         guard let api else { return notify("Connect to a backend first", .error) }
         Task { [weak self] in

@@ -490,6 +490,45 @@ function App() {
     }
   }
 
+  // Load a magnetic CIF (mCIF): the backend expands the magnetic space group into
+  // the full magnetic cell, so we get EXPLICIT atoms (P1) plus a per-site `generic`
+  // magnetic structure. The user still supplies the interactions.
+  const handleMcifUpload = async (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+
+    const formData = new FormData()
+    formData.append('file', file)
+
+    try {
+      const response = await fetch('/api/parse-mcif', {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        let detail = 'Failed to parse mCIF'
+        try { detail = (await response.json()).detail || detail } catch { /* keep default */ }
+        throw new Error(detail)
+      }
+
+      const data = await response.json()
+      rawImportRef.current = null       // mCIF starts a fresh explicit structure
+      setAtomMode('explicit')           // magnetic cell is already fully expanded
+      setConfig(prev => ({
+        ...prev,
+        lattice: data.lattice,
+        wyckoff_atoms: data.wyckoff_atoms,
+        magnetic_elements: data.magnetic_elements ?? prev.magnetic_elements,
+        magnetic_structure: { ...prev.magnetic_structure, ...data.magnetic_structure },
+      }))
+      alert(`mCIF Loaded: ${data.n_sites} magnetic site${data.n_sites === 1 ? '' : 's'} `
+            + `(${data.international}). Spin directions imported; now add interactions.`)
+    } catch (err) {
+      alert('Error loading mCIF: ' + err.message)
+    }
+  }
+
   const DEFAULT_CONFIG = {
     lattice: { a: 5.0, b: 5.0, c: 5.0, alpha: 90, beta: 90, gamma: 90, space_group: 1 },
     wyckoff_atoms: [],
@@ -1351,6 +1390,7 @@ function App() {
 
       <AppHeader
         onCifUpload={handleCifUpload}
+        onMcifUpload={handleMcifUpload}
         onYamlImport={handleImport}
         onReset={resetToDefaults}
         onExportYaml={handleExportYaml}

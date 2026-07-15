@@ -87,6 +87,10 @@ struct APIClient: Sendable {
         try await postMultipart("parse-cif", fileURL: fileURL, as: ParsedCIF.self)
     }
 
+    func parseMCIF(fileURL: URL) async throws -> ParsedMCIF {
+        try await postMultipart("parse-mcif", fileURL: fileURL, as: ParsedMCIF.self)
+    }
+
     func uploadFitData(fileURL: URL) async throws -> FitDataUploadResult {
         try await postMultipart("upload-fit-data", fileURL: fileURL, as: FitDataUploadResult.self)
     }

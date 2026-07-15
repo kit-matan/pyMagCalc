@@ -3,6 +3,7 @@ import SwiftUI
 struct StructureView: View {
     @EnvironmentObject var model: AppModel
     @Binding var showCIFImporter: Bool
+    @Binding var showMCIFImporter: Bool
     @State private var sgSearch = ""
 
     var body: some View {
@@ -31,6 +32,14 @@ struct StructureView: View {
                 Label("Import CIF", systemImage: "doc.badge.arrow.up")
             }
             .disabled(!model.serverReachable)
+            Button {
+                showMCIFImporter = true
+            } label: {
+                Label("Import mCIF", systemImage: "square.and.arrow.up.on.square")
+            }
+            .disabled(!model.serverReachable)
+            .help("Magnetic CIF: expands the magnetic space group into the full "
+                  + "magnetic cell (atoms + spin directions)")
         }
     }
 

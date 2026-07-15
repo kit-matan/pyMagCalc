@@ -3,7 +3,7 @@ import io
 import yaml
 import numpy as np
 import spglib
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, Response
 from ase.io import read
@@ -660,6 +660,93 @@ async def parse_cif(file: UploadFile = File(...)):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/parse-mcif")
+async def parse_mcif(file: UploadFile = File(...),
+                     spin_s: float = Form(0.5), ion: str = Form("")):
+    """
+    Parse a magnetic CIF (mCIF) and return the FULLY EXPANDED magnetic cell:
+    lattice, per-site positions, and per-site spin DIRECTIONS.
+
+    Unlike a plain CIF, an mCIF encodes an experimentally-determined magnetic
+    structure via a magnetic space group. `magcalc.mcif` expands it into the
+    magnetic cell, so the returned atoms are EXPLICIT (atom_mode = explicit,
+    P1) and the magnetic_structure is a `generic` pattern with those directions
+    -- exactly what LSWT needs. The user still supplies the interactions.
+    """
+    try:
+        from magcalc.mcif import read_mcif
+
+        content = await file.read()
+        temp_filename = f"temp_{uuid.uuid4()}.mcif"
+        with open(temp_filename, "wb") as f:
+            f.write(content)
+
+        try:
+            data = read_mcif(temp_filename)
+        except Exception as e:
+            # read_mcif raises a clear ValueError on an inconsistent file; surface it.
+            import traceback
+            traceback.print_exc()
+            raise HTTPException(status_code=400,
+                                detail=f"mCIF parsing failed: {str(e)}")
+        finally:
+            if os.path.exists(temp_filename):
+                os.remove(temp_filename)
+
+        A = np.array(data["lattice_vectors"], float)          # rows are a1,a2,a3
+        a, b, c = (float(np.linalg.norm(A[i])) for i in range(3))
+
+        def _ang(u, v):
+            cos = float(np.dot(u, v) / (np.linalg.norm(u) * np.linalg.norm(v)))
+            return float(np.degrees(np.arccos(max(-1.0, min(1.0, cos)))))
+
+        alpha, beta, gamma = _ang(A[1], A[2]), _ang(A[0], A[2]), _ang(A[0], A[1])
+
+        wyckoff_atoms, directions = [], []
+        for i, s in enumerate(data["sites"]):
+            # element symbol = leading alphabetic run of the site label (Tb1_1 -> Tb)
+            m = re.match(r"[A-Za-z]+", str(s["label"]))
+            base = m.group() if m else str(s["label"])
+            atom = {
+                "label": f"{s['label']}_{i}",
+                "pos": [float(x) for x in s["pos"]],
+                "spin_S": float(spin_s),
+                "species": base,     # web app field
+                "element": base,     # native app (WyckoffAtom) field
+            }
+            if ion:
+                atom["ion"] = ion
+            wyckoff_atoms.append(atom)
+            directions.append([float(x) for x in s["direction"]])
+
+        magnetic_elements = sorted({a2["species"] for a2 in wyckoff_atoms})
+
+        return {
+            # P1 magnetic cell (already expanded) -> explicit atoms, no further symmetry
+            "lattice": {"a": a, "b": b, "c": c, "alpha": alpha, "beta": beta,
+                        "gamma": gamma, "space_group": 1},
+            "international": "P1 (expanded magnetic cell)",
+            "atom_mode": "explicit",
+            "wyckoff_atoms": wyckoff_atoms,
+            "magnetic_elements": magnetic_elements,
+            "magnetic_structure": {
+                "enabled": True,
+                "type": "pattern",
+                "pattern_type": "generic",
+                "directions": directions,
+            },
+            "n_sites": len(wyckoff_atoms),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/get-neighbors")
 async def get_neighbors(config: Dict[str, Any]):
