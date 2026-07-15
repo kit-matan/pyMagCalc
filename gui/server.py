@@ -95,6 +95,67 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 app.mount("/files", StaticFiles(directory=project_root), name="files")
 
 
+def _faithful_run_config(expanded: Dict[str, Any], data: Dict[str, Any]) -> Dict[str, Any]:
+    """Overlay the client's structure/interaction blocks onto the expanded config so the
+    RUN matches `magcalc run` exactly.
+
+    `expand_config` re-derives crystal_structure (atoms, g-tensors) and flattens
+    interactions using builder-side symmetry detection. That diverges from the runner's
+    own (CLI) expansion for advanced cases -- an `interaction_matrix` that breaks the
+    lattice symmetry (silently DROPPED -> SW38 lost all exchange), a non-standard
+    primitive cell (SW21 YIG -> wrong bond set), `anisotropic_exchange` distance rules
+    (ZnCVO -> error), `magnetic_supercell` (SW03 auto -> wrong band count), `dipole_dipole`
+    and `from_mcif`. The runner (magcalc.runner) handles all of these natively, so hand it
+    the client's blocks unchanged instead of the re-derived ones. Verified: all example
+    configs then reproduce `magcalc run` to machine precision.
+    """
+    cs_in = data.get("crystal_structure") or {}
+
+    # from_mcif: the runner builds the whole crystal cell from the file; a re-derived
+    # (empty) crystal_structure would only conflict, so drop it and pass the file through.
+    if data.get("from_mcif"):
+        expanded["from_mcif"] = data["from_mcif"]
+        if data.get("mcif"):
+            expanded["mcif"] = data["mcif"]
+        expanded.pop("crystal_structure", None)
+    elif cs_in:
+        atom_mode = cs_in.get("atom_mode")
+        atoms = cs_in.get("wyckoff_atoms") or cs_in.get("atoms_uc") or []
+        cs_out: Dict[str, Any] = {"dimensionality": 3}
+        if cs_in.get("lattice_vectors"):
+            cs_out["lattice_vectors"] = cs_in["lattice_vectors"]
+            explicit = True
+        else:
+            cs_out["lattice_parameters"] = cs_in.get("lattice_parameters") or {}
+            explicit = (atom_mode == "explicit")
+        # In symmetry mode send ONLY wyckoff_atoms (+ space_group) so the runner expands
+        # the orbit -- exactly as the CLI does. The frontend duplicates atoms into both
+        # keys; keeping atoms_uc would make the runner treat the Wyckoff reps as the whole
+        # (unexpanded) cell.
+        if explicit:
+            cs_out["atoms_uc"] = atoms
+        else:
+            cs_out["wyckoff_atoms"] = atoms
+        for k in ("magnetic_elements", "magnetic_supercell"):
+            if cs_in.get(k) is not None:
+                cs_out[k] = cs_in[k]
+        expanded["crystal_structure"] = cs_out
+
+    # Interactions: pass through unflattened. Unwrap the designer "explicit" wrapper
+    # {list: [...]} -> [...], which config_loader expects as a bare list.
+    inter = data.get("interactions")
+    if isinstance(inter, dict) and "list" in inter:
+        expanded["interactions"] = inter["list"]
+    elif inter is not None:
+        expanded["interactions"] = inter
+
+    # SU(N) mode and other calculation flags must reach the runner.
+    if (data.get("calculation") or {}).get("mode"):
+        expanded.setdefault("calculation", {})["mode"] = data["calculation"]["mode"]
+
+    return expanded
+
+
 def _hydrate_builder(data: Dict[str, Any]) -> 'MagCalcConfigBuilder':
     """
     Shared helper to create and hydrate a MagCalcConfigBuilder from a request payload.
@@ -314,7 +375,13 @@ async def trigger_calculation(config: Dict[str, Any]):
         # 0. Expand the Config (Crucial step: generates atoms_uc, bonds, etc.)
         # We can reuse the logic from expand_config endpoint
         expanded_data = await expand_config(config)
-        
+
+        # 0.1 Make the RUN faithful to `magcalc run`: overlay the client's structure
+        # and interaction blocks so the runner does its own (CLI-identical) expansion,
+        # instead of the builder-side re-derivation that silently diverges for advanced
+        # Hamiltonians / non-standard cells. See _faithful_run_config.
+        expanded_data = _faithful_run_config(expanded_data, config.get("data", {}))
+
         # 0.5 Clean up old plots to prevent stale results
         gui_dir = os.path.dirname(os.path.abspath(__file__))
         project_root = os.path.dirname(gui_dir)

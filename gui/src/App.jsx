@@ -368,8 +368,19 @@ function App() {
             : { lattice_parameters: cs.lattice_parameters || config.lattice }),
           atoms_uc: atoms,
           wyckoff_atoms: atoms,
-          atom_mode: cs.atom_mode || (cs.lattice_vectors ? 'explicit' : 'symmetry'),
+          // A raw config that lists `atoms_uc` is already the full cell (explicit);
+          // only `wyckoff_atoms` needs symmetry expansion. Keying off lattice_vectors
+          // alone mislabelled lattice_parameters+atoms_uc configs (no space group) as
+          // "symmetry", which then tried to re-expand them and dropped per-atom data
+          // like the dipole g-tensor.
+          atom_mode: cs.atom_mode
+            || (cs.atoms_uc ? 'explicit' : (cs.wyckoff_atoms ? 'symmetry'
+                : (cs.lattice_vectors ? 'explicit' : 'symmetry'))),
           magnetic_elements: cs.magnetic_elements || config.magnetic_elements || ['Cu'],
+          // A magnetic supercell (SpinW nExt / Sunny resize_supercell; also the
+          // non-diagonal SU(N) matrix) is physics the runner needs -- pass it through
+          // so supercell/SU(N) configs run the same as `magcalc run`.
+          ...(cs.magnetic_supercell ? { magnetic_supercell: cs.magnetic_supercell } : {}),
           dimensionality: 3,
         },
         interactions: raw.interactions,
