@@ -13,7 +13,7 @@ Branches (both pushed to `origin`):
 - `feature/sun-mode` — SU(N) (Gap 3 #1), 1/S corrections (#8), mCIF (#12), Studio GUI.
   These two overlap in intent and should be consolidated before merge.
 
-Test suite: 185 passing (`python -m pytest tests`). Every new feature has a test that
+Test suite: 184 passing (`python -m pytest tests`). Every new feature has a test that
 pins it to an **independent reference** (Sunny, or an exact analytic identity), never a
 self-generated golden number.
 
@@ -109,7 +109,7 @@ guard refuses). Never silently wrong.
 |---|---|---|---|
 | 13 | GS search sees q≠0 instabilities | ⚠️ partial | imaginary-mode check does; anneal/energy-audit optimize only within the cell |
 | 14 | Expose symmetry analyzer as CLI | ❌ | `get_bond_constraints` exists (GUI/tests only); `magcalc symmetry` would be ~free |
-| 15 | Broken `examples/materials/aCVO/config.yaml` | ✅ | was a nested legacy fragment; rewritten as a valid top-level legacy config. Also fixed 2 general runner bugs (clear error for missing `crystal_structure`; `hasattr(model,'minimize')` no longer matches imported scipy). `tests/test_config_robustness.py` |
+| 15 | Broken `aCVO/config.yaml` (+ `KFe3J/config.yaml`) | ✅ | both were legacy `python_model_file` configs superseded by `config_acvo.yaml` / `config_kfe3j.yaml`; **retired** (untracked + git-ignored, kept locally). Fixed 2 general runner bugs kept: clear error for missing `crystal_structure`; `hasattr(model,'minimize')` no longer matches imported scipy. `tests/test_config_robustness.py` |
 
 ---
 

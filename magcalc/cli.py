@@ -168,8 +168,8 @@ def validate(
         typer.echo(str(e))
         raise typer.Exit(code=1)
 
-    # Identify the model section, allowing a single wrapper key
-    # (e.g. examples/aCVO/config.yaml wraps everything under `cvo_model:`).
+    # Identify the model section, allowing a single wrapper key (a config whose model
+    # keys are all nested one level down under a single wrapper, e.g. `cvo_model:`).
     section = data
     if "crystal_structure" not in section and "python_model_file" not in section \
             and "spin_model_module" not in section and len(section) == 1:

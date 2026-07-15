@@ -8,15 +8,9 @@ tripped two latent engine bugs. Both are general, not aCVO-specific:
      were a custom minimizer (`from scipy.optimize import minimize` in the model module),
      so it called scipy's minimize with a config -> "missing argument x0".
 """
-import os
-
 import pytest
 
 from magcalc.generic_model import GenericSpinModel
-
-HERE = os.path.dirname(__file__)
-ACVO = os.path.join(HERE, "..", "examples", "materials", "aCVO")
-
 
 def test_nested_config_gives_clear_error_not_keyerror():
     """The exact aCVO breakage: keys nested under a wrapper -> no top-level
@@ -59,8 +53,6 @@ def test_legacy_minimize_not_confused_with_imported_scipy():
     assert getattr(fn2, "__module__", None) == mod2.__name__
 
 
-def test_acvo_legacy_config_runs():
-    """End to end: the fixed aCVO legacy config (python_model_file: spin_model.py) runs,
-    minimises to its ground state, and passes the stability guard."""
-    from magcalc.runner import run_calculation
-    run_calculation(os.path.join(ACVO, "config.yaml"))        # must not raise
+# NB: the aCVO/KFe3J legacy `config.yaml` files (python_model_file workflow) were retired
+# and git-ignored -- superseded by config_acvo.yaml / config_kfe3j.yaml (GAP_STATUS.md #15).
+# The two runner fixes above are general and are exercised without those files.

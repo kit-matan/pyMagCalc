@@ -617,7 +617,7 @@ class MagCalc:
                 )
 
             # Extract numerical Hamiltonian parameters from config
-            # Try "model_params" first as per aCVO/config.yaml, then "parameters" as a fallback.
+            # Try "model_params" first (legacy python-model configs), then "parameters".
             self.p_numerical = self.model_config_data.get("model_params")
             if self.p_numerical is None:
                 self.p_numerical = self.model_config_data.get("parameters")
