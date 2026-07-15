@@ -18,6 +18,39 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', date
 logger = logging.getLogger("magcalc")
 
 @app.command()
+def mcif(
+    filename: Annotated[str, typer.Argument(help="Path to the .mcif file")],
+    out: Annotated[str, typer.Option(help="Write a runnable config fragment here")] = None,
+    spin_s: Annotated[float, typer.Option(help="Spin magnitude S for every site")] = 1.0,
+    ion: Annotated[str, typer.Option(help="Ion label for form factors, e.g. Fe2+")] = None,
+):
+    """
+    Import a magnetic CIF (mCIF): expand the magnetic space group into the full magnetic
+    cell and print (or write) the per-site spin directions.
+    """
+    from magcalc.mcif import mcif_to_config_fragment, read_mcif
+    import numpy as _np
+
+    data = read_mcif(filename)
+    typer.secho(f"{len(data['sites'])} magnetic sites in the cell:", fg=typer.colors.GREEN)
+    for s in data['sites']:
+        typer.echo(f"  {s['label']:8s} pos={_np.round(s['pos'], 4).tolist()}  "
+                   f"dir={_np.round(s['direction'], 4).tolist()}")
+    if out:
+        import yaml
+        frag = mcif_to_config_fragment(filename, spin_S=spin_s, ion=ion)
+        frag['interactions'] = {'symmetry_rules': [
+            {'type': 'heisenberg', 'distance': 0.0, 'value': 'J1  # set the bond distance + value'}]}
+        frag['parameters'] = {'J1': 1.0}
+        frag['parameter_order'] = ['J1']
+        frag['tasks'] = {'dispersion': True}
+        with open(out, 'w') as f:
+            yaml.safe_dump(frag, f, sort_keys=False)
+        typer.secho(f"Wrote config fragment to {out} "
+                    f"(fill in `interactions` before running).", fg=typer.colors.GREEN)
+
+
+@app.command()
 def init(
     filename: Annotated[str, typer.Argument(help="Filename for the new config")] = "config.yaml"
 ):

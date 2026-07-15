@@ -197,6 +197,24 @@ def run_calculation(config_file: str):
     logger.info(f"Loaded configuration from {config_file}")
     config_dir = os.path.dirname(os.path.abspath(config_file))
 
+    # mCIF: an experimentally-determined magnetic structure (magnetic space group +
+    # moments). `from_mcif: <file>` fills crystal_structure (lattice + magnetic-cell
+    # atoms) and magnetic_structure (per-site directions) from the mCIF; the user still
+    # supplies `interactions`, `parameters`, `tasks`. An explicit crystal_structure /
+    # magnetic_structure in the config takes precedence over the mCIF-derived one.
+    _mcif = config.get('from_mcif')
+    if _mcif:
+        from magcalc.mcif import mcif_to_config_fragment
+        mpath = _mcif if os.path.isabs(_mcif) else os.path.join(config_dir, _mcif)
+        _mcfg = config.get('mcif', {}) or {}
+        frag = mcif_to_config_fragment(mpath, spin_S=_mcfg.get('spin_S', 1.0),
+                                       ion=_mcfg.get('ion'))
+        logger.info(f"Loaded magnetic structure from mCIF {mpath}: "
+                    f"{len(frag['crystal_structure']['atoms_uc'])} sites.")
+        frag['crystal_structure'].update(config.get('crystal_structure') or {})
+        config['crystal_structure'] = frag['crystal_structure']
+        config.setdefault('magnetic_structure', frag['magnetic_structure'])
+
     # Initialize Generic Model
     spin_module_name = config.get('spin_model_module')
     python_model_rel = config.get('python_model_file')

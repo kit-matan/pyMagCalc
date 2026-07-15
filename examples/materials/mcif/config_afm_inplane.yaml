@@ -1,0 +1,13 @@
+from_mcif: afm_inplane.mcif
+mcif: {spin_S: 2.5, ion: Fe2+}
+interactions:
+  heisenberg:
+  - {pair: [Fe1_0, Fe1_1], rij_offset: [0, 0, 0], value: 1.0}
+  - {pair: [Fe1_1, Fe1_0], rij_offset: [0, 0, 0], value: 1.0}
+parameters: {}
+parameter_order: []
+tasks: {minimization: false, dispersion: true}
+q_path: {G: [0,0,0], X: [0.5,0,0], path: [G, X], points_per_segment: 5}
+plotting: {save_plot: false, show_plot: false, plot_structure: false}
+output: {save_data: false}
+calculation: {cache_mode: none, on_imaginary: warn}

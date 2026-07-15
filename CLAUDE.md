@@ -382,6 +382,29 @@ Validated against Sunny 0.8.1 AND the textbook S=1/2 square-lattice Heisenberg A
 Refuses (does not return a plausible number) when the structure is not a classical
 minimum: imaginary magnons, or H(q) non-positive-definite, both trigger a hard error.
 
+## 5e. Magnetic CIF (mCIF) import
+
+```yaml
+from_mcif: my_structure.mcif      # relative to the config file
+mcif: {spin_S: 2.5, ion: Fe2+}    # optional: S and form-factor ion for every site
+interactions: {...}               # you still supply the exchange
+```
+
+An mCIF encodes an experimentally-determined magnetic structure via a magnetic space
+group (symmetry ops each with a time-reversal parity p = +/-1). `from_mcif` expands it
+into the full magnetic cell -- lattice, per-site positions, and spin DIRECTIONS -- so you
+only add `interactions`/`parameters`/`tasks`. An explicit `crystal_structure` in the same
+config overrides the mCIF-derived one.
+
+CLI: `magcalc mcif file.mcif [--out frag.yaml] [--spin-s S] [--ion Fe2+]` prints the
+expanded sites, or writes a runnable config fragment.
+
+Transforms (matching Sunny's MCIF.jl): position `r' = R r + T`; moment (an AXIAL vector)
+`m' = det(R) * p * (R m)` -- invariant under spatial inversion, flipped by time reversal.
+Validated against Sunny on TbSb (`tests/data_TbSb.mcif`): identical sites and directions,
+including the R-centring anti-translations that make it a G-type AFM. The reader REFUSES a
+file whose symops map a fixed site to two different moments (as Sunny does).
+
 ## 6. Intensity / experiment layer
 
 Applies to S(Q,ω), powder, energy-cut **and FITTING** intensities (never to energies).
