@@ -39,6 +39,8 @@ struct TasksView: View {
                                systemImage: "chart.bar", isOn: $model.config.tasks.sqwMap)
                 TaskToggleCard(title: "Powder Average", subtitle: "S(Q,ω) Sphere Sampl.",
                                systemImage: "wind", isOn: $model.config.tasks.powderAverage)
+                TaskToggleCard(title: "1/S Corrections", subtitle: "Zero-point energy + moment reduction",
+                               systemImage: "target", isOn: $model.config.tasks.corrections)
             }
         }
     }
@@ -195,6 +197,46 @@ struct TasksView: View {
                             .font(.caption2)
                             .foregroundStyle(.orange)
                     }
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("LSWT Engine").font(.caption).foregroundStyle(.secondary)
+                    Picker("", selection: $model.config.calculation.mode) {
+                        Text("Dipole (default)").tag("dipole")
+                        Text("SU(N) — single-ion / multipolar").tag("SUN")
+                    }
+                    .labelsHidden()
+                    Text("SU(N) captures single-ion (multipolar) excitations — e.g. FeI₂'s bound state — that dipole LSWT cannot represent. Use it for S ≥ 1 with strong single-ion anisotropy.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    if model.config.calculation.mode == "SUN" {
+                        Text("SU(N)'s ground state differs from the dipole one — enable Run Minimization so it is found in SU(N), not inherited. Powder/domain averaging not yet supported.")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Temperature (K)").font(.caption).foregroundStyle(.secondary)
+                    TextField("0 (T → 0)", value: $model.config.calculation.temperature,
+                              format: .number)
+                        .textFieldStyle(.roundedBorder)
+                    Text("Applies the Bose thermal factor to S(Q,ω)/powder intensities. Blank = T → 0 (bare LSWT).")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Cross-section").font(.caption).foregroundStyle(.secondary)
+                    Picker("", selection: $model.config.calculation.crossSection) {
+                        Text("Unpolarized ⊥ (default)").tag("perp")
+                        Text("Trace (full)").tag("trace")
+                        Text("Chiral").tag("chiral")
+                        Text("Sˣˣ").tag("xx")
+                        Text("Sʸʸ").tag("yy")
+                        Text("Sᶻᶻ").tag("zz")
+                    }
+                    .labelsHidden()
+                    Text("Neutron cross-section contraction for S(Q,ω) intensities.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
             }
         }

@@ -160,9 +160,11 @@ struct Tasks: Codable, Hashable {
     var exportCSV = false
     var powderAverage = false
     var plotStructure = false
+    /// 1/S corrections: zero-point energy + ordered-moment reduction.
+    var corrections = false
 
     enum CodingKeys: String, CodingKey {
-        case minimization, dispersion
+        case minimization, dispersion, corrections
         case plotDispersion = "plot_dispersion"
         case sqwMap = "sqw_map"
         case plotSqwMap = "plot_sqw_map"
@@ -281,11 +283,21 @@ struct CalculationSettings: Codable, Hashable {
     /// knowingly metastable (e.g. a commensurate approximation to an incommensurate
     /// spiral).
     var onImaginary = "error"
+    /// LSWT engine: "dipole" (default) or "SUN". SU(N) captures single-ion (multipolar)
+    /// excitations that dipole LSWT structurally cannot represent (e.g. FeI2's bound state).
+    var mode = "dipole"
+    /// Sample temperature in Kelvin. nil => T -> 0 (bare LSWT). Applies the Bose factor
+    /// to S(Q,w)/powder intensities.
+    var temperature: Double? = nil
+    /// Neutron cross-section contraction: "perp" (default) | "trace" | "chiral" | a
+    /// tensor component like "xx"/"yy"/"zz".
+    var crossSection = "perp"
 
     enum CodingKeys: String, CodingKey {
-        case backend
+        case backend, mode, temperature
         case cacheMode = "cache_mode"
         case onImaginary = "on_imaginary"
+        case crossSection = "cross_section"
     }
 }
 

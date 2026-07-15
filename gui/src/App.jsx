@@ -244,7 +244,8 @@ function App() {
       plot_sqw_map: true,
       export_csv: false,
       powder_average: false,
-      plot_structure: false
+      plot_structure: false,
+      corrections: false
     },
     q_path: {
       points: { Start: [0, 1, 0], End: [0, 3, 0] },
@@ -295,7 +296,10 @@ function App() {
       // default rather than drawing a plausible-looking plot. 'warn' is for
       // structures that are knowingly metastable (e.g. a commensurate approximation
       // to an incommensurate spiral).
-      on_imaginary: 'error'
+      on_imaginary: 'error',
+      mode: 'dipole',
+      temperature: null,
+      cross_section: 'perp'
     },
     powder_average: {
       q_min: 0.1,
@@ -501,7 +505,8 @@ function App() {
       plot_sqw_map: false,
       powder_average: false,
       export_csv: false,
-      plot_structure: false
+      plot_structure: false,
+      corrections: false
     },
     q_path: {
       points: { Gamma: [0, 0, 0] },
@@ -563,7 +568,10 @@ function App() {
       // default rather than drawing a plausible-looking plot. 'warn' is for
       // structures that are knowingly metastable (e.g. a commensurate approximation
       // to an incommensurate spiral).
-      on_imaginary: 'error'
+      on_imaginary: 'error',
+      mode: 'dipole',
+      temperature: null,
+      cross_section: 'perp'
     },
     fitting: {
       type: 'dispersion',
@@ -2239,6 +2247,22 @@ function App() {
                             <Check size={12} strokeWidth={4} />
                           </div>
                         </div>
+
+                        <div
+                          className={`task-card ${config.tasks.corrections ? 'active' : ''}`}
+                          onClick={() => updateField('tasks', 'corrections', !config.tasks.corrections)}
+                        >
+                          <div className="task-icon-box">
+                            <Target size={18} />
+                          </div>
+                          <div className="task-info">
+                            <span className="task-name">1/S Corrections</span>
+                            <span className="task-desc">Zero-point energy + moment reduction</span>
+                          </div>
+                          <div className="task-check">
+                            <Check size={12} strokeWidth={4} />
+                          </div>
+                        </div>
                       </div>
                     </div>
 
@@ -2483,6 +2507,65 @@ function App() {
                               produce a plausible-looking but meaningless spectrum, with no warning.
                             </p>
                           )}
+                        </div>
+
+                        <div className="input-group">
+                          <label>LSWT Engine</label>
+                          <select
+                            value={config.calculation.mode || 'dipole'}
+                            className="minimal-input"
+                            onChange={(e) => updateField('calculation', 'mode', e.target.value)}
+                          >
+                            <option value="dipole">Dipole (default)</option>
+                            <option value="SUN">SU(N) — single-ion / multipolar</option>
+                          </select>
+                          <p className="text-xs opacity-50 mt-xs">
+                            SU(N) captures single-ion (multipolar) excitations — e.g. FeI₂'s
+                            bound state — that dipole LSWT cannot represent. Use it for S ≥ 1
+                            with strong single-ion anisotropy.
+                          </p>
+                          {config.calculation.mode === 'SUN' && (
+                            <p className="text-xs text-warning mt-xs">
+                              SU(N)'s ground state differs from the dipole one — enable
+                              <strong> Run Minimization</strong> so it is found in SU(N), not
+                              inherited. Powder/domain averaging are not yet supported.
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="input-group">
+                          <label>Temperature (K)</label>
+                          <input
+                            type="number" step="1" min="0"
+                            value={config.calculation.temperature ?? ''}
+                            placeholder="0 (T → 0)"
+                            className="minimal-input"
+                            onChange={(e) => updateField('calculation', 'temperature',
+                              e.target.value === '' ? null : parseFloat(e.target.value))}
+                          />
+                          <p className="text-xs opacity-50 mt-xs">
+                            Applies the Bose thermal factor to S(Q,ω)/powder intensities.
+                            Blank = T → 0 (bare LSWT).
+                          </p>
+                        </div>
+
+                        <div className="input-group">
+                          <label>Cross-section</label>
+                          <select
+                            value={config.calculation.cross_section || 'perp'}
+                            className="minimal-input"
+                            onChange={(e) => updateField('calculation', 'cross_section', e.target.value)}
+                          >
+                            <option value="perp">Unpolarized ⊥ (default)</option>
+                            <option value="trace">Trace (full)</option>
+                            <option value="chiral">Chiral</option>
+                            <option value="xx">Sˣˣ</option>
+                            <option value="yy">Sʸʸ</option>
+                            <option value="zz">Sᶻᶻ</option>
+                          </select>
+                          <p className="text-xs opacity-50 mt-xs">
+                            Neutron cross-section contraction for S(Q,ω) intensities.
+                          </p>
                         </div>
                       </div>
 
