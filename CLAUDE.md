@@ -355,6 +355,33 @@ to a LOCAL minimum (E/site = -2.35592338, one `minimize_energy!` after
 `randomize_spins!`). The true ground state is -2.91893118. A published reference number
 is not automatically a converged one -- check it before trusting it.
 
+## 5d. 1/S (LSWT) corrections
+
+```yaml
+tasks: {corrections: true}
+corrections: {k_mesh: [24, 24, 24]}      # per-axis; use 1 on a decoupled axis
+```
+
+LSWT is the leading 1/S term. `compute_corrections` (magcalc/corrections.py) gives the two
+standard next-order quantities from the SAME H(q) the dispersion uses:
+
+* **zero-point energy** `dE` per site (add to the classical energy) -- quantum
+  fluctuations lower the ground state;
+* **ordered-moment reduction** `dS_i`, with `<S^z_i> = S - dS_i`.
+
+Both are k-space integrals, done on an OFFSET (Monkhorst-Pack) grid that avoids Gamma and
+the zone edge -- a magnet with a Goldstone mode has omega -> 0 there and the moment
+integrand ~ 1/omega, so a Gamma-centred grid samples the divergence directly (it produced
+~1e6 nonsense before the offset). The energy converges fast; the moment converges SLOWLY
+across a gapless cone, so use a fine `k_mesh` (>= 64 per active axis) for dS.
+
+Validated against Sunny 0.8.1 AND the textbook S=1/2 square-lattice Heisenberg AFM:
+`dE = -0.157947 J/site` (exact to 6 dp), `dS -> 0.1966`. A ferromagnet gives exactly zero
+(the classical state IS the magnon vacuum) -- the cleanest self-consistency check.
+
+Refuses (does not return a plausible number) when the structure is not a classical
+minimum: imaginary magnons, or H(q) non-positive-definite, both trigger a hard error.
+
 ## 6. Intensity / experiment layer
 
 Applies to S(Q,ω), powder, energy-cut **and FITTING** intensities (never to energies).

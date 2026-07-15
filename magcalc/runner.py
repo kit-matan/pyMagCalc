@@ -885,6 +885,37 @@ def run_calculation(config_file: str):
                 q_cart_disp, backend=backend, satellites=disp_satellites)
             _emit_dispersion(q_cart_disp, disp_res.energies, disp_file_disp)
 
+    # 3c. 1/S (LSWT) corrections -- zero-point energy and ordered-moment reduction.
+    if tasks.get('corrections', False):
+        from magcalc.corrections import compute_corrections
+        cc = final_config.get('corrections', {}) or {}
+        mesh = cc.get('k_mesh', [16, 16, 16])
+        try:
+            res = compute_corrections(calculator, k_mesh=tuple(mesh))
+            logger.info(
+                f"1/S corrections ({res.n_kpoints} k-points): "
+                f"energy {res.energy_correction_per_site:+.6f} meV/site; "
+                f"ordered-moment reduction dS = "
+                f"{np.array2string(res.moment_reduction, precision=4)} "
+                f"(<S^z> = S - dS).")
+            memory_cache['corrections'] = {
+                'energy_correction_per_site': res.energy_correction_per_site,
+                'moment_reduction': res.moment_reduction,
+                'n_kpoints': res.n_kpoints,
+            }
+            if save_data_flag:
+                cf = final_config.get('output', {}).get(
+                    'corrections_filename', 'corrections.npz')
+                if not os.path.isabs(cf):
+                    cf = os.path.join(config_dir, cf)
+                _safe_makedirs(cf)
+                np.savez(cf, energy_correction_per_site=res.energy_correction_per_site,
+                         moment_reduction=res.moment_reduction, n_kpoints=res.n_kpoints)
+                logger.info(f"1/S corrections saved to {cf}")
+        except Exception as e:
+            logger.error(f"1/S correction calculation failed: {e}")
+            raise
+
     # 4. Powder Average
     # NOTE on units: dispersion and S(Q,w) above interpret q_path entries as
     # reciprocal-lattice units (RLU) and multiply by the B-matrix internally,

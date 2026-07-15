@@ -91,6 +91,7 @@ _KNOWN_TASK_KEYS = {
     "dispersion",
     "sqw_map",
     "powder_average",
+    "corrections",
     "energy_cut",
     "calculate_dispersion",
     "calculate_sqw_map",

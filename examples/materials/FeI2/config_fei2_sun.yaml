@@ -125,7 +125,7 @@ minimization:
   seed: 1
 plotting:
   save_plot: true
-  show_plot: false
+  show_plot: true
   plot_structure: false
   energy_limits_disp: [0, 6]
   energy_limits_sqw: [0, 6]
