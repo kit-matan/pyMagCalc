@@ -10,12 +10,20 @@ The validation gates from SUN_PLAN.md, in order of how loudly they fail:
   GATE 3  With single-ion anisotropy, match Sunny :SUN mode by mode -- including the
           quadrupolar band that dipole LSWT cannot represent at all.
 """
+import os
+
 import numpy as np
 import pytest
 
 import magcalc as mc
 from magcalc.generic_model import GenericSpinModel
 from magcalc.sun import SUNModel, coherent_from_direction, spin_matrices, stevens_matrices
+
+# Resolve example configs relative to this test file so the suite works no matter
+# what CWD pytest is launched from (workspace root or pyMagCalc/).
+FEI2_CONFIG = os.path.join(
+    os.path.dirname(__file__), "..", "examples", "materials", "FeI2", "config_fei2.yaml"
+)
 
 A = 4.0
 LAT = [[A, 0, 0], [0, 9.0, 0], [0, 0, 9.0]]
@@ -324,7 +332,7 @@ def test_fei2_su3_matches_sunny():
     }
     MSUPER = [[1, 0, 0], [0, 1, -2], [0, 1, 2]]
 
-    cfg = yaml.safe_load(open("examples/materials/FeI2/config_fei2.yaml"))
+    cfg = yaml.safe_load(open(FEI2_CONFIG))
     m = GenericSpinModel(cfg)
     lat = np.array(m.config["crystal_structure"]["lattice_vectors"], float)
 
@@ -364,7 +372,7 @@ def test_fei2_su3_intensities_match_sunny():
     }
     MSUPER = [[1, 0, 0], [0, 1, -2], [0, 1, 2]]
 
-    cfg = yaml.safe_load(open("examples/materials/FeI2/config_fei2.yaml"))
+    cfg = yaml.safe_load(open(FEI2_CONFIG))
     m = GenericSpinModel(cfg)
     lat = np.array(m.config["crystal_structure"]["lattice_vectors"], float)
     mdl = SUNModel.from_generic_model(m, supercell=MSUPER, directions=[[0, 0, 1]] * 4)
@@ -396,7 +404,7 @@ def test_runner_mode_sun_end_to_end(tmp_path):
 
     from magcalc.runner import run_calculation
 
-    cfg = yaml.safe_load(open("examples/materials/FeI2/config_fei2.yaml"))
+    cfg = yaml.safe_load(open(FEI2_CONFIG))
     cfg.pop("magnetic_structure", None)
     cfg["crystal_structure"]["magnetic_supercell"] = {
         "matrix": [[1, 0, 0], [0, 1, -2], [0, 1, 2]]}
@@ -418,7 +426,7 @@ def test_nondiagonal_supercell_refused_in_dipole_mode(tmp_path):
     silently fall back to the chemical cell (which would give wrong physics quietly)."""
     import yaml
 
-    cfg = yaml.safe_load(open("examples/materials/FeI2/config_fei2.yaml"))
+    cfg = yaml.safe_load(open(FEI2_CONFIG))
     cfg["crystal_structure"]["magnetic_supercell"] = {
         "matrix": [[1, 0, 0], [0, 1, -2], [0, 1, 2]]}
     cfg["calculation"] = {"cache_mode": "none"}          # dipole (default)
@@ -430,7 +438,7 @@ def test_runner_rejects_unknown_mode(tmp_path):
     import yaml
 
     from magcalc.runner import run_calculation
-    cfg = yaml.safe_load(open("examples/materials/FeI2/config_fei2.yaml"))
+    cfg = yaml.safe_load(open(FEI2_CONFIG))
     cfg["calculation"] = {"mode": "quantum", "cache_mode": "none"}
     cfg["tasks"] = {"dispersion": False}
     p = tmp_path / "bad.yaml"
@@ -451,7 +459,7 @@ def test_wrong_sun_reference_state_is_INVISIBLE_to_the_imaginary_check():
     import yaml
 
     MSUPER = [[1, 0, 0], [0, 1, -2], [0, 1, 2]]
-    cfg = yaml.safe_load(open("examples/materials/FeI2/config_fei2.yaml"))
+    cfg = yaml.safe_load(open(FEI2_CONFIG))
     m = GenericSpinModel(cfg)
     lat = np.array(m.config["crystal_structure"]["lattice_vectors"], float)
 
@@ -482,7 +490,7 @@ def test_sun_refuses_a_structure_with_the_wrong_number_of_sites(tmp_path):
 
     from magcalc.runner import run_calculation
 
-    cfg = yaml.safe_load(open("examples/materials/FeI2/config_fei2.yaml"))
+    cfg = yaml.safe_load(open(FEI2_CONFIG))
     cfg["crystal_structure"]["magnetic_supercell"] = {
         "matrix": [[1, 0, 0], [0, 1, -2], [0, 1, 2]]}
     cfg["calculation"] = {"mode": "SUN", "cache_mode": "none"}
@@ -510,7 +518,7 @@ def test_dipole_mode_warns_when_single_ion_bands_would_be_missing(caplog):
 
     from magcalc.runner import _advise_sun_mode
 
-    cfg = yaml.safe_load(open("examples/materials/FeI2/config_fei2.yaml"))
+    cfg = yaml.safe_load(open(FEI2_CONFIG))
     m = GenericSpinModel(cfg)
     with caplog.at_level(logging.WARNING):
         _advise_sun_mode(m)
