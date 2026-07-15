@@ -104,8 +104,8 @@ q_path:
   points_per_segment: 120
 plotting:
   save_plot: true
-  show_plot: false
-  plot_structure: false
+  show_plot: true
+  plot_structure: true
   energy_limits_disp: [0, 12]
   disp_plot_filename: ZnCVO_disp.png
   disp_title: 'ZnCu2V2O7 (ZnCVO): spin-wave dispersion along [100]'
