@@ -1,0 +1,169 @@
+# pyMagCalc ↔ SpinW/Sunny feature-gap status
+
+A running record of the gaps between pyMagCalc and SpinW/Sunny, what has been closed, and
+what remains — written so a future session (AI or human) can pick up without re-deriving
+the context. Keep it updated when a gap moves.
+
+Reference oracle: **Sunny.jl 0.8.1** is checked out in-repo at
+`../Sunny.jl-main`, and Julia 1.12 + Sunny 0.8.1 are installed. Use them (and textbook
+analytic results) to validate every new feature — see "How things were validated" below.
+
+Branches (both pushed to `origin`):
+- `feature/gap-closure-ewald` — Gap 1, Gap 2, and Ewald (Gap 3 #7).
+- `feature/sun-mode` — SU(N) (Gap 3 #1), 1/S corrections (#8), mCIF (#12), Studio GUI.
+  These two overlap in intent and should be consolidated before merge.
+
+Test suite: 181 passing (`python -m pytest tests`). Every new feature has a test that
+pins it to an **independent reference** (Sunny, or an exact analytic identity), never a
+self-generated golden number.
+
+---
+
+## Gap 1 — Intensity / experiment layer — ✅ CLOSED
+
+The neutron-intensity / experiment surface. Config keys under `calculation:` and
+`plotting:`, plus a task.
+
+| Item | Status | Key(s) | Validated against |
+|---|---|---|---|
+| Bose thermal factor | ✅ | `calculation.temperature` (K) | Sunny `kT`; detailed balance |
+| Domain / twin averaging | ✅ | `calculation.domains` (`{axis,n_fold}` or list) | manual twin average; exact for perp/trace |
+| Cross-section selection | ✅ | `calculation.cross_section` (perp/trace/xx/…) | tensor sum rules |
+| Instrument resolution | ✅ | `plotting.resolution` (`de_fwhm` poly, `dq_fwhm`, `ei`, `two_theta`, `shape`), `plotting.energy_grid_step` | SpinW `sw_instrument` (SW37) |
+| 2-D constant-energy cuts | ✅ | `tasks.energy_cut` + `energy_cut:` block | SW10 |
+| Polarized / chiral cross-sections | ✅ | `cross_section: chiral` / `sf±` | Sunny, proper-screw helix |
+
+Tests: `tests/test_intensity_layer.py`, `tests/test_polarized.py`.
+
+---
+
+## Gap 2 — Hamiltonian terms — ✅ CLOSED
+
+Terms beyond bilinear exchange. All under `interactions:` except the g-tensor (per atom)
+and multi-k (magnetic_structure).
+
+| Item | Status | Key | Validated against |
+|---|---|---|---|
+| 3×3 single-ion anisotropy | ✅ | `interactions.sia_matrix` | reduces to uniaxial `sia` |
+| Stevens operators O_k^q (k=2/4/6) | ✅ | `interactions.stevens` | table generated from Sunny `stevens_matrices(Inf)`; O_2^0 identity |
+| Anisotropic per-site g-tensor | ✅ | atom `g:` (scalar/diag/3×3/`{g_par,g_perp,axis}`) | g=2 ≡ legacy Zeeman; SW20 in field |
+| Biquadratic exchange | ✅ | `interactions.biquadratic` | exact collinear map to 1e-15 |
+| Long-range dipole-dipole (truncated) | ✅ | `interactions.dipole_dipole: {method: truncated, cutoff}` | Sunny truncated sum to 3e-8 |
+| Multi-k structures | ✅ | `magnetic_structure: {type: multi_k}` + supercell (per-axis LCM) | one-component k=½ ≡ Néel chain |
+
+**Two latent engine bugs fixed while doing this** (see CLAUDE.md; both were silent,
+plausible-but-wrong):
+1. The LSWT truncation filtered by *powers of S*, silently deleting every quartic term
+   (biquadratic, Stevens O_4/O_6, whose quadratic-boson part carries S³). Now truncates
+   by **boson degree**. Verified inert on all prior configs (dispersions byte-identical).
+2. The classical energy ignored the g-tensor and assumed **B ∥ z** on the numeric-param
+   path — which the minimizer uses — so it optimized a *different* Hamiltonian than LSWT
+   diagonalized (wrong ground state, imaginary magnons). Field vector now resolved once.
+
+Tests: `tests/test_hamiltonian_terms.py`.
+
+---
+
+## Gap 3 — Beyond dipole LSWT
+
+### Tier 1 (affects results you would publish) — ✅ ALL DONE
+
+| # | Item | Status | Key | Validated against |
+|---|---|---|---|---|
+| 1 | **SU(N) mode** | ✅ | `calculation.mode: SUN` | Sunny `:SUN` — FeI₂ energy, all 8 bands, AND intensities to 4e-7 |
+| 2 | Fitting sees temperature/domains/cross_section | ✅ | (auto from `calculation:`) | ignoring T biased J by 17% |
+| 3 | Mixed-spin intensity prefactor | ✅ | (per-site √(S_i/2)) | decoupled-sublattice identity (was 60% error) |
+| 4 | Polarized / chiral cross-sections | ✅ | `cross_section` | Sunny (also listed under Gap 1) |
+
+**SU(N) detail** (`magcalc/sun/`, `tests/test_sun.py`): a second LSWT engine (as in
+Sunny). Each site carries an N=2S+1 level Hilbert space with a coherent state; N-1 bosons
+per site; captures single-ion (multipolar) excitations dipole LSWT structurally cannot.
+Validation gates, in order of how loudly they fail:
+- **Gate 1** — S=1/2 (N=2) is *identical* to dipole LSWT (0.0e+00). Any convention error
+  (phase, Bogoliubov metric, factors, on-site mean field) fails here.
+- **Gate 2** — no single-ion terms: dipole bands reproduced; extras are flat Δm≥2 modes.
+- **Gate 3** — single-ion anisotropy vs Sunny `:SUN` (4.7e-07), incl. the quadrupolar band.
+- **FeI₂** — E/site −2.91893118, 8 bands + intensities to 4e-4, via the config bridge +
+  a non-diagonal magnetic supercell + the CP^(N-1) ground-state search.
+
+Runs on 38/47 example configs; the rest **refuse honestly** (incommensurate/spiral/auto-
+supercell → not supported; mixed-spin → not yet; frustrated GS search not converging →
+guard refuses). Never silently wrong.
+
+### Tier 2 (capability parity)
+
+| # | Item | Status | Notes |
+|---|---|---|---|
+| 5 | Finite-T classical dynamics (Langevin, SampledCorrelations) | ❌ | classical S(Q,ω) above T_N |
+| 6 | Thermal Monte-Carlo (parallel tempering, Wang–Landau) | ❌ | ground-state MC done (`annealing.py`); thermal sampling not |
+| 7 | **Ewald dipole-dipole** | ✅ | `dipole_dipole: {method: ewald}`; Sunny to 1.3e-8; truncated→Ewald convergence (needs no Julia). `tests/test_ewald.py` |
+| 8 | **LSWT 1/S corrections** | ✅ | `tasks.corrections`; Sunny + textbook square AFM: dE=−0.157947, dS→0.1966. `magcalc/corrections.py`, `tests/test_corrections.py` |
+| 9 | SCGA (paramagnetic diffuse scattering) | ❌ | |
+| 10 | KPM / Lanczos | ❌ | large supercells without full diagonalization |
+| 11 | Entangled units | ❌ | dimers/tetramers |
+| 12 | **mCIF / magnetic space groups** | ✅ | `from_mcif:` + CLI `magcalc mcif`; Sunny on TbSb: identical sites + directions. `magcalc/mcif.py`, `tests/test_mcif.py` |
+
+### Tier 3 (plumbing / cheap wins)
+
+| # | Item | Status | Notes |
+|---|---|---|---|
+| 13 | GS search sees q≠0 instabilities | ⚠️ partial | imaginary-mode check does; anneal/energy-audit optimize only within the cell |
+| 14 | Expose symmetry analyzer as CLI | ❌ | `get_bond_constraints` exists (GUI/tests only); `magcalc symmetry` would be ~free |
+| 15 | Broken `examples/materials/aCVO/config.yaml` | ❌ | pre-existing (`KeyError: crystal_structure`), unrelated to this work |
+
+---
+
+## Delivered alongside, not on the original gap list
+
+- **Monte-Carlo / annealing ground-state minimizer** (`magcalc/annealing.py`): SpinW
+  `anneal` (Metropolis + cooling, Sunny `LocalSampler` proposal mix) and `optmagsteep`
+  (`method: steep`). On SW20-in-field, multistart L-BFGS hit the true minimum in only
+  3/200 starts; annealing finds it in 1 run. Now the recommended `minimization.method`.
+- **Two-part ground-state guard** (runner, `on_imaginary: error|warn|off`): an
+  imaginary-mode check AND an energy audit (perturb-and-relax). The run FAILS on a
+  non-minimum instead of drawing a plausible-but-wrong spectrum. Caught a real shipped
+  bug (SW20 zero-field was not at its ground state). The energy audit is necessary
+  because a stationary *maximum* (or a wrong SU(N) reference) returns a real, positive,
+  plausible spectrum the imaginary check cannot see.
+- **Studio (web + native) controls**: minimization method picker, Ground-State Check,
+  LSWT engine (dipole/SU(N)), temperature, cross-section, 1/S corrections task. The new
+  interaction *types* (biquadratic/Stevens/3×3 SIA/dipole-dipole/g-tensor/multi-k),
+  energy-cut, resolution, and mCIF are NOT in the GUI yet (need bond/matrix editors);
+  they work via the config/CLI today.
+
+---
+
+## How things were validated (and the recurring trap)
+
+The single most important lesson from this work, stated for the next session:
+
+**A check that a wrong answer passes is not a check.** The engine has repeatedly produced
+plausible-but-wrong spectra that looked fine:
+- the S-power filter silently deleting quartic terms;
+- the classical energy optimizing a different Hamiltonian than LSWT diagonalized;
+- a mixed-spin intensity off by 60% (a constant factor, easy to wave through);
+- SU(N) intensities off by exactly ×L (per-site normalization);
+- a **stationary maximum** returning a real, positive spectrum (invisible to the
+  imaginary-mode check — only the energy audit catches it);
+- a dipole-derived state used as an SU(N) reference (a good local minimum, so again
+  invisible to the imaginary check).
+
+Every one was caught by an **independent oracle or an exact identity**, never by
+inspection. So: validate against Sunny (in-repo) or a textbook analytic result; prefer
+identities (decoupled-sublattice sum, S=1/2 SU(N)≡dipole, ferromagnet has zero
+corrections) that fail loudly; and be suspicious of a discrepancy that is a *clean
+constant factor*.
+
+**A published reference number is not automatically a converged one.** Sunny's own FeI₂
+example converges to a *local* minimum (E/site −2.35592338, one `minimize_energy!`); the
+true ground state (−2.91893118) needs restarts. Days were spent "debugging" against a
+non-converged reference. Re-minimize the reference before trusting it.
+
+Key conventions worth knowing before touching the engine:
+- pyMagCalc stores `HMat(q) = g · H2(q)` with H2 Hermitian, g = diag(I,−I); eigenvalues
+  are the ±ω pairs. (The name `_build_TwogH2_matrix` is just a name.)
+- Bonds are listed in BOTH directions with NO 1/2 on the hopping — this is how
+  `H = (1/2) Σ_ordered` is encoded. The on-site (mean-field / local-field) term is the
+  q=0 sum, NO phase (a phase there makes a ferromagnet's H(q) cancel to zero).
+- The dipole ground state ≠ the SU(N) ground state when an anisotropy is present
+  (a coherent state has ⟨Sz²⟩ ≠ (S n_z)²). Find the SU(N) GS in SU(N).
