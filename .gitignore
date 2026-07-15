@@ -63,3 +63,11 @@ memory/
 **/.DS_Store
 **/xcuserdata/
 *.xcuserstate
+
+# generated 3D-structure JSON written next to plots by runs
+examples/materials/plots/
+
+# Retired legacy python-model example configs (superseded by config_acvo.yaml /
+# config_kfe3j.yaml). Kept locally, off GitHub. See GAP_STATUS.md #15.
+examples/materials/aCVO/config.yaml
+examples/materials/KFe3J/config.yaml

@@ -28,6 +28,105 @@ ENERGY_IMAG_PART_THRESHOLD: float = 1e-5
 SQW_IMAG_PART_THRESHOLD: float = 1e-4
 Q_ZERO_THRESHOLD: float = 1e-10
 PROJECTION_CHECK_TOLERANCE: float = 1e-5
+KB_MEV_PER_K: float = 0.08617333262  # Boltzmann constant in meV/K
+
+
+def thermal_bose_prefactor(
+    energies: npt.NDArray[np.float64],
+    temperature_K: float,
+    e_floor: float = 1e-6,
+) -> npt.NDArray[np.float64]:
+    """Thermal (Bose) occupation prefactor |1/(1 - exp(-E/kT))| per mode.
+
+    Multiplying the T=0 LSWT intensities by this factor gives the
+    finite-temperature cross-section: (n(E)+1) for energy loss (E > 0) and
+    n(|E|) for energy gain (E < 0) — the same detailed-balance form as Sunny's
+    thermal_prefactor and SpinW's sw_egrid 'T' option. Energies in meV,
+    temperature in Kelvin.
+
+    The prefactor diverges like kT/E as E -> 0 (Goldstone modes); |E| is
+    floored at e_floor meV so the result stays finite.
+    """
+    E = np.asarray(energies, dtype=float)
+    kT = KB_MEV_PER_K * float(temperature_K)
+    if kT <= 0.0:
+        return np.ones_like(E)
+    E_safe = np.where(np.abs(E) < e_floor, np.where(E < 0.0, -e_floor, e_floor), E)
+    with np.errstate(divide="ignore", over="ignore"):
+        return np.abs(1.0 / np.expm1(-E_safe / kT))
+
+
+_XYZ_INDEX = {"x": 0, "y": 1, "z": 2}
+
+
+def contract_cross_section(
+    spin_corr: npt.NDArray[np.complex128],
+    q_vector: npt.NDArray[np.float64],
+    cross_section: str = "perp",
+) -> Tuple[npt.NDArray[np.complex128], bool]:
+    """Contract the 3x3 spin-correlation tensor to a per-mode cross-section.
+
+    spin_corr is S^{ab}(q, mode) with shape (3, 3, n_modes). Supported
+    cross_section values:
+      - "perp"  (default): unpolarized neutron factor sum_ab (d_ab - q^_a q^_b)
+        S^{ab}; falls back to the trace at |q| ~ 0 where q^ is undefined.
+      - "trace": sum_a S^{aa} (Sunny ssf_trace).
+      - a two-letter component like "xx", "zz", "xy": the single lab-frame
+        tensor component S^{ab} (Sunny ssf_custom analogue). Off-diagonal
+        components are generally complex; the caller reports the real part
+        and must not clamp it (it is legitimately signed).
+
+    Returns (per_mode_values, clamp) where clamp says whether negatives are
+    numerical noise that should be clipped to zero (true for perp/trace and
+    diagonal components).
+    """
+    cs = (cross_section or "perp").lower()
+    if cs == "perp":
+        q_norm_sq = float(np.dot(q_vector, q_vector))
+        if q_norm_sq < Q_ZERO_THRESHOLD:
+            return np.einsum("aam->m", spin_corr), True
+        q_hat = np.asarray(q_vector, dtype=float) / np.sqrt(q_norm_sq)
+        polarization = np.eye(3) - np.outer(q_hat, q_hat)
+        return np.einsum("ab,abm->m", polarization, spin_corr), True
+    if cs == "trace":
+        return np.einsum("aam->m", spin_corr), True
+    if cs in ("chiral", "sf+", "sf-", "sf_plus", "sf_minus"):
+        # Chiral (polarization-dependent) term. With the neutron polarization along
+        # q (the usual longitudinal SF/NSF setup) ALL magnetic scattering is
+        # spin-flip, and the two beam polarizations differ by the chiral term
+        #
+        #     M_ch(q, w) = i * qhat . [ sum_ab eps_abc S^ab(q, w) ]
+        #     sigma_SF^(+/-) = S_perp -/+ M_ch
+        #
+        # M_ch is the antisymmetric (imaginary) part of the correlation tensor, so
+        # it is nonzero only for a chiral structure (a spiral): it vanishes
+        # identically for any collinear or coplanar-with-a-mirror state. The SIGN
+        # convention here is pinned to Sunny (tests/test_polarized.py).
+        q_norm_sq = float(np.dot(q_vector, q_vector))
+        if q_norm_sq < Q_ZERO_THRESHOLD:
+            n_modes = spin_corr.shape[2]
+            zero = np.zeros(n_modes, dtype=np.complex128)
+            if cs == "chiral":
+                return zero, False
+            return np.einsum("aam->m", spin_corr), True
+        q_hat = np.asarray(q_vector, dtype=float) / np.sqrt(q_norm_sq)
+        eps = np.zeros((3, 3, 3))
+        eps[0, 1, 2] = eps[1, 2, 0] = eps[2, 0, 1] = 1.0
+        eps[0, 2, 1] = eps[2, 1, 0] = eps[1, 0, 2] = -1.0
+        chiral = 1j * np.einsum("abc,c,abm->m", eps, q_hat, spin_corr)
+        if cs == "chiral":
+            return chiral, False          # signed: do NOT clamp negatives
+        polarization = np.eye(3) - np.outer(q_hat, q_hat)
+        perp = np.einsum("ab,abm->m", polarization, spin_corr)
+        sign = -1.0 if cs in ("sf+", "sf_plus") else +1.0
+        return perp + sign * chiral, True
+    if len(cs) == 2 and cs[0] in _XYZ_INDEX and cs[1] in _XYZ_INDEX:
+        a, b = _XYZ_INDEX[cs[0]], _XYZ_INDEX[cs[1]]
+        return spin_corr[a, b, :], a == b
+    raise ValueError(
+        f"Unknown cross_section '{cross_section}'. Use 'perp', 'trace', or a "
+        f"component like 'xx', 'yy', 'zz', 'xy'."
+    )
 
 @dataclass
 class DispersionResult:
@@ -82,11 +181,17 @@ def process_calc_disp(
         int,
         float,
         Union[List[float], npt.NDArray[np.float64]],
+        Optional[npt.NDArray[np.complex128]],   # h_dip(+q): Ewald, precomputed
     ],
 ) -> Tuple[npt.NDArray[np.float64], Optional[npt.NDArray[np.complex128]]]:
     """
     Worker function for parallel dispersion calculation at a single q-point.
     Uses pre-initialized _worker_HMat_func.
+
+    `h_dip` is the long-range dipolar (Ewald) contribution to H(q), already in the
+    host's g*H2 convention. It is precomputed in the parent process because A(q) is an
+    infinite lattice sum: it cannot be expressed as bonds and so cannot come through
+    the symbolic Hamiltonian.
     """
     (
         _,  # Ud_numeric (unused by HMat_func as it's baked into params/sym)
@@ -94,6 +199,7 @@ def process_calc_disp(
         nspins,
         spin_magnitude_num,
         hamiltonian_params_num,
+        h_dip,
     ) = args
     
     global _worker_HMat_func
@@ -111,6 +217,8 @@ def process_calc_disp(
         HMat_numeric = np.array(
             _worker_HMat_func(*numerical_args), dtype=np.complex128
         )
+        if h_dip is not None:
+            HMat_numeric = HMat_numeric + h_dip
     except Exception:
         logger.exception(f"Error evaluating HMat function at {q_label}.")
         return nan_energies, None
@@ -156,6 +264,9 @@ def process_calc_Sqw(
         float,
         Union[List[float], npt.NDArray[np.float64]],
         Optional[List[str]], # ion_list
+        str,  # cross_section
+        Optional[List[float]],  # spin_magnitudes (per site; mixed spin)
+        Optional[Tuple[npt.NDArray[np.complex128], npt.NDArray[np.complex128]]],  # h_dip(+q), h_dip(-q)
     ],
 ) -> Tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
     """
@@ -169,6 +280,9 @@ def process_calc_Sqw(
         spin_magnitude_num,
         hamiltonian_params_num,
         ion_list,
+        cross_section,
+        spin_magnitudes,
+        h_dip_pair,
     ) = args
     
     global _worker_HMat_func
@@ -191,13 +305,17 @@ def process_calc_Sqw(
         Hmat_minus_q = np.array(
             _worker_HMat_func(*numerical_args_minus_q), dtype=np.complex128
         )
+        if h_dip_pair is not None:
+            Hmat_plus_q = Hmat_plus_q + h_dip_pair[0]
+            Hmat_minus_q = Hmat_minus_q + h_dip_pair[1]
     except Exception:
         logger.exception(f"Error evaluating HMat function at {q_label}.")
         return nan_result
         
     try:
         K_matrix, Kd_matrix, eigenvalues = KKdMatrix(
-            spin_magnitude_num, Hmat_plus_q, Hmat_minus_q, Ud_numeric, q_vector, nspins
+            spin_magnitude_num, Hmat_plus_q, Hmat_minus_q, Ud_numeric, q_vector, nspins,
+            spin_magnitudes=spin_magnitudes
         )
         if (
             np.isnan(K_matrix).any()
@@ -240,22 +358,24 @@ def process_calc_Sqw(
         # spin_corr[alpha, beta, mode] = sum_{i,j} K_w[i, alpha, mode] * Kd_w[j, beta, mode]
         spin_corr = np.einsum("iam,jbm->abm", K_w, Kd_w)
 
-        if q_norm_sq < Q_ZERO_THRESHOLD:
-            intensity_per_mode = np.einsum("aam->m", spin_corr)
-        else:
-            q_normalized = q_vector / np.sqrt(q_norm_sq)
-            polarization = np.eye(3) - np.outer(q_normalized, q_normalized)
-            intensity_per_mode = np.einsum("ab,abm->m", polarization, spin_corr)
+        intensity_per_mode, clamp = contract_cross_section(
+            spin_corr, q_vector, cross_section
+        )
 
-        max_imag = float(np.max(np.abs(np.imag(intensity_per_mode)))) if nspins > 0 else 0.0
-        if max_imag > SQW_IMAG_PART_THRESHOLD:
-            worst_mode = int(np.argmax(np.abs(np.imag(intensity_per_mode))))
-            logger.warning(
-                f"Significant imaginary part in Sqw for {q_label}, mode {worst_mode}: {np.imag(intensity_per_mode[worst_mode])}"
-            )
+        if clamp:
+            # Imaginary parts are numerical noise for perp/trace/diagonal
+            # contractions; off-diagonal components are legitimately complex
+            # (the caller gets the real part) so no warning there.
+            max_imag = float(np.max(np.abs(np.imag(intensity_per_mode)))) if nspins > 0 else 0.0
+            if max_imag > SQW_IMAG_PART_THRESHOLD:
+                worst_mode = int(np.argmax(np.abs(np.imag(intensity_per_mode))))
+                logger.warning(
+                    f"Significant imaginary part in Sqw for {q_label}, mode {worst_mode}: {np.imag(intensity_per_mode[worst_mode])}"
+                )
 
         intensities = np.real(intensity_per_mode)
-        intensities[intensities < 0] = 0
+        if clamp:
+            intensities[intensities < 0] = 0
         return q_vector, energies, intensities
     except Exception:
         logger.exception(f"Error during intensity calculation for {q_label}.")
@@ -303,6 +423,8 @@ def process_calc_Sqw_single_k(
         npt.NDArray[np.float64],  # k_cart
         npt.NDArray[np.float64],  # n_axis
         int,  # k_case
+        str,  # cross_section
+        Optional[List[float]],  # spin_magnitudes (per site; mixed spin)
     ],
 ) -> Tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
     """
@@ -325,6 +447,8 @@ def process_calc_Sqw_single_k(
         k_cart,
         n_axis,
         k_case,
+        cross_section,
+        spin_magnitudes,
     ) = args
 
     global _worker_HMat_func
@@ -345,11 +469,6 @@ def process_calc_Sqw_single_k(
     if ion_list:
         for i in range(nspins):
             ff_values[i] = get_form_factor(ion_list[i], q_mag)
-    if q_norm_sq < Q_ZERO_THRESHOLD:
-        polarization = None  # use trace
-    else:
-        q_normalized = q_vector / q_mag
-        polarization = np.eye(3) - np.outer(q_normalized, q_normalized)
 
     numerical_args_base = [spin_magnitude_num] + list(hamiltonian_params_num)
 
@@ -367,7 +486,8 @@ def process_calc_Sqw_single_k(
                 dtype=np.complex128,
             )
             K_matrix, Kd_matrix, eigenvalues = KKdMatrix(
-                spin_magnitude_num, Hmat_plus_q, Hmat_minus_q, Ud_numeric, q_c, nspins
+                spin_magnitude_num, Hmat_plus_q, Hmat_minus_q, Ud_numeric, q_c, nspins,
+                spin_magnitudes=spin_magnitudes
             )
             if (
                 np.isnan(K_matrix).any()
@@ -396,23 +516,25 @@ def process_calc_Sqw_single_k(
             # Rotate back to the lab frame: L . S' . R per mode.
             spin_corr_lab = np.einsum("ax,xym,yb->abm", T_left, spin_corr, T_right)
 
-            if polarization is None:
-                intensity_per_mode = np.einsum("aam->m", spin_corr_lab)
-            else:
-                intensity_per_mode = np.einsum("ab,abm->m", polarization, spin_corr_lab)
-
-            max_imag = (
-                float(np.max(np.abs(np.imag(intensity_per_mode)))) if nspins > 0 else 0.0
+            # Contract at the PHYSICAL q (not the channel q).
+            intensity_per_mode, clamp = contract_cross_section(
+                spin_corr_lab, q_vector, cross_section
             )
-            if max_imag > SQW_IMAG_PART_THRESHOLD:
-                worst_mode = int(np.argmax(np.abs(np.imag(intensity_per_mode))))
-                logger.warning(
-                    f"Significant imaginary part in Sqw for {q_label}, mode "
-                    f"{worst_mode}: {np.imag(intensity_per_mode[worst_mode])}"
+
+            if clamp:
+                max_imag = (
+                    float(np.max(np.abs(np.imag(intensity_per_mode)))) if nspins > 0 else 0.0
                 )
+                if max_imag > SQW_IMAG_PART_THRESHOLD:
+                    worst_mode = int(np.argmax(np.abs(np.imag(intensity_per_mode))))
+                    logger.warning(
+                        f"Significant imaginary part in Sqw for {q_label}, mode "
+                        f"{worst_mode}: {np.imag(intensity_per_mode[worst_mode])}"
+                    )
 
             channel_int = np.real(intensity_per_mode)
-            channel_int[channel_int < 0] = 0
+            if clamp:
+                channel_int[channel_int < 0] = 0
             intensities_all[sl] = channel_int
         except Exception:
             logger.exception(f"Error during single-k S(q,w) calculation for {q_label}.")

@@ -13,6 +13,25 @@ struct ParsedCIF: Codable {
     }
 }
 
+/// Response from `/parse-mcif`: a fully-expanded magnetic cell (explicit atoms, P1)
+/// plus the per-site spin directions as a `generic` magnetic structure.
+struct ParsedMCIF: Codable {
+    var lattice: LatticeParameters
+    var international: String
+    var wyckoffAtoms: [WyckoffAtom]
+    var magneticElements: [String]
+    var magneticStructure: MagneticStructureSettings
+    var nSites: Int
+
+    enum CodingKeys: String, CodingKey {
+        case lattice, international
+        case wyckoffAtoms = "wyckoff_atoms"
+        case magneticElements = "magnetic_elements"
+        case magneticStructure = "magnetic_structure"
+        case nSites = "n_sites"
+    }
+}
+
 struct EquivalentBond: Codable, Hashable {
     var pair: [String]
     var offset: [Int]

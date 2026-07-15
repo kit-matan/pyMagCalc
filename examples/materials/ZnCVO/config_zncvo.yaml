@@ -1,0 +1,116 @@
+# =====================================================================
+# ZnCu2V2O7 (ZnCVO) -- SYMMETRY-based LSWT config. S = 1/2, monoclinic C2/c
+# (space group 15), beta = 110.25 deg. One Cu on Wyckoff 8f expands to the 8
+# magnetic sites; the exchange bonds are propagated by the space group.
+#
+# Validated band-by-band (to ~5e-5 meV) against the reference spin_model.py +
+# disp_ZnCVO.py.  Supersedes the broken config_modern.yaml (which had Cartesian
+# positions, a missing magnetic structure, and a double-counted anisotropy).
+#
+# Interactions (only the non-zero couplings of the model are kept):
+#   Heisenberg  J1 (2.96 A), J5 (5.19 A), J6 (5.27 A), J7 (7.34 A) as distance
+#     symmetry_rules -- each propagates to every symmetry-equivalent bond.
+#   Exchange anisotropy: the model's beta-projected diagonal tensor G*J, in the
+#     GLOBAL frame. It is INVARIANT under the C2/c point group (2/m leaves a
+#     diagonal tensor with y||b unchanged), so it is faithfully propagated by
+#     the same distance rules (no per-bond rotation). The engine applies the
+#     1/2 of H = (1/2) sum_ordered, so the value is G*J*const, NOT 0.5*G*J*const.
+#
+# Magnetic structure: collinear +/- c antiferromagnet (spins along the c-axis,
+# beta-90 deg from z), alternating up/down -- physics input, given explicitly in
+# Wyckoff-orbit order.
+#
+# EXPECTED WARNING (not an error): on running, the ground-state ENERGY audit
+# reports the +/- c structure is metastable by ~0.030 meV/cell (0.0038 meV/site).
+# The tiny G leaves the moment direction WITHIN the easy plane nearly soft, so
+# relaxing cants it very slightly downhill. This is why `on_imaginary: warn` is
+# set (as in SW03/SW23) -- the run proceeds and the spectrum is clean and real.
+# Two intended modes:
+#   * AS SHIPPED (recommended): LSWT about the EXPERIMENTAL +/- c structure. This
+#     is exactly what the reference disp_ZnCVO.py assumes, hence the ~5e-5 meV
+#     match. Keep the explicit magnetic_structure below and leave the warning.
+#   * MODEL'S CLASSICAL MINIMUM: if you instead want LSWT about this model's own
+#     energy minimum, drop `magnetic_structure` and set
+#       tasks: {minimization: true}
+#       minimization: {enabled: true, method: anneal, num_starts: 20, n_sweeps: 4000, seed: 0}
+#     This gives a slightly canted state and shifts bands by up to ~0.2 meV, so
+#     it DEPARTS from the reference (a soft-direction effect, not a bug).
+# =====================================================================
+crystal_structure:
+  lattice_parameters:
+    a: 7.689
+    b: 8.0289
+    c: 10.1065
+    alpha: 90.0
+    beta: 110.251999
+    gamma: 90.0
+    space_group: 15
+  wyckoff_atoms:
+  - label: Cu
+    pos: [0.30976, 0.07364, 0.51407]
+    spin_S: 0.5
+    ion: Cu2+
+parameters:
+  J1: 8.497751
+  J5: 5.261605
+  J6: 1.873546
+  J7: 0.5095509
+  G: 0.00447892
+  H_mag: 0.0
+  H_dir: [0, 0, 1]
+parameter_order: [J1, J5, J6, J7, G, H_mag, H_dir]
+interactions:
+  symmetry_rules:
+  - type: heisenberg
+    distance: 2.96
+    value: J1
+  - type: heisenberg
+    distance: 5.19
+    value: J5
+  - type: heisenberg
+    distance: 5.268
+    value: J6
+  - type: heisenberg
+    distance: 7.34
+    value: J7
+  anisotropic_exchange:
+  - distance: 2.96
+    value: [G * J1 * -1.284329, G * J1 * -0.592029, G * J1 * 1.284329]
+  - distance: 5.19
+    value: [G * J5 * -1.284329, G * J5 * -0.592029, G * J5 * 1.284329]
+  - distance: 5.268
+    value: [G * J6 * -1.284329, G * J6 * -0.592029, G * J6 * 1.284329]
+  - distance: 7.34
+    value: [G * J7 * -1.284329, G * J7 * -0.592029, G * J7 * 1.284329]
+magnetic_structure:
+  type: pattern
+  pattern_type: generic
+  directions:
+  - [-0.34615, 0.0, 0.938179]
+  - [0.34615, 0.0, -0.938179]
+  - [-0.34615, 0.0, 0.938179]
+  - [0.34615, 0.0, -0.938179]
+  - [-0.34615, 0.0, 0.938179]
+  - [0.34615, 0.0, -0.938179]
+  - [-0.34615, 0.0, 0.938179]
+  - [0.34615, 0.0, -0.938179]
+tasks:
+  minimization: false
+  dispersion: true
+q_path:
+  A: [-0.5, 2.0, 0.0]
+  B: [1.5, 2.0, 0.0]
+  path: [A, B]
+  points_per_segment: 120
+plotting:
+  save_plot: true
+  show_plot: true
+  plot_structure: true
+  energy_limits_disp: [0, 12]
+  disp_plot_filename: ZnCVO_disp.png
+  disp_title: 'ZnCu2V2O7 (ZnCVO): spin-wave dispersion along [100]'
+output:
+  save_data: false
+calculation:
+  cache_mode: auto
+  on_imaginary: warn

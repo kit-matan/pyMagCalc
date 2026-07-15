@@ -83,6 +83,32 @@ def _rotate_spin_operators(
     return spin_ops_global_ouc
 
 
+def boson_degree(term: sp.Expr) -> int:
+    """Total power of the Holstein-Primakoff boson operators (c*/cd*) in one term."""
+    powers = term.as_powers_dict()
+    return sum(
+        powers.get(s, 0) for s in term.atoms(sp.Symbol) if s.name.startswith("c")
+    )
+
+
+def _is_purely_quadratic_in_bosons(expr: sp.Expr) -> bool:
+    """True when every additive term of `expr` is exactly quadratic in bosons.
+
+    Used to detect that the spin model already performed the LSWT truncation, so
+    the legacy S-power filter can (and must) be skipped -- see _prepare_hamiltonian.
+    """
+    if expr == 0:
+        return False
+    terms = expr.as_ordered_terms() if hasattr(expr, "as_ordered_terms") else [expr]
+    saw_boson = False
+    for t in terms:
+        deg = boson_degree(t)
+        if deg != 2:
+            return False
+        saw_boson = True
+    return saw_boson
+
+
 def _prepare_hamiltonian(
     spin_model_module: Any,
     spin_ops_global_ouc: List[sp.Matrix],
@@ -110,6 +136,20 @@ def _prepare_hamiltonian(
     # Check if S_sym is present. If not (substituted), we assume filtering was done by module.
     if not hamiltonian_sym.has(S_sym):
         logger.info("S_sym not found in Hamiltonian (likely substituted). Skipping S-power filtering.")
+    elif _is_purely_quadratic_in_bosons(hamiltonian_sym):
+        # The model already truncated to the LSWT (boson-degree-2) terms itself --
+        # GenericSpinModel._apply_substitution_and_filter does exactly this. The
+        # S-power heuristic below is then not just redundant but WRONG for any
+        # term of higher order in the spin operators: the quadratic-boson part of
+        # a quartic term (biquadratic exchange, Stevens O_4/O_6) carries S^3, and
+        # `coeff(S,1)*S + coeff(S,2)*S^2` would silently delete it. Boson degree is
+        # the physically correct LSWT criterion, so when the model has already
+        # applied it there is nothing left to filter.
+        logger.debug(
+            "Hamiltonian is already purely quadratic in boson operators; "
+            "skipping the S-power filter (it would drop S^3 terms from quartic "
+            "spin operators)."
+        )
     else:
         # Legacy filtering logic
         # This logic seems specific to how the Hamiltonian is constructed in the model.

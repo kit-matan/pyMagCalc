@@ -3,7 +3,7 @@ import io
 import yaml
 import numpy as np
 import spglib
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, Response
 from ase.io import read
@@ -93,6 +93,67 @@ app = FastAPI(title="MagCalc Designer Backend")
 # Mount the project root to serve generated files (e.g. plots)
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 app.mount("/files", StaticFiles(directory=project_root), name="files")
+
+
+def _faithful_run_config(expanded: Dict[str, Any], data: Dict[str, Any]) -> Dict[str, Any]:
+    """Overlay the client's structure/interaction blocks onto the expanded config so the
+    RUN matches `magcalc run` exactly.
+
+    `expand_config` re-derives crystal_structure (atoms, g-tensors) and flattens
+    interactions using builder-side symmetry detection. That diverges from the runner's
+    own (CLI) expansion for advanced cases -- an `interaction_matrix` that breaks the
+    lattice symmetry (silently DROPPED -> SW38 lost all exchange), a non-standard
+    primitive cell (SW21 YIG -> wrong bond set), `anisotropic_exchange` distance rules
+    (ZnCVO -> error), `magnetic_supercell` (SW03 auto -> wrong band count), `dipole_dipole`
+    and `from_mcif`. The runner (magcalc.runner) handles all of these natively, so hand it
+    the client's blocks unchanged instead of the re-derived ones. Verified: all example
+    configs then reproduce `magcalc run` to machine precision.
+    """
+    cs_in = data.get("crystal_structure") or {}
+
+    # from_mcif: the runner builds the whole crystal cell from the file; a re-derived
+    # (empty) crystal_structure would only conflict, so drop it and pass the file through.
+    if data.get("from_mcif"):
+        expanded["from_mcif"] = data["from_mcif"]
+        if data.get("mcif"):
+            expanded["mcif"] = data["mcif"]
+        expanded.pop("crystal_structure", None)
+    elif cs_in:
+        atom_mode = cs_in.get("atom_mode")
+        atoms = cs_in.get("wyckoff_atoms") or cs_in.get("atoms_uc") or []
+        cs_out: Dict[str, Any] = {"dimensionality": 3}
+        if cs_in.get("lattice_vectors"):
+            cs_out["lattice_vectors"] = cs_in["lattice_vectors"]
+            explicit = True
+        else:
+            cs_out["lattice_parameters"] = cs_in.get("lattice_parameters") or {}
+            explicit = (atom_mode == "explicit")
+        # In symmetry mode send ONLY wyckoff_atoms (+ space_group) so the runner expands
+        # the orbit -- exactly as the CLI does. The frontend duplicates atoms into both
+        # keys; keeping atoms_uc would make the runner treat the Wyckoff reps as the whole
+        # (unexpanded) cell.
+        if explicit:
+            cs_out["atoms_uc"] = atoms
+        else:
+            cs_out["wyckoff_atoms"] = atoms
+        for k in ("magnetic_elements", "magnetic_supercell"):
+            if cs_in.get(k) is not None:
+                cs_out[k] = cs_in[k]
+        expanded["crystal_structure"] = cs_out
+
+    # Interactions: pass through unflattened. Unwrap the designer "explicit" wrapper
+    # {list: [...]} -> [...], which config_loader expects as a bare list.
+    inter = data.get("interactions")
+    if isinstance(inter, dict) and "list" in inter:
+        expanded["interactions"] = inter["list"]
+    elif inter is not None:
+        expanded["interactions"] = inter
+
+    # SU(N) mode and other calculation flags must reach the runner.
+    if (data.get("calculation") or {}).get("mode"):
+        expanded.setdefault("calculation", {})["mode"] = data["calculation"]["mode"]
+
+    return expanded
 
 
 def _hydrate_builder(data: Dict[str, Any]) -> 'MagCalcConfigBuilder':
@@ -314,7 +375,13 @@ async def trigger_calculation(config: Dict[str, Any]):
         # 0. Expand the Config (Crucial step: generates atoms_uc, bonds, etc.)
         # We can reuse the logic from expand_config endpoint
         expanded_data = await expand_config(config)
-        
+
+        # 0.1 Make the RUN faithful to `magcalc run`: overlay the client's structure
+        # and interaction blocks so the runner does its own (CLI-identical) expansion,
+        # instead of the builder-side re-derivation that silently diverges for advanced
+        # Hamiltonians / non-standard cells. See _faithful_run_config.
+        expanded_data = _faithful_run_config(expanded_data, config.get("data", {}))
+
         # 0.5 Clean up old plots to prevent stale results
         gui_dir = os.path.dirname(os.path.abspath(__file__))
         project_root = os.path.dirname(gui_dir)
@@ -660,6 +727,93 @@ async def parse_cif(file: UploadFile = File(...)):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/parse-mcif")
+async def parse_mcif(file: UploadFile = File(...),
+                     spin_s: float = Form(0.5), ion: str = Form("")):
+    """
+    Parse a magnetic CIF (mCIF) and return the FULLY EXPANDED magnetic cell:
+    lattice, per-site positions, and per-site spin DIRECTIONS.
+
+    Unlike a plain CIF, an mCIF encodes an experimentally-determined magnetic
+    structure via a magnetic space group. `magcalc.mcif` expands it into the
+    magnetic cell, so the returned atoms are EXPLICIT (atom_mode = explicit,
+    P1) and the magnetic_structure is a `generic` pattern with those directions
+    -- exactly what LSWT needs. The user still supplies the interactions.
+    """
+    try:
+        from magcalc.mcif import read_mcif
+
+        content = await file.read()
+        temp_filename = f"temp_{uuid.uuid4()}.mcif"
+        with open(temp_filename, "wb") as f:
+            f.write(content)
+
+        try:
+            data = read_mcif(temp_filename)
+        except Exception as e:
+            # read_mcif raises a clear ValueError on an inconsistent file; surface it.
+            import traceback
+            traceback.print_exc()
+            raise HTTPException(status_code=400,
+                                detail=f"mCIF parsing failed: {str(e)}")
+        finally:
+            if os.path.exists(temp_filename):
+                os.remove(temp_filename)
+
+        A = np.array(data["lattice_vectors"], float)          # rows are a1,a2,a3
+        a, b, c = (float(np.linalg.norm(A[i])) for i in range(3))
+
+        def _ang(u, v):
+            cos = float(np.dot(u, v) / (np.linalg.norm(u) * np.linalg.norm(v)))
+            return float(np.degrees(np.arccos(max(-1.0, min(1.0, cos)))))
+
+        alpha, beta, gamma = _ang(A[1], A[2]), _ang(A[0], A[2]), _ang(A[0], A[1])
+
+        wyckoff_atoms, directions = [], []
+        for i, s in enumerate(data["sites"]):
+            # element symbol = leading alphabetic run of the site label (Tb1_1 -> Tb)
+            m = re.match(r"[A-Za-z]+", str(s["label"]))
+            base = m.group() if m else str(s["label"])
+            atom = {
+                "label": f"{s['label']}_{i}",
+                "pos": [float(x) for x in s["pos"]],
+                "spin_S": float(spin_s),
+                "species": base,     # web app field
+                "element": base,     # native app (WyckoffAtom) field
+            }
+            if ion:
+                atom["ion"] = ion
+            wyckoff_atoms.append(atom)
+            directions.append([float(x) for x in s["direction"]])
+
+        magnetic_elements = sorted({a2["species"] for a2 in wyckoff_atoms})
+
+        return {
+            # P1 magnetic cell (already expanded) -> explicit atoms, no further symmetry
+            "lattice": {"a": a, "b": b, "c": c, "alpha": alpha, "beta": beta,
+                        "gamma": gamma, "space_group": 1},
+            "international": "P1 (expanded magnetic cell)",
+            "atom_mode": "explicit",
+            "wyckoff_atoms": wyckoff_atoms,
+            "magnetic_elements": magnetic_elements,
+            "magnetic_structure": {
+                "enabled": True,
+                "type": "pattern",
+                "pattern_type": "generic",
+                "directions": directions,
+            },
+            "n_sites": len(wyckoff_atoms),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/get-neighbors")
 async def get_neighbors(config: Dict[str, Any]):

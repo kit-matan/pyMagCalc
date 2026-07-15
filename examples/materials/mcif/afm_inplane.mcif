@@ -1,0 +1,36 @@
+# Minimal mCIF: G-type AFM, IN-PLANE moment along a. Identity op + a body-centring
+# ANTI-translation (time reversal) -> the (1/2,1/2,1/2) image carries the reversed
+# moment. 2 sites, hand-checkable.
+_cell_length_a 4.0
+_cell_length_b 5.0
+_cell_length_c 6.0
+_cell_angle_alpha 90.0
+_cell_angle_beta 90.0
+_cell_angle_gamma 90.0
+_space_group_magn.name_BNS "test-inplane"
+
+loop_
+_space_group_symop_magn_operation.id
+_space_group_symop_magn_operation.xyz
+1 x,y,z,+1
+
+loop_
+_space_group_symop_magn_centering.id
+_space_group_symop_magn_centering.xyz
+1 x,y,z,+1
+2 x+1/2,y+1/2,z+1/2,-1
+
+loop_
+_atom_site_label
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+_atom_site_occupancy
+Fe1 0.0 0.0 0.0 1.0
+
+loop_
+_atom_site_moment.label
+_atom_site_moment.crystalaxis_x
+_atom_site_moment.crystalaxis_y
+_atom_site_moment.crystalaxis_z
+Fe1 3.0 0.0 0.0

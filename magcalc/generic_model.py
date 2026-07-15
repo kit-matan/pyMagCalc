@@ -10,6 +10,13 @@ import sympy as sp
 from scipy.optimize import minimize
 from tqdm import tqdm
 
+from .stevens import stevens_polynomial
+
+# mu0 * muB^2 / (4*pi), in meV * Angstrom^3. Cross-checked against Sunny 0.8.1,
+# whose Units(:meV, :angstrom).vacuum_permeability = 0.6745817653 is mu0*muB^2
+# (no 4pi): 0.6745817653 / (4*pi) = 0.05368216.
+DIPOLE_PREFACTOR_MEV_A3 = 0.05368216
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -86,6 +93,62 @@ def spiral_propagation_case(k, tol=1e-8):
     return 3
 
 
+def resolve_supercell_dims(spec, k_rlu=None, max_size=100, tol=1e-6):
+    """Resolve a magnetic_supercell spec to integer dims [n1, n2, n3].
+
+    Accepts [n1, n2, n3], {'matrix': [n1, n2, n3]}, or 'auto'. 'auto' derives
+    the minimal diagonal supercell commensurate with the propagation vector k
+    (per-component denominator, like the diagonal case of Sunny's
+    suggest_magnetic_supercell); it raises if k is incommensurate within
+    max_size.
+
+    `k_rlu` may be a single k, or a LIST of k vectors (a multi-k structure): the
+    cell must then be commensurate with EVERY k, so each axis takes the least
+    common multiple of the per-k denominators.
+    """
+    from fractions import Fraction
+    from math import lcm
+
+    if isinstance(spec, dict):
+        spec = spec.get('matrix', spec.get('dims'))
+    if isinstance(spec, str):
+        if spec != 'auto':
+            raise ValueError(f"Unknown magnetic_supercell spec: {spec!r}")
+        if k_rlu is None:
+            raise ValueError("magnetic_supercell: 'auto' requires a "
+                             "magnetic_structure with a propagation vector k.")
+        k_arr = np.atleast_2d(np.asarray(k_rlu, dtype=float))
+        dims = [1, 1, 1]
+        for k_vec in k_arr:
+            for axis, comp in enumerate(k_vec):
+                frac = Fraction(comp).limit_denominator(max_size)
+                if abs(float(frac) - comp) > tol:
+                    raise ValueError(
+                        f"magnetic_supercell: 'auto' — k component {comp} is "
+                        f"incommensurate (no denominator <= {max_size}); use the "
+                        "rotating-frame single_k mode instead."
+                    )
+                dims[axis] = lcm(dims[axis], frac.denominator)
+        if any(d > max_size for d in dims):
+            raise ValueError(
+                f"magnetic_supercell: 'auto' derived {dims}, which exceeds "
+                f"max_size={max_size}. The k vectors are mutually near-incommensurate."
+            )
+        return [int(d) for d in dims]
+    dims = [int(d) for d in spec]
+    if len(dims) != 3 or any(d < 1 for d in dims):
+        raise ValueError(f"magnetic_supercell must be three integers >= 1, got {spec}")
+    return dims
+
+
+def supercell_site_label(label, cell):
+    """Label of a replicated site. Cell (0,0,0) keeps the original label."""
+    i, j, l = cell
+    if (i, j, l) == (0, 0, 0):
+        return label
+    return f"{label}@{i}_{j}_{l}"
+
+
 def interactions_to_numpy(Jex_sym, DM_sym, Kex_sym):
     """Convert (possibly symbolic) interaction matrices to numeric arrays.
 
@@ -131,7 +194,7 @@ def interactions_to_numpy(Jex_sym, DM_sym, Kex_sym):
 _LEGACY_MS_WARNED = set()
 
 
-def normalize_magnetic_structure(ms_cfg):
+def normalize_magnetic_structure(ms_cfg, quiet=False):
     """Normalize the 'magnetic_structure' config onto the unified 'single_k' form.
 
     - 'spiral' (legacy rotating-frame) -> 'single_k' (pure rename: axis/n,
@@ -182,7 +245,7 @@ def normalize_magnetic_structure(ms_cfg):
             cfg['k'] = [0, 0, 0]
         k_case = spiral_propagation_case(cfg['k'])
         cfg['k_case'] = k_case
-        if k_case == 2 and not cfg.get('real_space', False):
+        if k_case == 2 and not cfg.get('real_space', False) and not quiet:
             logger.warning(
                 "single_k structure with 2k integer (k = 1/2-type, k=%s): the "
                 "helical description may double count a collinear structure; "
@@ -237,9 +300,32 @@ class GenericSpinModel:
     def __init__(self, config, base_path="."):
         self.config = config
         self.base_path = base_path
-        
+
+        # A declarative model needs `crystal_structure` at the TOP level. Fail here with
+        # an actionable message rather than crashing later with a bare
+        # KeyError('crystal_structure') deep inside expansion. The usual causes:
+        #   * the config keys are nested one level down (e.g. everything under a
+        #     `cvo_model:` wrapper) -- a fragment meant to be embedded, not run;
+        #   * it is a LEGACY python-model config that belongs at the runner level via
+        #     `python_model_file:` / `spin_model_module:` (those never reach here).
+        if not isinstance(config, dict) or 'crystal_structure' not in config:
+            top = list(config.keys()) if isinstance(config, dict) else type(config).__name__
+            raise ValueError(
+                "Config has no top-level `crystal_structure`. A declarative model needs "
+                "`crystal_structure` (lattice + atoms) at the top level. "
+                f"Found top-level keys: {top}. If your model keys are nested under another "
+                "key, un-nest them; if this is a legacy `python_model_file` config, that is "
+                "handled by the runner, not GenericSpinModel.")
+
         # We always attempt in-place expansion to standardize.
         self._expand_config_inplace()
+
+        # Magnetic supercell (SpinW nExt / Sunny resize_supercell analogue):
+        # replicate the chemical cell and remap interactions + magnetic
+        # structure. Must run after rule expansion (explicit pair/offset
+        # bonds) and before structure loading.
+        self.supercell_dims = [1, 1, 1]
+        self._apply_magnetic_supercell()
 
         self.crystal_config = self.config.get('crystal_structure', {})
         self.interactions_config = self.config.get('interactions', [])
@@ -414,6 +500,9 @@ class GenericSpinModel:
 
                  rules = interactions_data.get('symmetry_rules', [])
                  for rule in rules:
+                     # A rule that cannot be applied must NOT be swallowed: the run
+                     # would otherwise "succeed" with a term missing from H, i.e. a
+                     # physically wrong spectrum that looks like a good result.
                      try:
                          rtype = rule.get('type')
                          if rtype == 'heisenberg' and not rule.get('ref_pair'):
@@ -431,7 +520,9 @@ class GenericSpinModel:
                                  offset=rule.get('offset')
                              )
                      except Exception as e:
-                         logger.warning(f"Failed to add symmetry rule {rule}: {e}")
+                         raise ValueError(
+                             f"Failed to expand symmetry rule {rule}: {e}"
+                         ) from e
              
              if atom_mode == 'symmetry':
                  # Standard distance-based propagation for rules without ref_pair
@@ -453,13 +544,23 @@ class GenericSpinModel:
             # Map builder internal lists to the formats GenericSpinModel expects
             # We map to keys like 'dm_manual' where needed.
             inter_map = [
-                ("heisenberg", "heisenberg"), 
-                ("dm_interaction", "dm_manual"), 
+                ("heisenberg", "heisenberg"),
+                ("dm_interaction", "dm_manual"),
                 ("anisotropic_exchange", "anisotropic_exchange"),
                 ("interaction_matrix", "interaction_matrix"),
                 ("kitaev", "kitaev"),
-                ("single_ion_anisotropy", "sia")
+                ("single_ion_anisotropy", "sia"),
+                # On-site / higher-order terms. These are not touched by the
+                # symmetry-rule expanders, but they MUST be carried through this
+                # dict->list conversion or they would silently vanish.
+                ("sia_matrix", "sia_matrix"),
+                ("stevens", "stevens"),
+                ("biquadratic", "biquadratic"),
             ]
+            for extra_key in ("sia_matrix", "stevens", "biquadratic"):
+                if extra_key in interactions_data:
+                    builder.config["interactions"].setdefault(
+                        extra_key, list(interactions_data[extra_key]))
             for itype_key, key_in_model in inter_map:
                 if itype_key in builder.config["interactions"]:
                     for r in builder.config["interactions"][itype_key]:
@@ -481,6 +582,399 @@ class GenericSpinModel:
                 if not isinstance(item, dict):
                     logger.error(f"DEBUG: Found non-dict item in interactions at index {idx}: {item} (Type: {type(item)})")
 
+        # Long-range dipole-dipole -> explicit per-bond interaction matrices.
+        # Runs last so it sees the final atoms_uc/lattice_vectors, and before the
+        # magnetic supercell so the replication remaps the generated bonds.
+        dd_spec = None
+        if isinstance(interactions_data, dict):
+            dd_spec = interactions_data.get('dipole_dipole')
+        if dd_spec is None:
+            dd_spec = self.config.get('dipole_dipole')
+        if dd_spec:
+            self._expand_dipole_dipole(dd_spec)
+
+    def _expand_dipole_dipole(self, spec):
+        """Expand dipolar coupling into explicit 3x3 `interaction_matrix` bonds.
+
+        H_dip = (mu0 g_i g_j muB^2 / 4pi) * sum_{i<j}
+                    [ S_i.S_j - 3 (S_i.rhat)(S_j.rhat) ] / r^3
+
+        i.e. a bilinear bond matrix  J_ij = A_ij (I - 3 rhat rhat^T) / r^3  with
+        A_ij = (mu0 muB^2/4pi) g_i g_j. Emitting it as ordinary bond matrices (both
+        directions, matching the 1/2-ordered-pairs convention) means the rotating
+        frame, magnetic supercell and symmetry checks all handle it for free.
+
+        This is a REAL-SPACE TRUNCATED sum inside `cutoff` (Angstrom) -- the
+        analogue of Sunny's `modify_exchange_with_truncated_dipole_dipole!`, not
+        its Ewald-summed `enable_dipole_dipole!`. The dipolar sum is only
+        conditionally convergent, so results depend on the cutoff: increase it
+        until the quantity you care about stops moving.
+
+        spec: {cutoff: <Angstrom>, g: <optional override, default per-site g or 2>}
+        """
+        # Stash the spec at the top level: `interactions` is about to be flattened to a
+        # list, and MagCalc needs to find this later.
+        if isinstance(spec, dict):
+            self.config['dipole_dipole'] = dict(spec)
+
+        method = str(spec.get('method', 'truncated')).lower() \
+            if isinstance(spec, dict) else 'truncated'
+        if method == 'ewald':
+            # Ewald sums ALL images exactly, so there are no finite bonds to generate --
+            # A(q) is added to the dynamical matrix directly (core._ewald_nambu).
+            # Generating truncated bonds here as well would double-count.
+            logger.info("dipole_dipole: Ewald summation (no real-space bonds generated).")
+            return
+        if method != 'truncated':
+            raise ValueError(
+                f"dipole_dipole.method must be 'truncated' or 'ewald', got {method!r}.")
+
+        cutoff = float(spec.get('cutoff', 0.0)) if isinstance(spec, dict) else float(spec)
+        if cutoff <= 0:
+            raise ValueError(
+                f"dipole_dipole needs a positive `cutoff` in Angstrom, got {spec!r}.")
+
+        cs = self.config['crystal_structure']
+        lat = np.asarray(cs['lattice_vectors'], dtype=float)
+        atoms = cs['atoms_uc']
+        labels = [a['label'] for a in atoms]
+        frac = np.asarray([a['pos'] for a in atoms], dtype=float)
+        cart = frac @ lat
+        n = len(atoms)
+
+        # Per-site isotropic g for the dipolar prefactor. A full g-tensor makes the
+        # dipolar coupling anisotropic in a way this scalar form cannot express, so
+        # be explicit rather than silently using some projection of it.
+        g_override = spec.get('g') if isinstance(spec, dict) else None
+        g_site = []
+        for a in atoms:
+            g = g_override if g_override is not None else a.get('g', 2.0)
+            if not isinstance(g, (int, float)):
+                raise ValueError(
+                    f"dipole_dipole needs a scalar g per site (site {a.get('label')} "
+                    f"has g={g!r}). Pass `g:` in the dipole_dipole block to override.")
+            g_site.append(float(g))
+
+        # Cell images that can hold a bond of length <= cutoff.
+        vol = abs(np.linalg.det(lat))
+        heights = [vol / np.linalg.norm(np.cross(lat[(k+1) % 3], lat[(k+2) % 3]))
+                   for k in range(3)]
+        ranges = [range(-m, m + 1)
+                  for m in (max(1, int(np.ceil(cutoff / h))) for h in heights)]
+
+        entries = []
+        for i in range(n):
+            for j in range(n):
+                for off in product(*ranges):
+                    r_vec = (cart[j] + np.asarray(off, dtype=float) @ lat) - cart[i]
+                    r = float(np.linalg.norm(r_vec))
+                    if r < 1e-8 or r > cutoff:
+                        continue
+                    rhat = r_vec / r
+                    A = DIPOLE_PREFACTOR_MEV_A3 * g_site[i] * g_site[j]
+                    J = A * (np.eye(3) - 3.0 * np.outer(rhat, rhat)) / r**3
+                    entries.append({
+                        'type': 'interaction_matrix',
+                        'pair': [labels[i], labels[j]],
+                        'rij_offset': list(off),
+                        'value': [[float(x) for x in row] for row in J],
+                        'distance': r,
+                    })
+
+        if not entries:
+            raise ValueError(
+                f"dipole_dipole with cutoff {cutoff} A matched no bonds -- the cutoff "
+                f"is shorter than the nearest neighbour distance.")
+
+        inters = self.config.get('interactions')
+        if isinstance(inters, list):
+            inters.extend(entries)
+        else:
+            self.config['interactions'] = entries
+        logger.info(
+            f"dipole_dipole: generated {len(entries)} bond matrices within "
+            f"{cutoff} A (truncated real-space sum).")
+
+
+    def _apply_magnetic_supercell(self):
+        """Expand the chemical cell into a diagonal magnetic supercell.
+
+        SpinW nExt / Sunny resize_supercell analogue, driven by
+        ``crystal_structure.magnetic_supercell: [n1, n2, n3]`` (or ``'auto'``
+        to derive the minimal cell commensurate with the propagation vector).
+
+        Performs, in place on ``self.config``:
+        - replicates ``atoms_uc`` over the n1*n2*n3 cells (cell-major, atom
+          index fastest; cell (0,0,0) keeps the original labels, replicas are
+          labelled ``<label>@i_j_l``) and rescales the lattice;
+        - remaps explicit pair/offset interactions onto the replicated sites
+          with periodic wrapping (offsets in supercell units); distance-only
+          rules and SIA entries are expanded accordingly;
+        - converts the magnetic structure to explicit per-site directions:
+          a ``single_k`` structure becomes the commensurate real-space spin
+          pattern (replicas rotated by R(2*pi*k.c, axis) like Sunny's
+          repeat_periodically_as_spiral), so the LSWT runs on the supercell
+          with unrotated interactions (folded bands, SpinW convention).
+
+        Q-vectors remain in CHEMICAL-cell RLU: the runner converts them with
+        the chemical B-matrix (see ``chemical_unit_cell``).
+        """
+        cs = self.config.get('crystal_structure', {}) or {}
+        spec = cs.get('magnetic_supercell')
+        if not spec:
+            return
+
+        # A NON-DIAGONAL (3x3) supercell is applied by the SU(N) engine, which handles
+        # it natively (SUNModel._replicate); the dipole engine cannot express it, so
+        # refuse rather than silently fall back to the chemical cell.
+        _mat = spec.get('matrix') if isinstance(spec, dict) else spec
+        if _mat is not None and np.asarray(_mat, dtype=object).shape == (3, 3):
+            mode = str((self.config.get('calculation') or {}).get('mode', 'dipole')).upper()
+            if mode != 'SUN':
+                raise ValueError(
+                    "A non-diagonal magnetic_supercell (3x3 matrix) is only supported by "
+                    "the SU(N) engine. Set `calculation: {mode: SUN}`, or give a diagonal "
+                    "[n1, n2, n3].")
+            logger.info("Non-diagonal magnetic_supercell: applied by the SU(N) engine.")
+            return
+
+        # quiet=True: the k=1/2 double-count warning is moot when the user is
+        # already requesting a real-space supercell.
+        ms_raw = normalize_magnetic_structure(self.config.get('magnetic_structure'),
+                                              quiet=True)
+        if ms_raw.get('type') == 'single_k':
+            k_rlu = np.asarray(ms_raw.get('k', [0, 0, 0]), dtype=float)
+        elif ms_raw.get('type') == 'multi_k':
+            # Every component's k must fit the cell -> pass them all.
+            k_rlu = np.asarray([c['k'] for c in ms_raw.get('components', [])],
+                               dtype=float)
+        else:
+            k_rlu = None
+
+        dims = resolve_supercell_dims(spec, k_rlu=k_rlu)
+        if dims == [1, 1, 1]:
+            logger.info("magnetic_supercell [1,1,1]: nothing to expand.")
+            return
+        n1, n2, n3 = dims
+        n_cells = n1 * n2 * n3
+        cells = [np.array(c, dtype=int) for c in product(range(n1), range(n2), range(n3))]
+
+        atoms = cs.get('atoms_uc')
+        if not atoms:
+            raise ValueError("magnetic_supercell requires explicit or expanded "
+                             "'atoms_uc' (Wyckoff atoms are expanded first).")
+        if 'cif_file' in cs:
+            raise ValueError("magnetic_supercell is not supported with cif_file "
+                             "structures; list atoms_uc explicitly.")
+        interactions = self.config.get('interactions', [])
+        if not isinstance(interactions, list):
+            raise ValueError("magnetic_supercell requires the interactions list "
+                             "form (builder expansion should have produced it).")
+
+        n_chem = len(atoms)
+        logger.info(f"Applying magnetic supercell {dims}: {n_chem} -> "
+                    f"{n_chem * n_cells} sites.")
+
+        # --- 1. Replicate atoms (cell-major, atom index fastest) ---
+        dims_f = np.asarray(dims, dtype=float)
+        new_atoms = []
+        for cell in cells:
+            for atom in atoms:
+                rep = dict(atom)
+                rep['label'] = supercell_site_label(atom['label'], tuple(cell))
+                pos = (np.asarray(atom['pos'], dtype=float) + cell) / dims_f
+                rep['pos'] = [float(x) for x in pos]
+                new_atoms.append(rep)
+        cs['atoms_uc'] = new_atoms
+        cs.pop('wyckoff_atoms', None)
+
+        # --- 2. Rescale the lattice ---
+        if 'lattice_vectors' in cs:
+            lv = np.asarray(cs['lattice_vectors'], dtype=float)
+            cs['lattice_vectors'] = (lv * dims_f[:, None]).tolist()
+            if 'lattice_parameters' in cs:
+                # lattice_vectors takes priority in _load_structure; drop the
+                # now-inconsistent parameters to avoid ambiguity.
+                cs.pop('lattice_parameters', None)
+        elif 'lattice_parameters' in cs:
+            lp = cs['lattice_parameters']
+            for key, n in zip(('a', 'b', 'c'), dims):
+                if lp.get(key) is not None:
+                    lp[key] = float(lp[key]) * n
+            # The supercell breaks the space group; symmetry expansion already
+            # ran on the chemical cell.
+            lp.pop('space_group', None)
+        else:
+            raise ValueError("magnetic_supercell requires lattice_vectors or "
+                             "lattice_parameters.")
+
+        # --- 3. Remap interactions ---
+        new_interactions = []
+        for entry in interactions:
+            itype = entry.get('type')
+            pair = entry.get('pair')
+            offset = entry.get('rij_offset', entry.get('offset_j'))
+
+            if itype in ('sia', 'single_ion_anisotropy'):
+                rep = dict(entry)
+                targets = rep.get('atoms') or rep.get('atom_labels')
+                if targets:
+                    expanded = [supercell_site_label(lbl, tuple(c))
+                                for c in cells for lbl in targets]
+                    if 'atoms' in rep or 'atom_labels' not in rep:
+                        rep['atoms'] = expanded
+                        rep.pop('atom_labels', None)
+                    else:
+                        rep['atom_labels'] = expanded
+                new_interactions.append(rep)
+            elif pair and offset is not None:
+                m = np.asarray(offset, dtype=int)
+                for cell in cells:
+                    target = cell + m
+                    wrapped = np.mod(target, dims)
+                    new_off = np.floor_divide(target, dims)
+                    rep = dict(entry)
+                    rep['pair'] = [supercell_site_label(pair[0], tuple(cell)),
+                                   supercell_site_label(pair[1], tuple(wrapped))]
+                    rep['rij_offset'] = [int(x) for x in new_off]
+                    rep.pop('offset_j', None)
+                    new_interactions.append(rep)
+            elif pair and entry.get('distance') is not None:
+                # Pair + distance (no offset): replicate the pair labels over
+                # all cell combinations; the distance check does the matching.
+                for c_i in cells:
+                    for c_j in cells:
+                        rep = dict(entry)
+                        rep['pair'] = [supercell_site_label(pair[0], tuple(c_i)),
+                                       supercell_site_label(pair[1], tuple(c_j))]
+                        new_interactions.append(rep)
+            else:
+                # Distance-only rules (no pair) match every site pair at that
+                # distance in the supercell at runtime; keep unchanged.
+                new_interactions.append(dict(entry))
+        self.config['interactions'] = new_interactions
+
+        # --- 4. Magnetic structure -> explicit per-site directions ---
+        self._remap_magnetic_structure_supercell(ms_raw, atoms, cells, dims_f)
+
+        self.supercell_dims = dims
+
+    def _remap_magnetic_structure_supercell(self, ms_raw, chem_atoms, cells, dims_f):
+        """Convert the magnetic structure to per-supercell-site directions."""
+        mtype = ms_raw.get('type')
+        if not mtype:
+            return
+        n_chem = len(chem_atoms)
+
+        if mtype == 'single_k':
+            k = np.asarray(ms_raw.get('k', [0, 0, 0]), dtype=float)
+            axis = np.asarray(ms_raw.get('axis', [0, 0, 1]), dtype=float)
+            n_ax = axis / (np.linalg.norm(axis) or 1.0)
+            d_frac = [np.asarray(a['pos'], dtype=float) for a in chem_atoms]
+
+            # Commensurability: the pattern must be periodic in the supercell.
+            kn = k * dims_f
+            if np.max(np.abs(kn - np.round(kn))) > 1e-6:
+                logger.warning(
+                    "magnetic_supercell %s is not commensurate with k=%s "
+                    "(k*dims not integer); the spin pattern will not be "
+                    "periodic — use the rotating-frame single_k mode instead.",
+                    [int(d) for d in dims_f], k.tolist())
+
+            # Lab-frame direction of each chemical site in cell 0.
+            cone_deg = float(ms_raw.get('cone_angle_deg', 0.0) or 0.0)
+            lab0 = []
+            if ms_raw.get('S0'):
+                S0 = ms_raw['S0']
+                if len(S0) == 1:
+                    S0 = S0 * n_chem
+                lab0 = [np.asarray(s, dtype=float) for s in S0]
+            else:
+                # local_directions / u,v basis / default -> lab frame via the
+                # full-position phase (CLAUDE.md convention).
+                if ms_raw.get('local_directions') or ms_raw.get('directions'):
+                    dirs = ms_raw.get('local_directions', ms_raw.get('directions'))
+                    u_loc = [np.asarray(dirs[i % len(dirs)], dtype=float)
+                             for i in range(n_chem)]
+                elif ms_raw.get('u') is not None or ms_raw.get('v') is not None:
+                    u_vec = np.asarray(ms_raw.get('u', [1, 0, 0]), dtype=float)
+                    v_vec = np.asarray(ms_raw.get('v', [0, 1, 0]), dtype=float)
+                    u_loc = []
+                    for i in range(n_chem):
+                        ph = 2 * np.pi * float(d_frac[i] @ k)
+                        u_loc.append(rotation_about_axis(-ph, n_ax) @ (
+                            u_vec * np.cos(ph) + v_vec * np.sin(ph)))
+                else:
+                    trial = np.array([1.0, 0.0, 0.0]) if abs(n_ax[0]) < 0.9 \
+                        else np.array([0.0, 1.0, 0.0])
+                    u0 = trial - np.dot(trial, n_ax) * n_ax
+                    u0 /= np.linalg.norm(u0)
+                    u_loc = [u0.copy() for _ in range(n_chem)]
+                if cone_deg > 0.0:
+                    c = np.radians(cone_deg)
+                    coned = []
+                    for v in u_loc:
+                        u_in = v - np.dot(v, n_ax) * n_ax
+                        nrm = np.linalg.norm(u_in)
+                        if nrm < 1e-12:
+                            raise ValueError("Conical structure needs a non-zero "
+                                             "in-plane component.")
+                        coned.append(np.cos(c) * n_ax + np.sin(c) * (u_in / nrm))
+                    u_loc = coned
+                for i in range(n_chem):
+                    ph = 2 * np.pi * float(d_frac[i] @ k)
+                    lab0.append(rotation_about_axis(ph, n_ax) @ u_loc[i])
+
+            # Replicas: rotate by R(2*pi*k.cell) — Sunny's
+            # repeat_periodically_as_spiral cell-offset convention.
+            directions = []
+            for cell in cells:
+                R_cell = rotation_about_axis(2 * np.pi * float(cell @ k), n_ax)
+                for i in range(n_chem):
+                    v = R_cell @ lab0[i]
+                    nrm = np.linalg.norm(v)
+                    if nrm > 1e-12:
+                        v = v / nrm
+                    directions.append([float(x) for x in v])
+
+            self.config['magnetic_structure'] = {
+                'enabled': True, 'type': 'pattern', 'pattern_type': 'generic',
+                'directions': directions,
+            }
+            logger.info(
+                "single_k + magnetic_supercell: converted to a real-space "
+                "commensurate pattern (%d sites); LSWT runs on the supercell "
+                "with unrotated interactions (folded bands).", len(directions))
+        elif mtype == 'pattern':
+            rep = dict(ms_raw)
+            dirs = rep.get('directions')
+            if dirs:
+                rep['directions'] = [dirs[i % len(dirs)] for _ in cells
+                                     for i in range(n_chem)]
+            self.config['magnetic_structure'] = rep
+        elif mtype == 'explicit':
+            entries = ms_raw.get('explicit_list', ms_raw.get('configuration', []))
+            new_entries = []
+            for ci, _cell in enumerate(cells):
+                for item in entries:
+                    idx = item.get('atom_index')
+                    if idx is None or not (0 <= idx < n_chem):
+                        continue
+                    rep = dict(item)
+                    rep['atom_index'] = ci * n_chem + idx
+                    new_entries.append(rep)
+            self.config['magnetic_structure'] = {
+                'enabled': True, 'type': 'explicit', 'explicit_list': new_entries,
+            }
+        # other/absent types: leave unchanged
+
+    def chemical_unit_cell(self):
+        """Lattice vectors of the CHEMICAL cell (rows), undoing any magnetic
+        supercell scaling. Q-vectors in configs are interpreted in chemical
+        RLU (SpinW/Sunny convention)."""
+        uc = np.asarray(self.unit_cell(), dtype=float)
+        dims = np.asarray(self.supercell_dims, dtype=float)
+        return uc / dims[:, None]
 
     def _load_structure(self):
         """
@@ -942,6 +1436,82 @@ class GenericSpinModel:
 
         return Jex, DM, Kex
 
+    def _match_bond_pairs(self, interaction):
+        """(i, j_ouc) pairs matched by an interaction's pair/offset/distance keys.
+
+        Same matching rules as _spin_interactions_lab, factored out for the
+        non-bilinear terms (biquadratic) that do not populate Jex/DM/Kex.
+        """
+        apos = self.atom_pos()
+        apos_ouc = self.atom_pos_ouc()
+        N_atom, N_atom_ouc = len(apos), len(apos_ouc)
+        dist_tol = 0.1
+        atom_labels = [a.get('label') for a in
+                       self.config.get('crystal_structure').get('atoms_uc')]
+        label_to_idx = {lbl: idx for idx, lbl in enumerate(atom_labels)}
+
+        target_pair = interaction.get('pair')
+        offset = interaction.get('rij_offset') or interaction.get('offset_j')
+        target_dist = interaction.get('distance')
+
+        if target_pair:
+            i_candidates = [label_to_idx[target_pair[0]]] \
+                if target_pair[0] in label_to_idx else []
+        else:
+            i_candidates = range(N_atom)
+
+        pairs = []
+        for i in i_candidates:
+            for j in range(N_atom_ouc):
+                j_uc = j % N_atom
+                if target_pair and atom_labels[j_uc] != target_pair[1]:
+                    continue
+                if offset is not None:
+                    target_pos = apos[j_uc] + offset[0]*self.unit_cell()[0] + \
+                                 offset[1]*self.unit_cell()[1] + offset[2]*self.unit_cell()[2]
+                    if la.norm(apos_ouc[j] - target_pos) > 0.001:
+                        continue
+                if target_dist is not None:
+                    d = la.norm(apos[i] - apos_ouc[j])
+                    if abs(d - target_dist) > dist_tol:
+                        continue
+                elif offset is None:
+                    continue
+                pairs.append((i, j))
+        return pairs
+
+    def _compute_biquadratic_terms(self, Sxyz, param_map):
+        """`type: biquadratic` -- H = (1/2) sum_ij B_ij (S_i . S_j)^2.
+
+        The 1/2-over-ordered-pairs convention matches the Heisenberg term, so
+        every bond must appear in BOTH directions (symmetry rules do this
+        automatically). Unlike SW28's collinear J_eff = J +/- dJ workaround, this
+        is the genuine operator and is therefore valid for non-collinear
+        structures too.
+
+        The quadratic-boson part of (S_i.S_j)^2 carries S^3; it survives only
+        because the LSWT truncation is by boson degree (see
+        symbolic._prepare_hamiltonian) -- the legacy S-power filter deleted it.
+        """
+        HM = 0
+        for interaction in self.interactions_config:
+            if interaction.get('type') not in ('biquadratic', 'biq'):
+                continue
+            B = self._resolve_scalar(
+                interaction.get('value', interaction.get('B')), param_map)
+            if B is None:
+                raise ValueError(f"biquadratic entry needs a `value`: {interaction}")
+            pairs = self._match_bond_pairs(interaction)
+            if not pairs:
+                raise ValueError(
+                    f"biquadratic entry matched no bonds: {interaction}. A term that "
+                    f"matches nothing would silently vanish from the Hamiltonian.")
+            for i, j in pairs:
+                dot = (Sxyz[i][0]*Sxyz[j][0] + Sxyz[i][1]*Sxyz[j][1]
+                       + Sxyz[i][2]*Sxyz[j][2])
+                HM += 0.5 * B * dot**2
+        return HM
+
     def _check_rotational_symmetry(self, Jex, DM, Kex, theta=0.01):
         """Verify the Hamiltonian is invariant under rotations about the spiral axis.
 
@@ -1166,6 +1736,9 @@ class GenericSpinModel:
         # 1. Exchange Terms (Heisenberg + DM + Anisotropic)
         HM += self._compute_heisenberg_dm_terms(Sxyz, Jex, DM, Kex)
         
+        # 1b. Biquadratic exchange
+        HM += self._compute_biquadratic_terms(Sxyz, param_map)
+
         # 2. Extra Terms (SIA)
         HM += self._compute_sia_terms(Sxyz, p_rest, param_map)
 
@@ -1351,6 +1924,92 @@ class GenericSpinModel:
             else:
                 for i in target_idx:
                     HM += D_sia * (Sxyz[i][2])**2
+
+        # --- General 3x3 anisotropy tensor: sum_ab A_ab S^a S^b ---
+        HM += self._compute_sia_matrix_terms(Sxyz, param_map, label_to_idx, N_uc)
+        # --- Stevens operators: sum_kq B_k^q O_k^q(S) ---
+        HM += self._compute_stevens_terms(Sxyz, param_map, label_to_idx, N_uc)
+        return HM
+
+    def _resolve_scalar(self, val, param_map):
+        """Resolve a config scalar: number, named parameter, or safe expression."""
+        if val is None:
+            return None
+        if isinstance(val, (int, float)):
+            return val
+        if isinstance(val, str):
+            if param_map and val in param_map:
+                return param_map[val]
+            return safe_eval(val, param_map or {})
+        return val
+
+    def _sia_target_indices(self, interaction, label_to_idx, N_uc):
+        labels = interaction.get('atoms') or interaction.get('atom_labels')
+        if labels:
+            return [label_to_idx[l] for l in labels if l in label_to_idx]
+        return list(range(N_uc))
+
+    def _compute_sia_matrix_terms(self, Sxyz, param_map, label_to_idx, N_uc):
+        """`type: sia_matrix` -- full 3x3 single-ion anisotropy tensor A.
+
+        H_i = S_i^T A S_i, summed over the entry's target sites. Only the
+        symmetric part of A contributes (the antisymmetric part contracts to
+        zero against S_i S_i), so A is symmetrized on input.
+        """
+        HM = 0
+        for interaction in self.interactions_config:
+            if interaction.get('type') not in ('sia_matrix', 'anisotropy_matrix'):
+                continue
+            val = interaction.get('matrix', interaction.get('value'))
+            if val is None:
+                raise ValueError(f"sia_matrix entry needs a 3x3 `matrix`: {interaction}")
+            rows = [[self._resolve_scalar(v, param_map) for v in row] for row in val]
+            A = sp.Matrix(rows)
+            if A.shape != (3, 3):
+                raise ValueError(
+                    f"sia_matrix `matrix` must be 3x3, got {A.shape}: {interaction}")
+            A = (A + A.T) / 2  # only the symmetric part survives S_i^T A S_i
+            for i in self._sia_target_indices(interaction, label_to_idx, N_uc):
+                Si = sp.Matrix(Sxyz[i])
+                HM += (Si.T * A * Si)[0]
+        return HM
+
+    def _compute_stevens_terms(self, Sxyz, param_map, label_to_idx, N_uc):
+        """`type: stevens` -- crystal-field terms sum_{k,q} B_k^q O_k^q(S_i).
+
+        Accepts either a single {k, q, value} or a `B` mapping of "k,q" -> value
+        (e.g. {"2,0": B20, "4,3": B43}). O_k^q are the classical (large-s)
+        Stevens polynomials, Sunny's `stevens_matrices(Inf)` convention.
+
+        Quartic/sextic operators contribute quadratic-boson terms at order S^3 /
+        S^5; these survive because the model truncates by boson degree (see
+        symbolic._prepare_hamiltonian).
+        """
+        HM = 0
+        for interaction in self.interactions_config:
+            if interaction.get('type') != 'stevens':
+                continue
+            terms = {}
+            if 'B' in interaction:
+                for key, v in (interaction['B'] or {}).items():
+                    k_str, q_str = str(key).replace(' ', '').split(',')
+                    terms[(int(k_str), int(q_str))] = v
+            elif 'k' in interaction:
+                terms[(int(interaction['k']), int(interaction.get('q', 0)))] = \
+                    interaction.get('value')
+            else:
+                raise ValueError(
+                    f"stevens entry needs either `B: {{'k,q': value}}` or `k`/`q`/`value`: "
+                    f"{interaction}")
+
+            targets = self._sia_target_indices(interaction, label_to_idx, N_uc)
+            for (k, q), raw in terms.items():
+                B = self._resolve_scalar(raw, param_map)
+                if B is None:
+                    raise ValueError(
+                        f"stevens B_{k}^{q} resolved to None in {interaction}")
+                for i in targets:
+                    HM += B * stevens_polynomial(k, q, Sxyz[i][0], Sxyz[i][1], Sxyz[i][2])
         return HM
 
     def _compute_zeeman_terms(self, Sxyz: List[Any], p_rest: List[Any], param_map: Dict[str, Any], gamma: float, mu_B: float) -> sp.Expr:
@@ -1420,31 +2079,121 @@ class GenericSpinModel:
                   Hy = H_mag_val * H_dir[1]
                   Hz = H_mag_val * H_dir[2]
         
+        # Per-site g-tensors (anisotropic / sublattice-dependent Zeeman). When
+        # present, the field couples as mu_B * B . g_i . S_i (SpinW `addg`,
+        # Sunny `Moment(g=...)`), so g_xy != g_z and per-sublattice local frames
+        # (rare-earth pyrochlores) are expressible. Without them the legacy
+        # global isotropic gamma*mu_B*H.S is used unchanged.
+        g_tensors = self._resolve_g_tensors()
+
+        # Resolve the field VECTOR once, from whichever form is available. Doing
+        # this in one place matters: the classical-energy path (used by the
+        # minimizer) binds numeric parameters, and H_dir then does not survive
+        # param_map as a 3-vector. The old code fell through to a branch that
+        # both ignored the g-tensor AND assumed the field pointed along z, so the
+        # minimizer optimized a DIFFERENT Hamiltonian than LSWT diagonalized --
+        # a wrong ground state, showing up as imaginary magnon energies.
+        B_vec = None
         if Hx is not None or Hy is not None or Hz is not None:
-             # Vector Zeeman
-             # Handle missing components as 0
-             if Hx is None: Hx = 0
-             if Hy is None: Hy = 0
-             if Hz is None: Hz = 0
-             
-             for i in range(N_uc):
-                 term = Hx*Sxyz[i][0] + Hy*Sxyz[i][1] + Hz*Sxyz[i][2]
-                 HM += gamma * mu_B * term
-                 
+            B_vec = [Hx or 0, Hy or 0, Hz or 0]
         elif H_mag is not None:
-             # Check if vector (legacy check for runtime list passing, though discourage)
-             is_vector = isinstance(H_mag, (list, tuple, np.ndarray))
-             
-             for i in range(N_uc):
-                  if is_vector and len(H_mag) == 3:
-                      # Dot product
-                      term = H_mag[0]*Sxyz[i][0] + H_mag[1]*Sxyz[i][1] + H_mag[2]*Sxyz[i][2]
-                      HM += gamma * mu_B * term
-                  else:
-                      # Scalar - assume Z
-                      HM += gamma * mu_B * Sxyz[i][2] * H_mag
-        
+            if isinstance(H_mag, (list, tuple, np.ndarray)) and len(H_mag) == 3:
+                B_vec = list(H_mag)
+            else:
+                # Scalar magnitude: take the direction from the config (static),
+                # falling back to z only when no direction was given at all.
+                cfg_params = self.config.get(
+                    'parameters', self.config.get('model_params', {})) or {}
+                d = cfg_params.get('H_dir')
+                if isinstance(d, (list, tuple, np.ndarray)) and len(d) == 3:
+                    B_vec = [H_mag * d[0], H_mag * d[1], H_mag * d[2]]
+                else:
+                    B_vec = [0, 0, H_mag]
+
+        if B_vec is None:
+            return HM
+
+        if g_tensors is not None:
+            Bm = sp.Matrix(B_vec)
+            for i in range(N_uc):
+                Si = sp.Matrix(Sxyz[i])
+                # The legacy global term is gamma*mu_B*H.S with gamma=1, calibrated
+                # (SW29) so that H_mag = B[Tesla] reproduces the electron g=2
+                # Zeeman. Scaling by g/2 makes an isotropic g=2 tensor reduce
+                # EXACTLY to the legacy term (asserted in tests), while g_xy != g_z
+                # now works.
+                HM += (mu_B / 2.0) * (Bm.T * g_tensors[i] * Si)[0]
+        else:
+            for i in range(N_uc):
+                HM += gamma * mu_B * (
+                    B_vec[0]*Sxyz[i][0] + B_vec[1]*Sxyz[i][1] + B_vec[2]*Sxyz[i][2])
+
         return HM
+
+    def _resolve_g_tensors(self):
+        """Per-site 3x3 g-tensors from `crystal_structure.atoms_uc[i].g`, or None.
+
+        Returns None when NO atom declares a `g` (the legacy global isotropic
+        Zeeman then applies unchanged). Otherwise every site gets a tensor;
+        sites without a `g` fall back to the isotropic electron value g = 2.
+
+        Accepted per-atom forms (values may be numbers, parameter names, or
+        expressions):
+          g: 2.0                                   isotropic
+          g: [gxx, gyy, gzz]                       diagonal, lab frame
+          g: [[...], [...], [...]]                 full 3x3, lab frame
+          g: {g_par: 1.8, g_perp: 4.32,            uniaxial about a LOCAL axis:
+              axis: [1, 1, 1]}                     g = g_par*zz^T + g_perp*(I - zz^T)
+
+        The last form is what rare-earth pyrochlores need: each sublattice
+        carries its own local <111> axis (SW20's Yb2Ti2O7, g_xy=4.32/g_z=1.8).
+        """
+        atoms = (self.config.get('crystal_structure', {}) or {}).get('atoms_uc') or []
+        if not any(isinstance(a, dict) and a.get('g') is not None for a in atoms):
+            return None
+
+        param_map = self._resolve_param_map(self.parameter_order or [])
+        N_uc = len(self.atom_pos())
+        tensors = []
+        for i in range(N_uc):
+            spec = atoms[i].get('g') if i < len(atoms) and isinstance(atoms[i], dict) else None
+            tensors.append(self._build_g_tensor(spec, param_map, i))
+        return tensors
+
+    def _build_g_tensor(self, spec, param_map, site_idx):
+        if spec is None:
+            return sp.eye(3) * 2.0  # electron g; matches the legacy calibration
+        if isinstance(spec, (int, float, str)):
+            return sp.eye(3) * self._resolve_scalar(spec, param_map)
+        if isinstance(spec, dict):
+            axis = np.asarray(spec.get('axis', [0, 0, 1]), dtype=float)
+            norm = np.linalg.norm(axis)
+            if norm < 1e-12:
+                raise ValueError(
+                    f"g-tensor `axis` must be non-zero for site {site_idx}: {spec}")
+            z = sp.Matrix((axis / norm).tolist())
+            g_par = self._resolve_scalar(
+                spec.get('g_par', spec.get('g_z', spec.get('g_parallel'))), param_map)
+            g_perp = self._resolve_scalar(
+                spec.get('g_perp', spec.get('g_xy', spec.get('g_perpendicular'))), param_map)
+            if g_par is None or g_perp is None:
+                raise ValueError(
+                    f"axial g-tensor for site {site_idx} needs both `g_par` and "
+                    f"`g_perp` (aliases g_z/g_xy): {spec}")
+            zzT = z * z.T
+            return g_par * zzT + g_perp * (sp.eye(3) - zzT)
+        if isinstance(spec, (list, tuple)):
+            if len(spec) == 3 and all(not isinstance(v, (list, tuple)) for v in spec):
+                vals = [self._resolve_scalar(v, param_map) for v in spec]
+                return sp.diag(*vals)
+            if len(spec) == 3:
+                rows = [[self._resolve_scalar(v, param_map) for v in row] for row in spec]
+                M = sp.Matrix(rows)
+                if M.shape == (3, 3):
+                    return M
+        raise ValueError(
+            f"Unrecognized g-tensor spec for site {site_idx}: {spec!r}. Use a scalar, "
+            f"a 3-vector (diagonal), a 3x3 matrix, or {{g_par, g_perp, axis}}.")
 
     def _apply_substitution_and_filter(self, HM: sp.Expr, pr: List[Any]) -> sp.Expr:
         """Substitute numerical parameters and filter for quadratic terms."""
@@ -1718,9 +2467,71 @@ class GenericSpinModel:
             return self._generate_structure_from_pattern(struct_config)
         elif method == 'spiral':
             return self._generate_structure_spiral_local(struct_config)
+        elif method == 'multi_k':
+            return self._generate_structure_multi_k(struct_config)
         else:
              logger.warning(f"Unknown magnetic_structure type: {method}")
              return None, None
+
+    def _generate_structure_multi_k(self, config):
+        """Real-space multi-k structure on a commensurate magnetic supercell.
+
+        S_i  =  sum_m  m_m * cos(2*pi * k_m . r_i + phi_m)         (then normalized)
+
+        with r_i the site position in CHEMICAL fractional coordinates. Each
+        component gives an amplitude vector `m` (Cartesian), a propagation vector
+        `k` (chemical RLU) and an optional phase.
+
+        This is a REAL-SPACE construction: it requires a magnetic supercell
+        commensurate with every k (`crystal_structure.magnetic_supercell: auto`
+        derives it via the per-axis LCM of the k denominators). There is no
+        rotating-frame multi-k theory -- SpinW and Sunny also require a supercell
+        here -- so all k must be commensurate.
+
+        `normalize: true` (default) rescales every site to |S| = 1, which is the
+        usual convention for a multi-k *spin* structure; set it false to keep a
+        genuinely amplitude-modulated (sinusoidal) structure, whose sites then
+        have unequal moment lengths.
+        """
+        comps = config.get('components') or []
+        if not comps:
+            raise ValueError(
+                "multi_k magnetic_structure needs a `components` list of "
+                "{k: [...], m: [...], phase_deg: <optional>}.")
+        if self.supercell_dims == [1, 1, 1]:
+            logger.warning(
+                "multi_k structure without a magnetic supercell: unless every k is "
+                "a reciprocal-lattice vector this is not commensurate with the cell. "
+                "Set crystal_structure.magnetic_supercell: auto.")
+
+        dims = np.asarray(self.supercell_dims, dtype=float)
+        atoms = self.config['crystal_structure']['atoms_uc']
+        normalize = config.get('normalize', True)
+
+        thetas, phis = [], []
+        for a in atoms:
+            # Supercell-fractional -> chemical-fractional (the supercell lattice is
+            # diag(dims) x chemical, so multiplying by dims undoes the rescaling).
+            r_chem = np.asarray(a['pos'], dtype=float) * dims
+            S = np.zeros(3)
+            for c in comps:
+                k = np.asarray(c['k'], dtype=float)
+                m = np.asarray(c['m'], dtype=float)
+                phase = np.deg2rad(float(c.get('phase_deg', 0.0)))
+                S += m * np.cos(2.0 * np.pi * float(np.dot(k, r_chem)) + phase)
+            norm = np.linalg.norm(S)
+            if norm < 1e-9:
+                raise ValueError(
+                    f"multi_k: site {a.get('label')} has zero net moment "
+                    f"(the components cancel there). Adjust the phases/amplitudes.")
+            if normalize:
+                S = S / norm
+            thetas.append(float(np.arccos(np.clip(S[2] / np.linalg.norm(S), -1, 1))))
+            phis.append(float(np.arctan2(S[1], S[0])))
+        logger.info(
+            f"multi_k structure: {len(comps)} components on a "
+            f"{self.supercell_dims} supercell ({len(atoms)} sites).")
+        return thetas, phis
 
     def _generate_structure_single_k(self, config):
         """Structure angles for the unified single-k (propagation-vector) type.

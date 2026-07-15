@@ -1,0 +1,85 @@
+# =====================================================================
+# S07 - Long-range dipole-dipole on the pyrochlore lattice
+#
+# Port of Sunny tutorial 07_Dipole_Dipole.jl to pyMagCalc (LSWT).
+#   Del Maestro & Gingras, J. Phys.: Cond. Matter 16, 3339 (2004).
+#
+#   magcalc run examples/sunny_tutorials/S07_dipole_dipole/config.yaml
+#
+# Gd3+ (s = 7/2, g = 2) on the pyrochlore lattice (Fd-3m Wyckoff 16c),
+# nearest-neighbour AFM J1 = 0.304 K = 0.026197 meV, PLUS the infinite-range
+# magnetic dipole-dipole interaction summed exactly by Ewald.
+#
+# The NN-AFM pyrochlore is highly frustrated: on its own it has a macroscopic
+# manifold of degenerate ground states and flat zero-energy spin-wave modes.
+# The dipole-dipole term lifts this degeneracy and selects a long-range
+# ordered state (Del Maestro-Gingras), raising the flat modes to finite energy.
+# Annealing finds this dipole-selected state reproducibly (stable, real magnons).
+#
+# Units: everything is in meV (J1 converted from Kelvin). pyMagCalc's Ewald
+# dipolar constant is meV-based; the dipole scale relative to J1 is physical,
+# so the band SHAPE matches Sunny (whose plot axis is in Kelvin, = meV / 0.0862).
+#
+# Structure note: spglib's default setting for space group 227 does not place
+# a single Wyckoff generator on the 16c orbit (origin-choice mismatch with
+# Sunny's ITA setting), so per CLAUDE.md the 16 pyrochlore sites are listed
+# explicitly. Each carries g = 2 (required by the Ewald dipolar term).
+#
+# See README.md: the quantitative Ewald-vs-Sunny agreement (1.3e-8) and the
+# truncated->Ewald convergence are pinned independently in tests/test_ewald.py.
+# =====================================================================
+
+parameter_order: []
+parameters: {}
+crystal_structure:
+  lattice_parameters: {a: 10.19, b: 10.19, c: 10.19, alpha: 90, beta: 90, gamma: 90}
+  atoms_uc:
+  - {label: A0, pos: [0, 0, 0], spin_S: 3.5, ion: Gd3+, g: 2.0}
+  - {label: A1, pos: [0, 0.25, 0.25], spin_S: 3.5, ion: Gd3+, g: 2.0}
+  - {label: A2, pos: [0, 0.5, 0.5], spin_S: 3.5, ion: Gd3+, g: 2.0}
+  - {label: A3, pos: [0, 0.75, 0.75], spin_S: 3.5, ion: Gd3+, g: 2.0}
+  - {label: A4, pos: [0.25, 0, 0.25], spin_S: 3.5, ion: Gd3+, g: 2.0}
+  - {label: A5, pos: [0.25, 0.25, 0], spin_S: 3.5, ion: Gd3+, g: 2.0}
+  - {label: A6, pos: [0.25, 0.5, 0.75], spin_S: 3.5, ion: Gd3+, g: 2.0}
+  - {label: A7, pos: [0.25, 0.75, 0.5], spin_S: 3.5, ion: Gd3+, g: 2.0}
+  - {label: A8, pos: [0.5, 0, 0.5], spin_S: 3.5, ion: Gd3+, g: 2.0}
+  - {label: A9, pos: [0.5, 0.25, 0.75], spin_S: 3.5, ion: Gd3+, g: 2.0}
+  - {label: A10, pos: [0.5, 0.5, 0], spin_S: 3.5, ion: Gd3+, g: 2.0}
+  - {label: A11, pos: [0.5, 0.75, 0.25], spin_S: 3.5, ion: Gd3+, g: 2.0}
+  - {label: A12, pos: [0.75, 0, 0.75], spin_S: 3.5, ion: Gd3+, g: 2.0}
+  - {label: A13, pos: [0.75, 0.25, 0.5], spin_S: 3.5, ion: Gd3+, g: 2.0}
+  - {label: A14, pos: [0.75, 0.5, 0.25], spin_S: 3.5, ion: Gd3+, g: 2.0}
+  - {label: A15, pos: [0.75, 0.75, 0], spin_S: 3.5, ion: Gd3+, g: 2.0}
+interactions:
+  symmetry_rules:
+  - {type: heisenberg, distance: 3.6027, value: 0.026197}   # NN pyrochlore bond, a/sqrt(8)
+  # infinite-range dipole-dipole, summed exactly (real + reciprocal + surface).
+  # Swap to `{method: truncated, cutoff: 5.0}` for the real-space 5 A cutoff
+  # (Sunny's dashed curves), or delete this line for the frustrated no-dipole case.
+  dipole_dipole: {method: ewald}
+
+# The dipole-selected ordered state is found by annealing (reproducible; a bare
+# NN-AFM pyrochlore has no unique classical minimum, so minimization is required).
+minimization: {enabled: true, method: anneal, num_starts: 12, n_sweeps: 3000, seed: 0}
+
+tasks: {minimization: true, dispersion: true}
+
+q_path:
+  G:  [0.0, 0.0, 0.0]
+  X:  [0.0, 1.0, 0.0]
+  W:  [1.0, 0.5, 0.0]
+  L:  [0.5, 0.5, 0.5]
+  K:  [0.75, 0.75, 0.0]
+  G2: [0.0, 0.0, 0.0]
+  path: [G, X, W, L, K, G2]
+  points_per_segment: 100
+
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  disp_plot_filename: S07_disp.png
+  disp_title: "Pyrochlore AFM + long-range dipole (Ewald): LSWT dispersion"
+
+calculation: {cache_mode: none, on_imaginary: warn}
+output: {save_data: false}

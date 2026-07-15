@@ -244,7 +244,8 @@ function App() {
       plot_sqw_map: true,
       export_csv: false,
       powder_average: false,
-      plot_structure: false
+      plot_structure: false,
+      corrections: false
     },
     q_path: {
       points: { Start: [0, 1, 0], End: [0, 3, 0] },
@@ -273,10 +274,15 @@ function App() {
       directions: []
     },
     minimization: {
-      num_starts: 1000,
+      // Monte-Carlo annealing (SpinW `anneal` / Sunny LocalSampler) is the default:
+      // it crosses barriers, so it does not get trapped the way multistart gradient
+      // descent does. On SW20-in-field the gradient path reached the true minimum in
+      // only 3 of 200 starts; anneal finds it in a single run.
+      method: "anneal",
+      num_starts: 4,
+      n_sweeps: 2000,
       n_workers: 8,
-      early_stopping: 10,
-      method: "L-BFGS-B"
+      early_stopping: 10
     },
     calculation: {
       // 'auto' reuses the cached symbolic matrix (gen_HM) across runs; it is
@@ -284,7 +290,16 @@ function App() {
       // needlessly costs seconds of cold-start time. Measured ~79x faster on a
       // 9-spin model. Cache auto-invalidates when the model structure changes.
       cache_mode: 'auto',
-      backend: 'numpy'
+      backend: 'numpy',
+      // LSWT is an expansion about a classical energy MINIMUM. If the magnetic
+      // structure is not one, the spectrum is meaningless -- so the run FAILS by
+      // default rather than drawing a plausible-looking plot. 'warn' is for
+      // structures that are knowingly metastable (e.g. a commensurate approximation
+      // to an incommensurate spiral).
+      on_imaginary: 'error',
+      mode: 'dipole',
+      temperature: null,
+      cross_section: 'perp'
     },
     powder_average: {
       q_min: 0.1,
@@ -353,8 +368,19 @@ function App() {
             : { lattice_parameters: cs.lattice_parameters || config.lattice }),
           atoms_uc: atoms,
           wyckoff_atoms: atoms,
-          atom_mode: cs.atom_mode || (cs.lattice_vectors ? 'explicit' : 'symmetry'),
+          // A raw config that lists `atoms_uc` is already the full cell (explicit);
+          // only `wyckoff_atoms` needs symmetry expansion. Keying off lattice_vectors
+          // alone mislabelled lattice_parameters+atoms_uc configs (no space group) as
+          // "symmetry", which then tried to re-expand them and dropped per-atom data
+          // like the dipole g-tensor.
+          atom_mode: cs.atom_mode
+            || (cs.atoms_uc ? 'explicit' : (cs.wyckoff_atoms ? 'symmetry'
+                : (cs.lattice_vectors ? 'explicit' : 'symmetry'))),
           magnetic_elements: cs.magnetic_elements || config.magnetic_elements || ['Cu'],
+          // A magnetic supercell (SpinW nExt / Sunny resize_supercell; also the
+          // non-diagonal SU(N) matrix) is physics the runner needs -- pass it through
+          // so supercell/SU(N) configs run the same as `magcalc run`.
+          ...(cs.magnetic_supercell ? { magnetic_supercell: cs.magnetic_supercell } : {}),
           dimensionality: 3,
         },
         interactions: raw.interactions,
@@ -475,6 +501,45 @@ function App() {
     }
   }
 
+  // Load a magnetic CIF (mCIF): the backend expands the magnetic space group into
+  // the full magnetic cell, so we get EXPLICIT atoms (P1) plus a per-site `generic`
+  // magnetic structure. The user still supplies the interactions.
+  const handleMcifUpload = async (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+
+    const formData = new FormData()
+    formData.append('file', file)
+
+    try {
+      const response = await fetch('/api/parse-mcif', {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        let detail = 'Failed to parse mCIF'
+        try { detail = (await response.json()).detail || detail } catch { /* keep default */ }
+        throw new Error(detail)
+      }
+
+      const data = await response.json()
+      rawImportRef.current = null       // mCIF starts a fresh explicit structure
+      setAtomMode('explicit')           // magnetic cell is already fully expanded
+      setConfig(prev => ({
+        ...prev,
+        lattice: data.lattice,
+        wyckoff_atoms: data.wyckoff_atoms,
+        magnetic_elements: data.magnetic_elements ?? prev.magnetic_elements,
+        magnetic_structure: { ...prev.magnetic_structure, ...data.magnetic_structure },
+      }))
+      alert(`mCIF Loaded: ${data.n_sites} magnetic site${data.n_sites === 1 ? '' : 's'} `
+            + `(${data.international}). Spin directions imported; now add interactions.`)
+    } catch (err) {
+      alert('Error loading mCIF: ' + err.message)
+    }
+  }
+
   const DEFAULT_CONFIG = {
     lattice: { a: 5.0, b: 5.0, c: 5.0, alpha: 90, beta: 90, gamma: 90, space_group: 1 },
     wyckoff_atoms: [],
@@ -490,7 +555,8 @@ function App() {
       plot_sqw_map: false,
       powder_average: false,
       export_csv: false,
-      plot_structure: false
+      plot_structure: false,
+      corrections: false
     },
     q_path: {
       points: { Gamma: [0, 0, 0] },
@@ -524,10 +590,15 @@ function App() {
       directions: []
     },
     minimization: {
-      num_starts: 1000,
+      // Monte-Carlo annealing (SpinW `anneal` / Sunny LocalSampler) is the default:
+      // it crosses barriers, so it does not get trapped the way multistart gradient
+      // descent does. On SW20-in-field the gradient path reached the true minimum in
+      // only 3 of 200 starts; anneal finds it in a single run.
+      method: "anneal",
+      num_starts: 4,
+      n_sweeps: 2000,
       n_workers: 8,
-      early_stopping: 10,
-      method: "L-BFGS-B"
+      early_stopping: 10
     },
     powder_average: {
       q_min: 0.1,
@@ -541,7 +612,16 @@ function App() {
       // needlessly costs seconds of cold-start time. Measured ~79x faster on a
       // 9-spin model. Cache auto-invalidates when the model structure changes.
       cache_mode: 'auto',
-      backend: 'numpy'
+      backend: 'numpy',
+      // LSWT is an expansion about a classical energy MINIMUM. If the magnetic
+      // structure is not one, the spectrum is meaningless -- so the run FAILS by
+      // default rather than drawing a plausible-looking plot. 'warn' is for
+      // structures that are knowingly metastable (e.g. a commensurate approximation
+      // to an incommensurate spiral).
+      on_imaginary: 'error',
+      mode: 'dipole',
+      temperature: null,
+      cross_section: 'perp'
     },
     fitting: {
       type: 'dispersion',
@@ -1046,6 +1126,32 @@ function App() {
     }))
   }
 
+  // Monte-Carlo methods ('anneal', 'steep') and the gradient multistart methods take
+  // completely different budgets: `num_starts` means "annealing runs" (a handful) for
+  // the former and "random restarts" (hundreds) for the latter, and early_stopping /
+  // n_workers apply only to the latter. Carrying one method's numbers over to the
+  // other is how you get either an absurdly slow run or a silently wrong ground state,
+  // so retune them whenever the method changes.
+  const isAnnealMethod = (m) => m === 'anneal' || m === 'monte_carlo' || m === 'steep'
+
+  const onMinimizationMethodChange = (method) => {
+    setConfig(prev => {
+      const wasAnneal = isAnnealMethod(prev.minimization.method)
+      const nowAnneal = isAnnealMethod(method)
+      const next = { ...prev.minimization, method }
+      if (wasAnneal !== nowAnneal) {
+        if (nowAnneal) {
+          next.num_starts = 4          // independent annealing runs
+          next.n_sweeps = next.n_sweeps ?? 2000
+        } else {
+          next.num_starts = 1000       // random restarts
+          next.early_stopping = 10
+        }
+      }
+      return { ...prev, minimization: next }
+    })
+  }
+
   const addRuleFromVisualizer = (type) => {
     if (!selectedBond) return;
 
@@ -1295,6 +1401,7 @@ function App() {
 
       <AppHeader
         onCifUpload={handleCifUpload}
+        onMcifUpload={handleMcifUpload}
         onYamlImport={handleImport}
         onReset={resetToDefaults}
         onExportYaml={handleExportYaml}
@@ -2191,6 +2298,22 @@ function App() {
                             <Check size={12} strokeWidth={4} />
                           </div>
                         </div>
+
+                        <div
+                          className={`task-card ${config.tasks.corrections ? 'active' : ''}`}
+                          onClick={() => updateField('tasks', 'corrections', !config.tasks.corrections)}
+                        >
+                          <div className="task-icon-box">
+                            <Target size={18} />
+                          </div>
+                          <div className="task-info">
+                            <span className="task-name">1/S Corrections</span>
+                            <span className="task-desc">Zero-point energy + moment reduction</span>
+                          </div>
+                          <div className="task-check">
+                            <Check size={12} strokeWidth={4} />
+                          </div>
+                        </div>
                       </div>
                     </div>
 
@@ -2283,35 +2406,61 @@ function App() {
                       <h3>Minimization Parameters</h3>
                       <div className="grid-form mt-md">
                         <div className="input-group">
-                          <label>Num Starts</label>
-                          <input type="number" value={config.minimization.num_starts} className="minimal-input"
-                            onChange={(e) => updateField('minimization', 'num_starts', parseInt(e.target.value))} />
-                        </div>
-                        <div className="input-group">
-                          <label>N Workers</label>
-                          <input type="number" value={config.minimization.n_workers} className="minimal-input"
-                            onChange={(e) => updateField('minimization', 'n_workers', parseInt(e.target.value))} />
-                        </div>
-                        <div className="input-group">
-                          <label>Early Stopping</label>
-                          <input type="number" value={config.minimization.early_stopping} className="minimal-input"
-                            onChange={(e) => updateField('minimization', 'early_stopping', parseInt(e.target.value))} />
-                          <div className="text-xs text-warning mt-1" style={{ gridColumn: "1 / -1" }}>
-                            &ge; 10 to ensure accurate magnetic structure.
-                          </div>
-                        </div>
-                        <div className="input-group">
                           <label>Method</label>
                           <select
                             className="minimal-select"
                             value={config.minimization.method}
-                            onChange={(e) => updateField('minimization', 'method', e.target.value)}
+                            onChange={(e) => onMinimizationMethodChange(e.target.value)}
                           >
-                            <option value="L-BFGS-B">L-BFGS-B</option>
-                            <option value="TNC">TNC</option>
-                            <option value="SLSQP">SLSQP</option>
+                            <option value="anneal">Monte-Carlo annealing (recommended)</option>
+                            <option value="steep">Steepest descent (local field)</option>
+                            <option value="L-BFGS-B">L-BFGS-B (gradient multistart)</option>
+                            <option value="TNC">TNC (gradient multistart)</option>
+                            <option value="SLSQP">SLSQP (gradient multistart)</option>
                           </select>
+                          <div className="text-xs text-secondary mt-1" style={{ gridColumn: "1 / -1" }}>
+                            {isAnnealMethod(config.minimization.method)
+                              ? (config.minimization.method === 'steep'
+                                  ? 'Aligns each spin with its local field (SpinW optmagsteep). Fast, but it only goes downhill \u2014 it cannot escape a local minimum.'
+                                  : 'Metropolis + cooling (SpinW anneal / Sunny LocalSampler), then a gradient polish. Crosses barriers, so it does not get trapped.')
+                              : 'Random multistart in (\u03b8, \u03c6). Gets trapped on frustrated systems \u2014 prefer annealing.'}
+                          </div>
                         </div>
+
+                        <div className="input-group">
+                          <label>{isAnnealMethod(config.minimization.method) ? 'Runs' : 'Num Starts'}</label>
+                          <input type="number" value={config.minimization.num_starts} className="minimal-input"
+                            onChange={(e) => updateField('minimization', 'num_starts', parseInt(e.target.value))} />
+                        </div>
+
+                        {config.minimization.method === 'anneal' && (
+                          <div className="input-group">
+                            <label>Sweeps</label>
+                            <input type="number" value={config.minimization.n_sweeps ?? 2000} className="minimal-input"
+                              onChange={(e) => updateField('minimization', 'n_sweeps', parseInt(e.target.value))} />
+                            <div className="text-xs text-secondary mt-1" style={{ gridColumn: "1 / -1" }}>
+                              Cooling steps; each attempts one move per spin.
+                            </div>
+                          </div>
+                        )}
+
+                        {!isAnnealMethod(config.minimization.method) && (
+                          <>
+                            <div className="input-group">
+                              <label>N Workers</label>
+                              <input type="number" value={config.minimization.n_workers} className="minimal-input"
+                                onChange={(e) => updateField('minimization', 'n_workers', parseInt(e.target.value))} />
+                            </div>
+                            <div className="input-group">
+                              <label>Early Stopping</label>
+                              <input type="number" value={config.minimization.early_stopping} className="minimal-input"
+                                onChange={(e) => updateField('minimization', 'early_stopping', parseInt(e.target.value))} />
+                              <div className="text-xs text-warning mt-1" style={{ gridColumn: "1 / -1" }}>
+                                Stop after N starts hit the same minimum. Use &ge; 2 &times; the number of magnetic sites; too low silently returns a LOCAL minimum.
+                              </div>
+                            </div>
+                          </>
+                        )}
                       </div>
                     </div>
 
@@ -2375,6 +2524,98 @@ function App() {
                           <p className="text-xs opacity-50 mt-xs">
                             'Fortran' uses the fMagCalc backend for S(Q,ω) and powder
                             (much faster); falls back to NumPy if it isn't installed.
+                          </p>
+                        </div>
+
+                        <div className="input-group">
+                          <label>Ground-State Check</label>
+                          <select
+                            value={config.calculation.on_imaginary || 'error'}
+                            className="minimal-input"
+                            onChange={(e) => updateField('calculation', 'on_imaginary', e.target.value)}
+                          >
+                            <option value="error">Fail the run (default)</option>
+                            <option value="warn">Warn only (metastable structure)</option>
+                            <option value="off">Disable</option>
+                          </select>
+                          <p className="text-xs opacity-50 mt-xs">
+                            Spin waves are an expansion about a classical energy <em>minimum</em>;
+                            about anything else the spectrum is meaningless. The run is checked
+                            for imaginary magnon energies and for a lower-energy relaxation, and
+                            fails if either fires.
+                          </p>
+                          {config.calculation.on_imaginary === 'warn' && (
+                            <p className="text-xs text-warning mt-xs">
+                              Use only when the structure is <strong>knowingly</strong> metastable —
+                              e.g. a commensurate approximation to an incommensurate spiral, or a
+                              state the reference calculation also treats as non-minimal. Otherwise
+                              you are silently computing the wrong physics.
+                            </p>
+                          )}
+                          {config.calculation.on_imaginary === 'off' && (
+                            <p className="text-xs text-warning mt-xs">
+                              Both ground-state guards are disabled. A wrong ground state will now
+                              produce a plausible-looking but meaningless spectrum, with no warning.
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="input-group">
+                          <label>LSWT Engine</label>
+                          <select
+                            value={config.calculation.mode || 'dipole'}
+                            className="minimal-input"
+                            onChange={(e) => updateField('calculation', 'mode', e.target.value)}
+                          >
+                            <option value="dipole">Dipole (default)</option>
+                            <option value="SUN">SU(N) — single-ion / multipolar</option>
+                          </select>
+                          <p className="text-xs opacity-50 mt-xs">
+                            SU(N) captures single-ion (multipolar) excitations — e.g. FeI₂'s
+                            bound state — that dipole LSWT cannot represent. Use it for S ≥ 1
+                            with strong single-ion anisotropy.
+                          </p>
+                          {config.calculation.mode === 'SUN' && (
+                            <p className="text-xs text-warning mt-xs">
+                              SU(N)'s ground state differs from the dipole one — enable
+                              <strong> Run Minimization</strong> so it is found in SU(N), not
+                              inherited. Powder/domain averaging are not yet supported.
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="input-group">
+                          <label>Temperature (K)</label>
+                          <input
+                            type="number" step="1" min="0"
+                            value={config.calculation.temperature ?? ''}
+                            placeholder="0 (T → 0)"
+                            className="minimal-input"
+                            onChange={(e) => updateField('calculation', 'temperature',
+                              e.target.value === '' ? null : parseFloat(e.target.value))}
+                          />
+                          <p className="text-xs opacity-50 mt-xs">
+                            Applies the Bose thermal factor to S(Q,ω)/powder intensities.
+                            Blank = T → 0 (bare LSWT).
+                          </p>
+                        </div>
+
+                        <div className="input-group">
+                          <label>Cross-section</label>
+                          <select
+                            value={config.calculation.cross_section || 'perp'}
+                            className="minimal-input"
+                            onChange={(e) => updateField('calculation', 'cross_section', e.target.value)}
+                          >
+                            <option value="perp">Unpolarized ⊥ (default)</option>
+                            <option value="trace">Trace (full)</option>
+                            <option value="chiral">Chiral</option>
+                            <option value="xx">Sˣˣ</option>
+                            <option value="yy">Sʸʸ</option>
+                            <option value="zz">Sᶻᶻ</option>
+                          </select>
+                          <p className="text-xs opacity-50 mt-xs">
+                            Neutron cross-section contraction for S(Q,ω) intensities.
                           </p>
                         </div>
                       </div>

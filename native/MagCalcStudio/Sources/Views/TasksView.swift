@@ -39,6 +39,8 @@ struct TasksView: View {
                                systemImage: "chart.bar", isOn: $model.config.tasks.sqwMap)
                 TaskToggleCard(title: "Powder Average", subtitle: "S(Q,ω) Sphere Sampl.",
                                systemImage: "wind", isOn: $model.config.tasks.powderAverage)
+                TaskToggleCard(title: "1/S Corrections", subtitle: "Zero-point energy + moment reduction",
+                               systemImage: "target", isOn: $model.config.tasks.corrections)
             }
         }
     }
@@ -77,26 +79,54 @@ struct TasksView: View {
         SectionCard(title: "Minimization Parameters") {
             Grid(horizontalSpacing: 10, verticalSpacing: 8) {
                 GridRow {
-                    IntField(label: "Num Starts", value: $model.config.minimization.numStarts)
-                    IntField(label: "N Workers", value: $model.config.minimization.nWorkers)
-                }
-                GridRow {
-                    IntField(label: "Early Stopping", value: $model.config.minimization.earlyStopping)
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Method").font(.caption).foregroundStyle(.secondary)
-                        Picker("", selection: $model.config.minimization.method) {
-                            Text("L-BFGS-B").tag("L-BFGS-B")
-                            Text("TNC").tag("TNC")
-                            Text("SLSQP").tag("SLSQP")
+                        Picker("", selection: Binding(
+                            get: { model.config.minimization.method },
+                            set: { newValue in
+                                let previous = model.config.minimization.method
+                                model.config.minimization.method = newValue
+                                model.config.minimization.applyMethodDefaults(previousMethod: previous)
+                            }
+                        )) {
+                            Text("Monte-Carlo annealing (recommended)").tag("anneal")
+                            Text("Steepest descent (local field)").tag("steep")
+                            Text("L-BFGS-B (gradient multistart)").tag("L-BFGS-B")
+                            Text("TNC (gradient multistart)").tag("TNC")
+                            Text("SLSQP (gradient multistart)").tag("SLSQP")
                         }
                         .labelsHidden()
+                    }
+                    IntField(
+                        label: model.config.minimization.isAnnealMethod ? "Runs" : "Num Starts",
+                        value: $model.config.minimization.numStarts
+                    )
+                }
+                if model.config.minimization.method == "anneal" {
+                    GridRow {
+                        IntField(label: "Sweeps", value: $model.config.minimization.nSweeps)
+                        Color.clear.frame(height: 0)
+                    }
+                }
+                if !model.config.minimization.isAnnealMethod {
+                    GridRow {
+                        IntField(label: "N Workers", value: $model.config.minimization.nWorkers)
+                        IntField(label: "Early Stopping", value: $model.config.minimization.earlyStopping)
                     }
                 }
             }
             .frame(maxWidth: 420)
-            Text("≥ 10 to ensure accurate magnetic structure.")
-                .font(.caption)
-                .foregroundStyle(.orange)
+            if model.config.minimization.isAnnealMethod {
+                Text(model.config.minimization.method == "steep"
+                     ? "Aligns each spin with its local field (SpinW optmagsteep). Fast, but it only goes downhill — it cannot escape a local minimum."
+                     : "Metropolis + cooling (SpinW anneal / Sunny LocalSampler), then a gradient polish. Crosses barriers, so it does not get trapped.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Random multistart in (θ, φ). Gets trapped on frustrated systems — prefer annealing. Early Stopping should be ≥ 2 × the number of magnetic sites; too low silently returns a LOCAL minimum.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
         }
     }
 
@@ -144,6 +174,67 @@ struct TasksView: View {
                     }
                     .labelsHidden()
                     Text("'Fortran' uses the fMagCalc backend for S(Q,ω) and powder (much faster); falls back to NumPy if it isn't installed.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Ground-State Check").font(.caption).foregroundStyle(.secondary)
+                    Picker("", selection: $model.config.calculation.onImaginary) {
+                        Text("Fail the run (default)").tag("error")
+                        Text("Warn only (metastable structure)").tag("warn")
+                        Text("Disable").tag("off")
+                    }
+                    .labelsHidden()
+                    Text("Spin waves are an expansion about a classical energy minimum; about anything else the spectrum is meaningless. The run is checked for imaginary magnon energies and for a lower-energy relaxation, and fails if either fires.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    if model.config.calculation.onImaginary == "warn" {
+                        Text("Use only when the structure is knowingly metastable — e.g. a commensurate approximation to an incommensurate spiral. Otherwise you are silently computing the wrong physics.")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    } else if model.config.calculation.onImaginary == "off" {
+                        Text("Both ground-state guards are disabled. A wrong ground state will now produce a plausible-looking but meaningless spectrum, with no warning.")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("LSWT Engine").font(.caption).foregroundStyle(.secondary)
+                    Picker("", selection: $model.config.calculation.mode) {
+                        Text("Dipole (default)").tag("dipole")
+                        Text("SU(N) — single-ion / multipolar").tag("SUN")
+                    }
+                    .labelsHidden()
+                    Text("SU(N) captures single-ion (multipolar) excitations — e.g. FeI₂'s bound state — that dipole LSWT cannot represent. Use it for S ≥ 1 with strong single-ion anisotropy.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    if model.config.calculation.mode == "SUN" {
+                        Text("SU(N)'s ground state differs from the dipole one — enable Run Minimization so it is found in SU(N), not inherited. Powder/domain averaging not yet supported.")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Temperature (K)").font(.caption).foregroundStyle(.secondary)
+                    TextField("0 (T → 0)", value: $model.config.calculation.temperature,
+                              format: .number)
+                        .textFieldStyle(.roundedBorder)
+                    Text("Applies the Bose thermal factor to S(Q,ω)/powder intensities. Blank = T → 0 (bare LSWT).")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Cross-section").font(.caption).foregroundStyle(.secondary)
+                    Picker("", selection: $model.config.calculation.crossSection) {
+                        Text("Unpolarized ⊥ (default)").tag("perp")
+                        Text("Trace (full)").tag("trace")
+                        Text("Chiral").tag("chiral")
+                        Text("Sˣˣ").tag("xx")
+                        Text("Sʸʸ").tag("yy")
+                        Text("Sᶻᶻ").tag("zz")
+                    }
+                    .labelsHidden()
+                    Text("Neutron cross-section contraction for S(Q,ω) intensities.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }

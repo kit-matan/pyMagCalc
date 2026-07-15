@@ -1,7 +1,7 @@
 import React from 'react'
-import { Share2, Code, Trash2, Download } from 'lucide-react'
+import { Share2, Magnet, Code, Trash2, Download } from 'lucide-react'
 
-export default function AppHeader({ onCifUpload, onYamlImport, onReset, onExportYaml }) {
+export default function AppHeader({ onCifUpload, onMcifUpload, onYamlImport, onReset, onExportYaml }) {
   return (
     <header className="glass">
       <div className="logo animate-fade-in">
@@ -19,6 +19,10 @@ export default function AppHeader({ onCifUpload, onYamlImport, onReset, onExport
         <label className="btn btn-secondary glass cursor-pointer">
           <Share2 size={16} /> Load CIF
           <input type="file" accept=".cif" hidden onChange={onCifUpload} />
+        </label>
+        <label className="btn btn-secondary glass cursor-pointer" title="Load a magnetic CIF: expands the magnetic space group into the full magnetic cell (atoms + spin directions)">
+          <Magnet size={16} /> Load mCIF
+          <input type="file" accept=".mcif,.cif" hidden onChange={onMcifUpload} />
         </label>
         <label className="btn btn-secondary glass cursor-pointer">
           <Code size={16} /> Load YAML

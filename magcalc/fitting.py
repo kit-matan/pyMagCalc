@@ -179,6 +179,9 @@ class FitProblem:
         lineshape: str = "lorentzian",
         backend: str = "numpy",
         fast: bool = True,
+        temperature: Optional[float] = None,
+        domains=None,
+        cross_section: str = "perp",
     ):
         self.fit_type = fit_type
         self.calc = calculator
@@ -189,6 +192,13 @@ class FitProblem:
         self.match = match
         self.lineshape = lineshape
         self.backend = backend
+        # Measurement model -- the SAME options `magcalc run` applies (see
+        # CLAUDE.md 'Intensity / experiment layer'). Fitting used to ignore these
+        # entirely, so every intensity residual was computed at T = 0 for a single
+        # domain: a systematic bias against any real (finite-T, twinned) data set.
+        self.temperature = temperature
+        self.domains = domains
+        self.cross_section = cross_section
         self._neval = 0
         # Cache of the expensive forward-model output (mode energies/intensities)
         # keyed on the Hamiltonian parameter vector. Lets nuisance-only steps
@@ -261,11 +271,16 @@ class FitProblem:
             modes = np.real(np.asarray(res.energies))
         elif self.fit_type == "powder":
             res = self.calc.calculate_powder_average(
-                self._q_mags, num_samples=self._powder_samples, backend=self.backend
+                self._q_mags, num_samples=self._powder_samples, backend=self.backend,
+                temperature=self.temperature, cross_section=self.cross_section,
             )
             modes = (np.asarray(res.energies), np.asarray(res.intensities))
         else:  # sqw
-            res = self.calc.calculate_sqw(self._q_cart, backend=self.backend)
+            res = self.calc.calculate_sqw(
+                self._q_cart, backend=self.backend,
+                temperature=self.temperature, domains=self.domains,
+                cross_section=self.cross_section,
+            )
             modes = (np.asarray(res.energies), np.asarray(res.intensities))
 
         self._cache_key = key
@@ -487,6 +502,19 @@ def run_fit(
     parameters = final_config.get("parameters") or final_config.get("model_params", {}) or {}
     base_values = {k: parameters[k] for k in name_order}
 
+    # The measurement model comes from the SAME `calculation:` block that `magcalc run`
+    # uses, so a fit and a forward run of the same config model the experiment
+    # identically. `fitting:` may override any of them locally.
+    calc_cfg = final_config.get("calculation", {}) or {}
+    temperature = fit_cfg.get("temperature", calc_cfg.get("temperature"))
+    domains = fit_cfg.get("domains", calc_cfg.get("domains"))
+    cross_section = fit_cfg.get(
+        "cross_section", calc_cfg.get("cross_section", "perp"))
+    if fit_type in ("sqw", "powder"):
+        logger.info(
+            f"Fit measurement model: temperature={temperature}, "
+            f"domains={'yes' if domains else 'none'}, cross_section={cross_section}.")
+
     problem = FitProblem(
         fit_type=fit_type,
         calculator=calculator,
@@ -498,6 +526,9 @@ def run_fit(
         lineshape=lineshape,
         backend=backend,
         fast=fast,
+        temperature=temperature,
+        domains=domains,
+        cross_section=cross_section,
     )
     # Number of sphere samples for powder evaluations during the fit.
     problem._powder_samples = int(

@@ -62,8 +62,10 @@ from .numerical import (
     SQW_IMAG_PART_THRESHOLD,
     Q_ZERO_THRESHOLD,
     PROJECTION_CHECK_TOLERANCE,
+    thermal_bose_prefactor,
     # substitute_expr, # Not used in core.py presumably
 )
+from .linalg import rotation_matrix
 # --- End Modularized Imports ---
 
 
@@ -166,6 +168,48 @@ logger.addHandler(logging.NullHandler())
 # faster per call, scales with N (not bond count), and is trivially picklable so
 # parallel workers need no per-task lambdify. These are module-level (not
 # closures) so they pickle cleanly to multiprocessing workers.
+
+def _parse_domains(domains) -> Optional[List[Tuple[npt.NDArray[np.float64], float]]]:
+    """Normalize a domain/twin specification into [(R, weight), ...].
+
+    Two accepted forms (angles in degrees, axes in Cartesian lab coordinates):
+      - shorthand dict {'axis': [0,0,1], 'n_fold': 3}: n equal-weight domains
+        rotated by k*360/n (k = 0..n-1), identity included;
+      - explicit list [{'axis': ..., 'angle': ..., 'weight': ...}, ...]. The
+        list is the COMPLETE set of domains — include {'angle': 0} for the
+        original orientation. 'weight' defaults to 1; weights are normalized
+        to sum to 1.
+
+    Returns None when no averaging is requested (empty/absent spec, or a
+    single identity domain).
+    """
+    if not domains:
+        return None
+    if isinstance(domains, dict):
+        n = int(domains.get('n_fold', 0))
+        if n < 1:
+            raise ValueError(
+                f"domains dict shorthand needs 'n_fold' >= 1, got {domains}.")
+        axis = domains.get('axis', [0, 0, 1])
+        entries = [{'axis': axis, 'angle': 360.0 * k / n, 'weight': 1.0}
+                   for k in range(n)]
+    else:
+        entries = list(domains)
+    if len(entries) == 0:
+        return None
+    out = []
+    for e in entries:
+        angle = float(e.get('angle', e.get('angle_deg', 0.0)))
+        R = rotation_matrix(e.get('axis', [0, 0, 1]), angle)
+        out.append((R, float(e.get('weight', 1.0))))
+    w_sum = sum(w for _, w in out)
+    if w_sum <= 0:
+        raise ValueError("Domain weights must sum to a positive number.")
+    out = [(R, w / w_sum) for R, w in out]
+    if len(out) == 1 and np.allclose(out[0][0], np.eye(3)):
+        return None
+    return out
+
 
 def _classical_spin_components(x, S, n):
     """Cartesian spin components m (3N,) from angle vector x=[th0,ph0,th1,...].
@@ -573,7 +617,7 @@ class MagCalc:
                 )
 
             # Extract numerical Hamiltonian parameters from config
-            # Try "model_params" first as per aCVO/config.yaml, then "parameters" as a fallback.
+            # Try "model_params" first (legacy python-model configs), then "parameters".
             self.p_numerical = self.model_config_data.get("model_params")
             if self.p_numerical is None:
                 self.p_numerical = self.model_config_data.get("parameters")
@@ -683,6 +727,13 @@ class MagCalc:
             except Exception as e:
                 logger.exception("Error getting nspins from spin_model.atom_pos()")
                 raise RuntimeError("Failed to determine nspins from spin model.") from e
+
+        # --- Magnetic supercell normalization ---
+        # Sunny/SpinW normalize S(q,w) per CHEMICAL cell (Avec Avec'/Ncells);
+        # with a magnetic_supercell of N cells the raw intensities are N times
+        # larger, so divide them back for size-independent output.
+        self.supercell_ncells: int = int(np.prod(
+            getattr(self.sm, 'supercell_dims', [1, 1, 1])))
 
         # --- Single-k (propagation vector) structure attributes ---
         # Populated when the spin model carries a rotating-frame single-k
@@ -1448,6 +1499,10 @@ class MagCalc:
         # Prepare numeric params list corresponding to self.params_sym_flat symbols
         filtered_h_params = list(self.hamiltonian_params)
 
+        # Long-range dipolar (Ewald) term: A(q) is an infinite lattice sum, so it
+        # cannot be a bond and cannot come through the symbolic Hamiltonian. Compute
+        # it here (parent process) and hand each worker its H_dip(q).
+        dip_stack = self._ewald_h_stack(np.array(q_vectors_list, dtype=float))
         task_args = [
             (
                 self.Ud_numeric,  # Pass numerical Ud
@@ -1455,8 +1510,9 @@ class MagCalc:
                 self.nspins,
                 self.spin_magnitude,
                 filtered_h_params,
+                None if dip_stack is None else dip_stack[iq],
             )
-            for q in q_vectors_list
+            for iq, q in enumerate(q_vectors_list)
         ]
 
         results = []
@@ -1698,6 +1754,331 @@ class MagCalc:
                 return c
         return None
 
+    def _minimize_anneal(
+        self, H_q, b_q, c_q, S_val, nspins, method="anneal", num_starts=1,
+        x0=None, seed=0, n_sweeps=2000, T_start=None, T_end=None,
+        polish=True, **_ignored,
+    ):
+        """Ground state by simulated annealing (or pure steepest descent).
+
+        method:
+          'anneal' / 'monte_carlo' -- Metropolis with a geometric cooling schedule,
+              restarted `num_starts` times (SpinW `anneal`; Sunny `LocalSampler`
+              proposal mix). Crosses barriers, so it does not get stuck the way
+              multistart L-BFGS does.
+          'steep' / 'optmagsteep' -- iterative alignment with the local field only
+              (SpinW `optmagsteep`). Monotone: fast, but cannot escape a local
+              minimum. Included for parity / polishing.
+
+        Every run is finished with an L-BFGS polish so the answer is a true
+        stationary point, not a low-temperature snapshot. Returns the usual
+        OptimizeResult, with `hits` = how many restarts reached the best energy
+        (the same convergence evidence the multistart path reports).
+        """
+        from scipy.optimize import OptimizeResult
+
+        from .annealing import (
+            anneal, cartesian_to_angles, random_spins, steepest_descent,
+        )
+
+        m0 = None
+        if x0 is not None:
+            m0, *_ = _classical_spin_components(np.asarray(x0, float), S_val, nspins)
+
+        n_runs = max(int(num_starts), 1)
+        best_x, best_e, hits = None, np.inf, 0
+        steep_only = method in ("steep", "optmagsteep")
+
+        logger.info(
+            f"Ground state via {'steepest descent' if steep_only else 'simulated annealing'}"
+            f" ({n_runs} run(s)"
+            f"{'' if steep_only else f', {n_sweeps} sweeps x {nspins} moves'})..."
+        )
+
+        for run in range(n_runs):
+            rng = np.random.default_rng((seed or 0) + run)
+            if steep_only:
+                start = m0 if (m0 is not None and run == 0) \
+                    else random_spins(nspins, S_val, rng)
+                m, e = steepest_descent(start, H_q, b_q, c_q, S_val, nspins)
+            else:
+                m, e = anneal(H_q, b_q, c_q, S_val, nspins, n_sweeps=n_sweeps,
+                              T_start=T_start, T_end=T_end,
+                              seed=(seed or 0) + run,
+                              m0=m0 if run == 0 else None)
+
+            x = cartesian_to_angles(m, nspins)
+            if polish:
+                res = minimize(_classical_energy_np, x,
+                               args=(H_q, b_q, c_q, S_val, nspins),
+                               jac=_classical_grad_np, method="L-BFGS-B",
+                               options={"maxiter": 1000})
+                x, e = res.x, float(res.fun)
+
+            if np.isclose(e, best_e, atol=1e-6):
+                hits += 1
+            elif e < best_e:
+                best_e, best_x, hits = e, x, 1
+                logger.info(f"New best energy found: {best_e:.6f} meV (run {run + 1})")
+
+        result = OptimizeResult(
+            x=best_x, fun=best_e, success=best_x is not None, nit=n_runs,
+            message=f"{method}: best of {n_runs} run(s)",
+        )
+        result.global_message = f"{method} ({n_runs} runs, {hits} hit the minimum)"
+        result.hits = hits
+        result.num_starts = n_runs
+        if hits <= 1 and n_runs > 1:
+            logger.warning(
+                f"{method}: the best energy ({best_e:.6f} meV) was reached by only "
+                f"{hits} of {n_runs} runs. Raise `num_starts` or `n_sweeps` and check "
+                f"the energy is reproducible across `seed`s."
+            )
+        logger.info(f"{method} complete: E_min = {best_e:.6f} meV ({hits}/{n_runs} runs).")
+        return result
+
+    def relax_from_current(
+        self, params: Optional[List[float]] = None, tol: float = 1e-6
+    ) -> Optional[Tuple[float, float]]:
+        """Energy of the CURRENT magnetic structure vs. the energy after a local
+        downhill relaxation from it. Returns (E_now, E_relaxed), or None if the
+        classical energy is not available.
+
+        This is the second, independent ground-state guard. It catches the case the
+        imaginary-energy check CANNOT see: a stationary point that is a maximum or
+        saddle -- e.g. a ferromagnetic structure supplied for an antiferromagnet.
+        There the Bogoliubov problem stays diagonal, `process_calc_disp` sorts the
+        +/- omega pairs and returns the upper half, so the spectrum comes back real
+        and positive (it is |omega|) and nothing looks wrong. Energy is the honest
+        test: if a downhill step lowers it, the structure is not the ground state.
+        """
+        if params is None:
+            params = self.hamiltonian_params
+        if params is None:
+            return None
+        nspins = len(self.sm.atom_pos())
+        nspins_ouc = len(self.sm.atom_pos_ouc())
+        S_val = float(self.spin_magnitude)
+        quad = self._extract_classical_quadratic(params, nspins, nspins_ouc, S_val)
+        if quad is None:
+            return None
+        H_q, b_q, c_q = quad
+
+        # Current spin directions, as angles. mpr() may hand back SYMBOLIC rotation
+        # matrices (models with a `transformations` block build them from the
+        # parameter symbols), so bind the numeric parameters before converting. A
+        # diagnostic must never break an otherwise-working run: if the rotations
+        # still cannot be made numeric, skip this guard rather than raise.
+        rot = self.sm.mpr(list(self.params_sym))
+        subs = dict(zip(self.params_sym_flat, params))
+        x0 = np.zeros(2 * nspins)
+        for i in range(nspins):
+            R_i = rot[i]
+            try:
+                if hasattr(R_i, "subs"):
+                    R_i = R_i.subs(subs)
+                R = np.array(R_i, dtype=float)
+            except (TypeError, ValueError):
+                logger.debug(
+                    "relax_from_current: rotation matrices are not numeric "
+                    "(symbolic model); skipping the classical-energy ground-state guard."
+                )
+                return None
+            z = R @ np.array([0.0, 0.0, 1.0])          # local z -> global spin dir
+            x0[2 * i] = np.arccos(np.clip(z[2], -1.0, 1.0))
+            x0[2 * i + 1] = np.arctan2(z[1], z[0])
+
+        e_now = _classical_energy_np(x0, H_q, b_q, c_q, S_val, nspins)
+
+        # Relax from SLIGHTLY PERTURBED copies, not from x0 itself. A maximum or
+        # saddle (e.g. a ferromagnetic state with antiferromagnetic exchange) is a
+        # stationary point: the gradient there is zero, so a descent started exactly
+        # at it never moves and the energy looks stable. An infinitesimal nudge is
+        # what makes it roll away. The perturbation is deliberately SMALL (0.05 rad)
+        # so this stays a LOCAL-minimum test -- it must not hop to some distant
+        # basin and start reporting legitimate metastable states as errors.
+        rng = np.random.default_rng(0)
+        e_best = e_now
+        for _ in range(5):
+            xp = x0 + rng.normal(0.0, 0.05, size=x0.shape)
+            res = minimize(_classical_energy_np, xp,
+                           args=(H_q, b_q, c_q, S_val, nspins),
+                           jac=_classical_grad_np, method="L-BFGS-B",
+                           options={"maxiter": 500, "ftol": tol})
+            e_best = min(e_best, float(res.fun))
+        return float(e_now), float(e_best)
+
+    # ---------------- long-range dipole-dipole (Ewald) -----------------------
+    def _ewald_spec(self):
+        """The `interactions.dipole_dipole` block, when it asks for Ewald."""
+        cfg = getattr(self.sm, "config", None)
+        if not isinstance(cfg, dict):
+            return None
+        spec = (cfg.get("dipole_dipole")
+                or (cfg.get("interactions") or {}).get("dipole_dipole")
+                if isinstance(cfg.get("interactions"), dict) else cfg.get("dipole_dipole"))
+        if not isinstance(spec, dict):
+            return None
+        if str(spec.get("method", "truncated")).lower() != "ewald":
+            return None
+        return spec
+
+    def _ewald_A(self, q_rlu):
+        """Ewald A(q) (n,n,3,3), cached per q."""
+        from .ewald import dipole_ewald_at_q
+
+        spec = self._ewald_spec()
+        cs = self.sm.config["crystal_structure"]
+        lat = np.asarray(cs["lattice_vectors"], dtype=float)
+        atoms = cs["atoms_uc"]
+        frac = np.asarray([a["pos"] for a in atoms], dtype=float)
+        demag = spec.get("demag")
+        demag = np.asarray(demag, dtype=float) if demag is not None else None
+        return dipole_ewald_at_q(lat, frac, q_rlu, demag=demag)
+
+    def _ewald_g(self):
+        atoms = self.sm.config["crystal_structure"]["atoms_uc"]
+        spec = self._ewald_spec() or {}
+        override = spec.get("g")
+        out = []
+        for a in atoms:
+            g = override if override is not None else a.get("g", 2.0)
+            if not isinstance(g, (int, float)):
+                raise ValueError(
+                    f"dipole_dipole (ewald) needs a scalar g per site; site "
+                    f"{a.get('label')} has g={g!r}. Set `g:` in the dipole_dipole block.")
+            out.append(float(g))
+        return np.asarray(out, dtype=float)
+
+    def _ewald_nambu(self, q_cart):
+        """Dipolar contribution to H(q), in the host's g*H2 convention.
+
+        A(q) is an infinite lattice sum, so it cannot be a bond list and cannot come
+        through the symbolic Hamiltonian -- it is added to H(q) numerically here. The
+        block construction is the standard Nambu one (verified to reproduce
+        pyMagCalc's own H(q) from a bond list, element for element).
+        """
+        from .ewald import exchange_from_A
+
+        n = int(self.nspins)
+        lat = np.asarray(self.sm.config["crystal_structure"]["lattice_vectors"], float)
+        # q_cart -> rlu
+        q_rlu = np.asarray(q_cart, dtype=float) @ np.linalg.inv(
+            2.0 * np.pi * np.linalg.inv(lat).T)
+
+        Jq = exchange_from_A(self._ewald_A(q_rlu), self._ewald_g())
+        J0 = exchange_from_A(self._ewald_A(np.zeros(3)), self._ewald_g())
+
+        rots = [np.array(R, dtype=float) for R in self.sm.mpr(list(self.params_sym))]
+        mags = self.sm.spin_magnitudes()
+        S = [float(m) for m in mags] if mags and len(mags) == n             else [float(self.spin_magnitude)] * n
+
+        H11 = np.zeros((n, n), complex); H22 = np.zeros((n, n), complex)
+        H12 = np.zeros((n, n), complex); H21 = np.zeros((n, n), complex)
+        for i in range(n):
+            for j in range(n):
+                Ji = np.sqrt(S[i] * S[j]) * (rots[i].T @ Jq[i, j] @ rots[j])
+                Qm = 0.5 * (Ji[0, 0] + Ji[1, 1] - 1j * (Ji[0, 1] - Ji[1, 0]))
+                Qp = 0.5 * (Ji[0, 0] + Ji[1, 1] + 1j * (Ji[0, 1] - Ji[1, 0]))
+                Pm = 0.5 * (Ji[0, 0] - Ji[1, 1] - 1j * (Ji[0, 1] + Ji[1, 0]))
+                Pp = 0.5 * (Ji[0, 0] - Ji[1, 1] + 1j * (Ji[0, 1] + Ji[1, 0]))
+                H11[i, j] += Qm; H22[i, j] += Qp
+                H12[i, j] += Pp; H21[i, j] += Pm
+                # on-site classical local field: the q=0 sum, NO phase
+                Ji0 = rots[i].T @ J0[i, j] @ rots[j]
+                H11[i, i] -= S[j] * np.real(Ji0[2, 2])
+                H22[i, i] -= S[j] * np.real(Ji0[2, 2])
+
+        g_metric = np.diag([1.0] * n + [-1.0] * n)
+        return g_metric @ np.block([[H11, H12], [H21, H22]])
+
+    def _ewald_h_stack(self, q_grid):
+        """(Nq, 2N, 2N) dipolar contribution, or None when Ewald is not requested."""
+        if self._ewald_spec() is None:
+            return None
+        return np.array([self._ewald_nambu(q) for q in np.asarray(q_grid, float)])
+
+    def max_imaginary_energy(
+        self,
+        n_q: int = 16,
+        seed: int = 0,
+        q_cart: Optional[npt.NDArray[np.float64]] = None,
+    ) -> float:
+        """Largest |Im(omega)| over a sample of q -- a direct test that the current
+        magnetic structure really is a classical energy MINIMUM.
+
+        LSWT expanded about a non-minimum (a saddle, or a local minimum that is not
+        the ground state) has imaginary magnon energies. The engine's per-q warnings
+        for this were easy to miss and the imaginary part was then discarded, so a
+        wrong ground state produced a plausible-looking spectrum. This returns the
+        number so callers can act on it.
+
+        `q_cart`: extra q-points to test, in addition to the random sample. Callers
+        SHOULD pass the q-path they are about to plot. A broad instability shows up
+        anywhere, but an instability confined to particular q -- e.g. SW23, where the
+        acoustic branch collapses only at the magnetic satellites -- is easily missed
+        by a purely random sample, and that is exactly the q a user is looking at.
+
+        Cheap: it diagonalizes the SAME H(q) the dispersion uses.
+        """
+        if self.HMat_sym is None:
+            return 0.0
+        B = reciprocal_b_matrix(np.asarray(self.sm.unit_cell(), dtype=float))
+        rng = np.random.default_rng(seed)
+        q_sample = rng.uniform(-0.5, 0.5, size=(int(n_q), 3)) @ B
+        if q_cart is not None and len(q_cart) > 0:
+            extra = np.asarray(q_cart, dtype=float).reshape(-1, 3)
+            # cap the cost: a dense path can be thousands of points
+            if len(extra) > 256:
+                idx = np.linspace(0, len(extra) - 1, 256).astype(int)
+                extra = extra[idx]
+            q_sample = np.vstack([q_sample, extra])
+        return self.stability_report(n_q=n_q, seed=seed, q_cart=q_cart)["max_imag"]
+
+    def stability_report(
+        self,
+        n_q: int = 16,
+        seed: int = 0,
+        q_cart: Optional[npt.NDArray[np.float64]] = None,
+    ) -> Dict[str, float]:
+        """Imaginary-mode diagnostics: {'max_imag', 'band_scale', 'relative'}.
+
+        `relative` = max|Im(omega)| / bandwidth is the number to threshold on, NOT the
+        raw meV. An absolute cutoff cannot separate a real instability from numerical
+        noise across models whose energy scales differ by orders of magnitude: SW07's
+        120-degree kagome carries ~1e-3 meV of noise on a 2.4 meV band (the Goldstone
+        modes sit at omega ~ 0, where the Bogoliubov problem is singular and the
+        minimizer's residual error leaks into the imaginary part), while SW23's genuine
+        instability is 1.5 meV on a 59 meV band. In meV those are only 3 orders apart;
+        relative to the bandwidth they are 5e-4 vs 2.5e-2 -- cleanly separated.
+        """
+        if self.HMat_sym is None:
+            return {"max_imag": 0.0, "band_scale": 0.0, "relative": 0.0}
+        B = reciprocal_b_matrix(np.asarray(self.sm.unit_cell(), dtype=float))
+        rng = np.random.default_rng(seed)
+        q_sample = rng.uniform(-0.5, 0.5, size=(int(n_q), 3)) @ B
+        if q_cart is not None and len(q_cart) > 0:
+            extra = np.asarray(q_cart, dtype=float).reshape(-1, 3)
+            if len(extra) > 256:
+                idx = np.linspace(0, len(extra) - 1, 256).astype(int)
+                extra = extra[idx]
+            q_sample = np.vstack([q_sample, extra])
+
+        h = self._build_h_stack(q_sample, float(self.spin_magnitude))
+        worst, band = 0.0, 0.0
+        for m in h:
+            try:
+                ev = la.eigvals(m)
+            except Exception:
+                continue
+            worst = max(worst, float(np.max(np.abs(np.imag(ev)))))
+            band = max(band, float(np.max(np.abs(np.real(ev)))))
+        return {
+            "max_imag": worst,
+            "band_scale": band,
+            "relative": worst / band if band > 1e-12 else 0.0,
+        }
+
     def _build_h_stack(
         self,
         q_grid: npt.NDArray[np.float64],
@@ -1735,7 +2116,11 @@ class MagCalc:
         flat = np.empty((two_n * two_n, nq), dtype=np.complex128)
         for k, col in enumerate(entries):
             flat[k] = col  # scalar entries broadcast to (Nq,); array entries copy
-        return np.ascontiguousarray(flat.T.reshape(nq, two_n, two_n))
+        stack = np.ascontiguousarray(flat.T.reshape(nq, two_n, two_n))
+        dip = self._ewald_h_stack(q_grid if not negate else -np.asarray(q_grid, float))
+        if dip is not None:
+            stack = stack + dip
+        return stack
 
     def _calculate_dispersion_fortran(
         self,
@@ -1861,6 +2246,9 @@ class MagCalc:
         q_vectors: Union[List[npt.NDArray[np.float64]], npt.NDArray[np.float64]],
         backend: str = "numpy",
         satellites: Optional[bool] = None,
+        temperature: Optional[float] = None,
+        domains=None,
+        cross_section: str = "perp",
     ) -> Optional[SqwResult]:
         """
         Calculate the dynamical structure factor S(q,w) over a list of q-points.
@@ -1879,10 +2267,91 @@ class MagCalc:
                 3*nspins modes per q, channel-major [q-k | q | q+k]. Defaults
                 to True when a single-k structure is active (that IS the
                 physical cross-section), False otherwise.
+            temperature (Optional[float]): Sample temperature in Kelvin. When
+                set (> 0), every mode intensity is multiplied by the thermal
+                Bose prefactor |1/(1 - exp(-E/kT))| (Sunny's kT option /
+                SpinW sw_egrid 'T'). Default None = T -> 0 (bare LSWT).
+            domains: Magnetic/structural domain (twin) averaging spec — see
+                _parse_domains. The result is the weighted average of the
+                cross-sections of each rotated crystal, computed by sampling
+                the unrotated model at R^T q (exact for 'perp'/'trace'). Modes
+                are concatenated per domain: energies/intensities get
+                n_domains * n_modes columns. Not supported together with a
+                lab-frame component cross_section.
+            cross_section (str): 'perp' (default, unpolarized (delta_ab -
+                q^_a q^_b) contraction), 'trace', or a lab-frame tensor
+                component like 'xx', 'zz', 'xy' (real part; off-diagonal
+                components are signed).
 
         Returns:
             Optional[SqwResult]: Object containing q_vectors, energies, and intensities.
         """
+        # Validate the cross-section spec HERE: the pool workers swallow
+        # exceptions into NaN results, so a typo would otherwise produce an
+        # all-NaN map instead of an error.
+        cs_norm = (cross_section or "perp").lower()
+        _CS_NAMED = ("perp", "trace", "chiral", "sf+", "sf-", "sf_plus", "sf_minus")
+        if cs_norm not in _CS_NAMED and not (
+                len(cs_norm) == 2 and set(cs_norm) <= set("xyz")):
+            raise ValueError(
+                f"Unknown cross_section '{cross_section}'. Use 'perp', 'trace', "
+                f"'chiral', 'sf+'/'sf-' (polarized, P || q), or a component like "
+                f"'xx', 'yy', 'zz', 'xy'.")
+
+        # Convert q_vectors to list of arrays if it's a 2D array
+        if isinstance(q_vectors, np.ndarray) and q_vectors.ndim == 2:
+            q_vectors_list = [q_vectors[i, :] for i in range(q_vectors.shape[0])]
+        elif isinstance(q_vectors, list):
+            q_vectors_list = [np.array(q) for q in q_vectors]
+        else:
+             logger.error("Invalid input for q_vectors. Must be list of arrays or 2D array.")
+             return None
+
+        domain_list = _parse_domains(domains)
+        if domain_list is not None:
+            cs = (cross_section or "perp").lower()
+            if cs not in ("perp", "trace", "chiral", "sf+", "sf-", "sf_plus", "sf_minus"):
+                # A lab-frame component of a rotated crystal is not the same
+                # component of the unrotated one; rotating q alone would be
+                # silently wrong.
+                raise ValueError(
+                    "domains averaging supports only cross_section 'perp' or "
+                    f"'trace', not '{cross_section}'.")
+            logger.info(f"Averaging over {len(domain_list)} domains...")
+            energies_parts = []
+            intensities_parts = []
+            for R, weight in domain_list:
+                q_rot = [R.T @ np.asarray(q, dtype=float) for q in q_vectors_list]
+                res_d = self._calculate_sqw_single_domain(
+                    q_rot, backend, satellites, cross_section)
+                if res_d is None:
+                    logger.error("Domain S(q,w) calculation failed; aborting average.")
+                    return None
+                energies_parts.append(res_d.energies)
+                intensities_parts.append(res_d.intensities * weight)
+            result = SqwResult(
+                q_vectors=np.array([np.asarray(q, dtype=float) for q in q_vectors_list]),
+                energies=np.concatenate(energies_parts, axis=1),
+                intensities=np.concatenate(intensities_parts, axis=1),
+            )
+        else:
+            result = self._calculate_sqw_single_domain(
+                q_vectors_list, backend, satellites, cross_section)
+
+        if result is not None and temperature is not None and temperature > 0:
+            result.intensities = result.intensities * thermal_bose_prefactor(
+                result.energies, temperature)
+        return result
+
+    def _calculate_sqw_single_domain(
+        self,
+        q_vectors_list: List[npt.NDArray[np.float64]],
+        backend: str,
+        satellites: Optional[bool],
+        cross_section: str = "perp",
+    ) -> Optional[SqwResult]:
+        """Single-orientation S(q,w) engine behind calculate_sqw (which layers
+        domain averaging and the thermal factor on top)."""
         logger.info("Starting S(q,w) calculation...")
         start_t: float = timeit.default_timer()
 
@@ -1898,27 +2367,55 @@ class MagCalc:
             satellites = single_k_active
         use_single_k = bool(satellites) and single_k_active
 
-        # Convert q_vectors to list of arrays if it's a 2D array
-        if isinstance(q_vectors, np.ndarray) and q_vectors.ndim == 2:
-            q_vectors_list = [q_vectors[i, :] for i in range(q_vectors.shape[0])]
-        elif isinstance(q_vectors, list):
-            q_vectors_list = [np.array(q) for q in q_vectors]
-        else:
-             logger.error("Invalid input for q_vectors. Must be list of arrays or 2D array.")
-             return None
-
         ion_list = None
         if hasattr(self.sm, 'ion_list'):
             ion_list = self.sm.ion_list()
+        # Per-site spin magnitudes: the S(q,w) prefactor is sqrt(S_i/2) PER SITE, so a
+        # mixed-spin model needs the list, not the single reference S. None (or a
+        # uniform list) reproduces the old scalar path exactly.
+        spin_mags = None
+        try:
+            mags = self.sm.spin_magnitudes()
+            if mags and len(mags) == self.nspins:
+                spin_mags = [float(m) for m in mags]
+        except Exception:
+            spin_mags = None
 
         # Opt-in Fortran backend (falls back to NumPy on any unavailability).
         if backend == "fortran":
             if use_single_k:
                 logger.info("Single-k S(q,w) not available in the Fortran backend; using NumPy.")
+            elif (cross_section or "perp").lower() != "perp":
+                logger.info(
+                    f"cross_section='{cross_section}' not available in the "
+                    "Fortran backend (it computes the perp contraction); using NumPy.")
+            elif spin_mags is not None and len(set(np.round(spin_mags, 12))) > 1:
+                # The Fortran kernel applies a single global sqrt(S/2); with mixed
+                # spins that makes every relative intensity wrong by sqrt(S_i/S_ref).
+                logger.warning(
+                    "Mixed spin magnitudes detected; the Fortran backend applies a "
+                    "single global sqrt(S/2) prefactor and would give wrong relative "
+                    "intensities. Using NumPy for S(q,w).")
             else:
                 fortran_result = self._calculate_sqw_fortran(q_vectors_list, ion_list)
                 if fortran_result is not None:
+                    if self.supercell_ncells > 1:
+                        fortran_result.intensities = (
+                            fortran_result.intensities / self.supercell_ncells)
                     return fortran_result
+
+        # Dipolar (Ewald) contribution at +q and -q, precomputed here (see dispersion).
+        q_arr = np.array(q_vectors_list, dtype=float)
+        dip_p = self._ewald_h_stack(q_arr)
+        dip_m = self._ewald_h_stack(-q_arr)
+        dip_pairs = None if dip_p is None else [
+            (dip_p[i], dip_m[i]) for i in range(len(q_vectors_list))]
+        if dip_pairs is not None and use_single_k:
+            raise NotImplementedError(
+                "Ewald dipole-dipole is not yet supported together with a single-k "
+                "(rotating-frame) structure: the three q +/- k channels each need "
+                "their own A(q). Use a magnetic_supercell instead, or "
+                "dipole_dipole.method: truncated.")
 
         if use_single_k:
             logger.info(
@@ -1937,6 +2434,8 @@ class MagCalc:
                     self.k_cart,
                     self.spiral_axis,
                     self.k_case,
+                    cross_section,
+                    spin_mags,
                 )
                 for q in q_vectors_list
             ]
@@ -1950,8 +2449,11 @@ class MagCalc:
                     self.spin_magnitude,
                     list(self.hamiltonian_params),
                     ion_list,
+                    cross_section,
+                    spin_mags,
+                    None if dip_pairs is None else dip_pairs[iq],
                 )
-                for q in q_vectors_list
+                for iq, q in enumerate(q_vectors_list)
             ]
 
         try:
@@ -1987,10 +2489,15 @@ class MagCalc:
             f"Run-time for S(q,w) calculation: {np.round((end_time - start_t) / 60, 2)} min."
         )
 
+        intensities_arr = np.array(intensities_out)
+        if self.supercell_ncells > 1:
+            # Per-chemical-cell normalization (Sunny/SpinW convention).
+            intensities_arr = intensities_arr / self.supercell_ncells
+
         return SqwResult(
             q_vectors=np.array(q_vectors_out),
             energies=np.array(energies_out),
-            intensities=np.array(intensities_out)
+            intensities=intensities_arr
         )
 
     def calculate_powder_average(
@@ -1998,6 +2505,8 @@ class MagCalc:
         q_magnitudes: Union[List[float], npt.NDArray[np.float64]],
         num_samples: int = 100,
         backend: str = "numpy",
+        temperature: Optional[float] = None,
+        cross_section: str = "perp",
     ) -> Optional[SqwResult]:
         """
         Calculate the powder-averaged dynamic structure factor S(|q|, w).
@@ -2005,10 +2514,20 @@ class MagCalc:
         For each momentum magnitude |q|, it averages S(q, w) over a sphere of radius |q|.
         Optimized to use batch processing for maximum parallel efficiency.
 
+        Domain (twin) averaging is deliberately NOT applied here: the full
+        spherical average is invariant under any rigid rotation of the
+        crystal, so domains would multiply the cost without changing the
+        result.
+
         Args:
             q_magnitudes (Union[List[float], npt.NDArray[np.float64]]):
                 A list or NumPy array of momentum magnitudes |q|.
             num_samples (int): Number of points to sample on the sphere for each |q|.
+            temperature (Optional[float]): Sample temperature in Kelvin; applies
+                the Bose prefactor per (q, mode) BEFORE the spherical average
+                (see calculate_sqw).
+            cross_section (str): Contraction of the spin-correlation tensor
+                (see calculate_sqw).
 
         Returns:
             Optional[SqwResult]: Object containing q_magnitudes (as vectors [|q|, 0, 0]),
@@ -2049,7 +2568,9 @@ class MagCalc:
 
         # 2. Run single batch calculation
         # This maximizes CPU usage by keeping the worker pool alive for the entire duration
-        res = self.calculate_sqw(all_q_vectors, backend=backend)
+        res = self.calculate_sqw(
+            all_q_vectors, backend=backend,
+            temperature=temperature, cross_section=cross_section)
         
         if res is None:
             logger.error("Batch calculation failed.")
@@ -2195,6 +2716,18 @@ class MagCalc:
                         "using symbolic path."
                     )
                     return None
+            # Long-range dipolar (Ewald) term. The minimizer MUST optimize the same
+            # Hamiltonian that LSWT diagonalizes -- otherwise it finds a ground state
+            # that is not a minimum of the actual model, and the spectrum comes out
+            # imaginary (exactly the g-tensor bug fixed earlier). A(q=0) is the full
+            # lattice sum between sites of the cell, so it adds straight into H.
+            if self._ewald_spec() is not None:
+                from .ewald import exchange_from_A
+                J0 = exchange_from_A(self._ewald_A(np.zeros(3)), self._ewald_g())
+                for i in range(nspins):
+                    for j in range(nspins):
+                        H[3 * i:3 * i + 3, 3 * j:3 * j + 3] += np.real(J0[i, j])
+
             return H, b, c
         except Exception as e:
             logger.info(f"Quadratic energy extraction failed ({e}); using symbolic path.")
@@ -2318,6 +2851,21 @@ class MagCalc:
         # picklable to parallel workers). The angle-based symbolic energy is only
         # built on the fallback path, so the common case skips it entirely.
         quad = self._extract_classical_quadratic(params, nspins, nspins_ouc, S_val)
+
+        # Monte-Carlo / annealing ground-state search (SpinW `anneal` /
+        # `optmagsteep`, Sunny `LocalSampler`). Random-multistart L-BFGS reliably
+        # gets trapped on frustrated landscapes; annealing crosses barriers.
+        if method in ("anneal", "monte_carlo", "steep", "optmagsteep"):
+            if quad is None:
+                raise ValueError(
+                    f"method='{method}' needs the classical energy as a quadratic form, "
+                    f"which could not be extracted for this model. Use a gradient "
+                    f"method (e.g. L-BFGS-B) instead."
+                )
+            return self._minimize_anneal(
+                *quad, S_val, nspins, method=method, num_starts=num_starts,
+                x0=x0, seed=seed, **kwargs)
+
         if quad is not None:
             H_q, b_q, c_q = quad
             # Fast path: batched multistart (all starts vectorized on the spheres,
@@ -2465,11 +3013,26 @@ class MagCalc:
 
         if best_res is None:
             logger.warning("All minimization starts failed.")
-            # If all failed, we might want to return the last res if it exists, 
+            # If all failed, we might want to return the last res if it exists,
             # but usually it's better to return something indicating failure.
             # However, for consistency with original behavior:
         if best_res is not None:
              best_res.global_message = global_message
+             # Expose the multistart convergence evidence. `hits` is how many
+             # independent starts reached the best energy; hits == 1 means the
+             # minimum was seen exactly once, which is weak evidence that it is
+             # the GLOBAL minimum -- the failure mode that silently produces
+             # imaginary magnon energies downstream.
+             best_res.hits = hits
+             best_res.num_starts = num_starts
+             if hits <= 1 and num_starts > 1:
+                 logger.warning(
+                     f"Minimization: the best energy ({best_energy:.6f} meV) was reached by "
+                     f"only {hits} of {num_starts} starts. That is weak evidence it is the "
+                     f"global minimum -- a local minimum here yields IMAGINARY magnon "
+                     f"energies. Raise `num_starts` and `early_stopping`, and check the "
+                     f"energy is reproducible across `seed`s."
+                 )
 
         return best_res
 

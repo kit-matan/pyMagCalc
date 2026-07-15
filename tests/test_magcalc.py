@@ -671,8 +671,13 @@ def test_match_reorder_near_match():
         "test_near",
     )
 
-    # Assert against corrected expectations
-    assert_allclose(eigvecs_m_final, expected_eigvecs_m_final, atol=1e-14)
+    # The subspace matcher returns the +q target projected onto the matched
+    # -q eigenspace, i.e. the expected column up to a unit phase. Compare
+    # phase-insensitively (the phase is compensated in alpha downstream).
+    for col in range(nspins2):
+        overlap = np.abs(np.vdot(eigvecs_m_final[:, col],
+                                 expected_eigvecs_m_final[:, col]))
+        assert_allclose(overlap, 1.0, atol=1e-7)
     assert_allclose(eigvals_m_reordered, expected_eigvals_m_reordered, atol=1e-14)
     # Check diagonal elements of alpha_m_final are close to 1 in magnitude
     assert_allclose(np.abs(np.diag(alpha_m_final)), np.ones(nspins2), atol=1e-7)
@@ -718,17 +723,19 @@ def test_match_reorder_no_match(caplog):
         )
 
     # Check that warnings were logged
-    # This setup should make both targets fail the match.
+    # This setup should make both targets fail the match (the -q eigenvalues
+    # are non-degenerate, so each candidate subspace is one-dimensional and
+    # the 45-degree targets only reach |projection| = 1/sqrt(2)).
     assert (
-        f"No matching -q eigenvector found for +q eigenvector index 0 in first block at {test_label}"
+        f"No matching -q eigenvector subspace found for +q eigenvector index 0 at {test_label}"
         in caplog.text
     )
     assert (
-        f"No matching -q eigenvector found for +q eigenvector index 1 in second block at {test_label}"
+        f"No matching -q eigenvector subspace found for +q eigenvector index 1 at {test_label}"
         in caplog.text
     )
     assert (
-        f"Number of matched original -q vectors (0) does not equal {nspins2} at {test_label}"
+        f"Number of matched -q vectors (0) does not equal {nspins2} at {test_label}"
         in caplog.text
     )
 
@@ -777,7 +784,7 @@ def test_match_reorder_zero_norm_vector(caplog):
         in caplog.text
     )
     assert (
-        f"Number of matched original -q vectors (0) does not equal {nspins2} at {test_label}"
+        f"Number of matched -q vectors (0) does not equal {nspins2} at {test_label}"
         in caplog.text
     )
 

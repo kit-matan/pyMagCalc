@@ -1,0 +1,77 @@
+# =====================================================================
+# S01 - CoRh2O4 spin-wave simulation
+#
+# Port of Sunny tutorial 01_LSWT_CoRh2O4.jl to pyMagCalc (LSWT).
+#   Ge et al., Phys. Rev. B 96, 064413 (2017).
+#
+#   magcalc run examples/sunny_tutorials/S01_CoRh2O4/config.yaml
+#
+# Co2+ (s = 3/2) on the diamond sublattice (Fd-3m, space group 227, Wyckoff
+# 8a). Antiferromagnetic nearest-neighbour Heisenberg J = 0.63 meV. The
+# diamond lattice is bipartite, so the ground state is collinear Neel order;
+# the classical energy is exactly -2 J s^2 = -2.835 meV/site.
+#
+# Structure note: spglib's default setting for space group 227 places the
+# [1/8,1/8,1/8] site on the 16-fold orbit (origin-choice mismatch with Sunny's
+# ITA origin-2 setting), so the Wyckoff shortcut cannot be used here. Per
+# CLAUDE.md, we fall back to the explicit 8-atom diamond cell; the exchange is
+# still authored as a symmetry distance rule.
+# =====================================================================
+
+parameter_order: [J]
+parameters:
+  J: 0.63
+
+crystal_structure:
+  lattice_parameters: {a: 8.5031, b: 8.5031, c: 8.5031, alpha: 90, beta: 90, gamma: 90}
+  atoms_uc:
+  - {label: Co0, pos: [0.125, 0.125, 0.125], spin_S: 1.5, ion: Co2+}
+  - {label: Co1, pos: [0.125, 0.625, 0.625], spin_S: 1.5, ion: Co2+}
+  - {label: Co2, pos: [0.625, 0.125, 0.625], spin_S: 1.5, ion: Co2+}
+  - {label: Co3, pos: [0.625, 0.625, 0.125], spin_S: 1.5, ion: Co2+}
+  - {label: Co4, pos: [0.875, 0.875, 0.875], spin_S: 1.5, ion: Co2+}
+  - {label: Co5, pos: [0.875, 0.375, 0.375], spin_S: 1.5, ion: Co2+}
+  - {label: Co6, pos: [0.375, 0.875, 0.375], spin_S: 1.5, ion: Co2+}
+  - {label: Co7, pos: [0.375, 0.375, 0.875], spin_S: 1.5, ion: Co2+}
+
+interactions:
+  symmetry_rules:
+  - {type: heisenberg, distance: 3.6818, value: J}   # NN diamond bond, a*sqrt(3)/4
+
+# Neel order is found robustly by annealing (bipartite -> trivial global minimum).
+minimization: {enabled: true, method: anneal, num_starts: 4, n_sweeps: 2000, seed: 0}
+
+tasks:
+  minimization: true
+  dispersion: true
+  powder_average: true
+
+q_path:
+  Gamma: [0.0, 0.0, 0.0]
+  X:     [0.5, 0.0, 0.0]
+  W:     [0.5, 0.5, 0.0]
+  Gamma2: [0.0, 0.0, 0.0]
+  path: [Gamma, X, W, Gamma2]
+  points_per_segment: 160
+
+powder_average:
+  q_min: 0.05
+  q_max: 3.0
+  q_count: 150
+  num_samples: 400
+
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  disp_plot_filename: S01_CoRh2O4_disp.png
+  powder_plot_filename: S01_CoRh2O4_powder.png
+  disp_title: "CoRh2O4 LSWT dispersion"
+  powder_title: "CoRh2O4 powder average"
+  broadening: 0.4
+
+calculation:
+  cache_mode: none
+
+output:
+  save_data: false
