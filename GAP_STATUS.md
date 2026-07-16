@@ -117,6 +117,20 @@ guard refuses). Never silently wrong.
 
 ## Delivered alongside, not on the original gap list
 
+- **High-order dimer series expansion + Dlog-Padé** (`magcalc/sun/dimer_series.py`):
+  the linked-cluster method of Matan et al. (Nat. Phys. 6, 865 (2010) / PRB 89,
+  024414 (2014)) for STRONG-coupling dimer magnets, where the harmonic entangled
+  engine fails. Numerical Bloch/des Cloizeaux PT per cluster, subcluster subtraction
+  (cluster additivity asserted numerically), per-band eigenvalue series, Dlog-Padé
+  with the approximant spread as the uncertainty. Config:
+  `calculation: {mode: entangled, series_order: N}`. Validated: alternating-chain ED
+  (5e-4 J at J'/J=0.4; <8% at the gap at J'/J=0.8, order 7), PRR Eq. (A11) exact at
+  order 1, λ^(n+1) error scaling vs exact diagonalization. On the Rb2Cu3SnF12
+  pinwheel (J2=0.95 J1, dz=0.18, bond families assigned by Cu-F-Cu angle from the
+  CIF — 138.3°/123.3° matching the papers' 138°/124°): the Γ doublet lands at
+  2.2±1.0 meV (order 4, Dlog-Padé) vs the measured 2.35 meV; the papers' order 8
+  remains the converged answer. `tests/test_dimer_series.py`,
+  `examples/entangled/Rb2Cu3SnF12/series_dispersion.py`.
 - **Monte-Carlo / annealing ground-state minimizer** (`magcalc/annealing.py`): SpinW
   `anneal` (Metropolis + cooling, Sunny `LocalSampler` proposal mix) and `optmagsteep`
   (`method: steep`). On SW20-in-field, multistart L-BFGS hit the true minimum in only

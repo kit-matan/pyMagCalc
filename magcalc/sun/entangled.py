@@ -235,16 +235,37 @@ class EntangledCalculator:
         self.sm = spin_model
         self.config = config
         self.hamiltonian_params = list(hamiltonian_params or [])
-        units = _resolve_units(config, spin_model)
-        self.model = build_entangled_model(spin_model, self.hamiltonian_params, units)
+        self._units = _resolve_units(config, spin_model)
+        self.model = build_entangled_model(spin_model, self.hamiltonian_params, self._units)
         self.nspins = self.model.L
         self.spin_magnitude = 1.0
+        # Optional high-order dimer series (linked-cluster + Dlog-Pade) for the
+        # DISPERSION: `calculation: {series_order: N, series_resum: dlog_pade|pade|sum}`.
+        # The harmonic model above still provides S(Q,w) and the ground-state guards.
+        calc_cfg = (config.get("calculation") or {})
+        self.series_order = int(calc_cfg.get("series_order", 0) or 0)
+        self.series_resum = str(calc_cfg.get("series_resum", "dlog_pade"))
+        self._series = None
         logger.info("Entangled units: %d unit(s), N=%d per unit (%d bosons), %d bond(s).",
                     self.model.L, self.model.N, self.model.M, len(self.model.bonds))
 
+    def _series_model(self):
+        if self._series is None:
+            from .dimer_series import DimerSeriesModel
+            logger.info("Building dimer series model (order %d, resum=%s)...",
+                        self.series_order, self.series_resum)
+            self._series = DimerSeriesModel.from_generic_model(
+                self.sm, self.hamiltonian_params, units=self._units)
+        return self._series
+
     def calculate_dispersion(self, q_vectors, backend="numpy", satellites=None, **_):
         qs = np.asarray(q_vectors, dtype=float).reshape(-1, 3)
-        e = np.array([self.model.dispersion(q) for q in qs])
+        if self.series_order:
+            dsm = self._series_model()
+            e = np.array([dsm.dispersion(q, self.series_order, self.series_resum)[0]
+                          for q in qs])
+        else:
+            e = np.array([self.model.dispersion(q) for q in qs])
         return self._DispersionResult(q_vectors=qs, energies=e)
 
     def calculate_sqw(self, q_vectors, backend="numpy", satellites=None,

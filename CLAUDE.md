@@ -445,7 +445,23 @@ resulting triplon (Sunny's `EntangledSystem` analogue).
   c-axis field Zeeman-splits the Stot^z = +/-1 dimer triplet while Stot^z = 0 is
   unchanged (`examples/entangled/Rb2Cu3SnF12/`, Matan et al., Nat. Phys. 6, 865 (2010)).
 * Harmonic bond-operator level: EXACT in the weak-interdimer limit (Cu5SbO6), only
-  qualitative at strong coupling (J2 ~ J1) where a high-order series expansion is needed.
+  qualitative at strong coupling (J2 ~ J1). For strong coupling use the SERIES:
+
+```yaml
+calculation: {mode: entangled, series_order: 5, series_resum: dlog_pade}  # | pade | sum
+```
+
+  `series_order: N` switches the DISPERSION to the high-order dimer series expansion
+  (`magcalc/sun/dimer_series.py`): a linked-cluster expansion of the one-triplon
+  effective Hamiltonian to order N in ALL interdimer couplings (Heisenberg + DM),
+  resummed per band with Dlog-Pade (the papers' method; the spread across approximants
+  is the uncertainty). Validated against exact diagonalization of the alternating
+  chain -- 5e-4 J at J'/J = 0.4, better than 8 percent at the STRONG coupling
+  J'/J = 0.8 -- and against the exact first-order dimer expansion of PRR 8, 013247
+  (Eq. A11). Cost grows fast with order (cluster count x Hilbert 4^(N+1)): order 4-5
+  is interactive, 6+ is a batch run. S(Q,w) and the ground-state guards stay on the
+  harmonic model. Reference: `examples/entangled/Rb2Cu3SnF12/series_dispersion.py`
+  (the full pinwheel at J2 = 0.95 J1, gaps vs the measured 2.35 / 7.3 meV).
 * Not yet: powder/domain averaging (as for SU(N)).
 
 Example: `examples/entangled/dimer_chain/` -- a chain of S=1/2 dimers whose triplon
