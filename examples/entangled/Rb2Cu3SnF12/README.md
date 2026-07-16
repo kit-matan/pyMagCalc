@@ -1,7 +1,10 @@
 # Rb₂Cu₃SnF₁₂ — pinwheel valence-bond solid (single-dimer building block)
 
 From **Matan et al., Nature Physics 6, 865 (2010)** — "Pinwheel valence-bond solid
-and triplet excitations in the two-dimensional deformed kagome lattice."
+and triplet excitations in the two-dimensional deformed kagome lattice" — and the
+higher-resolution follow-up **Ehlers/Matan et al., Phys. Rev. B 89, 024414 (2014)**,
+"Ghost modes and continuum scattering …", which resolved the two branches
+(gaps **2.4 and 6.9 meV** at the zone centre) and determined their **polarizations**.
 
 Rb₂Cu₃SnF₁₂ is an S=1/2 deformed-kagome antiferromagnet whose ground state is a
 product of **singlet dimers** (the pinwheel VBS). Singlet dimers form on the
@@ -20,12 +23,15 @@ on-dimer physics analytically:
   `Δ₀ = √(J1² + Dz²)` and leaves the Stot^z = ±1 branch degenerate at
   `Δ± = J1/2 + ½√(J1² + Dz²) < Δ₀` — the mechanism behind the paper's two gaps;
 - a **c-axis field Zeeman-splits** the Stot^z = ±1 doublet (slope ∓2μ_B·B, g = 2)
-  while Stot^z = 0 is field-independent — the paper's Fig. 4. Run
+  while Stot^z = 0 is field-independent — the 2010 paper's Fig. 4. Run
   `python field_sweep.py` to reproduce the gaps-vs-field plot (Fig. 4d) and read off
-  g ≈ 2.
+  g ≈ 2;
+- the **mode polarizations** the 2014 follow-up determined: the Stot^z = ±1 doublet
+  is **in-plane** (it carries S_xx, S_yy) and the Stot^z = 0 singlet is
+  **out-of-plane** (only S_zz) — the entangled structure factor reproduces this exactly.
 
-`tests/test_entangled_units.py::test_Rb2Cu3SnF12_dimer_DM_and_field_mechanism` pins
-all of the above.
+`tests/test_entangled_units.py` (`…_dimer_DM_and_field_mechanism`,
+`…_triplet_polarizations`) pins all of the above.
 
 ## What it does NOT do (and why)
 
@@ -44,5 +50,15 @@ The entangled engine works at the **harmonic bond-operator** level, which is exa
 only in the *weak*-interdimer limit (see `../Cu5SbO6/`, where J2/J1 ≈ 0.36 and the
 full dispersion is reproduced to machine precision). For Rb₂Cu₃SnF₁₂'s strong
 coupling it would be only qualitative even with the full geometry. This example
-therefore captures the **singlet-VBS + DM + field** structure of a single pinwheel
-dimer — the paper's central mechanism — rather than the full dispersion.
+therefore captures the **singlet-VBS + DM + field + polarization** structure of a
+single pinwheel dimer — the papers' central mechanism — rather than the full
+dispersion. The 2014 follow-up further reports **ghost modes** (from the 2a×2a,
+48-spin enlarged cell below the 215 K structural transition) and an **8–10 meV
+continuum** (a possible kagome-spinon remnant); both are outside any single-cell
+dimer LSWT.
+
+To build the full 6-band dispersion here one would need the explicit **12-Cu
+deformed-kagome coordinates and the J1–J4 bond assignments** (from the
+crystallography, Morita 2008 / Ono 2009) — then `mode: entangled` with 6 units
+would give the six triplon bands, to be compared against the papers' 8th-order
+Dlog-Padé dispersion with the strong-coupling caveat above.
