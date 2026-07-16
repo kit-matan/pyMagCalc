@@ -632,6 +632,29 @@ def run_calculation(config_file: str):
                 q_guard = np.dot(np.array(q_guard_rlu), compute_b_matrix(spin_model))
         except Exception:
             logger.debug("Ground-state guard: no q-path available; using random q only.")
+
+        # q!=0 instability locator (Tier 3 #13). The in-cell minimizer optimizes only spin
+        # ANGLES within the magnetic cell, so it cannot discover that the true classical
+        # ground state is a longer-period MODULATION at some q!=0 (a spiral). NEITHER
+        # existing guard catches this: the energy audit relaxes only within the cell (so it
+        # stays put), and the magnon spectrum of such a state comes back REAL and positive
+        # (process_calc_disp sorts the +-omega pairs and returns the upper half). So we add
+        # a third, independent check: Luttinger-Tisza compares the classical energy of the
+        # best k=0 (in-cell) state to that of a spiral at the optimal k*. If k* is non-zero
+        # and clearly lower, the in-cell structure is NOT the classical ground state.
+        # Only for plain in-cell structures on a GenericSpinModel -- a single_k/supercell
+        # structure already encodes a modulation.
+        lt_info = None
+        _ms_type = (final_config.get('magnetic_structure') or {}).get('type', 'pattern')
+        _has_super = bool((final_config.get('crystal_structure') or {}).get('magnetic_supercell'))
+        if isinstance(spin_model, GenericSpinModel) and not _has_super \
+                and _ms_type in (None, 'pattern', 'ferromagnetic', 'antiferromagnetic', 'generic'):
+            try:
+                from magcalc import spiral_opt
+                lt_info = spiral_opt.ordering_wavevector(spin_model, params_val)
+            except Exception:
+                logger.debug("q!=0 instability locator unavailable.", exc_info=True)
+
         # Threshold on |Im| RELATIVE to the bandwidth. An absolute meV cutoff cannot
         # separate a real instability from numerical noise across models whose energy
         # scales differ by orders of magnitude -- and the noise is worst exactly where
@@ -664,6 +687,33 @@ def run_calculation(config_file: str):
             logger.info(
                 f"Ground-state stability check passed (max |Im(omega)| = "
                 f"{max_imag:.2e} meV).")
+            # Third guard (Tier 3 #13), reached only when the spectrum looks fine: a q!=0
+            # SPIRAL ground state that the two in-cell guards provably cannot see. A
+            # clearly non-zero Luttinger-Tisza ordering vector with a real energy gain
+            # means the k=0 in-cell state sits ABOVE a spiral at k*, yet returns a real,
+            # positive magnon spectrum (the FM-on-a-frustrated-chain class).
+            if lt_info is not None and lt_info["gain"] > 5e-2 \
+                    and float(np.linalg.norm(lt_info["k"] - np.round(lt_info["k"]))) > 1e-3:
+                kmsg = (
+                    f"The classical ground state is a q!=0 SPIRAL, not the k=0 structure "
+                    f"in use. Luttinger-Tisza finds an ordering wavevector "
+                    f"k* = {lt_info['k_nice']} whose classical energy is below the best "
+                    f"in-cell (k=0) state. The in-cell minimizer only varies spin angles "
+                    f"within the given cell, so it CANNOT reach this spiral -- and the "
+                    f"k=0 state returns a real, positive-looking spectrum that neither the "
+                    f"imaginary-energy nor the energy-audit guard can flag.\n"
+                    f"  * Use `magnetic_structure: {{type: single_k, "
+                    f"k: {np.round(lt_info['k'], 6).tolist()}, axis: [0, 0, 1]}}` with "
+                    f"`minimization: {{enabled: true, optimize_k: true}}` to find and "
+                    f"refine the spiral (rotating frame), or a commensurate "
+                    f"`crystal_structure: {{magnetic_supercell: auto}}`.\n"
+                    f"  * If a k=0 state is intended -- e.g. a single-ion anisotropy or "
+                    f"field NOT seen by this exchange-only estimate stabilizes it -- set "
+                    f"`calculation: {{on_imaginary: warn}}` (or `off`) to silence this."
+                )
+                if on_imaginary == 'error':
+                    raise ValueError(kmsg)
+                logger.warning(kmsg)
 
     # 1b. Data Fitting (optional)
     # Runs before the forward tasks so that, on success, the best-fit parameters
