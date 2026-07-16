@@ -1,0 +1,80 @@
+# =====================================================================
+# Cu5SbO6 -- coupled dimerized alternating-bond quantum spin chains
+#   Piyakulworawat et al., Phys. Rev. Research 8, 013247 (2026)
+#
+#   magcalc run examples/entangled/Cu5SbO6/config.yaml
+#
+# A distorted-honeycomb Cu2+ (S=1/2) magnet whose ground state is a product of
+# SINGLET DIMERS, with a gapped TRIPLON excitation -- exactly the physics the
+# `calculation.mode: entangled` (dimer-expansion) engine is for. Dipole LSWT
+# cannot touch it: the dimer singlet has zero dipole moment.
+#
+# This is the J1-J2-J4 model of the paper (its preferred model), built on the
+# effective DIMER LATTICE of the Appendix rather than the full C2/c cell:
+#   a1 = 9.00 A along the chain (a); a3 = 6.55 A at 62 deg (interlayer, ac-plane);
+#   the two spins of a dimer sit at 0 and 2/3 along a1 (intradimer separation
+#   6.0 A, matching Fig. 1(b)); b is decoupled (interchain J3 is negligible).
+# Couplings (paper, from the powder INS fit):
+#   J1 = 16.5 meV  intradimer  AFM  (6.0 A,  "third-neighbour" across the hexagon)
+#   J2 = -6.0 meV  interdimer  FM   (3.0 A,  first-neighbour, ~95 deg Cu-O-Cu)
+#   J4 = +3.0 meV  interlayer  AFM  (~5.78 A, the Cu2+-O-Cu1+-O-Cu2+ path)
+#
+# The dimer expansion (paper Eq. A11) gives, to first order,
+#   dE(q) = J1 - (J2/2) cos(2 pi q1) - (J4/2) cos[2 pi(q3 - q1)],
+# with DOS peaks (M1, M2) at 15 and 18 meV and a band spanning ~11-21 meV. The
+# entangled engine returns the FULL harmonic bond-operator result (the square-root
+# resummation of that first-order expansion): band edges 11.1-20.5 meV here.
+# The dynamical structure factor carries the dimer selection rule S ~ 1-cos(4pi q1/3)
+# (Eq. A14) -- zero at q1 = 0.
+# =====================================================================
+calculation: {mode: entangled, cache_mode: none, on_imaginary: warn}
+
+units: [[CuA, CuB]]                # the two S=1/2 spins forming each dimer
+
+crystal_structure:
+  # effective dimer lattice: L1 = a1 (chain), L2 = b (decoupled), L3 = a3 (interlayer)
+  lattice_vectors:
+  - [9.00, 0.0, 0.0]
+  - [0.0, 5.597, 0.0]
+  - [3.0748, 0.0, 5.7828]
+  atoms_uc:
+  - {label: CuA, pos: [0.0, 0.0, 0.0], spin_S: 0.5, ion: Cu2+}
+  - {label: CuB, pos: [0.66667, 0.0, 0.0], spin_S: 0.5, ion: Cu2+}
+
+interactions:
+  # explicit bonds, BOTH directions (H = 1/2 sum_ordered). Distances are too close
+  # to disambiguate J4 (5.78 A) from the b-repeat (5.60 A) with a distance rule.
+  heisenberg:
+  - {pair: [CuA, CuB], rij_offset: [0, 0, 0],  value: J1}     # intradimer AFM
+  - {pair: [CuB, CuA], rij_offset: [0, 0, 0],  value: J1}
+  - {pair: [CuB, CuA], rij_offset: [1, 0, 0],  value: J2}     # interdimer FM (chain)
+  - {pair: [CuA, CuB], rij_offset: [-1, 0, 0], value: J2}
+  - {pair: [CuB, CuA], rij_offset: [1, 0, -1], value: J4}     # interlayer AFM
+  - {pair: [CuA, CuB], rij_offset: [-1, 0, 1], value: J4}
+
+parameters: {J1: 16.5, J2: -6.0, J4: 3.0}
+parameter_order: [J1, J2, J4]
+
+# Ignored by the entangled engine (reference = the intra-dimer singlet), supplied
+# so the rest of the pipeline is happy.
+magnetic_structure: {type: pattern, pattern_type: ferromagnetic, direction: [0, 0, 1]}
+
+tasks: {minimization: false, dispersion: true}
+
+q_path:
+  A:  [0.0, 0.0, 0.0]      # along the chain (q1): the J2 dispersion
+  B:  [1.0, 0.0, 0.0]
+  C:  [1.0, 0.0, 1.0]      # along interlayer (q3 at q1=1): the J4 dispersion
+  D:  [0.5, 0.0, 1.0]
+  path: [A, B, C, D]
+  points_per_segment: 120
+
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  energy_limits_disp: [0, 24]
+  disp_plot_filename: Cu5SbO6_triplon.png
+  disp_title: "Cu5SbO6 triplon dispersion (J1-J2-J4 dimer model)"
+
+output: {save_data: false}

@@ -104,6 +104,42 @@ def test_dimer_structure_factor_selection_rule():
     assert np.allclose(ratios, ratios[0], rtol=1e-6), ratios
 
 
+def test_Cu5SbO6_reproduces_the_paper_dimer_expansion():
+    """The shipped Cu5SbO6 example (Piyakulworawat et al., PRR 8, 013247 (2026)) must
+    reproduce the paper's J1-J2-J4 dimer expansion: the triplon dispersion is the
+    full bond-operator resummation of Eq. (A11), and the structure factor obeys the
+    dimer selection rule (zero at q1 = 0)."""
+    cfg = yaml.safe_load(open(os.path.join(
+        HERE, "..", "examples", "entangled", "Cu5SbO6", "config.yaml")))
+    J1, J2, J4 = cfg["parameters"]["J1"], cfg["parameters"]["J2"], cfg["parameters"]["J4"]
+    m = GenericSpinModel(cfg)
+    pv = [cfg["parameters"][k] for k in cfg["parameter_order"]]
+    sm = build_entangled_model(m, pv, units=[[0, 1]])
+    L = np.array(cfg["crystal_structure"]["lattice_vectors"], float)
+    B = 2 * np.pi * np.linalg.inv(L).T
+
+    # intra-dimer on-site: singlet at -3J1/4, triplet at +J1/4 -> gap J1.
+    ev = np.linalg.eigvalsh(sm.onsite[0][1])
+    assert abs((ev[-1] - ev[0]) - J1) < 1e-9
+
+    # dispersion == sqrt(J1^2 - J1 J2 cos 2pi q1 - J1 J4 cos 2pi(q3-q1)) (first-order
+    # expansion Eq. A11 is its leading term); band spans ~11-21 meV as in the paper.
+    tops = []
+    for (h, k, l) in [(0, 0, 0), (0.25, 0, 0), (0.5, 0, 0), (0.5, 0, 0.5), (0.3, 0, 0.7)]:
+        w = np.max(np.real(sm.dispersion(np.array([h, k, l]) @ B)))
+        full = np.sqrt(J1**2 - J1 * J2 * np.cos(2 * np.pi * h)
+                       - J1 * J4 * np.cos(2 * np.pi * (l - h)))
+        assert abs(w - full) < 1e-9, f"{w} vs {full} at {(h, k, l)}"
+        tops.append(w)
+    grid = [np.max(np.real(sm.dispersion(np.array([h, 0, l]) @ B)))
+            for h in np.linspace(0, 1, 21) for l in np.linspace(0, 1, 21)]
+    assert 10.5 < min(grid) < 11.5 and 20.0 < max(grid) < 21.0    # paper: ~11 to ~21 meV
+
+    # dimer selection rule S ~ 1 - cos(4 pi q1 / 3): silent at q1 = 0.
+    _, I0 = sm.structure_factor(np.array([0.0, 0, 0]) @ B, cross_section="trace")
+    assert np.sum(I0) < 1e-9
+
+
 def test_units_must_partition_all_sites():
     cfg = yaml.safe_load(open(CFG))
     m = GenericSpinModel(cfg)
