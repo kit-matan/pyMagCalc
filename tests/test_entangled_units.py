@@ -171,6 +171,34 @@ def test_Rb2Cu3SnF12_dimer_DM_and_field_mechanism():
     assert abs(gB[1] - g0[-1]) < 1e-6                    # middle (Sz=0) unchanged by field
 
 
+def test_Rb2Cu3SnF12_triplet_polarizations():
+    """Ehlers et al., PRB 89, 024414 (2014): the Stot^z = +/-1 doublet is polarized
+    IN-PLANE and the Stot^z = 0 singlet OUT-OF-PLANE. The entangled structure factor
+    must reproduce this: the +/-1 modes carry only S_xx/S_yy, the 0 mode only S_zz."""
+    Sm = spin_matrices(0.5)
+    I2 = np.eye(2)
+    S1 = [np.kron(Sm[a], I2) for a in range(3)]
+    S2 = [np.kron(I2, Sm[a]) for a in range(3)]
+    J1, Dz = 18.6, 0.18 * 18.6
+    A = J1 * sum(S1[a] @ S2[a] for a in range(3)) + Dz * (S1[0] @ S2[1] - S1[1] @ S2[0])
+    Z = np.linalg.eigh(A)[1][:, 0]
+    d = 1.0
+    m = SUNModel(spins=[1.5], coherent_states=[Z], bonds=[], onsite=[(0, A)],
+                 operators=[S1 + S2],
+                 moment_terms=[[(np.array([-d / 2, 0, 0]), (0, 1, 2)),
+                                (np.array([d / 2, 0, 0]), (3, 4, 5))]])
+    m.pos = np.zeros((1, 3))
+    q = np.array([np.pi / d, 0, 0])
+
+    def chan(cs):
+        w, I = m.structure_factor(q, cross_section=cs)    # sort by this channel's own E
+        return np.real(I)[np.argsort(np.real(w))]         # ascending E: [Sz=+/-1, +/-1, 0]
+
+    Ixx, Izz = chan("xx"), chan("zz")
+    assert Ixx[0] > 1e-3 and Ixx[1] > 1e-3 and Ixx[2] < 1e-9     # +/-1 in-plane, 0 not
+    assert Izz[2] > 1e-3 and Izz[0] < 1e-9 and Izz[1] < 1e-9     # 0 out-of-plane, +/-1 not
+
+
 def test_units_must_partition_all_sites():
     cfg = yaml.safe_load(open(CFG))
     m = GenericSpinModel(cfg)
