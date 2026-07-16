@@ -308,6 +308,60 @@ def luttinger_tisza_guess(J_full, offsets, ouc_map, k_grid=16, refine=True):
     return best_k % 1.0, axis_guess
 
 
+def ordering_wavevector(model: GenericSpinModel, p_num, k_grid: int = 24) -> Dict[str, Any]:
+    """Luttinger-Tisza estimate of the classical ORDERING wavevector k* from the bilinear
+    exchange alone -- the tool the ground-state guard uses to SEE a q!=0 instability.
+
+    LSWT is an expansion about a classical minimum, but the in-cell minimizer (anneal /
+    energy audit) only optimizes spin ANGLES within the given magnetic cell; it cannot
+    discover that the true classical ground state is a longer-period MODULATION at some
+    q != 0 (a spiral). Luttinger-Tisza finds that q directly: k* minimizes the smallest
+    eigenvalue of the Fourier exchange matrix J(k) (Sunny LuttingerTisza.jl).
+
+    Returns {'k' (RLU, wrapped [0,1)), 'k_nice', 'lambda_min' (eigmin J(k*)),
+    'lambda_at_zero' (eigmin J(0)), 'gain' = (lambda0 - lambda_min)/|scale|}. A `gain`
+    well above numerical noise means the couplings favour ordering at k* rather than the
+    k=0 (or the cell's) state -- i.e. a q!=0 instability the in-cell search cannot reach.
+
+    Caveat: this is the BILINEAR-exchange estimate. It ignores single-ion anisotropy,
+    field and biquadratic terms, so k* is a strong indicator, not a proof; the guard uses
+    it only to LOCATE / NAME an instability the magnon spectrum has already flagged.
+    """
+    J_full, offsets, ouc_map = _build_bond_arrays(model, p_num)
+    k_star, _axis = luttinger_tisza_guess(J_full, offsets, ouc_map, k_grid=k_grid)
+    # The refine step optimizes all three components, leaving ~1e-4 noise on axes with no
+    # bonds (a chain's b/c). Snap any component within 1e-3 of an integer back to it.
+    k_star = np.asarray(k_star, float)
+    k_star = np.where(np.abs(k_star - np.round(k_star)) < 1e-3, np.round(k_star), k_star) % 1.0
+
+    # eigmin(J(k)) at k* and at 0, to quantify how much a q!=0 modulation lowers the
+    # classical energy relative to the k=0 state.
+    N = J_full.shape[0]
+
+    def _eigmin(k):
+        ph = np.exp(2j * np.pi * (offsets @ np.asarray(k, float)))
+        Jk = np.zeros((3 * N, 3 * N), dtype=complex)
+        for i in range(N):
+            blocks = J_full[i] * ph[:, None, None]
+            for j in range(N):
+                sel = (ouc_map == j)
+                if np.any(sel):
+                    Jk[3 * i:3 * i + 3, 3 * j:3 * j + 3] += blocks[sel].sum(axis=0)
+        Jk = 0.5 * (Jk + Jk.conj().T)
+        return float(la.eigvalsh(Jk)[0])
+
+    lam_star = _eigmin(k_star)
+    lam_zero = _eigmin(np.zeros(3))
+    scale = max(abs(lam_zero), abs(lam_star), 1e-9)
+    return {
+        "k": np.asarray(k_star, float),
+        "k_nice": nice_k_string(k_star),
+        "lambda_min": lam_star,
+        "lambda_at_zero": lam_zero,
+        "gain": (lam_zero - lam_star) / scale,
+    }
+
+
 def nice_k_string(k, max_den=12, tol=1e-4):
     """Human-readable k with near-rational components annotated."""
     parts = []
