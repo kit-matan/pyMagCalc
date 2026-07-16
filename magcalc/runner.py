@@ -546,19 +546,23 @@ def run_calculation(config_file: str):
     # (structure, symmetry propagation, q-path, tasks, plotting, the ground-state
     # guards) is unchanged; only the LSWT engine is swapped.
     mode = str(calc_config.get('mode', 'dipole')).upper()
-    if mode not in ('DIPOLE', 'SUN'):
+    if mode not in ('DIPOLE', 'SUN', 'ENTANGLED'):
         raise ValueError(
-            f"calculation.mode must be 'dipole' or 'SUN', got {calc_config.get('mode')!r}.")
+            f"calculation.mode must be 'dipole', 'SUN' or 'entangled', "
+            f"got {calc_config.get('mode')!r}.")
 
     if mode == 'DIPOLE':
         _advise_sun_mode(spin_model)
 
-    logger.info(f"Initializing {'SU(N)' if mode == 'SUN' else 'MagCalc'} "
-                f"for LSWT Calculation...")
+    _engine = {'SUN': 'SU(N)', 'ENTANGLED': 'entangled-unit SU(N)'}.get(mode, 'MagCalc')
+    logger.info(f"Initializing {_engine} for LSWT Calculation...")
     try:
         if mode == 'SUN':
             from magcalc.sun.adapter import SUNCalculator
             calculator = SUNCalculator(spin_model, final_config, params_val)
+        elif mode == 'ENTANGLED':
+            from magcalc.sun.entangled import EntangledCalculator
+            calculator = EntangledCalculator(spin_model, final_config, params_val)
         else:
             calculator = mc.MagCalc(
                 spin_model_module=spin_model,
@@ -647,7 +651,7 @@ def run_calculation(config_file: str):
         lt_info = None
         _ms_type = (final_config.get('magnetic_structure') or {}).get('type', 'pattern')
         _has_super = bool((final_config.get('crystal_structure') or {}).get('magnetic_supercell'))
-        if isinstance(spin_model, GenericSpinModel) and not _has_super \
+        if mode == 'DIPOLE' and isinstance(spin_model, GenericSpinModel) and not _has_super \
                 and _ms_type in (None, 'pattern', 'ferromagnetic', 'antiferromagnetic', 'generic'):
             try:
                 from magcalc import spiral_opt

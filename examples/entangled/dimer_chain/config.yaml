@@ -1,0 +1,53 @@
+# =====================================================================
+# Entangled-unit dimer chain (alternating Heisenberg chain) -- Tier 2 #11.
+#
+#   magcalc run examples/entangled/dimer_chain/config.yaml
+#
+# Two S=1/2 spins per cell form a DIMER (the "unit"). `calculation.mode: entangled`
+# treats each dimer as one effective SU(N) site: its intra-dimer Heisenberg coupling J
+# is diagonalized exactly (singlet ground state, triplet at +J), and the excitations are
+# the triplons -- transitions within the dimer spectrum that dipole (and single-site
+# SU(N)) LSWT cannot represent, because the singlet has zero dipole moment.
+#
+# Inter-dimer coupling J' disperses the triplon. Exact harmonic (bond-operator) result:
+#   omega(q) = sqrt(J^2 - J*J'*cos(2*pi*q))   along the chain (a).
+# With J = 4, J' = 1: omega(0) = sqrt(12) = 3.464 meV, omega(1/2) = sqrt(20) = 4.472 meV.
+# =====================================================================
+calculation: {mode: entangled, cache_mode: none, on_imaginary: error}
+
+units: [[A, B]]            # the two sites forming each dimer
+
+crystal_structure:
+  lattice_vectors: [[3.0, 0.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 8.0]]
+  atoms_uc:
+  - {label: A, pos: [0.0, 0.0, 0.0], spin_S: 0.5, ion: Cu2+}
+  - {label: B, pos: [0.4, 0.0, 0.0], spin_S: 0.5, ion: Cu2+}
+
+interactions:
+  symmetry_rules:
+  - {type: heisenberg, distance: 1.2, value: J}    # intra-dimer A-B (same cell)
+  - {type: heisenberg, distance: 1.8, value: Jp}   # inter-dimer B(cell)-A(cell+1)
+
+parameters: {J: 4.0, Jp: 1.0}
+parameter_order: [J, Jp]
+
+# Ignored by the entangled engine (the reference is the intra-unit ground state), but
+# supplied so the rest of the pipeline is happy.
+magnetic_structure: {type: pattern, pattern_type: ferromagnetic, direction: [0, 0, 1]}
+
+tasks: {minimization: false, dispersion: true}
+
+q_path:
+  G: [0.0, 0.0, 0.0]
+  H: [1.0, 0.0, 0.0]
+  path: [G, H]
+  points_per_segment: 100
+
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  disp_plot_filename: dimer_chain_triplon.png
+  disp_title: "Dimer chain: triplon dispersion (entangled units)"
+
+output: {save_data: false}
