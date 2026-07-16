@@ -56,7 +56,27 @@ class SUNModel:
         coherent_states: Sequence[np.ndarray],
         bonds: Sequence[Tuple[int, int, np.ndarray, np.ndarray]],
         onsite: Optional[Sequence[Tuple[int, np.ndarray]]] = None,
+        operators: Optional[Sequence[Sequence[np.ndarray]]] = None,
+        moment_terms: Optional[Sequence[Sequence[Tuple[np.ndarray, Sequence[int]]]]] = None,
     ):
+        """
+        By default each site carries the 3 dipole operators `spin_matrices(S)` and a bond's
+        matrix `J` couples them (S_i^a J_ab S_j^b) -- ordinary SU(N).
+
+        For ENTANGLED UNITS a site is a small CLUSTER (dimer/trimer/...) whose N is the
+        product Hilbert-space dimension. Pass `operators[i]` = the site's local operators
+        (e.g. the embedded constituent spins S_1^x..S_2^z of a dimer) and give each bond a
+        coupling matrix `C` of shape (n_ops_i, n_ops_j): the term is sum_{p,r} C[p,r]
+        O_i^p O_j^r. `moment_terms[i]` describes the neutron magnetic-moment operator of the
+        unit as a list of `(d_k, [ix, iy, iz])`: constituent k sits at CARTESIAN offset `d_k`
+        from the unit position and contributes `operators[i][ix|iy|iz]`. The structure
+        factor then builds the q-DEPENDENT moment sum_k e^{i q.d_k} S_k -- essential for
+        entangled units, where the singlet->triplet triplon is excited by the STAGGERED
+        combination (the total spin sum_k S_k has zero matrix element). It defaults to the
+        first three operators at zero offset (the plain-dipole case). The reference
+        `coherent_states[i]` is the intra-unit ground state (e.g. a dimer singlet -- zero
+        dipole, so dipole LSWT cannot touch it), not a spin coherent state.
+        """
         self.S = [float(s) for s in spins]
         self.Z = [np.asarray(z, dtype=complex) for z in coherent_states]
         self.bonds = [(int(i), int(j), np.asarray(dr, float), np.asarray(J, float))
@@ -65,13 +85,29 @@ class SUNModel:
                        for (i, A) in (onsite or [])]
 
         self.pos = None          # site positions (set by the bridge; needed for S(q,w))
-        self.L = len(self.S)
-        self.Ns = [int(round(2 * s)) + 1 for s in self.S]
+        self.L = len(self.Z)
+        self.Ns = [len(z) for z in self.Z]       # N = local Hilbert-space dimension
         if len(set(self.Ns)) != 1:
             raise NotImplementedError(
-                "SU(N) currently requires all sites to have the same N (same spin S).")
+                "SU(N) currently requires all sites to have the same N.")
         self.N = self.Ns[0]
         self.M = self.N - 1                      # bosons per site
+
+        # Local operators used by the bonds. Default: the 3 dipole components.
+        if operators is None:
+            self.ops = [[spin_matrices(s)[a] for a in range(3)] for s in self.S]
+        else:
+            self.ops = [[np.asarray(o, dtype=complex) for o in ol] for ol in operators]
+        self.n_ops = len(self.ops[0])
+        if any(len(ol) != self.n_ops for ol in self.ops):
+            raise NotImplementedError("all sites must expose the same number of operators.")
+        # Neutron magnetic-moment operator, as (cartesian offset d_k, [ix,iy,iz]) terms.
+        # Default: the first 3 operators at zero offset (plain dipole).
+        if moment_terms is None:
+            self.moment_terms = [[(np.zeros(3), (0, 1, 2))] for _ in range(self.L)]
+        else:
+            self.moment_terms = [[(np.asarray(d, float), tuple(int(x) for x in idx))
+                                  for (d, idx) in ml] for ml in moment_terms]
         self._prepare()
 
     # ---------------------------------------------------------------- setup
@@ -84,22 +120,21 @@ class SUNModel:
 
     def _prepare(self):
         """Rotate every local operator into the |Z> basis and cache the pieces."""
-        L, M = self.L, self.M
-        self.s0 = np.zeros((L, 3), dtype=complex)          # <Z|S^a|Z>
-        self.t = np.zeros((L, 3, M), dtype=complex)        # <0|S^a|m>  (coeff of b_m)
-        self.tb = np.zeros((L, 3, M), dtype=complex)       # <m|S^a|0>  (coeff of b_m^dag)
-        self.Q = np.zeros((L, 3, M, M), dtype=complex)     # A~_mn - delta A~_00
-        self.QA = np.zeros((L, M, M), dtype=complex)       # on-site anisotropy
+        L, M, nop = self.L, self.M, self.n_ops
+        self.s0 = np.zeros((L, nop), dtype=complex)        # <Z|O^p|Z>
+        self.t = np.zeros((L, nop, M), dtype=complex)      # <0|O^p|m>  (coeff of b_m)
+        self.tb = np.zeros((L, nop, M), dtype=complex)     # <m|O^p|0>  (coeff of b_m^dag)
+        self.Q = np.zeros((L, nop, M, M), dtype=complex)   # O~_mn - delta O~_00
+        self.QA = np.zeros((L, M, M), dtype=complex)       # on-site (crystal field / intra-unit)
 
         for i in range(L):
             U = local_basis(self.Z[i])
-            Sxyz = spin_matrices(self.S[i])
-            for a in range(3):
-                St = U.conj().T @ Sxyz[a] @ U
-                self.s0[i, a] = St[0, 0]
-                self.t[i, a, :] = St[0, 1:]
-                self.tb[i, a, :] = St[1:, 0]
-                self.Q[i, a] = St[1:, 1:] - np.eye(M) * St[0, 0]
+            for p in range(nop):
+                Ot = U.conj().T @ self.ops[i][p] @ U
+                self.s0[i, p] = Ot[0, 0]
+                self.t[i, p, :] = Ot[0, 1:]
+                self.tb[i, p, :] = Ot[1:, 0]
+                self.Q[i, p] = Ot[1:, 1:] - np.eye(M) * Ot[0, 0]
 
         for (i, A) in self.onsite:
             U = local_basis(self.Z[i])
@@ -141,8 +176,8 @@ class SUNModel:
         for (i, j, dr, J) in self.bonds:
             ph = np.exp(1j * float(np.dot(q, dr)))
             bi, bj = i * M, j * M
-            for a in range(3):
-                for b in range(3):
+            for a in range(self.n_ops):
+                for b in range(self.n_ops):
                     c = J[a, b]
                     if c == 0.0:
                         continue
@@ -494,11 +529,19 @@ class SUNModel:
 
         v = np.zeros((3, 2 * D), dtype=complex)
         for i in range(self.L):
-            ph = np.exp(1j * float(np.dot(q_cart, self.pos[i]))) if self.pos is not None \
+            base = np.exp(1j * float(np.dot(q_cart, self.pos[i]))) if self.pos is not None \
                 else 1.0
-            for a in range(3):
-                v[a, i * self.M:(i + 1) * self.M] = ph * self.t[i, a]
-                v[a, D + i * self.M:D + (i + 1) * self.M] = ph * self.tb[i, a]
+            sl, slb = slice(i * self.M, (i + 1) * self.M), \
+                slice(D + i * self.M, D + (i + 1) * self.M)
+            # q-dependent moment: sum over constituents k, each at cartesian offset d_k,
+            # contributing e^{i q.(pos_i + d_k)} S_k^a. For a plain dipole this is one term
+            # at d=0; for a dimer the e^{i q.d} phases build the STAGGERED operator that the
+            # triplon couples to (the total-spin term alone would give zero intensity).
+            for (d_k, idx) in self.moment_terms[i]:
+                ph = base * np.exp(1j * float(np.dot(q_cart, d_k)))
+                for a in range(3):
+                    v[a, sl] += ph * self.t[i, idx[a]]
+                    v[a, slb] += ph * self.tb[i, idx[a]]
 
         M = (v @ T)[:, D:]                        # (3, D): amplitude per band
         # Normalise PER SITE, as Sunny's ssf does (without this the intensities come out

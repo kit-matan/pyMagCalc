@@ -410,6 +410,40 @@ Validated against Sunny on TbSb (`tests/data_TbSb.mcif`): identical sites and di
 including the R-centring anti-translations that make it a G-type AFM. The reader REFUSES a
 file whose symops map a fixed site to two different moments (as Sunny does).
 
+## 5f. Entangled units (dimers / trimers)
+
+```yaml
+calculation: {mode: entangled}
+units: [[Cu0, Cu1]]      # each unit = a list of site labels (or indices) forming a cluster
+crystal_structure: {...} # the PHYSICAL spins (2 per dimer, etc.)
+interactions: {...}      # intra- AND inter-unit exchange between the physical spins
+```
+
+A "unit" (dimer/trimer/tetramer) is treated as ONE effective SU(N) site whose Hilbert
+space is the product of its constituents (N = prod_k (2 S_k + 1)). The intra-unit coupling
+is diagonalized EXACTLY and becomes the on-site term; the reference is the unit's ground
+state -- e.g. a dimer SINGLET, which has zero dipole moment, so dipole (and single-site
+SU(N)) LSWT structurally cannot see its excitations. Inter-unit couplings disperse the
+resulting triplon (Sunny's `EntangledSystem` analogue).
+
+* THE case for strong intra-cluster coupling: spin-dimer magnets (a singlet ground state
+  with a gapped triplon), spin ladders, etc. -- where the excitation is a transition WITHIN
+  the cluster spectrum, not a spin precession.
+* `units:` must partition every magnetic site exactly once, and all units must have the
+  same product dimension N (hard error otherwise). Bonds within a unit (same cell) fold
+  into the on-site Hamiltonian; everything else becomes an inter-unit bond.
+* The reference is exact, so there is no coherent-state minimization; an over-strong
+  inter-unit coupling instead shows up as an imaginary triplon (the ground-state guard's
+  imaginary check -- the dimer picture breaking down).
+* The neutron structure factor uses the q-dependent STAGGERED moment sum_k e^{i q.d_k} S_k
+  (d_k = constituent offset), so the dimer selection rule I(q=0)=0 and the (1-cos(q.d))
+  form factor come out right (the total spin sum_k S_k alone is silent on the triplon).
+* Not yet: powder/domain averaging (as for SU(N)).
+
+Example: `examples/entangled/dimer_chain/` -- a chain of S=1/2 dimers whose triplon
+`omega(q) = sqrt(J^2 - J J' cos 2 pi q)` matches the exact bond-operator result.
+Reference: `magcalc/sun/entangled.py`, `tests/test_entangled_units.py`.
+
 ## 6. Intensity / experiment layer
 
 Applies to S(Q,ω), powder, energy-cut **and FITTING** intensities (never to energies).
