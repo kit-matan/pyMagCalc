@@ -57,21 +57,52 @@ dispersion. The 2014 follow-up further reports **ghost modes** (from the 2a×2a,
 continuum** (a possible kagome-spinon remnant); both are outside any single-cell
 dimer LSWT.
 
-### The full pinwheel, built from the CIF — and why it stays a building block
+### The full pinwheel from the CIF — bond assignment by superexchange angle
 
-Given the R-3 CIF (a = 13.877 Å, c = 20.239 Å, Cu1/Cu2 on 18f), the full pinwheel
-*geometry* is now buildable: the four in-plane Cu–Cu bonds are 3.341, 3.497, 3.531,
-3.565 Å, and the **shortest (3.341 Å) is the unique one that dimerizes every Cu
-exactly once** (18 dimers / 36 Cu in the hexagonal cell) — so J1 = 3.341 Å is the
-dimer bond, and J2/J3/J4 follow by distance. The entangled builder now handles the
-**straddling dimers** (4 of the 18 cross the cell boundary) via per-member offsets,
-and the model assembles cleanly (18 units, N = 4, 72 inter-unit bonds).
+Given the R-3 CIF (a = 13.877 Å, c = 20.239 Å, Cu1/Cu2 on 18f), the four in-plane
+Cu–Cu bond families are 3.341, 3.497, 3.531, 3.565 Å — and **every one of them is a
+perfect matching** (each Cu in exactly one bond of each family), so bond length alone
+cannot identify the dimer bond. The physical criterion is the **Cu–F–Cu superexchange
+angle** (J grows with angle in this family). Computing the bridging-fluorine angles
+from the CIF gives:
 
-But the resulting harmonic dispersion sits at **~9–28 meV**, roughly **4× above the
-observed 2–7 meV** band, and the out-of-plane DM barely dents it. That is the
-strong-coupling failure quantified: at J2 = 0.95 J1 the leading bond-operator gap is
-far too large, and only the 8th-order Dlog-Padé resummation of both papers brings it
-down to 2.4/6.9 meV. Shipping that dispersion as "Rb₂Cu₃SnF₁₂" would be misleading,
-so the shipped example stays the **single-dimer building block** (exact) and the full
-geometry is documented rather than plotted. The pieces to make it quantitative — a
-high-order series expansion on top of the entangled cell — are future work.
+| family | d (Å) | Cu–F–Cu angle | assignment |
+|---|---|---|---|
+| **J1 (dimer)** | 3.565 | **138.3°** | strongest — matches the papers' 138° |
+| J2 = 0.95 J1 | 3.531 | 136.2° | |
+| J3 = 0.85 J1 | 3.497 | 133.4° | |
+| J4 = 0.55 J1 | 3.341 | **123.3°** | weakest — matches the papers' 124° |
+
+(The end-point angles 138°/124° reproduce the 2010 paper exactly — a strong pin that
+the geometry and assignment are right. Note the *longest* bond is the strongest: the
+angle, not the distance, controls the exchange here.)
+
+### The full dispersion: `series_dispersion.py` (linked-cluster + Dlog-Padé)
+
+The harmonic bond-operator level is hopeless here (J2 = 0.95 J1 — strong coupling),
+so `series_dispersion.py` computes the triplon dispersion with the **high-order dimer
+series expansion** (`magcalc/sun/dimer_series.py`) — the same method as the papers:
+linked-cluster expansion of the one-triplon effective Hamiltonian in the interdimer
+couplings (out-of-plane DM d_z = 0.18 included, alternating pattern built from the
+triangle circulation), resummed with Dlog-Padé.
+
+At the Γ point (experiment: Δ₁ = 2.35/2.4 meV doublet, Δ₂ = 7.3/6.9 meV singlet),
+the Stot^z = ±1 doublet series is
+`18.75 − 10.11λ − 11.65λ² + 2.82λ³ + 2.80λ⁴ − 2.32λ⁵ − 0.51λ⁶` — strongly
+oscillating, the strong-coupling signature that forced the papers to 8th order:
+
+| Γ branch | order 4 | order 5 | order 6 | experiment |
+|---|---|---|---|---|
+| doublet (Dlog-Padé) | 2.2 ± 1.0 | 6.3 (wide) | 1.6 | **2.35 / 2.4** |
+| singlet (Dlog-Padé) | 11.1 ± 0.8 | 10.2 | 9.9 ± 0.9 | **7.3 / 6.9** |
+
+The doublet estimates bracket the measured gap with O(1 meV) scatter — the papers'
+order-8 Dlog-Padé is what pins it at 2.35 — and the singlet descends monotonically
+toward 7.3. A global sign flip of the DM pattern leaves every series coefficient
+invariant (checked to 0.0), as the mirror symmetry requires.
+
+Run `python series_dispersion.py [order]` (order 4 ≈ seconds, 5 ≈ a minute, 6 ≈ half
+an hour). The engine itself is validated against exact diagonalization of the
+alternating chain at strong coupling (`tests/test_dimer_series.py`) — the pinwheel
+numbers inherit that trust; only the ORDER is the limitation, exactly as in the
+papers.
