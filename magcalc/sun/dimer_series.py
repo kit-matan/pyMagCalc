@@ -309,12 +309,15 @@ def _embed_pair_op(Vp, pa, pb, m, nloc):
     return sp.csr_matrix((data, (row, col)), shape=(nloc ** m, nloc ** m))
 
 
-def _cluster_pt(levels_list, links_local, order):
+def _cluster_pt(levels_list, links_local, order, sz_list=None):
     """Ground-state and one-particle effective series on one cluster.
 
     levels_list: local eigen-energies (nloc,) per cluster node (ascending, [0] = gs).
     links_local: [(pa, pb, Vloc)] with pa < pb cluster-node positions, Vloc the
     (nloc^2 x nloc^2) coupling in the two nodes' LOCAL EIGENBASES.
+    sz_list: per node, the total-Sz quantum number of each local level (nloc,), or
+    None. When given (out-of-plane-only DM conserves Sz), the PT is run in total-Sz
+    SECTORS of the cluster Hilbert space -- ~3-4x cheaper, exactly equivalent.
 
     Returns (gs_int (order+1,), delta_int (order+1, m*nexc, m*nexc)):
     the INTERACTION parts -- local energies subtracted -- which are the
@@ -327,23 +330,54 @@ def _cluster_pt(levels_list, links_local, order):
 
     E0 = np.zeros(dims)
     idx = np.arange(dims)
+    digits = [(idx // nloc ** d) % nloc for d in range(m)]
     for d in range(m):
-        E0 += np.asarray(levels_list[d])[(idx // nloc ** d) % nloc]
+        E0 += np.asarray(levels_list[d])[digits[d]]
 
     V = sp.csr_matrix((dims, dims), dtype=complex)
     for (pa, pb, Vloc) in links_local:
         V = V + _embed_pair_op(Vloc, pa, pb, m, nloc)
+    V = V.tocsr()
 
     e_loc = sum(float(l[0]) for l in levels_list)
-    Heff_g = block_effective_series(E0, [V], [0], order)
-    gs = np.array([float(Heff_g[k][0, 0].real) for k in range(order + 1)])
+    onep = [alpha * nloc ** d for d in range(m) for alpha in range(1, nloc)]
+    p = len(onep)
+
+    if sz_list is None:
+        Heff_g = block_effective_series(E0, [V], [0], order)
+        gs = np.array([float(Heff_g[k][0, 0].real) for k in range(order + 1)])
+        Heff_1 = block_effective_series(E0, [V], onep, order)
+        delta = np.array([Heff_1[k] - gs[k] * np.eye(p) for k in range(order + 1)])
+    else:
+        Sz = np.zeros(dims)
+        for d in range(m):
+            Sz += np.asarray(sz_list[d])[digits[d]]
+        Sz = np.round(Sz * 2).astype(int)          # half-integer-safe integer key
+
+        def sector_pt(model_global):
+            q = Sz[model_global[0]]
+            sel = np.flatnonzero(Sz == q)
+            pos = {g: i for i, g in enumerate(sel)}
+            Vs = V[sel][:, sel]
+            P_loc = [pos[g] for g in model_global]
+            return block_effective_series(E0[sel], [Vs], P_loc, order)
+
+        Heff_g = sector_pt([0])
+        gs = np.array([float(Heff_g[k][0, 0].real) for k in range(order + 1)])
+
+        delta = np.zeros((order + 1, p, p), dtype=complex)
+        groups = defaultdict(list)                 # sector Sz -> [(pos_in_onep, state)]
+        for ii, g in enumerate(onep):
+            groups[Sz[g]].append((ii, g))
+        for _q, members in groups.items():
+            cols = [ii for ii, _g in members]
+            Heff_s = sector_pt([g for _ii, g in members])
+            for k in range(order + 1):
+                blk = Heff_s[k] - gs[k] * np.eye(len(cols))
+                delta[k][np.ix_(cols, cols)] = blk
+
     gs_int = gs.copy()
     gs_int[0] -= e_loc
-
-    onep = [alpha * nloc ** d for d in range(m) for alpha in range(1, nloc)]
-    Heff_1 = block_effective_series(E0, [V], onep, order)
-    p = len(onep)
-    delta = np.array([Heff_1[k] - gs[k] * np.eye(p) for k in range(order + 1)])
     # subtract the purely local order-0 splittings -> delta_int order 0 == 0
     loc0 = np.array([levels_list[d][alpha] - levels_list[d][0]
                      for d in range(m) for alpha in range(1, nloc)])
@@ -351,10 +385,18 @@ def _cluster_pt(levels_list, links_local, order):
     return gs_int, delta
 
 
+def _pt_worker(args):
+    """Multiprocessing worker: raw cluster PT (top-level for spawn pickling)."""
+    skey, levels_list, links_local, order, sz_list = args
+    gs, delta = _cluster_pt(levels_list, links_local, order, sz_list)
+    return skey, gs, delta
+
+
 class DimerSeriesModel:
     """Linked-cluster dimer series expansion for a lattice of entangled units."""
 
-    def __init__(self, lat, levels, positions, link_types, nloc):
+    def __init__(self, lat, levels, positions, link_types, nloc, sz_levels=None,
+                 n_workers=None):
         self.lat = np.asarray(lat, dtype=float)
         self.levels = [np.asarray(l, dtype=float) for l in levels]   # per dimer (nloc,)
         self.pos = np.asarray(positions, dtype=float)                # cartesian centroids
@@ -363,12 +405,31 @@ class DimerSeriesModel:
         self.nloc = int(nloc)
         self.nexc = self.nloc - 1
         self.D = len(self.levels)
+        self.sz_levels = ([np.asarray(s, float) for s in sz_levels]
+                          if sz_levels is not None else None)
+        self.n_workers = n_workers        # None = auto (cpu_count) for big orders
         self._touch = defaultdict(list)   # d -> [(t, shift)]: node (d,c) in inst (t, c-shift)
         for t, (u, v, off, _V) in enumerate(self.link_types):
             self._touch[u].append((t, (0, 0, 0)))
             self._touch[v].append((t, off))
         self._t_cache = {}                # order -> hopping dict
-        self._w_memo = {}                 # canonical cluster -> (nodes, gs_int, delta_int)
+        self._w_memo = {}                 # (struct key, order) -> subtracted weight
+        # structural hashes for the isomorphism dedup (strong digests: a hash
+        # collision here would be silently wrong physics)
+        import hashlib
+
+        def _digest(*chunks):
+            h = hashlib.blake2b(digest_size=16)
+            for c in chunks:
+                h.update(c)
+            return h.digest()
+
+        self._lvl_hash = [_digest(np.round(l, 10).tobytes(),
+                                  np.round(self.sz_levels[d], 6).tobytes()
+                                  if self.sz_levels is not None else b"")
+                          for d, l in enumerate(self.levels)]
+        self._V_hash = [_digest(np.round(V, 10).tobytes())
+                        for (_u, _v, _o, V) in self.link_types]
 
     # ------------------------------------------------------------- constructors
     @classmethod
@@ -469,10 +530,28 @@ class DimerSeriesModel:
                 Svec = [sum(emb[k][pp][a] for pp in range(len(u))) for a in range(3)]
                 A[k] += GAMMA * MU_B * sum(field[a] * Svec[a] for a in range(3))
 
-        # local eigenbases; rotate member operators
-        levels, rot_ops = [], []
+        # local eigenbases; rotate member operators. Within DEGENERATE eigenvalue groups
+        # (e.g. the t+/t- pair), rotate to definite total-Sz states so the Sz-sector
+        # optimization has well-defined local quantum numbers.
+        levels, rot_ops, sz_levels = [], [], []
         for k in range(U):
-            wv, Uk = np.linalg.eigh(0.5 * (A[k] + A[k].conj().T))
+            Ak = 0.5 * (A[k] + A[k].conj().T)
+            Szk = sum(emb[k][pp][2] for pp in range(len(units[k])))
+            wv, Uk = np.linalg.eigh(Ak)
+            scale = max(np.abs(wv).max(), 1.0)
+            i = 0
+            while i < nloc:
+                j = i
+                while j + 1 < nloc and abs(wv[j + 1] - wv[i]) < 1e-9 * scale:
+                    j += 1
+                if j > i:
+                    blk = Uk[:, i:j + 1]
+                    _szv, R = np.linalg.eigh(blk.conj().T @ Szk @ blk)
+                    Uk[:, i:j + 1] = blk @ R
+                i = j + 1
+            Sz_loc = Uk.conj().T @ Szk @ Uk
+            offdiag = np.abs(Sz_loc - np.diag(np.diag(Sz_loc))).max()
+            sz_levels.append(np.real(np.diag(Sz_loc)) if offdiag < 1e-9 else None)
             levels.append(wv)
             rot_ops.append([[Uk.conj().T @ emb[k][pp][a] @ Uk for a in range(3)]
                             for pp in range(len(units[k]))])
@@ -493,9 +572,22 @@ class DimerSeriesModel:
                             V += M[a, b] * (np.kron(Ob, Oa) if swap else np.kron(Oa, Ob))
         link_types = [(u, v, off, V) for (u, v, off), V in Vmap.items()
                       if np.abs(V).max() > 1e-12]
-        logger.info("DimerSeriesModel: %d units (N=%d), %d link types/cell.",
-                    U, nloc, len(link_types))
-        return cls(lat, levels, np.array(centroids), link_types, nloc)
+
+        # Sz sectors usable only if every local basis has definite Sz AND every link
+        # conserves total Sz: [V, Sz_u x 1 + 1 x Sz_v] = 0. Fallback: full space.
+        sz_ok = all(s is not None for s in sz_levels)
+        if sz_ok:
+            for (u, v, _off, V) in link_types:
+                Sz_uv = np.kron(np.diag(sz_levels[u]), np.eye(nloc)) + \
+                        np.kron(np.eye(nloc), np.diag(sz_levels[v]))
+                if np.abs(V @ Sz_uv - Sz_uv @ V).max() > 1e-9 * max(np.abs(V).max(), 1.0):
+                    sz_ok = False
+                    break
+        logger.info("DimerSeriesModel: %d units (N=%d), %d link types/cell, "
+                    "Sz sectors %s.", U, nloc, len(link_types),
+                    "ON" if sz_ok else "off")
+        return cls(lat, levels, np.array(centroids), link_types, nloc,
+                   sz_levels=sz_levels if sz_ok else None)
 
     # -------------------------------------------------------------- enumeration
     def _inst_nodes(self, inst):
@@ -562,18 +654,11 @@ class DimerSeriesModel:
         return levels
 
     # ------------------------------------------------------------------ weights
-    def _weight(self, form, order):
-        """Subtracted (linked) weight of a canonical cluster. Memoized per order."""
-        if (form, order) in self._w_memo:
-            return self._w_memo[(form, order)]
-        cluster = list(form)
-        nodes = sorted({n for inst in cluster for n in self._inst_nodes(inst)})
-        node_pos = {n: i for i, n in enumerate(nodes)}
-        m = len(nodes)
-        nexc = self.nexc
-
-        links_local = []
-        for (t, c) in cluster:
+    def _local_links(self, form, node_order):
+        """links of `form` with endpoint positions in the given node ordering."""
+        node_pos = {n: i for i, n in enumerate(node_order)}
+        out = []
+        for (t, c) in form:
             u, v, off, V = self.link_types[t]
             na = (u, c)
             nb = (v, (c[0] + off[0], c[1] + off[1], c[2] + off[2]))
@@ -582,80 +667,197 @@ class DimerSeriesModel:
                 # re-express V (built on kron(u, v)) on kron(node_pb_first) ordering
                 Vsw = V.reshape(self.nloc, self.nloc, self.nloc, self.nloc)
                 Vsw = Vsw.transpose(1, 0, 3, 2).reshape(self.nloc ** 2, self.nloc ** 2)
-                links_local.append((pb, pa, Vsw))
+                out.append((pb, pa, Vsw))
             else:
-                links_local.append((pa, pb, V))
+                out.append((pa, pb, V))
+        return out
 
-        lv = [self.levels[d] for (d, _c) in nodes]
-        gs_raw, delta_raw = _cluster_pt(lv, links_local, order)
+    def _struct(self, form):
+        """Structural (isomorphism) key of a cluster + the node ordering realizing it.
 
-        # subtract proper connected subclusters
-        Lc = len(cluster)
+        Two clusters with the same key are identical labeled operator graphs (same
+        local levels, same link operators, same directed connectivity) under the
+        returned node ordering, so their PT weights are equal block-permutations of
+        one another. Equal keys are SAFE by construction (the key encodes the full
+        structure); isomorphic clusters that hash differently merely miss the dedup.
+        """
+        nodes = sorted({n for inst in form for n in self._inst_nodes(inst)})
+        node_ids = {n: i for i, n in enumerate(nodes)}
+        m = len(nodes)
+        attrs = [self._lvl_hash[d] for (d, _c) in nodes]
+        edges = []                       # (i, j, Vhash) directed: i = u-node
+        adj = defaultdict(list)
+        for (t, c) in form:
+            u, v, off, _V = self.link_types[t]
+            na, nb = (u, c), (v, (c[0] + off[0], c[1] + off[1], c[2] + off[2]))
+            i, j = node_ids[na], node_ids[nb]
+            h = self._V_hash[t]
+            edges.append((i, j, h))
+            adj[i].append((j, h, +1))
+            adj[j].append((i, h, -1))
+
+        best = None
+        best_order = None
+        for start in range(m):
+            order_ = [start]
+            placed = {start: 0}
+            code = [attrs[start]]
+            while len(order_) < m:
+                cands = []
+                for n0 in order_:
+                    for (nb2, h, sgn) in adj[n0]:
+                        if nb2 not in placed:
+                            sig = (attrs[nb2],
+                                   tuple(sorted((placed[x], hh, ss)
+                                                for (x, hh, ss) in adj[nb2]
+                                                if x in placed)))
+                            cands.append((sig, nb2))
+                if not cands:
+                    break
+                sig, nxt = min(cands, key=lambda x: (x[0], x[1]))
+                placed[nxt] = len(order_)
+                order_.append(nxt)
+                code.append(sig)
+            if len(order_) < m:
+                continue
+            ecode = tuple(sorted((placed[i], placed[j], h) for (i, j, h) in edges))
+            full = (tuple(code), ecode)
+            if best is None or full < best:
+                best = full
+                best_order = [nodes[i] for i in order_]
+        return best, best_order
+
+    def _weight_by_struct(self, form, order, raw=None):
+        """Subtracted (linked) weight, memoized by STRUCTURAL key: computed once per
+        topology, reused for every embedding. Returns (node_order, gs_w, delta_w)
+        with delta_w indexed in node_order."""
+        skey, node_order = self._struct(form)
+        memo_key = (skey, order)
+        if memo_key in self._w_memo:
+            gs_w, Lc0, delta_trim = self._w_memo[memo_key]
+            return node_order, gs_w, Lc0, delta_trim
+
+        lv = [self.levels[d] for (d, _c) in node_order]
+        sz = ([self.sz_levels[d] for (d, _c) in node_order]
+              if self.sz_levels is not None else None)
+        if raw is None:
+            gs_raw, delta_raw = _cluster_pt(lv, self._local_links(form, node_order),
+                                            order, sz)
+        else:
+            gs_raw, delta_raw = raw
+        gs_raw = gs_raw.copy()
+        delta_raw = delta_raw.copy()
+
+        nexc = self.nexc
+        node_pos = {n: i for i, n in enumerate(node_order)}
+        Lc = len(form)
         for r in range(1, Lc):
-            for subset in itertools.combinations(cluster, r):
+            for subset in itertools.combinations(form, r):
                 if not self._connected(frozenset(subset)):
                     continue
-                sform, tau = self._canonical(frozenset(subset))
-                s_nodes, s_gs, s_delta = self._weight(sform, order)
-                gs_raw = gs_raw - s_gs
-                # map subcluster nodes (canonical frame) back into this cluster's frame
-                idx_map = []
-                for (d, c) in s_nodes:
-                    n_here = (d, (c[0] + tau[0], c[1] + tau[1], c[2] + tau[2]))
-                    idx_map.append(node_pos[n_here])
+                s_order, s_gs, s_L, s_trim = self._weight_by_struct(
+                    tuple(sorted(subset)), order)
+                gs_raw -= s_gs
+                idx_map = [node_pos[n] for n in s_order]
                 rows = np.concatenate([[i * nexc + a for a in range(nexc)]
                                        for i in idx_map])
-                srows = np.arange(len(s_nodes) * nexc)
-                for k in range(order + 1):
-                    delta_raw[k][np.ix_(rows, rows)] -= s_delta[k][np.ix_(srows, srows)]
+                srows = np.arange(len(s_order) * nexc)
+                for k in range(s_L, order + 1):
+                    delta_raw[k][np.ix_(rows, rows)] -= \
+                        s_trim[k - s_L][np.ix_(srows, srows)]
 
-        # linked-cluster theorem check: weight vanishes below order L
         low = max((np.abs(delta_raw[k]).max() for k in range(min(Lc, order + 1))),
                   default=0.0)
         scale = max(np.abs(delta_raw).max(), 1.0)
         if low > 1e-7 * scale:
             logger.warning("cluster additivity violated for %s (below-order weight "
                            "%.2e vs scale %.2e)", form, low, scale)
-        out = (tuple(nodes), gs_raw, delta_raw)
-        self._w_memo[(form, order)] = out
-        return out
+        delta_trim = delta_raw[min(Lc, order + 1):].copy() \
+            if Lc <= order else np.zeros((0,) + delta_raw.shape[1:], complex)
+        self._w_memo[memo_key] = (gs_raw, min(Lc, order + 1), delta_trim)
+        return node_order, gs_raw, min(Lc, order + 1), delta_trim
 
     # ----------------------------------------------------------------- assembly
     def hopping_series(self, order):
         """Bulk one-triplon hoppings: {(dA, dB, off3): (order+1, nexc, nexc) complex},
-        plus the order-0 local splittings handled in h_series_at. Cached per order."""
+        plus the order-0 local splittings handled in h_series_at. Cached per order.
+
+        Clusters are deduplicated by STRUCTURE (each topology's PT runs once) and the
+        raw PT of each level's new topologies runs in a multiprocessing pool.
+        """
         if order in self._t_cache:
             return self._t_cache[order]
+        import os
         levels = self._enumerate(order)
         n_cl = sum(len(v) for v in levels.values())
         logger.info("dimer series order %d: %d clusters (%s)", order, n_cl,
                     ", ".join(f"L{k}:{len(v)}" for k, v in sorted(levels.items())))
         t = defaultdict(lambda: np.zeros((order + 1, self.nexc, self.nexc), complex))
         nexc = self.nexc
+        n_workers = self.n_workers or max(1, (os.cpu_count() or 2) - 1)
+
         for size in sorted(levels):
-            for form in levels[size]:
-                nodes, _gs, delta = self._weight(form, order)
-                for ia, (dA, cA) in enumerate(nodes):
-                    for ib, (dB, cB) in enumerate(nodes):
+            forms = levels[size]
+            # group embeddings by structural key; one PT per topology
+            reps = {}
+            form_struct = {}
+            for form in forms:
+                skey, node_order = self._struct(form)
+                form_struct[form] = (skey, node_order)
+                if (skey, order) not in self._w_memo and skey not in reps:
+                    reps[skey] = (form, node_order)
+            logger.info("  L=%d: %d embeddings -> %d new topologies", size,
+                        len(forms), len(reps))
+
+            # parallel raw PT for the new topologies (worth it for big clusters)
+            raws = {}
+            if reps and size >= 4 and n_workers > 1 and len(reps) > 2 * n_workers:
+                import multiprocessing as mp
+                tasks = []
+                for skey, (form, node_order) in reps.items():
+                    lv = [self.levels[d] for (d, _c) in node_order]
+                    sz = ([self.sz_levels[d] for (d, _c) in node_order]
+                          if self.sz_levels is not None else None)
+                    tasks.append((skey, lv, self._local_links(form, node_order),
+                                  order, sz))
+                ctx = mp.get_context("spawn")
+                with ctx.Pool(n_workers) as pool:
+                    for skey, gs_raw, delta_raw in pool.imap_unordered(
+                            _pt_worker, tasks, chunksize=4):
+                        raws[skey] = (gs_raw, delta_raw)
+
+            # subtraction (serial: cheap) + memoization, reps first
+            for skey, (form, _no) in reps.items():
+                self._weight_by_struct(form, order, raw=raws.get(skey))
+
+            # assembly over ALL embeddings
+            for form in forms:
+                skey, node_order = form_struct[form]
+                _gs, Lc0, delta_trim = self._w_memo[(skey, order)]
+                if delta_trim.shape[0] == 0:
+                    continue
+                for ia, (dA, cA) in enumerate(node_order):
+                    for ib, (dB, cB) in enumerate(node_order):
                         off = (cB[0] - cA[0], cB[1] - cA[1], cB[2] - cA[2])
-                        blk = delta[:, ia * nexc:(ia + 1) * nexc,
-                                    ib * nexc:(ib + 1) * nexc]
+                        blk = delta_trim[:, ia * nexc:(ia + 1) * nexc,
+                                         ib * nexc:(ib + 1) * nexc]
                         if np.abs(blk).max() > 1e-14:
-                            t[(dA, dB, off)] += blk
+                            t[(dA, dB, off)][Lc0:] += blk
         t = dict(t)
         self._t_cache[order] = t
         return t
 
     def ground_state_energy(self, order):
         """Ground-state energy per unit cell: series (order+1,)."""
-        self.hopping_series(order)   # populate memo
+        self.hopping_series(order)   # populate memos
         levels = self._enumerate(order)
         gs = np.zeros(order + 1)
         gs[0] = sum(float(l[0]) for l in self.levels)
         for size in sorted(levels):
             for form in levels[size]:
-                _n, g, _d = self._w_memo[(form, order)]
-                gs += g
+                skey, _no = self._struct(form)
+                g, _L, _d = self._w_memo[(skey, order)]
+                gs = gs + g
         return gs
 
     def h_series_at(self, q_cart, order):
