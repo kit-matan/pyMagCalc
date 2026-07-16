@@ -152,6 +152,22 @@ def build_entangled_model(model, params: Optional[Sequence[float]] = None,
             oi, oj = _op_index(ui, i), _op_index(uj, jc)
             C[oi:oi + 3, oj:oj + 3] += M
 
+    # Optional Zeeman field: gamma * mu_B * H . (sum_k S_k) added to each unit's on-site
+    # term, so a magnetic field splits the unit's multiplet (e.g. the Stot^z = +/-1 dimer
+    # triplet Zeeman-splits while Stot^z = 0 is unchanged). Convention matches the dipole
+    # engine (gamma = 2, i.e. electron g = 2).
+    MU_B, GAMMA = 5.788e-2, 2.0
+    try:
+        from .. import spiral_opt as _so
+        H_vec = _so._resolve_field(model, params)
+    except Exception:
+        H_vec = None
+    if H_vec is not None and np.linalg.norm(H_vec) > 0:
+        for u, sites in enumerate(units):
+            Svec = [sum(unit_ops[u][3 * p + a] for p in range(len(sites))) for a in range(3)]
+            A_intra[u] = A_intra[u] + GAMMA * MU_B * (H_vec[0] * Svec[0]
+                                                      + H_vec[1] * Svec[1] + H_vec[2] * Svec[2])
+
     # Reference state per unit = ground state of its on-site (intra-unit) Hamiltonian.
     coherent = []
     for u in range(U):
