@@ -21,11 +21,20 @@
 #
 # The dimer expansion (paper Eq. A11) gives, to first order,
 #   dE(q) = J1 - (J2/2) cos(2 pi q1) - (J4/2) cos[2 pi(q3 - q1)],
-# with DOS peaks (M1, M2) at 15 and 18 meV and a band spanning ~11-21 meV. The
-# entangled engine returns the FULL harmonic bond-operator result (the square-root
-# resummation of that first-order expansion): band edges 11.1-20.5 meV here.
+# with DOS peaks (M1, M2) at 15 and 18 meV and a band spanning ~11-21 meV.
 # The dynamical structure factor carries the dimer selection rule S ~ 1-cos(4pi q1/3)
 # (Eq. A14) -- zero at q1 = 0.
+#
+# FIRST-ORDER EXPANSION vs THIS ENGINE. The paper uses the FIRST-ORDER dimer
+# expansion -- Eq. (A11) is linear in J2 and J4. The entangled engine instead
+# returns the FULL harmonic bond-operator (Sachdev-Bhatt) result, the square-root
+# resummation of that expansion:
+#   dE(q) = sqrt( J1^2 - J1 J2 cos(2 pi q1) - J1 J4 cos[2 pi(q3 - q1)] ).
+# The two AGREE TO FIRST ORDER in J2/J1, J4/J1 (expand the square root), so this
+# example faithfully reproduces the published analysis. Beyond first order the
+# engine additionally captures the RPA-level correction that sets the true band
+# edges -- 11.1 to 20.5 meV here, versus the linear estimate. That small extension
+# could serve as a cross-check for future single-crystal INS work on Cu5SbO6.
 # =====================================================================
 calculation: {mode: entangled, cache_mode: none, on_imaginary: warn}
 
