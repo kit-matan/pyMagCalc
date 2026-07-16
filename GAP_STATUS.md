@@ -15,7 +15,7 @@ two former development branches (`feature/sun-mode`, `feature/gap-closure-ewald`
 have been consolidated and retired; `feature/gap-closure-ewald` was fully contained
 in the merge and is deleted.
 
-Test suite: 199 tests (`python -m pytest tests`). Every new feature has a test that
+Test suite: 203 tests (`python -m pytest tests`). Every new feature has a test that
 pins it to an **independent reference** (Sunny, or an exact analytic identity), never a
 self-generated golden number.
 
@@ -110,7 +110,7 @@ guard refuses). Never silently wrong.
 | # | Item | Status | Notes |
 |---|---|---|---|
 | 13 | GS search sees q≠0 instabilities | ✅ | Luttinger-Tisza ordering-vector guard (`spiral_opt.ordering_wavevector` + a 3rd runner guard). Catches a q≠0 spiral GS the in-cell anneal/energy-audit provably cannot reach AND whose k=0 magnon spectrum comes back real-positive (blind to both older guards). Validated on the J1-J2 chain: LT k* = analytic `arccos(-J1/4J2)/2π` = 0.230053 to 1e-6; a FM supplied for it is now flagged with k* + the single_k/supercell fix. Zero false positives across all example configs. `tests/test_q_neq_0_instability.py` |
-| 14 | Expose symmetry analyzer as CLI | ❌ | `get_bond_constraints` exists (GUI/tests only); `magcalc symmetry` would be ~free |
+| 14 | Expose symmetry analyzer as CLI | ✅ | `magcalc symmetry <config> [--max-distance] [--json]` — space group, symmetry-inequivalent bond orbits, and the symmetry-ALLOWED exchange matrix per bond (Sunny `print_symmetry_table` analogue). New reusable `MagCalcConfigBuilder.from_config`. Validated: P4/mmm NN bond forced diagonal (analytic); Yb2Ti2O7 allowed form == the physical SpinW/Sunny matrix's zero/tie pattern. `tests/test_symmetry_cli.py` |
 | 15 | Broken `aCVO/config.yaml` (+ `KFe3J/config.yaml`) | ✅ | both were legacy `python_model_file` configs superseded by `config_acvo.yaml` / `config_kfe3j.yaml`; **retired** (untracked + git-ignored, kept locally). Fixed 2 general runner bugs kept: clear error for missing `crystal_structure`; `hasattr(model,'minimize')` no longer matches imported scipy. `tests/test_config_robustness.py` |
 
 ---

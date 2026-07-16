@@ -140,6 +140,117 @@ _KNOWN_TASK_KEYS = {
 
 
 @app.command()
+def symmetry(
+    config_file: Annotated[str, typer.Argument(help="Path to the config.yaml file")],
+    max_distance: Annotated[float, typer.Option(help="Search bonds out to this distance (Å)")] = 8.0,
+    as_json: Annotated[bool, typer.Option("--json", help="Emit the analysis as JSON")] = False,
+):
+    """
+    Crystal-symmetry analysis of a config: the space group, the symmetry-inequivalent
+    bond orbits out to `max_distance`, and the symmetry-ALLOWED exchange matrix for each
+    (the analogue of Sunny `print_symmetry_table` / SpinW's bond symmetry table).
+
+    Use it to choose `ref_pair` reference bonds and to see which exchange-matrix entries
+    symmetry forces to zero or ties together, before writing `interactions.symmetry_rules`.
+    """
+    if not os.path.exists(config_file):
+        typer.secho(f"Error: File {config_file} not found.", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+    try:
+        with open(config_file) as f:
+            data = yaml.safe_load(f) or {}
+    except yaml.YAMLError as e:
+        typer.secho(f"YAML Parse Failed:\n{e}", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
+    # Accept a single wrapper key (e.g. `my_model:`), matching `validate`.
+    section = data
+    if "crystal_structure" not in section and len(section) == 1:
+        inner = next(iter(section.values()))
+        if isinstance(inner, dict):
+            section = inner
+    if "crystal_structure" not in section:
+        typer.secho("Error: config has no `crystal_structure` to analyze.", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
+    try:
+        from magcalc.config_builder import MagCalcConfigBuilder
+    except ImportError:
+        typer.secho("Error: MagCalcConfigBuilder unavailable.", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
+    b = MagCalcConfigBuilder.from_config(section)
+    if not b.atoms_uc:
+        typer.secho("Error: no atoms could be built from the config.", fg=typer.colors.RED)
+        raise typer.Exit(code=1)
+
+    sg = b.space_group_number
+    given_sg = (section.get("crystal_structure", {}).get("lattice_parameters", {}) or {}).get("space_group")
+    sg_source = "given" if given_sg is not None else "detected from structure"
+    n_ops = len(b.symmetry_ops["rotations"]) if b.symmetry_ops else 0
+
+    def _relabel(matrix_rows, free):
+        # j0, j5, ... -> p1, p2, ... in order of first appearance, for a readable table.
+        # (p-names, not A/B/C, so they never collide with single-letter atom labels.)
+        names = {sym: f"p{i + 1}" for i, sym in enumerate(free)}
+        out = []
+        for row in matrix_rows:
+            out.append([names.get(e, e) if e in names else
+                        _sub_names(e, names) for e in row])
+        return out, [names[s] for s in free]
+
+    def _sub_names(expr, names):
+        s = expr
+        # replace bare and negated symbols (e.g. "-j6") token-wise
+        for sym, nm in names.items():
+            s = s.replace(sym, nm)
+        return s
+
+    orbits = b.analyze_bond_symmetry(max_distance=max_distance)
+    results = []
+    for o in orbits:
+        c = b.get_bond_constraints(o)
+        rows, free = _relabel(c["symbolic_matrix"], c["free_parameters"])
+        rep = o["representative"]
+        results.append({
+            "distance": round(float(o["distance"]), 4),
+            "multiplicity": int(o["multiplicity"]),
+            "atom_i": rep["atom_i"], "atom_j": rep["atom_j"],
+            "offset": [int(x) for x in rep["offset"]],
+            "little_group_order": int(c["little_group_size"]),
+            "allowed_matrix": rows,
+            "free_parameters": free,
+        })
+
+    if as_json:
+        import json
+        typer.echo(json.dumps({
+            "space_group": int(sg) if sg is not None else None,
+            "space_group_source": sg_source, "n_symmetry_ops": n_ops,
+            "n_atoms": len(b.atoms_uc), "max_distance": max_distance,
+            "bond_orbits": results}, indent=2))
+        return
+
+    typer.secho(f"Crystal symmetry analysis: {config_file}", fg=typer.colors.GREEN, bold=True)
+    typer.echo(f"  Space group: {sg} ({sg_source}), {n_ops} symmetry operations")
+    typer.echo(f"  Magnetic atoms in cell: {len(b.atoms_uc)} "
+               f"({', '.join(a['label'] for a in b.atoms_uc)})")
+    typer.echo(f"\nSymmetry-inequivalent bond orbits up to {max_distance:g} Å "
+               f"({len(results)} found):")
+    for n, r in enumerate(results, 1):
+        typer.secho(f"\n  #{n}  d = {r['distance']:.4f} Å   multiplicity {r['multiplicity']}",
+                    fg=typer.colors.CYAN)
+        typer.echo(f"      representative: {r['atom_i']} -> {r['atom_j']}  "
+                   f"offset {r['offset']}")
+        typer.echo(f"      symmetry-allowed exchange matrix (little group order "
+                   f"{r['little_group_order']}):")
+        w = max((len(e) for row in r["allowed_matrix"] for e in row), default=1)
+        for row in r["allowed_matrix"]:
+            typer.echo("        [ " + "  ".join(e.rjust(w) for e in row) + " ]")
+        typer.echo(f"      free parameters: {', '.join(r['free_parameters']) or '(none)'}")
+
+
+@app.command()
 def validate(
     config_file: Annotated[str, typer.Argument(help="Path to the config.yaml file")]
 ):
