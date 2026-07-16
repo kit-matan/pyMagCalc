@@ -430,8 +430,10 @@ resulting triplon (Sunny's `EntangledSystem` analogue).
   with a gapped triplon), spin ladders, etc. -- where the excitation is a transition WITHIN
   the cluster spectrum, not a spin precession.
 * `units:` must partition every magnetic site exactly once, and all units must have the
-  same product dimension N (hard error otherwise). Bonds within a unit (same cell) fold
-  into the on-site Hamiltonian; everything else becomes an inter-unit bond.
+  same product dimension N (hard error otherwise). Bonds within a unit fold into the
+  on-site Hamiltonian; everything else becomes an inter-unit bond. A unit's members may
+  carry a cell offset -- `[i, [j, [ox,oy,oz]]]` -- so a dimer can STRADDLE the cell
+  boundary (real dimer coverings always have some; the Rb2Cu3SnF12 pinwheel has 4 of 18).
 * The reference is exact, so there is no coherent-state minimization; an over-strong
   inter-unit coupling instead shows up as an imaginary triplon (the ground-state guard's
   imaginary check -- the dimer picture breaking down).

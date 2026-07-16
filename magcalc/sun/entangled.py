@@ -92,28 +92,36 @@ def build_entangled_model(model, params: Optional[Sequence[float]] = None,
 
     if units is None:
         raise ValueError("entangled mode needs a `units` list (each unit a list of site "
-                         "indices).")
-    units = [[int(s) for s in u] for u in units]
-    flat = [s for u in units for s in u]
-    if sorted(flat) != list(range(L)):
-        raise ValueError(f"`units` must partition all {L} magnetic sites exactly once; "
-                         f"got {units}.")
+                         "indices, or [site, [ox,oy,oz]] pairs for a cross-cell dimer).")
 
-    unit_of = {s: u for u, sites in enumerate(units) for s in sites}
-    pos_in_unit = {s: p for sites in units for p, s in enumerate(sites)}
+    # Normalize each member to (site, offset). A bare int means offset (0,0,0). Per-member
+    # offsets let a unit's constituents sit in DIFFERENT cells -- essential for a dimer
+    # covering, where some dimers straddle the crystallographic cell boundary.
+    def _member(m):
+        if isinstance(m, (list, tuple)) and len(m) == 2 and isinstance(m[1], (list, tuple)):
+            return int(m[0]), tuple(int(x) for x in m[1])
+        return int(m), (0, 0, 0)
+    units = [[_member(m) for m in u] for u in units]
+    flat = sorted(s for u in units for (s, _o) in u)
+    if flat != list(range(L)):
+        raise ValueError(f"`units` must partition all {L} magnetic sites exactly once "
+                         f"(by site index); got sites {flat}.")
+
     U = len(units)
+    role = {s: p for u in units for p, (s, _o) in enumerate(u)}       # index within its unit
+    shift = {s: np.array(o, int) for u in units for (s, o) in u}      # cell shift within unit
+    unit_of = {s: k for k, u in enumerate(units) for (s, _o) in u}
 
-    # Per-unit embedded operators, moment terms (constituent offset + op indices), centroid.
+    # Per-unit embedded operators, moment terms, centroid -- using each constituent's FRAME
+    # position apos[s] + offset.lat (so a straddling dimer is placed as one object).
     unit_ops, unit_moment_terms, unit_centroid, unit_dim = [], [], [], []
-    for sites in units:
-        s_list = [spins_all[s] for s in sites]
+    for u in units:
+        s_list = [spins_all[s] for (s, _o) in u]
         emb = _embedded_spin_ops(s_list)                       # emb[p] = [Sx,Sy,Sz]
-        ops = [emb[p][a] for p in range(len(sites)) for a in range(3)]  # 3*k operators
-        centroid = np.mean([apos[s] for s in sites], axis=0)   # CARTESIAN centroid
-        # neutron moment = sum_k e^{i q.(r_k - centroid)} S_k -> the q-dependent (staggered)
-        # combination that the triplon actually couples to.
-        mterms = [(apos[s] - centroid, (3 * p, 3 * p + 1, 3 * p + 2))
-                  for p, s in enumerate(sites)]
+        ops = [emb[p][a] for p in range(len(u)) for a in range(3)]
+        rpos = [apos[s] + np.array(o, float) @ lat for (s, o) in u]   # cartesian frame pos
+        centroid = np.mean(rpos, axis=0)
+        mterms = [(rpos[p] - centroid, (3 * p, 3 * p + 1, 3 * p + 2)) for p in range(len(u))]
         unit_ops.append(ops)
         unit_moment_terms.append(mterms)
         unit_dim.append(ops[0].shape[0])
@@ -122,34 +130,30 @@ def build_entangled_model(model, params: Optional[Sequence[float]] = None,
         raise NotImplementedError(f"all units must have the same dimension N; got {unit_dim}.")
     n_per_unit = [len(u) for u in units]
 
-    def _op_index(unit, site):
-        return 3 * pos_in_unit[site]        # first (x) operator index of `site` within `unit`
-
-    # Split physical pairs into intra-unit (-> on-site A) and inter-unit (-> bonds).
+    # Split physical pairs into intra-unit (-> on-site A) and inter-unit (-> bonds). With
+    # per-member shifts, the inter-unit CELL offset of a bond (i -> image of jc at ob) is
+    # ob - shift(jc) + shift(i): it accounts for where each endpoint sits inside its unit.
     A_intra = [np.zeros((unit_dim[0], unit_dim[0]), dtype=complex) for _ in range(U)]
-    bond_C: Dict[Any, np.ndarray] = {}      # (u_i, u_j, offset-tuple) -> coupling matrix
+    bond_C: Dict[Any, np.ndarray] = {}
     for i in range(L):
         for j in range(len(aouc)):
             M = _pair_matrix(Jex, DM, Kex, i, j)
             if not np.any(M):
                 continue
             jc = j % L
-            # cartesian cell translation of site j -> fractional integer cell offset
-            offset = np.round((aouc[j] - apos[jc]) @ inv_lat).astype(int)
+            ob = np.round((aouc[j] - apos[jc]) @ inv_lat).astype(int)
             ui, uj = unit_of[i], unit_of[jc]
-            if ui == uj and np.all(offset == 0):
-                # intra-unit: fold J_ab S_i^a S_j^b into the on-site Hamiltonian.
-                oi, oj = _op_index(ui, i), _op_index(ui, jc)
+            cell = ob - shift[jc] + shift[i]
+            oi, oj = 3 * role[i], 3 * role[jc]
+            if ui == uj and np.all(cell == 0):
                 emb = unit_ops[ui]
                 for a in range(3):
                     for b in range(3):
                         if M[a, b] != 0.0:
                             A_intra[ui] += 0.5 * M[a, b] * (emb[oi + a] @ emb[oj + b])
                 continue
-            # inter-unit bond between effective sites ui, uj at this cell offset.
-            key = (ui, uj, tuple(int(x) for x in offset))
+            key = (ui, uj, tuple(int(x) for x in cell))
             C = bond_C.setdefault(key, np.zeros((3 * n_per_unit[ui], 3 * n_per_unit[uj])))
-            oi, oj = _op_index(ui, i), _op_index(uj, jc)
             C[oi:oi + 3, oj:oj + 3] += M
 
     # Optional Zeeman field: gamma * mu_B * H . (sum_k S_k) added to each unit's on-site
