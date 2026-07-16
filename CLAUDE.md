@@ -61,6 +61,11 @@ Rules expand to **both bond directions** automatically (required by
 pyMagCalc's `H = (1/2) Σ_ordered`); never list reverse bonds by hand alongside
 rules.
 
+To pick `ref_pair` bonds and see which matrix entries symmetry zeros or ties,
+run `magcalc symmetry <config> [--max-distance Å] [--json]` — it lists the space
+group, the symmetry-inequivalent bond orbits, and the allowed exchange matrix
+for each (the Sunny `print_symmetry_table` analogue).
+
 Two rules the engine now **enforces with a hard error** (they used to be silent
 failures — a WARNING plus a Hamiltonian quietly missing a term):
 

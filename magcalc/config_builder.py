@@ -49,6 +49,53 @@ class MagCalcConfigBuilder:
         # Validation mapping
         self._atom_label_to_idx = {}
 
+    @classmethod
+    def from_config(cls, config: Dict[str, Any]) -> 'MagCalcConfigBuilder':
+        """Hydrate a builder (lattice, expanded atoms, symmetry ops) from a run config
+        dict -- the structural half of what `GenericSpinModel` does, without the
+        interactions/model. Used by the `magcalc symmetry` CLI and any caller that wants
+        the crystal-symmetry analysis (`analyze_bond_symmetry`, `get_bond_constraints`).
+        """
+        b = cls()
+        cs = config.get('crystal_structure', {}) or {}
+        lp = cs.get('lattice_parameters') or {}
+        sg = lp.get('space_group')
+
+        if lp:
+            b.set_lattice(a=lp.get('a', 1.0), b=lp.get('b', lp.get('a', 1.0)),
+                          c=lp.get('c', lp.get('a', 1.0)), alpha=lp.get('alpha', 90.0),
+                          beta=lp.get('beta', 90.0), gamma=lp.get('gamma', 90.0),
+                          space_group=int(sg) if sg is not None else None)
+        elif cs.get('lattice_vectors') is not None:
+            b.lattice_vectors = np.array(cs['lattice_vectors'], dtype=float)
+            b.config['crystal_structure']['lattice_vectors'] = b.lattice_vectors.tolist()
+            if sg is not None:
+                b.space_group_number = int(sg)
+                b._load_symmetry_ops(int(sg))
+
+        # Atoms. Explicit atoms_uc are the full cell already; wyckoff_atoms need the
+        # orbit expanded over the loaded space group (add_wyckoff_atom does that).
+        atom_mode = cs.get('atom_mode')
+        explicit_atoms = cs.get('atoms_uc')
+        wyckoff = cs.get('wyckoff_atoms')
+        if atom_mode == 'explicit' or (explicit_atoms and not wyckoff):
+            atoms = explicit_atoms or wyckoff or []
+            b.atoms_uc = [dict(a) for a in atoms]
+            b._atom_label_to_idx = {a.get('label', f'Atom{i}'): i
+                                    for i, a in enumerate(b.atoms_uc)}
+        else:
+            for a in (wyckoff or []):
+                b.add_wyckoff_atom(label=a.get('label', 'Atom'), pos=a.get('pos', [0, 0, 0]),
+                                   spin=a.get('spin_S', 0.5),
+                                   species=a.get('element', a.get('label', 'Atom')),
+                                   ion=a.get('ion'), element=a.get('element'))
+
+        # No space group given (lattice_vectors path): detect it from the structure so
+        # the analyzer has operations to work with.
+        if not b.symmetry_ops and b.atoms_uc:
+            b.detect_symmetry_from_structure()
+        return b
+
     def set_lattice(self, a: float, b: float = None, c: float = None, 
                    alpha: float = 90.0, beta: float = 90.0, gamma: float = 90.0,
                    space_group: int = None):
