@@ -2540,9 +2540,10 @@ function App() {
                           </select>
                           <p className="text-xs opacity-50 mt-xs">
                             Spin waves are an expansion about a classical energy <em>minimum</em>;
-                            about anything else the spectrum is meaningless. The run is checked
-                            for imaginary magnon energies and for a lower-energy relaxation, and
-                            fails if either fires.
+                            about anything else the spectrum is meaningless. Three guards run:
+                            imaginary magnon energies, a lower-energy relaxation, and a q≠0 spiral
+                            instability (a longer-period ground state the cell can't hold). The run
+                            fails if any fires.
                           </p>
                           {config.calculation.on_imaginary === 'warn' && (
                             <p className="text-xs text-warning mt-xs">
@@ -2554,8 +2555,8 @@ function App() {
                           )}
                           {config.calculation.on_imaginary === 'off' && (
                             <p className="text-xs text-warning mt-xs">
-                              Both ground-state guards are disabled. A wrong ground state will now
-                              produce a plausible-looking but meaningless spectrum, with no warning.
+                              All three ground-state guards are disabled. A wrong ground state will
+                              now produce a plausible-looking but meaningless spectrum, with no warning.
                             </p>
                           )}
                         </div>
