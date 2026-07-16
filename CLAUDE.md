@@ -438,6 +438,12 @@ resulting triplon (Sunny's `EntangledSystem` analogue).
 * The neutron structure factor uses the q-dependent STAGGERED moment sum_k e^{i q.d_k} S_k
   (d_k = constituent offset), so the dimer selection rule I(q=0)=0 and the (1-cos(q.d))
   form factor come out right (the total spin sum_k S_k alone is silent on the triplon).
+* A magnetic field (`parameters: {H_mag: <Tesla>, H_dir: [...]}`) adds the Zeeman term
+  gamma*mu_B*H.(sum_k S_k) to each unit, so a field splits the unit's multiplet -- e.g. a
+  c-axis field Zeeman-splits the Stot^z = +/-1 dimer triplet while Stot^z = 0 is
+  unchanged (`examples/entangled/Rb2Cu3SnF12/`, Matan et al., Nat. Phys. 6, 865 (2010)).
+* Harmonic bond-operator level: EXACT in the weak-interdimer limit (Cu5SbO6), only
+  qualitative at strong coupling (J2 ~ J1) where a high-order series expansion is needed.
 * Not yet: powder/domain averaging (as for SU(N)).
 
 Example: `examples/entangled/dimer_chain/` -- a chain of S=1/2 dimers whose triplon

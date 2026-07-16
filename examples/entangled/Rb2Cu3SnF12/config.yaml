@@ -1,0 +1,78 @@
+# =====================================================================
+# Rb2Cu3SnF12 -- pinwheel valence-bond solid on the deformed kagome lattice
+#   Matan et al., Nature Physics 6, 865 (2010)
+#
+#   magcalc run examples/entangled/Rb2Cu3SnF12/config.yaml
+#
+# The SINGLE-DIMER BUILDING BLOCK of the pinwheel VBS, in the entangled-units
+# engine. Rb2Cu3SnF12 is an S=1/2 deformed-kagome antiferromagnet whose ground
+# state is a product of SINGLET DIMERS (the pinwheel VBS); singlet dimers form on
+# the strongest bond J1 ~ 18.6 meV. This example models ONE such J1 dimer with its
+# out-of-plane Dzyaloshinskii-Moriya interaction and a c-axis field, to reproduce
+# the paper's key on-dimer physics EXACTLY:
+#
+#   * a non-magnetic SINGLET ground state, with a gapped TRIPLON (dipole LSWT
+#     cannot see it -- the singlet has no dipole moment);
+#   * the DM interaction (out-of-plane d_z = D_z/J1 = 0.18) splits the triplet:
+#     it RAISES the Stot^z = 0 branch to Delta_0 = sqrt(J1^2 + Dz^2) and leaves the
+#     Stot^z = +/-1 branch degenerate at Delta_pm = J1/2 + (1/2)sqrt(J1^2 + Dz^2)
+#     (< Delta_0) -- exactly the mechanism behind the paper's TWO observed gaps;
+#   * a magnetic field along c ZEEMAN-SPLITS the Stot^z = +/-1 doublet (slope
+#     -/+ 2 mu_B B, g = 2) while the Stot^z = 0 branch is field-independent -- the
+#     paper's Fig. 4. Extrapolating the Stot^z = +1 branch to zero gives the
+#     singlet-triplet critical field.
+#
+# SCOPE / what this does NOT do. The OBSERVED excitations of Rb2Cu3SnF12 are highly
+# dispersive with small gaps Delta_1 = 2.35 and Delta_2 = 7.3 meV -- these are
+# dispersion MINIMA, far below the J1 ~ 18.6 meV dimer scale, produced by the STRONG
+# interdimer coupling (J2 = 0.95 J1, J3 = 0.85 J1, J4 = 0.55 J1) on the 6-dimer
+# deformed-kagome PINWHEEL. Reproducing them needs (a) the full 12-spin pinwheel
+# geometry and (b) a high-order dimer SERIES expansion -- the paper used 8th order
+# with Dlog-Pade. That is beyond the harmonic bond-operator level the entangled
+# engine provides (which is exact only in the weak-interdimer limit, e.g. the
+# Cu5SbO6 example). This file therefore captures the singlet-VBS + DM + field
+# structure of a single pinwheel dimer, not the full dispersion.
+# =====================================================================
+calculation: {mode: entangled, cache_mode: none, on_imaginary: warn}
+
+units: [[CuA, CuB]]                # one J1 singlet dimer of the pinwheel VBS
+
+crystal_structure:
+  # a single dimer; c is perpendicular to the kagome plane (the DM d_z axis).
+  lattice_vectors: [[8.0, 0.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 8.0]]
+  atoms_uc:
+  - {label: CuA, pos: [0.0,  0.0, 0.0], spin_S: 0.5, ion: Cu2+}
+  - {label: CuB, pos: [0.25, 0.0, 0.0], spin_S: 0.5, ion: Cu2+}
+
+interactions:
+  # intradimer J1 + out-of-plane DM as the full 3x3 matrix J1*I + skew(D), D = (0,0,Dz):
+  #   [[J1, Dz, 0], [-Dz, J1, 0], [0, 0, J1]] -> S_i.M.S_j = J1 S_i.S_j + Dz (S_i x S_j)_z.
+  # Both directions (reverse = transpose = D -> -D), as required by H = 1/2 sum_ordered.
+  interaction_matrix:
+  - {pair: [CuA, CuB], rij_offset: [0, 0, 0], value: [[18.6, 3.348, 0.0], [-3.348, 18.6, 0.0], [0.0, 0.0, 18.6]]}
+  - {pair: [CuB, CuA], rij_offset: [0, 0, 0], value: [[18.6, -3.348, 0.0], [3.348, 18.6, 0.0], [0.0, 0.0, 18.6]]}
+
+# c-axis field (Tesla): makes the Stot^z = +/-1 Zeeman splitting visible. Set to 0
+# for the zero-field two-branch spectrum; the splitting is linear in H (Fig. 4).
+parameters: {H_mag: 15.0, H_dir: [0, 0, 1]}
+parameter_order: [H_mag, H_dir]
+
+magnetic_structure: {type: pattern, pattern_type: ferromagnetic, direction: [0, 0, 1]}
+
+tasks: {minimization: false, dispersion: true}
+
+q_path:
+  A: [0.0, 0.0, 0.0]
+  B: [1.0, 0.0, 0.0]
+  path: [A, B]
+  points_per_segment: 40
+
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  energy_limits_disp: [0, 24]
+  disp_plot_filename: Rb2Cu3SnF12_triplet.png
+  disp_title: "Rb2Cu3SnF12 pinwheel dimer: triplet at 15 T (Sz=+1, 0, -1)"
+
+output: {save_data: false}

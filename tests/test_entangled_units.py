@@ -140,6 +140,37 @@ def test_Cu5SbO6_reproduces_the_paper_dimer_expansion():
     assert np.sum(I0) < 1e-9
 
 
+def test_Rb2Cu3SnF12_dimer_DM_and_field_mechanism():
+    """The Rb2Cu3SnF12 pinwheel-dimer example (Matan et al., Nat. Phys. 6, 865 (2010)):
+    out-of-plane DM splits the triplet into Stot^z = 0 (raised) and the degenerate
+    Stot^z = +/-1 branch, and a c-axis field Zeeman-splits the +/-1 doublet while the
+    0 branch stays fixed -- all exact analytic single-dimer results (the paper's Fig. 4
+    mechanism)."""
+    cfg0 = yaml.safe_load(open(os.path.join(
+        HERE, "..", "examples", "entangled", "Rb2Cu3SnF12", "config.yaml")))
+    J1, Dz, muB = 18.6, 3.348, 5.788e-2
+
+    def gaps(B):
+        cfg = yaml.safe_load(yaml.safe_dump(cfg0))
+        cfg["parameters"]["H_mag"] = float(B)
+        m = GenericSpinModel(cfg)
+        pv = [cfg["parameters"][k] for k in cfg["parameter_order"]]
+        sm = build_entangled_model(m, pv, units=[[0, 1]])
+        return np.sort(np.real(sm.dispersion(np.zeros(3))))
+
+    # zero field: Stot^z=+/-1 (degenerate) below Stot^z=0.
+    d_pm = J1 / 2 + 0.5 * np.sqrt(J1**2 + Dz**2)
+    d_0 = np.sqrt(J1**2 + Dz**2)
+    g0 = gaps(0.0)
+    assert np.allclose(g0, sorted([d_pm, d_pm, d_0]), atol=1e-6)
+    assert d_pm < d_0                                    # DM raises the Sz=0 branch
+
+    # field: the +/-1 doublet splits by +/- 2 mu_B B (g=2); the Sz=0 branch is fixed.
+    gB = gaps(20.0)
+    assert np.allclose(gB, sorted([d_pm - 2 * muB * 20, d_0, d_pm + 2 * muB * 20]), atol=1e-6)
+    assert abs(gB[1] - g0[-1]) < 1e-6                    # middle (Sz=0) unchanged by field
+
+
 def test_units_must_partition_all_sites():
     cfg = yaml.safe_load(open(CFG))
     m = GenericSpinModel(cfg)
