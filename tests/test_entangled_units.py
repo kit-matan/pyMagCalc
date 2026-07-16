@@ -199,6 +199,33 @@ def test_Rb2Cu3SnF12_triplet_polarizations():
     assert Izz[2] > 1e-3 and Izz[0] < 1e-9 and Izz[1] < 1e-9     # 0 out-of-plane, +/-1 not
 
 
+def test_cross_boundary_dimer_via_per_member_offset():
+    """A unit whose two spins STRADDLE the cell boundary (bond B -> A at offset +a) is
+    specified as `[B, [A, [1,0,0]]]`. It must give the same isolated-dimer flat triplon
+    at omega = J as a within-cell dimer -- real dimer coverings (e.g. the Rb2Cu3SnF12
+    pinwheel) always have some straddling dimers."""
+    J = 5.0
+    cfg = {
+        "crystal_structure": {"lattice_vectors": [[3., 0, 0], [0, 8, 0], [0, 0, 8]],
+                              "atoms_uc": [{"label": "A", "pos": [0.1, 0, 0], "spin_S": 0.5},
+                                           {"label": "B", "pos": [0.9, 0, 0], "spin_S": 0.5}]},
+        "interactions": {"heisenberg": [
+            {"pair": ["B", "A"], "rij_offset": [1, 0, 0], "value": J},
+            {"pair": ["A", "B"], "rij_offset": [-1, 0, 0], "value": J}]},
+        "parameters": {}, "parameter_order": [],
+        "magnetic_structure": {"type": "pattern", "pattern_type": "ferromagnetic",
+                               "direction": [0, 0, 1]}}
+    m = GenericSpinModel(cfg)
+    sm = build_entangled_model(m, [], units=[[1, [0, [1, 0, 0]]]])   # B + A(+a): straddling
+    ev = np.linalg.eigvalsh(sm.onsite[0][1])
+    assert abs((ev[-1] - ev[0]) - J) < 1e-9                          # intra bond found across cell
+    L = np.array(cfg["crystal_structure"]["lattice_vectors"], float)
+    B = 2 * np.pi * np.linalg.inv(L).T
+    for qr in (0.0, 0.3, 0.5):
+        w = np.real(sm.dispersion(np.array([qr, 0, 0]) @ B))
+        assert np.allclose(w, J, atol=1e-9)                          # flat triplon at J
+
+
 def test_units_must_partition_all_sites():
     cfg = yaml.safe_load(open(CFG))
     m = GenericSpinModel(cfg)

@@ -57,8 +57,21 @@ dispersion. The 2014 follow-up further reports **ghost modes** (from the 2a×2a,
 continuum** (a possible kagome-spinon remnant); both are outside any single-cell
 dimer LSWT.
 
-To build the full 6-band dispersion here one would need the explicit **12-Cu
-deformed-kagome coordinates and the J1–J4 bond assignments** (from the
-crystallography, Morita 2008 / Ono 2009) — then `mode: entangled` with 6 units
-would give the six triplon bands, to be compared against the papers' 8th-order
-Dlog-Padé dispersion with the strong-coupling caveat above.
+### The full pinwheel, built from the CIF — and why it stays a building block
+
+Given the R-3 CIF (a = 13.877 Å, c = 20.239 Å, Cu1/Cu2 on 18f), the full pinwheel
+*geometry* is now buildable: the four in-plane Cu–Cu bonds are 3.341, 3.497, 3.531,
+3.565 Å, and the **shortest (3.341 Å) is the unique one that dimerizes every Cu
+exactly once** (18 dimers / 36 Cu in the hexagonal cell) — so J1 = 3.341 Å is the
+dimer bond, and J2/J3/J4 follow by distance. The entangled builder now handles the
+**straddling dimers** (4 of the 18 cross the cell boundary) via per-member offsets,
+and the model assembles cleanly (18 units, N = 4, 72 inter-unit bonds).
+
+But the resulting harmonic dispersion sits at **~9–28 meV**, roughly **4× above the
+observed 2–7 meV** band, and the out-of-plane DM barely dents it. That is the
+strong-coupling failure quantified: at J2 = 0.95 J1 the leading bond-operator gap is
+far too large, and only the 8th-order Dlog-Padé resummation of both papers brings it
+down to 2.4/6.9 meV. Shipping that dispersion as "Rb₂Cu₃SnF₁₂" would be misleading,
+so the shipped example stays the **single-dimer building block** (exact) and the full
+geometry is documented rather than plotted. The pieces to make it quantitative — a
+high-order series expansion on top of the entangled cell — are future work.
