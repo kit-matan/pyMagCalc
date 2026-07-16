@@ -91,18 +91,22 @@ the Stot^z = ±1 doublet series is
 `18.75 − 10.11λ − 11.65λ² + 2.82λ³ + 2.80λ⁴ − 2.32λ⁵ − 0.51λ⁶` — strongly
 oscillating, the strong-coupling signature that forced the papers to 8th order:
 
-| Γ branch | order 4 | order 5 | order 6 | experiment |
-|---|---|---|---|---|
-| doublet (Dlog-Padé) | 2.2 ± 1.0 | 6.3 (wide) | 1.6 | **2.35 / 2.4** |
-| singlet (Dlog-Padé) | 11.1 ± 0.8 | 10.2 | 9.9 ± 0.9 | **7.3 / 6.9** |
+| Γ branch | order 4 | order 5 | order 6 | order 7 | experiment |
+|---|---|---|---|---|---|
+| doublet (Dlog-Padé) | 2.2 ± 1.0 | 6.3 (wide) | 1.6 | **2.40** (sum 2.80) | **2.35 / 2.4** |
+| singlet (Dlog-Padé) | 11.1 ± 0.8 | 10.2 | 9.9 ± 0.9 | 10.3 (sum 10.1) | **7.3 / 6.9** |
 
-The doublet estimates bracket the measured gap with O(1 meV) scatter — the papers'
-order-8 Dlog-Padé is what pins it at 2.35 — and the singlet descends monotonically
-toward 7.3. A global sign flip of the DM pattern leaves every series coefficient
-invariant (checked to 0.0), as the mirror symmetry requires.
+At order 7 the doublet Dlog-Padé lands at **2.40 meV vs the measured 2.35(7)** —
+within the experimental uncertainty — with the plain sum (2.80) bracketing from
+above; the earlier orders oscillate around it exactly as a strong-coupling series
+should. The singlet converges more slowly (as its smaller low-order coefficients
+suggest) and still sits above the measured 7.3 at this order. A global sign flip of
+the DM pattern leaves every series coefficient invariant (checked to 0.0), as the
+mirror symmetry requires.
 
-Run `python series_dispersion.py [order]` (order 4 ≈ seconds, 5 ≈ a minute, 6 ≈ half
-an hour). The engine itself is validated against exact diagonalization of the
-alternating chain at strong coupling (`tests/test_dimer_series.py`) — the pinwheel
-numbers inherit that trust; only the ORDER is the limitation, exactly as in the
-papers.
+Run `python series_dispersion.py [order]`. After the Sz-sector + structural-dedup +
+multiprocessing optimization: order 5 ≈ 10 s, order 6 ≈ 2 min, order 7 ≈ 30 min,
+order 8 ≈ overnight (was an extrapolated ~9 days before the optimization). The
+engine itself is validated against exact diagonalization of the alternating chain at
+strong coupling (`tests/test_dimer_series.py`) — the pinwheel numbers inherit that
+trust; only the ORDER is the limitation, exactly as in the papers.
