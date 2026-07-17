@@ -167,7 +167,15 @@ plausible-but-wrong spectra that looked fine:
 - a **stationary maximum** returning a real, positive spectrum (invisible to the
   imaginary-mode check — only the energy audit catches it);
 - a dipole-derived state used as an SU(N) reference (a good local minimum, so again
-  invisible to the imaginary check).
+  invisible to the imaginary check);
+- the SU(N) one-magnon amplitudes DOUBLE-counted intracell phases (the engine's H(q)
+  is built in the full-position gauge, so the bosons already carry their positions)
+  and normalized per SITE instead of per CELL REPLICA. Both were invisible because
+  every intensity validation to that point had L == n_cells and r_i-phases that
+  cancel (Gate 3: one site; FeI2: supercell of one atom) -- dispersions were exact
+  while the S=1/2 AFM chain's zone-boundary intensity was ~60x too weak (the
+  (u-v)^2 combination instead of (u+v)^2). Caught by the powder work; pinned by
+  Gate 1b (`tests/test_powder_sun.py`) against Sunny to 2e-8.
 
 Every one was caught by an **independent oracle or an exact identity**, never by
 inspection. So: validate against Sunny (in-repo) or a textbook analytic result; prefer

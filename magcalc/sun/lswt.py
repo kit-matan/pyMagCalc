@@ -390,6 +390,7 @@ class SUNModel:
 
         mdl = cls.from_directions(spins, directions, bonds, onsite)
         mdl.pos = _np.asarray(positions, dtype=float)
+        mdl.n_cells = len(spins) // L if supercell is not None else 1
         return mdl
 
     # ------------------------------------------------- CP^(N-1) ground state
@@ -512,12 +513,24 @@ class SUNModel:
 
         The one-magnon matrix element. Keeping only the LINEAR part of the spin operator,
 
-            S^a(q) = sum_i e^{i q.r_i} [ sum_m t^a_i[m] b_im + tb^a_i[m] b^dag_im ]
+            S^a(q) = sum_i [ sum_m t^a_i[m] b_im(q) + tb^a_i[m] b^dag_im(q) ]
 
         so in the Nambu basis Psi = (b, b^dag) it is a row vector v_a. With Psi = T Phi,
         the amplitude to create magnon nu is (v_a T)[D + nu], and
 
             S^{ab}(q, w_nu) = conj(M^a_nu) M^b_nu.
+
+        NO intracell e^{i q.r_i} phases here: `hamiltonian(q)` is built in the
+        FULL-POSITION gauge (bond phases use the actual cartesian displacement dr, not
+        the integer cell offset), so the boson operators b_i(q) already carry their
+        site positions. Adding the phases again DOUBLE-counts them -- a real shipped
+        bug: dispersions were right, but at generic q in a multi-atom cell the
+        one-magnon weights picked the wrong Bogoliubov combination ((u-v)^2 instead of
+        (u+v)^2 -- the S=1/2 AFM chain came out ~60x too weak at the zone boundary,
+        caught against Sunny). The intra-UNIT constituent offsets d_k (entangled
+        dimers) are NOT part of that gauge (the Hamiltonian sees only unit centroids),
+        so their staggered-moment phases stay -- validated exactly by the dimer
+        (1 - cos q.d) selection rule.
 
         Because the observables here are the FULL N x N spin operators, the multipolar
         (single-ion) bands carry weight -- which is exactly what dipole LSWT cannot do.
@@ -529,24 +542,21 @@ class SUNModel:
 
         v = np.zeros((3, 2 * D), dtype=complex)
         for i in range(self.L):
-            base = np.exp(1j * float(np.dot(q_cart, self.pos[i]))) if self.pos is not None \
-                else 1.0
             sl, slb = slice(i * self.M, (i + 1) * self.M), \
                 slice(D + i * self.M, D + (i + 1) * self.M)
-            # q-dependent moment: sum over constituents k, each at cartesian offset d_k,
-            # contributing e^{i q.(pos_i + d_k)} S_k^a. For a plain dipole this is one term
-            # at d=0; for a dimer the e^{i q.d} phases build the STAGGERED operator that the
-            # triplon couples to (the total-spin term alone would give zero intensity).
             for (d_k, idx) in self.moment_terms[i]:
-                ph = base * np.exp(1j * float(np.dot(q_cart, d_k)))
+                ph = np.exp(1j * float(np.dot(q_cart, d_k)))
                 for a in range(3):
                     v[a, sl] += ph * self.t[i, idx[a]]
                     v[a, slb] += ph * self.tb[i, idx[a]]
 
         M = (v @ T)[:, D:]                        # (3, D): amplitude per band
-        # Normalise PER SITE, as Sunny's ssf does (without this the intensities come out
-        # a factor L too large -- a constant factor, easy to mistake for "close enough").
-        spin_corr = np.einsum("am,bm->abm", M.conj(), M) / self.L
+        # Normalise per CHEMICAL CELL (Sunny's ssf convention): divide by the number of
+        # cell replicas when a magnetic supercell folded the cell -- NOT by the site
+        # count. (The old /L was calibrated on FeI2, where L happened to EQUAL the
+        # replica count; on a multi-atom chemical cell it silently suppressed the
+        # intensity by the atom count.)
+        spin_corr = np.einsum("am,bm->abm", M.conj(), M) / getattr(self, "n_cells", 1)
 
         inten, clamp = contract_cross_section(spin_corr, q_cart, cross_section)
         inten = np.real(inten)
