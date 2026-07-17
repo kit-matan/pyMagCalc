@@ -183,7 +183,15 @@ plausible-but-wrong spectra that looked fine:
   plots and fits now use SAMPLE-RESOLVED modes (each sphere direction keeps its own
   energies -- SpinW `powspec` convention); pinned analytically by the exact dimer
   interference factor 1 - sin(Qd)/(Qd) and by the paper's peaks
-  (`tests/test_powder_binned.py`).
+  (`tests/test_powder_binned.py`);
+- GenericSpinModel.__init__ RESET `_ion_list = []` AFTER `_load_structure` had
+  populated it, so `ion_list()` was empty for every config and the magnetic form
+  factor was silently dropped from ALL intensities (dipole, SU(N), entangled).
+  Invisible to every Sunny/SpinW cross-check -- both sides were computed
+  form-factor-free -- and caught PHYSICALLY: the Cu5SbO6 powder map carried far
+  too much weight at high |Q| vs PRR 8, 013247 Fig. 5. Pinned by
+  `tests/test_form_factor.py` (ion_list survives construction; I_ion/I_bare ==
+  f(Q)^2 exactly; the dimer powder modulation (1-sin(Qd)/Qd) f(Q)^2).
 
 Every one was caught by an **independent oracle or an exact identity**, never by
 inspection. So: validate against Sunny (in-repo) or a textbook analytic result; prefer
