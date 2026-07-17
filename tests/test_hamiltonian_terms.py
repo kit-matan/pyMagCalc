@@ -88,6 +88,7 @@ def with_field(cfg):
 # --------------------------------------------------------------------------
 # Biquadratic
 # --------------------------------------------------------------------------
+@pytest.mark.slow
 def test_biquadratic_reduces_to_exact_collinear_bilinear():
     """On a collinear structure (S_i.S_j has no boson-linear part), the quadratic
     part of B (S_i.S_j)^2 is exactly 2*B*D0 times that of (S_i.S_j), with
@@ -126,6 +127,7 @@ def test_gtensor_g2_reduces_to_legacy_zeeman():
     assert np.allclose(legacy, g2, atol=1e-10)
 
 
+@pytest.mark.slow
 def test_gtensor_axial_selects_g_par_along_field():
     """With the local axis along z and B || z, only g_par couples, so an axial
     tensor (g_par, g_perp) must equal an isotropic g = g_par."""

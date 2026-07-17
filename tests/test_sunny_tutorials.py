@@ -18,6 +18,7 @@ schema-checked here:
 import os
 
 import numpy as np
+import pytest
 import yaml
 
 from magcalc.generic_model import GenericSpinModel
@@ -75,6 +76,7 @@ def test_all_ported_configs_validate():
         MagCalcConfig.model_validate(cfg)
 
 
+@pytest.mark.slow
 def test_S08_dispersion_is_the_exact_dm_ising_result():
     """w(q) = 3 + 0.6 sin(2 pi q_c), ASYMMETRIC in q_c (the tutorial's point)."""
     cfg = yaml.safe_load(open(os.path.join(ROOT, CONFIGS["S08"])))
@@ -86,6 +88,7 @@ def test_S08_dispersion_is_the_exact_dm_ising_result():
     assert abs((got[-1] - got[0]) - 1.2) < 1e-6
 
 
+@pytest.mark.slow
 def test_S09_triangular_120_matches_analytic_max_and_is_gapless_at_K():
     """w_max = 3 J S sqrt(9/8) = 1.5910 meV; Goldstone at K = [1/3,1/3,0]."""
     cfg = yaml.safe_load(open(os.path.join(ROOT, CONFIGS["S09"])))

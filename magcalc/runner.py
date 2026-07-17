@@ -1236,19 +1236,36 @@ def run_calculation(config_file: str):
         num_samples = powder_config.get('num_samples', 50)
         
         logger.info(f"Calculating Powder Average (Q={q_mags[0]:.2f} to {q_mags[-1]:.2f}, {len(q_mags)} points, {num_samples} samples, backend={backend})...")
-        powder_res = calculator.calculate_powder_average(
-            q_mags, num_samples=num_samples, backend=backend,
+        # Sample-resolved powder: every sphere direction keeps its OWN mode energies,
+        # so the broadened map shows the true powder lineshape (band edges, van Hove
+        # peaks). The legacy sphere-averaged per-mode arrays are derived from the
+        # same samples (no extra eigensolves) and kept in the npz for back-compat --
+        # but they collapse a dispersive band to its center, so plots and fits use
+        # the sample-resolved arrays.
+        from magcalc.numerical import powder_sample_modes
+        E_smp, I_smp = powder_sample_modes(
+            calculator, q_mags, num_samples=num_samples, backend=backend,
             temperature=temperature, cross_section=cross_section)
-        
-        if powder_res:
+        if E_smp is not None:
+            n_shell = len(q_mags)
+            n_modes = E_smp.shape[1] // num_samples
+            E_mean = np.nanmean(E_smp.reshape(n_shell, num_samples, n_modes), axis=1)
+            I_mean = np.nanmean(I_smp.reshape(n_shell, num_samples, n_modes),
+                                axis=1) * num_samples
+            q_vec_out = np.column_stack((q_mags, np.zeros_like(q_mags),
+                                         np.zeros_like(q_mags)))
             memory_cache['powder'] = {
-                'q_vectors': powder_res.q_vectors,
-                'energies': powder_res.energies,
-                'intensities': powder_res.intensities
+                'q_vectors': q_vec_out,
+                'energies': E_mean,
+                'intensities': I_mean,
+                'sample_energies': E_smp,
+                'sample_intensities': I_smp,
             }
             if save_data_flag:
                 _safe_makedirs(powder_file)
-                np.savez(powder_file, q_vectors=powder_res.q_vectors, energies=powder_res.energies, intensities=powder_res.intensities)
+                np.savez(powder_file, q_vectors=q_vec_out, energies=E_mean,
+                         intensities=I_mean, sample_energies=E_smp,
+                         sample_intensities=I_smp)
                 logger.info(f"Powder average data saved to {powder_file}")
 
     # 4b. Constant-energy cuts on a 2-D q grid (SW10-style; first-class
@@ -1461,10 +1478,12 @@ def run_calculation(config_file: str):
             plot_filename = plot_config.get('powder_plot_filename', 'powder_plot.png')
             if not os.path.isabs(plot_filename): plot_filename = os.path.join(config_dir, plot_filename)
             
+            _pe = data['sample_energies'] if 'sample_energies' in data else data['energies']
+            _pi = data['sample_intensities'] if 'sample_intensities' in data else data['intensities']
             plot_sqw_map(
                 q_vectors=data['q_vectors'],
-                energies=data['energies'],
-                intensities=data['intensities'],
+                energies=_pe,
+                intensities=_pi,
                 save_filename=plot_filename,
                 title=plot_config.get('powder_title', "Powder Average S(Q,w)"),
                 ylim=plot_config.get('energy_limits_sqw'),
@@ -1484,10 +1503,12 @@ def run_calculation(config_file: str):
                 plot_filename = plot_config.get('powder_plot_filename', 'powder_plot.png')
                 if not os.path.isabs(plot_filename): plot_filename = os.path.join(config_dir, plot_filename)
                 
+                _pe = data['sample_energies'] if 'sample_energies' in data else data['energies']
+                _pi = data['sample_intensities'] if 'sample_intensities' in data else data['intensities']
                 plot_sqw_map(
                     q_vectors=data['q_vectors'],
-                    energies=data['energies'],
-                    intensities=data['intensities'],
+                    energies=_pe,
+                    intensities=_pi,
                     save_filename=plot_filename,
                     title=plot_config.get('powder_title', "Powder Average S(Q,w)"),
                     ylim=plot_config.get('energy_limits_sqw'),

@@ -124,6 +124,7 @@ def test_chiral_vanishes_for_a_collinear_structure():
     assert np.max(np.abs(c)) < 1e-9
 
 
+@pytest.mark.slow
 def test_spin_flip_channels_split_by_twice_the_chiral_term():
     """sigma_SF^(+/-) = S_perp -/+ M_ch, so SF- minus SF+ must be exactly 2 M_ch."""
     calc = _model(SCREW)

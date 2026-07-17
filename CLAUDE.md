@@ -470,6 +470,17 @@ Example: `examples/entangled/dimer_chain/` -- a chain of S=1/2 dimers whose trip
 `omega(q) = sqrt(J^2 - J J' cos 2 pi q)` matches the exact bond-operator result.
 Reference: `magcalc/sun/entangled.py`, `tests/test_entangled_units.py`.
 
+## 5f2. Test suite: fast by default, FULL before merge
+
+`pytest` runs the FAST suite (~4 min): the `slow` marker (pytest.ini) holds the
+deep validations (ED oracles, convergence sweeps, integration runs). Rules:
+
+- iterate with `pytest`; run a feature's deep checks with `pytest -m slow -k <name>`;
+- **before merging to master, ALWAYS run `pytest -m ""` (everything)** -- the fast
+  suite alone is NOT a merge gate;
+- every feature must keep at least one quick pinned test OUTSIDE `slow`, so the
+  fast suite still touches all code paths.
+
 ## 5g. Beyond LSWT: diffuse, thermal, and dynamical methods
 
 Four tasks for regimes LSWT (an expansion about an ordered state) does not cover.

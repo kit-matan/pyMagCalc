@@ -270,11 +270,18 @@ class FitProblem:
             res = self.calc.calculate_dispersion(self._q_cart, serial=True, backend=self.backend)
             modes = np.real(np.asarray(res.energies))
         elif self.fit_type == "powder":
-            res = self.calc.calculate_powder_average(
-                self._q_mags, num_samples=self._powder_samples, backend=self.backend,
-                temperature=self.temperature, cross_section=self.cross_section,
+            # Sample-resolved modes: each sphere direction keeps its own energies, so
+            # the broadened model reproduces the true powder lineshape. The legacy
+            # sphere-averaged representation collapsed a dispersive band to its
+            # center, silently biasing powder fits (caught on Cu5SbO6, whose 10 meV
+            # band became a ~1 meV blob -- see PRR 8, 013247 Fig. 5).
+            from .numerical import powder_sample_modes
+            E_smp, I_smp = powder_sample_modes(
+                self.calc, self._q_mags, num_samples=self._powder_samples,
+                backend=self.backend, temperature=self.temperature,
+                cross_section=self.cross_section,
             )
-            modes = (np.asarray(res.energies), np.asarray(res.intensities))
+            modes = (E_smp, I_smp)
         else:  # sqw
             res = self.calc.calculate_sqw(
                 self._q_cart, backend=self.backend,

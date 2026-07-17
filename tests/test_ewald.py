@@ -60,6 +60,7 @@ def test_ewald_matches_sunny():
     assert np.allclose(got, want, atol=1e-5), f"got {got}, Sunny {want}"
 
 
+@pytest.mark.slow
 def test_truncated_sum_converges_to_ewald():
     """Independent of Sunny: the truncated sum must approach Ewald as the cutoff grows.
     (They differ by the surface/demagnetisation term, which is what makes a truncated
@@ -158,6 +159,7 @@ def test_ewald_with_single_k_is_rejected_not_silently_wrong():
         calc.calculate_sqw([np.array([0.2, 0, 0]) @ B], satellites=True)
 
 
+@pytest.mark.slow
 def test_ewald_reaches_the_sqw_path_too():
     """Regression: the dipolar term is injected into the S(Q,w) workers as well as the
     dispersion ones. (An earlier edit silently no-op'd on the S(Q,w) worker, so its

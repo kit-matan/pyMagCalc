@@ -88,6 +88,7 @@ def test_temperature_unset_is_identity(fm_chain):
 
 # ------------------------------------------------------------- cross-sections
 
+@pytest.mark.slow
 def test_diagonal_components_sum_to_trace(fm_chain):
     calc, _, qs, _ = fm_chain
     tr = calc.calculate_sqw(qs, cross_section="trace")
@@ -96,6 +97,7 @@ def test_diagonal_components_sum_to_trace(fm_chain):
     assert np.allclose(tr.intensities, diag, atol=1e-10)
 
 
+@pytest.mark.slow
 def test_perp_equals_trace_minus_projection(fm_chain):
     calc, _, qs, base = fm_chain
     tr = calc.calculate_sqw(qs, cross_section="trace")
@@ -115,6 +117,7 @@ def test_unknown_cross_section_raises(fm_chain):
 
 # ------------------------------------------------------------------- domains
 
+@pytest.mark.slow
 def test_domain_average_equals_manual_average(fm_chain):
     calc, _, qs, base = fm_chain
     doms = [{"axis": [0, 0, 1], "angle": 0},
@@ -129,6 +132,7 @@ def test_domain_average_equals_manual_average(fm_chain):
     assert np.allclose(dres.energies, man_E, atol=1e-12)
 
 
+@pytest.mark.slow
 def test_domain_nfold_shorthand(fm_chain):
     calc, _, qs, base = fm_chain
     d3 = calc.calculate_sqw(qs, domains={"axis": [0, 0, 1], "n_fold": 3})
@@ -318,6 +322,7 @@ _FE = {"label": "Fe", "pos": [0.0, 0.5, 0.0], "spin_S": 2.0, "ion": "Cu2+"}
 _QS_MS = [[0.12, 0, 0], [0.3, 0, 0], [0.45, 0, 0]]
 
 
+@pytest.mark.slow
 def test_mixed_spin_intensity_is_additive_over_decoupled_sublattices():
     """The S(Q,w) prefactor is sqrt(S_i/2) PER SITE. With a single global sqrt(S/2)
     (the old code) the weight of every site whose S differs from the reference is wrong
@@ -366,6 +371,7 @@ def _ferri(J, temperature):
     return np.real(res.intensities)
 
 
+@pytest.mark.slow
 def test_ignoring_temperature_biases_an_intensity_fit():
     """Fitting intensities at T=0 when the data were measured warm biases the exchange.
     Synthetic data at 40 K from J = 1.30; profile out a scale nuisance (what a real

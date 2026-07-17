@@ -159,6 +159,49 @@ def fibonacci_sphere_points(q_mag: float, num_samples: int) -> npt.NDArray[np.fl
                             q_mag * np.cos(phi)))
 
 
+def powder_sample_modes(calculator, q_magnitudes, num_samples: int = 50,
+                        backend: str = "numpy", temperature=None,
+                        cross_section: str = "perp"):
+    """Sample-resolved powder modes: the CORRECT input for powder lineshapes.
+
+    For each |q| shell, evaluates calculate_sqw at `num_samples` Fibonacci-sphere
+    directions and returns every mode of every direction:
+
+        energies   (n_shells, num_samples * n_modes)
+        intensities(n_shells, num_samples * n_modes)   [each direction / num_samples]
+
+    Broadening these (plot_sqw_map / broaden_spectrum) reproduces the true powder
+    average I(|Q|, w) -- the SpinW `powspec` convention: each sampled direction
+    deposits its intensity at its OWN mode energy, building the full band shape,
+    van Hove peaks and all. Averaging the mode energies over the sphere FIRST (the
+    legacy per-mode representation) collapses a dispersive band to its center --
+    e.g. Cu5SbO6's 10 meV-wide triplon band became a ~1 meV blob at J1, in
+    contradiction with the published powder spectrum (PRR 8, 013247, Fig. 5).
+
+    Works with any calculator exposing calculate_sqw (dipole MagCalc, SU(N),
+    entangled). The legacy sphere-averaged representation can be derived from the
+    result by reshaping to (n_shells, num_samples, n_modes) and averaging axis 1.
+    """
+    q_mags = np.asarray(q_magnitudes, dtype=float).ravel()
+    all_q = []
+    for q_mag in q_mags:
+        # Always num_samples points (a Q~0 shell is direction-independent anyway),
+        # keeping the output rectangular.
+        pts = fibonacci_sphere_points(max(float(q_mag), Q_ZERO_THRESHOLD),
+                                      num_samples)
+        if len(pts) == 1:
+            pts = np.repeat(pts, num_samples, axis=0)
+        all_q.extend(pts)
+    res = calculator.calculate_sqw(np.asarray(all_q), backend=backend,
+                                   temperature=temperature,
+                                   cross_section=cross_section)
+    n_modes = res.energies.shape[1]
+    E = np.asarray(res.energies).reshape(len(q_mags), num_samples * n_modes)
+    I = np.asarray(res.intensities).reshape(len(q_mags),
+                                            num_samples * n_modes) / num_samples
+    return E, I
+
+
 def powder_average_from_sqw(calculator, q_magnitudes, num_samples: int = 50,
                             backend: str = "numpy", temperature=None,
                             cross_section: str = "perp") -> SqwResult:

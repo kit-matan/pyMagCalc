@@ -175,7 +175,15 @@ plausible-but-wrong spectra that looked fine:
   cancel (Gate 3: one site; FeI2: supercell of one atom) -- dispersions were exact
   while the S=1/2 AFM chain's zone-boundary intensity was ~60x too weak (the
   (u-v)^2 combination instead of (u+v)^2). Caught by the powder work; pinned by
-  Gate 1b (`tests/test_powder_sun.py`) against Sunny to 2e-8.
+  Gate 1b (`tests/test_powder_sun.py`) against Sunny to 2e-8;
+- the powder average reported mode ENERGIES averaged over the sphere -- fine for
+  near-flat bands (where it was calibrated), but it collapses a dispersive band to
+  its center: Cu5SbO6's 10 meV triplon band became a ~1 meV blob at J1, in
+  contradiction with the published powder spectrum (PRR 8, 013247 Fig. 5). Powder
+  plots and fits now use SAMPLE-RESOLVED modes (each sphere direction keeps its own
+  energies -- SpinW `powspec` convention); pinned analytically by the exact dimer
+  interference factor 1 - sin(Qd)/(Qd) and by the paper's peaks
+  (`tests/test_powder_binned.py`).
 
 Every one was caught by an **independent oracle or an exact identity**, never by
 inspection. So: validate against Sunny (in-repo) or a textbook analytic result; prefer

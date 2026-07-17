@@ -17,6 +17,7 @@ except ImportError:
 
 from magcalc.core import MagCalc
 
+@pytest.mark.slow
 def test_kfe3j_integration():
     """
     Integration test using KFe3J example.
