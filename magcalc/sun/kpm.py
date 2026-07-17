@@ -4,7 +4,9 @@ Full diagonalization of the 2D×2D Bogoliubov–de Gennes matrix costs O(D³) pe
 which is prohibitive for the large magnetic cells that arise with quenched disorder
 or near-incommensurate order. KPM replaces it by a Chebyshev expansion of the
 spectral function, built from iterated matrix–vector products with the dynamical
-matrix — O(D·M) per q for M moments (D·M·nnz with a sparse matrix), no eigensolve.
+matrix — no eigensolve. With the dense matrices the engine currently builds this is
+O(D²·M) per q for M moments (an eigensolve is O(D³)); a sparse dynamical matrix
+would bring it to O(nnz·M).
 
 The subtlety is that the LSWT dynamical matrix is the PARA-unitary (non-Hermitian)
 D̂ = g H₂, with H₂ ≻ 0 Hermitian and g = diag(1_D, −1_D); its spectrum is the real

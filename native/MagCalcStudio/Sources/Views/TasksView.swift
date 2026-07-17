@@ -41,8 +41,65 @@ struct TasksView: View {
                                systemImage: "wind", isOn: $model.config.tasks.powderAverage)
                 TaskToggleCard(title: "1/S Corrections", subtitle: "Zero-point energy + moment reduction",
                                systemImage: "target", isOn: $model.config.tasks.corrections)
+                TaskToggleCard(title: "Diffuse S(q) — SCGA", subtitle: "Paramagnetic, above T_N",
+                               systemImage: "magnifyingglass", isOn: $model.config.tasks.scga)
+                TaskToggleCard(title: "Thermal Monte-Carlo", subtitle: "E, C, M, χ vs T (parallel tempering)",
+                               systemImage: "flask", isOn: $model.config.tasks.thermalMC)
+                TaskToggleCard(title: "Classical Dynamics S(q,ω)", subtitle: "Finite-T lineshapes (Landau–Lifshitz)",
+                               systemImage: "play.circle", isOn: $model.config.tasks.sampledCorrelations)
+                TaskToggleCard(title: "KPM S(q,ω)", subtitle: "No-diagonalization (SU(N)/entangled)",
+                               systemImage: "bolt", isOn: $model.config.tasks.kpmSqw)
+            }
+            if model.config.tasks.scga || model.config.tasks.thermalMC
+                || model.config.tasks.sampledCorrelations || model.config.tasks.kpmSqw {
+                beyondLswtSettings
             }
         }
+    }
+
+    /// Parameter fields for the beyond-LSWT tasks; shown only when one is enabled.
+    private var beyondLswtSettings: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Beyond-LSWT settings").font(.caption.bold()).foregroundStyle(.secondary)
+            if model.config.tasks.scga {
+                HStack(spacing: 10) {
+                    NumberField(label: "SCGA kT (meV)", value: $model.config.scga.temperature)
+                    IntField(label: "SCGA mesh density", value: $model.config.scga.meshDensity)
+                }
+                .frame(maxWidth: 420)
+            }
+            if model.config.tasks.thermalMC {
+                HStack(spacing: 10) {
+                    LabeledTextField(label: "MC temperatures (meV, comma-sep)",
+                                     text: $model.config.thermalMC.temperatures)
+                    LabeledTextField(label: "MC supercell (L1,L2,L3)",
+                                     text: $model.config.thermalMC.supercell)
+                    IntField(label: "MC sweeps", value: $model.config.thermalMC.nSweeps)
+                }
+                .frame(maxWidth: 640)
+            }
+            if model.config.tasks.sampledCorrelations {
+                HStack(spacing: 10) {
+                    NumberField(label: "Dynamics kT (meV)",
+                                value: $model.config.sampledCorrelations.temperature)
+                    LabeledTextField(label: "Supercell (L1,L2,L3)",
+                                     text: $model.config.sampledCorrelations.supercell)
+                    IntField(label: "Trajectories", value: $model.config.sampledCorrelations.nTraj)
+                }
+                .frame(maxWidth: 640)
+            }
+            if model.config.tasks.kpmSqw {
+                HStack(spacing: 10) {
+                    NumberField(label: "KPM E max (meV)", value: $model.config.kpm.eMax)
+                    NumberField(label: "KPM FWHM (meV)", value: $model.config.kpm.fwhm)
+                }
+                .frame(maxWidth: 420)
+            }
+            Text("SCGA / thermal MC / dynamics are classical (paramagnetic-friendly): run alone they skip the LSWT ground-state check. KPM needs the SU(N) or entangled engine.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.top, 6)
     }
 
     // MARK: Display parameters
@@ -203,8 +260,18 @@ struct TasksView: View {
                     Picker("", selection: $model.config.calculation.mode) {
                         Text("Dipole (default)").tag("dipole")
                         Text("SU(N) — single-ion / multipolar").tag("SUN")
+                        Text("Entangled units — dimers / trimers").tag("entangled")
                     }
                     .labelsHidden()
+                    if model.config.calculation.mode == "entangled" {
+                        LabeledTextField(label: "Units (JSON, site indices per unit)",
+                                         text: $model.config.calculation.unitsText)
+                        IntField(label: "Dimer series order (0 = harmonic)",
+                                     value: $model.config.calculation.seriesOrder)
+                        Text("Each unit (e.g. a singlet dimer) becomes one effective SU(N) site; excitations are its triplons. Orders ≥ 4 of the series get expensive — see TUTORIAL §4g.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                     Text("SU(N) captures single-ion (multipolar) excitations — e.g. FeI₂'s bound state — that dipole LSWT cannot represent. Use it for S ≥ 1 with strong single-ion anisotropy.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)

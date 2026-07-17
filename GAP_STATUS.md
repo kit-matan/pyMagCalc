@@ -142,10 +142,15 @@ guard refuses). Never silently wrong.
   because a stationary *maximum* (or a wrong SU(N) reference) returns a real, positive,
   plausible spectrum the imaginary check cannot see.
 - **Studio (web + native) controls**: minimization method picker, Ground-State Check,
-  LSWT engine (dipole/SU(N)), temperature, cross-section, 1/S corrections task. The new
-  interaction *types* (biquadratic/Stevens/3×3 SIA/dipole-dipole/g-tensor/multi-k),
-  energy-cut, resolution, and mCIF are NOT in the GUI yet (need bond/matrix editors);
-  they work via the config/CLI today.
+  LSWT engine (dipole/SU(N)/**entangled** incl. units + dimer series order),
+  temperature, cross-section, 1/S corrections task, and the four beyond-LSWT tasks
+  (**SCGA / thermal MC / SampledCorrelations / KPM**) with per-task settings — each
+  produces a plot the apps display (runner-side `plot_scga`/`plot_thermal_mc`/
+  `plot_sqw_grid`). The server passes ALL beyond-LSWT blocks through verbatim
+  (`tests/test_gui_passthrough.py` pins this — they used to be silently dropped by a
+  whitelist). Still config/CLI-only: the new interaction *types* (biquadratic/
+  Stevens/3×3 SIA/dipole-dipole/g-tensor/multi-k) and the energy-cut/resolution
+  editors (the blocks pass through if present; there is just no UI editor).
 
 ---
 

@@ -416,6 +416,21 @@ async def trigger_calculation(config: Dict[str, Any]):
         expanded_data["plotting"]["sqw_plot_filename"] = "sqw_plot.png"
         expanded_data["plotting"]["powder_plot_filename"] = "powder_plot.png"
         expanded_data["plotting"]["structure_plot_filename"] = "mag_structure.png"
+        expanded_data["plotting"]["scga_plot_filename"] = "scga_plot.png"
+        expanded_data["plotting"]["thermal_mc_plot_filename"] = "thermal_mc_plot.png"
+        expanded_data["plotting"]["sampled_correlations_plot_filename"] = \
+            "sampled_correlations_plot.png"
+        expanded_data["plotting"]["kpm_plot_filename"] = "kpm_plot.png"
+        expanded_data["plotting"]["energy_cut_plot_filename"] = "energy_cut.png"
+        # remove stale copies so a run without the task doesn't serve old results
+        for _pf in ("scga_plot.png", "thermal_mc_plot.png",
+                    "sampled_correlations_plot.png", "kpm_plot.png", "energy_cut.png"):
+            try:
+                _p = os.path.join(project_root, _pf)
+                if os.path.exists(_p):
+                    os.remove(_p)
+            except OSError:
+                pass
 
         # When a fit is requested, pin the comparison-plot and report filenames so
         # the UI can capture and serve them reliably (same pattern as the plots).
@@ -517,6 +532,11 @@ async def trigger_calculation(config: Dict[str, Any]):
             
         if os.path.exists(os.path.join(project_root, "powder_plot.png")):
             results["plots"].append("/files/powder_plot.png")
+
+        for _pf in ("scga_plot.png", "thermal_mc_plot.png",
+                    "sampled_correlations_plot.png", "kpm_plot.png", "energy_cut.png"):
+            if os.path.exists(os.path.join(project_root, _pf)):
+                results["plots"].append(f"/files/{_pf}")
 
         if os.path.exists(os.path.join(project_root, "fit_comparison.png")):
             results["plots"].append("/files/fit_comparison.png")
@@ -1223,6 +1243,16 @@ async def expand_config(config: Dict[str, Any]):
             "powder_average": data.get("powder_average", {}),
             "fitting": data.get("fitting", {})
         }
+
+        # Beyond-LSWT / auxiliary blocks: pass through verbatim. These are consumed
+        # by the runner's task blocks; without this they were silently DROPPED by the
+        # whitelist above, so tasks like scga/thermal_mc ran with defaults (or not at
+        # all) from the apps while working from the CLI.
+        for k in ("scga", "thermal_mc", "sampled_correlations", "kpm",
+                  "corrections", "energy_cut", "units", "parameter_order",
+                  "hamiltonian_params"):
+            if data.get(k) is not None:
+                expanded_config[k] = data[k]
 
         return expanded_config
         

@@ -245,7 +245,11 @@ function App() {
       export_csv: false,
       powder_average: false,
       plot_structure: false,
-      corrections: false
+      corrections: false,
+      scga: false,
+      thermal_mc: false,
+      sampled_correlations: false,
+      kpm_sqw: false
     },
     q_path: {
       points: { Start: [0, 1, 0], End: [0, 3, 0] },
@@ -299,8 +303,18 @@ function App() {
       on_imaginary: 'error',
       mode: 'dipole',
       temperature: null,
-      cross_section: 'perp'
+      cross_section: 'perp',
+      // entangled mode extras (used only when mode === 'entangled')
+      series_order: 0,
+      units_text: ''
     },
+    // Beyond-LSWT task settings (sent only when the matching task is enabled).
+    scga: { temperature: 1.0, mesh_density: 12 },
+    thermal_mc: { temperatures: '0.5, 1.0, 2.0, 4.0', supercell: '4, 4, 1',
+                  n_sweeps: 4000, n_equil: 1500 },
+    sampled_correlations: { temperature: 0.5, supercell: '8, 1, 1', dt: 0.02,
+                            n_steps: 2048, n_traj: 8 },
+    kpm: { e_min: 0.0, e_max: 10.0, e_step: 0.05, fwhm: 0.1 },
     powder_average: {
       q_min: 0.1,
       q_max: 4.0,
@@ -556,7 +570,11 @@ function App() {
       powder_average: false,
       export_csv: false,
       plot_structure: false,
-      corrections: false
+      corrections: false,
+      scga: false,
+      thermal_mc: false,
+      sampled_correlations: false,
+      kpm_sqw: false
     },
     q_path: {
       points: { Gamma: [0, 0, 0] },
@@ -621,8 +639,18 @@ function App() {
       on_imaginary: 'error',
       mode: 'dipole',
       temperature: null,
-      cross_section: 'perp'
+      cross_section: 'perp',
+      // entangled mode extras (used only when mode === 'entangled')
+      series_order: 0,
+      units_text: ''
     },
+    // Beyond-LSWT task settings (sent only when the matching task is enabled).
+    scga: { temperature: 1.0, mesh_density: 12 },
+    thermal_mc: { temperatures: '0.5, 1.0, 2.0, 4.0', supercell: '4, 4, 1',
+                  n_sweeps: 4000, n_equil: 1500 },
+    sampled_correlations: { temperature: 0.5, supercell: '8, 1, 1', dt: 0.02,
+                            n_steps: 2048, n_traj: 8 },
+    kpm: { e_min: 0.0, e_max: 10.0, e_step: 0.05, fwhm: 0.1 },
     fitting: {
       type: 'dispersion',
       data_file: '',
@@ -877,7 +905,9 @@ function App() {
         enabled: config.tasks.minimization,
         ...config.minimization
       },
-      output: config.output
+      calculation: buildCalcPayload(),
+      output: config.output,
+      ...buildBeyondLswtBlocks()
     }
 
     try {
@@ -1119,6 +1149,64 @@ function App() {
     }
   }, [activeTab, config.lattice, config.wyckoff_atoms])
 
+  // ---- Beyond-LSWT payload helpers ------------------------------------- //
+  // Parse '0.5, 1, 2' or '4,4,1' style strings into number lists.
+  const parseNumList = (v, fallback) => {
+    if (Array.isArray(v)) return v.map(Number)
+    if (typeof v !== 'string') return fallback
+    const out = v.split(/[\s,]+/).filter(Boolean).map(Number).filter(x => !isNaN(x))
+    return out.length ? out : fallback
+  }
+
+  // The config blocks for the beyond-LSWT tasks (SCGA, thermal MC, classical
+  // dynamics, KPM) plus entangled-mode extras. Only enabled tasks emit a block, so
+  // the YAML stays clean. Consumed by the runner's task blocks (see TUTORIAL 4h).
+  const buildBeyondLswtBlocks = () => {
+    const out = {}
+    if (config.tasks.scga) out.scga = {
+      temperature: Number(config.scga.temperature) || 1.0,
+      mesh_density: Number(config.scga.mesh_density) || 12
+    }
+    if (config.tasks.thermal_mc) out.thermal_mc = {
+      temperatures: parseNumList(config.thermal_mc.temperatures, [0.5, 1, 2, 4]),
+      supercell: parseNumList(config.thermal_mc.supercell, [4, 4, 1]),
+      n_sweeps: Number(config.thermal_mc.n_sweeps) || 4000,
+      n_equil: Number(config.thermal_mc.n_equil) || 1500
+    }
+    if (config.tasks.sampled_correlations) out.sampled_correlations = {
+      temperature: Number(config.sampled_correlations.temperature) || 0.5,
+      supercell: parseNumList(config.sampled_correlations.supercell, [8, 1, 1]),
+      dt: Number(config.sampled_correlations.dt) || 0.02,
+      n_steps: Number(config.sampled_correlations.n_steps) || 2048,
+      n_traj: Number(config.sampled_correlations.n_traj) || 8
+    }
+    if (config.tasks.kpm_sqw) out.kpm = {
+      e_min: Number(config.kpm.e_min) || 0,
+      e_max: Number(config.kpm.e_max) || 10,
+      e_step: Number(config.kpm.e_step) || 0.05,
+      fwhm: Number(config.kpm.fwhm) || 0.1
+    }
+    if (config.calculation.mode === 'entangled' && config.calculation.units_text) {
+      try {
+        const u = JSON.parse(config.calculation.units_text)
+        if (Array.isArray(u) && u.length) out.units = u
+      } catch { /* leave units for the runner to derive/complain about */ }
+    }
+    return out
+  }
+
+  // calculation block for the payload: strip UI-only fields; only send
+  // series_order when the entangled series is actually requested.
+  const buildCalcPayload = () => {
+    const calc = { ...config.calculation }
+    delete calc.units_text
+    if (!(calc.mode === 'entangled' && Number(calc.series_order) > 0)) {
+      delete calc.series_order
+      delete calc.series_resum
+    }
+    return calc
+  }
+
   const updateField = (section, field, value) => {
     setConfig(prev => ({
       ...prev,
@@ -1264,9 +1352,10 @@ function App() {
         ...config.minimization
       },
       powder_average: config.powder_average,
-      calculation: config.calculation,
+      calculation: buildCalcPayload(),
       output: config.output,
-      fitting: config.fitting
+      fitting: config.fitting,
+      ...buildBeyondLswtBlocks()
     }
 
     // Per-run overrides (e.g. the Fitting panel forces `tasks: { fit: true }`
@@ -2314,7 +2403,159 @@ function App() {
                             <Check size={12} strokeWidth={4} />
                           </div>
                         </div>
+
+                        <div
+                          className={`task-card ${config.tasks.scga ? 'active' : ''}`}
+                          onClick={() => updateField('tasks', 'scga', !config.tasks.scga)}
+                        >
+                          <div className="task-icon-box">
+                            <Search size={18} />
+                          </div>
+                          <div className="task-info">
+                            <span className="task-name">Diffuse S(q) — SCGA</span>
+                            <span className="task-desc">Paramagnetic, above T_N</span>
+                          </div>
+                          <div className="task-check">
+                            <Check size={12} strokeWidth={4} />
+                          </div>
+                        </div>
+
+                        <div
+                          className={`task-card ${config.tasks.thermal_mc ? 'active' : ''}`}
+                          onClick={() => updateField('tasks', 'thermal_mc', !config.tasks.thermal_mc)}
+                        >
+                          <div className="task-icon-box">
+                            <Beaker size={18} />
+                          </div>
+                          <div className="task-info">
+                            <span className="task-name">Thermal Monte-Carlo</span>
+                            <span className="task-desc">E, C, M, χ vs T (parallel tempering)</span>
+                          </div>
+                          <div className="task-check">
+                            <Check size={12} strokeWidth={4} />
+                          </div>
+                        </div>
+
+                        <div
+                          className={`task-card ${config.tasks.sampled_correlations ? 'active' : ''}`}
+                          onClick={() => updateField('tasks', 'sampled_correlations', !config.tasks.sampled_correlations)}
+                        >
+                          <div className="task-icon-box">
+                            <Play size={18} />
+                          </div>
+                          <div className="task-info">
+                            <span className="task-name">Classical Dynamics S(q,ω)</span>
+                            <span className="task-desc">Finite-T lineshapes (Landau–Lifshitz)</span>
+                          </div>
+                          <div className="task-check">
+                            <Check size={12} strokeWidth={4} />
+                          </div>
+                        </div>
+
+                        <div
+                          className={`task-card ${config.tasks.kpm_sqw ? 'active' : ''}`}
+                          onClick={() => updateField('tasks', 'kpm_sqw', !config.tasks.kpm_sqw)}
+                        >
+                          <div className="task-icon-box">
+                            <Zap size={18} />
+                          </div>
+                          <div className="task-info">
+                            <span className="task-name">KPM S(q,ω)</span>
+                            <span className="task-desc">No-diagonalization (SU(N)/entangled)</span>
+                          </div>
+                          <div className="task-check">
+                            <Check size={12} strokeWidth={4} />
+                          </div>
+                        </div>
                       </div>
+
+                      {(config.tasks.scga || config.tasks.thermal_mc ||
+                        config.tasks.sampled_correlations || config.tasks.kpm_sqw) && (
+                        <div className="mt-md">
+                          <h4 className="mb-sm">Beyond-LSWT settings</h4>
+                          {config.tasks.scga && (
+                            <div className="grid-form mb-md">
+                              <div className="input-group">
+                                <label>SCGA kT (meV)</label>
+                                <input type="number" step="0.1" className="minimal-input"
+                                  value={config.scga.temperature}
+                                  onChange={(e) => updateField('scga', 'temperature', e.target.value)} />
+                              </div>
+                              <div className="input-group">
+                                <label>SCGA mesh density</label>
+                                <input type="number" step="1" className="minimal-input"
+                                  value={config.scga.mesh_density}
+                                  onChange={(e) => updateField('scga', 'mesh_density', e.target.value)} />
+                              </div>
+                            </div>
+                          )}
+                          {config.tasks.thermal_mc && (
+                            <div className="grid-form mb-md">
+                              <div className="input-group">
+                                <label>MC temperatures (meV, comma-sep)</label>
+                                <input type="text" className="minimal-input"
+                                  value={config.thermal_mc.temperatures}
+                                  onChange={(e) => updateField('thermal_mc', 'temperatures', e.target.value)} />
+                              </div>
+                              <div className="input-group">
+                                <label>MC supercell (L1,L2,L3)</label>
+                                <input type="text" className="minimal-input"
+                                  value={config.thermal_mc.supercell}
+                                  onChange={(e) => updateField('thermal_mc', 'supercell', e.target.value)} />
+                              </div>
+                              <div className="input-group">
+                                <label>MC sweeps</label>
+                                <input type="number" step="500" className="minimal-input"
+                                  value={config.thermal_mc.n_sweeps}
+                                  onChange={(e) => updateField('thermal_mc', 'n_sweeps', e.target.value)} />
+                              </div>
+                            </div>
+                          )}
+                          {config.tasks.sampled_correlations && (
+                            <div className="grid-form mb-md">
+                              <div className="input-group">
+                                <label>Dynamics kT (meV)</label>
+                                <input type="number" step="0.1" className="minimal-input"
+                                  value={config.sampled_correlations.temperature}
+                                  onChange={(e) => updateField('sampled_correlations', 'temperature', e.target.value)} />
+                              </div>
+                              <div className="input-group">
+                                <label>Dynamics supercell (L1,L2,L3)</label>
+                                <input type="text" className="minimal-input"
+                                  value={config.sampled_correlations.supercell}
+                                  onChange={(e) => updateField('sampled_correlations', 'supercell', e.target.value)} />
+                              </div>
+                              <div className="input-group">
+                                <label>Trajectories</label>
+                                <input type="number" step="1" className="minimal-input"
+                                  value={config.sampled_correlations.n_traj}
+                                  onChange={(e) => updateField('sampled_correlations', 'n_traj', e.target.value)} />
+                              </div>
+                            </div>
+                          )}
+                          {config.tasks.kpm_sqw && (
+                            <div className="grid-form mb-md">
+                              <div className="input-group">
+                                <label>KPM E max (meV)</label>
+                                <input type="number" step="1" className="minimal-input"
+                                  value={config.kpm.e_max}
+                                  onChange={(e) => updateField('kpm', 'e_max', e.target.value)} />
+                              </div>
+                              <div className="input-group">
+                                <label>KPM FWHM (meV)</label>
+                                <input type="number" step="0.05" className="minimal-input"
+                                  value={config.kpm.fwhm}
+                                  onChange={(e) => updateField('kpm', 'fwhm', e.target.value)} />
+                              </div>
+                            </div>
+                          )}
+                          <p className="text-xs opacity-50">
+                            SCGA / thermal MC / dynamics are classical (paramagnetic-friendly):
+                            run alone they skip the LSWT ground-state check. KPM needs the
+                            SU(N) or entangled engine.
+                          </p>
+                        </div>
+                      )}
                     </div>
 
                     <div className="card shadow-glow">
@@ -2570,6 +2811,7 @@ function App() {
                           >
                             <option value="dipole">Dipole (default)</option>
                             <option value="SUN">SU(N) — single-ion / multipolar</option>
+                            <option value="entangled">Entangled units — dimers / trimers</option>
                           </select>
                           <p className="text-xs opacity-50 mt-xs">
                             SU(N) captures single-ion (multipolar) excitations — e.g. FeI₂'s
@@ -2582,6 +2824,29 @@ function App() {
                               <strong> Run Minimization</strong> so it is found in SU(N), not
                               inherited. Powder/domain averaging are not yet supported.
                             </p>
+                          )}
+                          {config.calculation.mode === 'entangled' && (
+                            <div className="mt-xs">
+                              <div className="input-group">
+                                <label>Units (JSON, site indices per unit)</label>
+                                <input type="text" className="minimal-input"
+                                  placeholder='e.g. [[0,1],[2,3]] — blank: from config'
+                                  value={config.calculation.units_text || ''}
+                                  onChange={(e) => updateField('calculation', 'units_text', e.target.value)} />
+                              </div>
+                              <div className="input-group mt-xs">
+                                <label>Dimer series order (0 = harmonic)</label>
+                                <input type="number" step="1" min="0" className="minimal-input"
+                                  value={config.calculation.series_order || 0}
+                                  onChange={(e) => updateField('calculation', 'series_order',
+                                    parseInt(e.target.value) || 0)} />
+                              </div>
+                              <p className="text-xs opacity-50 mt-xs">
+                                Each unit (e.g. a singlet dimer) becomes one effective SU(N)
+                                site; excitations are its triplons. Orders ≥ 4 of the series
+                                get expensive — see TUTORIAL §4g.
+                              </p>
+                            </div>
                           )}
                         </div>
 

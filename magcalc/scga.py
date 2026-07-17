@@ -126,7 +126,6 @@ def _q_mesh(lat, nq, wraps):
 
 def _wraps(cache):
     w = np.zeros(3, bool)
-    lat = None
     for (_i, _j, R_cart, _M) in cache["bonds"]:
         w |= np.abs(R_cart) > 1e-9
     return w if w.any() else np.array([True, True, True])
@@ -163,7 +162,9 @@ def solve_lambda(model, params, kT, nq=12, mesh=None):
     while g(hi) > 0:
         hi = lam_min + 2 * (hi - lam_min)
         if hi - lam_min > 1e12:
-            break
+            raise RuntimeError(
+                "SCGA sum rule has no solution in a sane range -- check kT and the "
+                "spin magnitudes (target lambda would exceed lambda_min + 1e12).")
     lam = optimize.brentq(g, lo, hi, xtol=1e-14, rtol=1e-14, maxiter=200)
     residual = abs(g(lam)) / target
     return lam, lam_min, residual, cache, mesh

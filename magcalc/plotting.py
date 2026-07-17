@@ -508,3 +508,103 @@ def plot_fit_comparison(
     except Exception as e:
         logger.error(f"Failed to plot fit comparison: {e}")
         raise e
+
+
+def plot_scga(intensities, save_filename=None, temperature=None, labels=None,
+              show_plot=False):
+    """SCGA diffuse S(q) along the q-path (one line, q-path index on x)."""
+    try:
+        fig, ax = plt.subplots(figsize=(7, 4.2))
+        x = np.arange(len(intensities))
+        ax.plot(x, intensities, "-", lw=1.8)
+        ax.set_xlabel("q-path index")
+        ax.set_ylabel("S(q) (arb. units)")
+        ttl = "SCGA diffuse scattering"
+        if temperature is not None:
+            ttl += f"  (kT = {temperature:g} meV)"
+        ax.set_title(ttl)
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        if save_filename:
+            os.makedirs(os.path.dirname(os.path.abspath(save_filename)), exist_ok=True)
+            fig.savefig(save_filename, dpi=150, bbox_inches="tight", pad_inches=0.1)
+            logger.info(f"SCGA plot saved to {save_filename}")
+        if show_plot:
+            plt.show()
+        plt.close(fig)
+    except Exception as e:
+        logger.error(f"Failed to plot SCGA S(q): {e}")
+        raise
+
+
+def plot_thermal_mc(temperatures, energy, heat_capacity, magnetization,
+                    susceptibility, save_filename=None, show_plot=False):
+    """Thermal-MC thermodynamics: 2x2 panels of <E>/N, C/N, |M|/NS, chi vs kT."""
+    try:
+        fig, axes = plt.subplots(2, 2, figsize=(8.5, 6.2), sharex=True)
+        panels = [(energy, r"$\langle E\rangle/N$ (meV)"),
+                  (heat_capacity, r"$C/N$"),
+                  (magnetization, r"$|M|/(NS)$"),
+                  (susceptibility, r"$\chi$ per spin")]
+        for ax, (y, lbl) in zip(axes.ravel(), panels):
+            ax.plot(temperatures, y, "o-", ms=4)
+            ax.set_ylabel(lbl)
+            ax.grid(True, alpha=0.3)
+        for ax in axes[1]:
+            ax.set_xlabel("kT (meV)")
+        fig.suptitle("Thermal Monte-Carlo (parallel tempering)")
+        fig.tight_layout()
+        if save_filename:
+            os.makedirs(os.path.dirname(os.path.abspath(save_filename)), exist_ok=True)
+            fig.savefig(save_filename, dpi=150, bbox_inches="tight", pad_inches=0.1)
+            logger.info(f"Thermal-MC plot saved to {save_filename}")
+        if show_plot:
+            plt.show()
+        plt.close(fig)
+    except Exception as e:
+        logger.error(f"Failed to plot thermal MC: {e}")
+        raise
+
+
+def plot_sqw_grid(energies, intensities, save_filename=None, title="S(q,w)",
+                  e_max=None, log_scale=True, show_plot=False):
+    """Generic S(q,w) map on (q-path index, energy) -- used by the KPM and
+    SampledCorrelations tasks. `intensities` has shape (n_energies, n_q)."""
+    try:
+        energies = np.asarray(energies, float)
+        I = np.asarray(intensities, float)
+        if e_max is not None:
+            keep = energies <= float(e_max)
+            energies, I = energies[keep], I[keep]
+        fig, ax = plt.subplots(figsize=(7, 4.8))
+        pos = I[I > 0]
+        norm = None
+        if log_scale and pos.size:
+            vmax = float(pos.max())
+            norm = LogNorm(vmin=max(vmax * 1e-4, float(pos.min())), vmax=vmax)
+        mesh = ax.pcolormesh(np.arange(I.shape[1] + 1), _bin_edges(energies), I,
+                             cmap="viridis", norm=norm, shading="flat")
+        fig.colorbar(mesh, ax=ax, label="Intensity (arb. units)")
+        ax.set_xlabel("q-path index")
+        ax.set_ylabel("Energy (meV)")
+        ax.set_title(title)
+        fig.tight_layout()
+        if save_filename:
+            os.makedirs(os.path.dirname(os.path.abspath(save_filename)), exist_ok=True)
+            fig.savefig(save_filename, dpi=150, bbox_inches="tight", pad_inches=0.1)
+            logger.info(f"S(q,w) map saved to {save_filename}")
+        if show_plot:
+            plt.show()
+        plt.close(fig)
+    except Exception as e:
+        logger.error(f"Failed to plot S(q,w) map: {e}")
+        raise
+
+
+def _bin_edges(centers):
+    centers = np.asarray(centers, float)
+    if len(centers) < 2:
+        return np.array([centers[0] - 0.5, centers[0] + 0.5])
+    mid = 0.5 * (centers[1:] + centers[:-1])
+    return np.concatenate([[centers[0] - (mid[0] - centers[0])], mid,
+                           [centers[-1] + (centers[-1] - mid[-1])]])

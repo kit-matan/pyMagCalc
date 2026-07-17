@@ -1035,6 +1035,15 @@ def run_calculation(config_file: str):
                     np.savez(sf, q_vectors=q_cart, intensities=res.intensities,
                              lam=res.lam, temperature=res.temperature)
                     logger.info(f"SCGA S(q) saved to {sf}")
+                plot_cfg = final_config.get('plotting', {}) or {}
+                if plot_cfg.get('save_plot', True):
+                    from magcalc.plotting import plot_scga
+                    pf = plot_cfg.get('scga_plot_filename', 'scga_plot.png')
+                    if not os.path.isabs(pf):
+                        pf = os.path.join(config_dir, pf)
+                    plot_scga(res.intensities, save_filename=pf,
+                              temperature=res.temperature,
+                              show_plot=plot_cfg.get('show_plot', False))
             except Exception as e:
                 logger.error(f"SCGA calculation failed: {e}")
                 raise
@@ -1074,6 +1083,8 @@ def run_calculation(config_file: str):
                                 cross_section=kp.get('cross_section', 'perp'),
                                 ion=ion0)
                     smap[:, iq] = r.intensities
+                if not len(q_cart):
+                    raise ValueError("kpm_sqw: empty q-path.")
                 logger.info(
                     f"KPM S(q,w): {len(q_cart)} q x {len(energies)} E, "
                     f"~{r.n_moments} moments (gamma={r.gamma:.3f}); "
@@ -1087,8 +1098,18 @@ def run_calculation(config_file: str):
                     _safe_makedirs(kf)
                     np.savez(kf, q_vectors=q_cart, energies=energies, intensities=smap)
                     logger.info(f"KPM S(q,w) saved to {kf}")
+                plot_cfg = final_config.get('plotting', {}) or {}
+                if plot_cfg.get('save_plot', True):
+                    from magcalc.plotting import plot_sqw_grid
+                    pf = plot_cfg.get('kpm_plot_filename', 'kpm_plot.png')
+                    if not os.path.isabs(pf):
+                        pf = os.path.join(config_dir, pf)
+                    plot_sqw_grid(energies, smap, save_filename=pf,
+                                  title='KPM S(q,w) (Chebyshev)',
+                                  show_plot=plot_cfg.get('show_plot', False))
             except Exception as e:
                 logger.error(f"KPM calculation failed: {e}")
+                raise
 
     # 3f. Thermal Monte-Carlo -- finite-T thermodynamics (parallel tempering).
     if tasks.get('thermal_mc', False):
@@ -1125,8 +1146,19 @@ def run_calculation(config_file: str):
                              magnetization=res.magnetization,
                              susceptibility=res.susceptibility)
                     logger.info(f"Thermal MC saved to {tf}")
+                plot_cfg = final_config.get('plotting', {}) or {}
+                if plot_cfg.get('save_plot', True):
+                    from magcalc.plotting import plot_thermal_mc
+                    pf = plot_cfg.get('thermal_mc_plot_filename', 'thermal_mc_plot.png')
+                    if not os.path.isabs(pf):
+                        pf = os.path.join(config_dir, pf)
+                    plot_thermal_mc(res.temperatures, res.energy, res.heat_capacity,
+                                    res.magnetization, res.susceptibility,
+                                    save_filename=pf,
+                                    show_plot=plot_cfg.get('show_plot', False))
             except Exception as e:
                 logger.error(f"Thermal MC failed: {e}")
+                raise
 
     # 3g. SampledCorrelations -- classical-dynamics S(q,w) over the full q-path/energy
     # grid in one shot (finite-T lineshapes, above or below T_N).
@@ -1166,8 +1198,20 @@ def run_calculation(config_file: str):
                     np.savez(cf, q_vectors=res.q_vectors, energies=res.energies,
                              intensities=res.sqw)
                     logger.info(f"SampledCorrelations saved to {cf}")
+                plot_cfg = final_config.get('plotting', {}) or {}
+                if plot_cfg.get('save_plot', True):
+                    from magcalc.plotting import plot_sqw_grid
+                    pf = plot_cfg.get('sampled_correlations_plot_filename',
+                                      'sampled_correlations_plot.png')
+                    if not os.path.isabs(pf):
+                        pf = os.path.join(config_dir, pf)
+                    plot_sqw_grid(res.energies, res.sqw, save_filename=pf,
+                                  title=f'Classical dynamics S(q,w), kT={kT} meV',
+                                  e_max=sd.get('e_max'),
+                                  show_plot=plot_cfg.get('show_plot', False))
             except Exception as e:
                 logger.error(f"SampledCorrelations failed: {e}")
+                raise
 
     # 4. Powder Average
     # NOTE on units: dispersion and S(Q,w) above interpret q_path entries as

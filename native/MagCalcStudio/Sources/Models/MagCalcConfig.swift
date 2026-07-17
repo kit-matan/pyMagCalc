@@ -162,15 +162,139 @@ struct Tasks: Codable, Hashable {
     var plotStructure = false
     /// 1/S corrections: zero-point energy + ordered-moment reduction.
     var corrections = false
+    /// Beyond-LSWT tasks (see TUTORIAL 4h): SCGA diffuse S(q), thermal Monte-Carlo,
+    /// classical-dynamics S(q,w), and the KPM spectral solver.
+    var scga = false
+    var thermalMC = false
+    var sampledCorrelations = false
+    var kpmSqw = false
 
     enum CodingKeys: String, CodingKey {
-        case minimization, dispersion, corrections
+        case minimization, dispersion, corrections, scga
         case plotDispersion = "plot_dispersion"
         case sqwMap = "sqw_map"
         case plotSqwMap = "plot_sqw_map"
         case exportCSV = "export_csv"
         case powderAverage = "powder_average"
         case plotStructure = "plot_structure"
+        case thermalMC = "thermal_mc"
+        case sampledCorrelations = "sampled_correlations"
+        case kpmSqw = "kpm_sqw"
+    }
+
+    init() {}
+
+    // Decode with defaults so project files saved before a flag existed still open.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = Tasks()
+        minimization = try c.decodeIfPresent(Bool.self, forKey: .minimization) ?? d.minimization
+        dispersion = try c.decodeIfPresent(Bool.self, forKey: .dispersion) ?? d.dispersion
+        plotDispersion = try c.decodeIfPresent(Bool.self, forKey: .plotDispersion) ?? d.plotDispersion
+        sqwMap = try c.decodeIfPresent(Bool.self, forKey: .sqwMap) ?? d.sqwMap
+        plotSqwMap = try c.decodeIfPresent(Bool.self, forKey: .plotSqwMap) ?? d.plotSqwMap
+        exportCSV = try c.decodeIfPresent(Bool.self, forKey: .exportCSV) ?? d.exportCSV
+        powderAverage = try c.decodeIfPresent(Bool.self, forKey: .powderAverage) ?? d.powderAverage
+        plotStructure = try c.decodeIfPresent(Bool.self, forKey: .plotStructure) ?? d.plotStructure
+        corrections = try c.decodeIfPresent(Bool.self, forKey: .corrections) ?? d.corrections
+        scga = try c.decodeIfPresent(Bool.self, forKey: .scga) ?? d.scga
+        thermalMC = try c.decodeIfPresent(Bool.self, forKey: .thermalMC) ?? d.thermalMC
+        sampledCorrelations = try c.decodeIfPresent(Bool.self, forKey: .sampledCorrelations) ?? d.sampledCorrelations
+        kpmSqw = try c.decodeIfPresent(Bool.self, forKey: .kpmSqw) ?? d.kpmSqw
+    }
+}
+
+// MARK: - Beyond-LSWT task settings (mirror the web app's blocks; TUTORIAL 4h)
+
+struct SCGASettings: Codable, Hashable {
+    /// kT in meV (SCGA is classical: temperature IS the energy scale).
+    var temperature: Double = 1.0
+    var meshDensity: Int = 12
+
+    enum CodingKeys: String, CodingKey {
+        case temperature
+        case meshDensity = "mesh_density"
+    }
+
+    init() {}
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = SCGASettings()
+        temperature = try c.decodeIfPresent(Double.self, forKey: .temperature) ?? d.temperature
+        meshDensity = try c.decodeIfPresent(Int.self, forKey: .meshDensity) ?? d.meshDensity
+    }
+}
+
+struct ThermalMCSettings: Codable, Hashable {
+    /// Comma-separated kT list in meV, parsed at payload build.
+    var temperatures = "0.5, 1.0, 2.0, 4.0"
+    var supercell = "4, 4, 1"
+    var nSweeps: Int = 4000
+    var nEquil: Int = 1500
+
+    enum CodingKeys: String, CodingKey {
+        case temperatures, supercell
+        case nSweeps = "n_sweeps"
+        case nEquil = "n_equil"
+    }
+
+    init() {}
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = ThermalMCSettings()
+        temperatures = try c.decodeIfPresent(String.self, forKey: .temperatures) ?? d.temperatures
+        supercell = try c.decodeIfPresent(String.self, forKey: .supercell) ?? d.supercell
+        nSweeps = try c.decodeIfPresent(Int.self, forKey: .nSweeps) ?? d.nSweeps
+        nEquil = try c.decodeIfPresent(Int.self, forKey: .nEquil) ?? d.nEquil
+    }
+}
+
+struct SampledCorrelationsSettings: Codable, Hashable {
+    var temperature: Double = 0.5
+    var supercell = "8, 1, 1"
+    var dt: Double = 0.02
+    var nSteps: Int = 2048
+    var nTraj: Int = 8
+
+    enum CodingKeys: String, CodingKey {
+        case temperature, supercell, dt
+        case nSteps = "n_steps"
+        case nTraj = "n_traj"
+    }
+
+    init() {}
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = SampledCorrelationsSettings()
+        temperature = try c.decodeIfPresent(Double.self, forKey: .temperature) ?? d.temperature
+        supercell = try c.decodeIfPresent(String.self, forKey: .supercell) ?? d.supercell
+        dt = try c.decodeIfPresent(Double.self, forKey: .dt) ?? d.dt
+        nSteps = try c.decodeIfPresent(Int.self, forKey: .nSteps) ?? d.nSteps
+        nTraj = try c.decodeIfPresent(Int.self, forKey: .nTraj) ?? d.nTraj
+    }
+}
+
+struct KPMSettings: Codable, Hashable {
+    var eMin: Double = 0.0
+    var eMax: Double = 10.0
+    var eStep: Double = 0.05
+    var fwhm: Double = 0.1
+
+    enum CodingKeys: String, CodingKey {
+        case fwhm
+        case eMin = "e_min"
+        case eMax = "e_max"
+        case eStep = "e_step"
+    }
+
+    init() {}
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = KPMSettings()
+        eMin = try c.decodeIfPresent(Double.self, forKey: .eMin) ?? d.eMin
+        eMax = try c.decodeIfPresent(Double.self, forKey: .eMax) ?? d.eMax
+        eStep = try c.decodeIfPresent(Double.self, forKey: .eStep) ?? d.eStep
+        fwhm = try c.decodeIfPresent(Double.self, forKey: .fwhm) ?? d.fwhm
     }
 }
 
@@ -292,12 +416,33 @@ struct CalculationSettings: Codable, Hashable {
     /// Neutron cross-section contraction: "perp" (default) | "trace" | "chiral" | a
     /// tensor component like "xx"/"yy"/"zz".
     var crossSection = "perp"
+    /// Entangled-mode extras: dimer series order (0 = harmonic bond-operator) and the
+    /// units partition as JSON text, e.g. "[[0,1],[2,3]]" (blank: from the config).
+    var seriesOrder: Int = 0
+    var unitsText = ""
 
     enum CodingKeys: String, CodingKey {
         case backend, mode, temperature
         case cacheMode = "cache_mode"
         case onImaginary = "on_imaginary"
         case crossSection = "cross_section"
+        case seriesOrder = "series_order"
+        case unitsText = "units_text"
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = CalculationSettings()
+        cacheMode = try c.decodeIfPresent(String.self, forKey: .cacheMode) ?? d.cacheMode
+        backend = try c.decodeIfPresent(String.self, forKey: .backend) ?? d.backend
+        onImaginary = try c.decodeIfPresent(String.self, forKey: .onImaginary) ?? d.onImaginary
+        mode = try c.decodeIfPresent(String.self, forKey: .mode) ?? d.mode
+        temperature = try c.decodeIfPresent(Double.self, forKey: .temperature) ?? d.temperature
+        crossSection = try c.decodeIfPresent(String.self, forKey: .crossSection) ?? d.crossSection
+        seriesOrder = try c.decodeIfPresent(Int.self, forKey: .seriesOrder) ?? d.seriesOrder
+        unitsText = try c.decodeIfPresent(String.self, forKey: .unitsText) ?? d.unitsText
     }
 }
 
@@ -379,6 +524,10 @@ struct MagCalcConfig: Codable, Hashable {
     var singleIonAnisotropy: [SingleIonAnisotropy] = []
     var parameters: [String: JSONValue] = ["H_mag": .number(0), "H_dir": .array([0, 0, 1])]
     var tasks = Tasks()
+    var scga = SCGASettings()
+    var thermalMC = ThermalMCSettings()
+    var sampledCorrelations = SampledCorrelationsSettings()
+    var kpm = KPMSettings()
     var qPath = QPath()
     var plotting = PlottingSettings()
     var magneticStructure = MagneticStructureSettings()
@@ -400,6 +549,9 @@ struct MagCalcConfig: Codable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case lattice, parameters, tasks, plotting, minimization, calculation, fitting, output
+        case scga, kpm
+        case thermalMC = "thermal_mc"
+        case sampledCorrelations = "sampled_correlations"
         case wyckoffAtoms = "wyckoff_atoms"
         case magneticElements = "magnetic_elements"
         case symmetryInteractions = "symmetry_interactions"
@@ -427,6 +579,11 @@ struct MagCalcConfig: Codable, Hashable {
         singleIonAnisotropy = try c.decodeIfPresent([SingleIonAnisotropy].self, forKey: .singleIonAnisotropy) ?? d.singleIonAnisotropy
         parameters = try c.decodeIfPresent([String: JSONValue].self, forKey: .parameters) ?? d.parameters
         tasks = try c.decodeIfPresent(Tasks.self, forKey: .tasks) ?? d.tasks
+        scga = try c.decodeIfPresent(SCGASettings.self, forKey: .scga) ?? d.scga
+        thermalMC = try c.decodeIfPresent(ThermalMCSettings.self, forKey: .thermalMC) ?? d.thermalMC
+        sampledCorrelations = try c.decodeIfPresent(SampledCorrelationsSettings.self,
+                                                    forKey: .sampledCorrelations) ?? d.sampledCorrelations
+        kpm = try c.decodeIfPresent(KPMSettings.self, forKey: .kpm) ?? d.kpm
         qPath = try c.decodeIfPresent(QPath.self, forKey: .qPath) ?? d.qPath
         plotting = try c.decodeIfPresent(PlottingSettings.self, forKey: .plotting) ?? d.plotting
         magneticStructure = try c.decodeIfPresent(MagneticStructureSettings.self, forKey: .magneticStructure) ?? d.magneticStructure
@@ -525,6 +682,14 @@ extension MagCalcConfig {
         let magStructFinal: JSONValue = rawObj?["magnetic_structure"]
             ?? ((try? JSONValue(encoding: magneticStructure)) ?? .object([:]))
 
+        // calculation: strip UI-only fields; only send series_order when the
+        // entangled series is actually requested (mirrors the web app).
+        var calcDict = ((try? JSONValue(encoding: calculation)) ?? .object([:])).objectValue ?? [:]
+        calcDict.removeValue(forKey: "units_text")
+        if !(calculation.mode == "entangled" && calculation.seriesOrder > 0) {
+            calcDict.removeValue(forKey: "series_order")
+        }
+
         var input: [String: JSONValue] = [
             "crystal_structure": crystalValue,
             "interactions": interactionsFinal,
@@ -535,11 +700,53 @@ extension MagCalcConfig {
             "plotting": plottingDict,
             "minimization": minimizationDict,
             "powder_average": (try? JSONValue(encoding: powderAverage)) ?? .object([:]),
-            "calculation": (try? JSONValue(encoding: calculation)) ?? .object([:]),
+            "calculation": .object(calcDict),
             "output": (try? JSONValue(encoding: output)) ?? .object([:]),
         ]
         input["fitting"] = (try? JSONValue(encoding: fitting)) ?? .object([:])
+
+        // Beyond-LSWT blocks: emitted only for enabled tasks, so the config the
+        // backend receives matches the CLI form (TUTORIAL 4h).
+        if tasks.scga {
+            input["scga"] = (try? JSONValue(encoding: scga)) ?? .object([:])
+        }
+        if tasks.thermalMC {
+            input["thermal_mc"] = .object([
+                "temperatures": .array(Self.parseNumberList(thermalMC.temperatures,
+                                                            fallback: [0.5, 1, 2, 4]).map { .number($0) }),
+                "supercell": .array(Self.parseNumberList(thermalMC.supercell,
+                                                         fallback: [4, 4, 1]).map { .number($0) }),
+                "n_sweeps": .number(Double(thermalMC.nSweeps)),
+                "n_equil": .number(Double(thermalMC.nEquil)),
+            ])
+        }
+        if tasks.sampledCorrelations {
+            input["sampled_correlations"] = .object([
+                "temperature": .number(sampledCorrelations.temperature),
+                "supercell": .array(Self.parseNumberList(sampledCorrelations.supercell,
+                                                         fallback: [8, 1, 1]).map { .number($0) }),
+                "dt": .number(sampledCorrelations.dt),
+                "n_steps": .number(Double(sampledCorrelations.nSteps)),
+                "n_traj": .number(Double(sampledCorrelations.nTraj)),
+            ])
+        }
+        if tasks.kpmSqw {
+            input["kpm"] = (try? JSONValue(encoding: kpm)) ?? .object([:])
+        }
+        if calculation.mode == "entangled", !calculation.unitsText.isEmpty,
+           let data = calculation.unitsText.data(using: .utf8),
+           let units = try? JSONDecoder().decode(JSONValue.self, from: data),
+           case .array(let arr) = units, !arr.isEmpty {
+            input["units"] = units
+        }
         return .object(input)
+    }
+
+    /// Parses "0.5, 1, 2" / "4,4,1" style strings into a number list.
+    static func parseNumberList(_ text: String, fallback: [Double]) -> [Double] {
+        let parts = text.split(whereSeparator: { ", \t".contains($0) })
+            .compactMap { Double($0) }
+        return parts.isEmpty ? fallback : parts
     }
 
     /// Payload for structure-only endpoints (/get-neighbors, /analyze-bonds,
