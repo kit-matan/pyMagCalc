@@ -595,7 +595,9 @@ def run_calculation(config_file: str):
     # ground state, so the LSWT ground-state guard is irrelevant. Skip it when SCGA is the
     # only task (any LSWT task -- dispersion/sqw/corrections -- re-arms it).
     _lswt_tasks = ('dispersion', 'sqw_map', 'corrections', 'powder', 'energy_cut')
-    if tasks.get('scga', False) and not any(tasks.get(t) for t in _lswt_tasks):
+    _classical_only = ('scga', 'thermal_mc')
+    if any(tasks.get(t) for t in _classical_only) and \
+            not any(tasks.get(t) for t in _lswt_tasks):
         on_imaginary = 'off'
     if on_imaginary != 'off':
         # Guard 2 (independent of the imaginary check): does a downhill step from
@@ -1087,6 +1089,44 @@ def run_calculation(config_file: str):
                     logger.info(f"KPM S(q,w) saved to {kf}")
             except Exception as e:
                 logger.error(f"KPM calculation failed: {e}")
+
+    # 3f. Thermal Monte-Carlo -- finite-T thermodynamics (parallel tempering).
+    if tasks.get('thermal_mc', False):
+        from magcalc import thermal_mc as _tmc
+        tm = final_config.get('thermal_mc', {}) or {}
+        temps = tm.get('temperatures')
+        if not temps:
+            logger.error("thermal_mc needs `thermal_mc.temperatures` (list, in meV).")
+        else:
+            try:
+                res = _tmc.run_thermal_mc(
+                    spin_model, params_val, [float(t) for t in temps],
+                    supercell=tuple(tm.get('supercell', [4, 4, 1])),
+                    n_sweeps=int(tm.get('n_sweeps', 4000)),
+                    n_equil=int(tm.get('n_equil', 1500)),
+                    seed=int(tm.get('seed', 0)))
+                logger.info(
+                    f"Thermal MC ({res.n_spins} spins, accept {res.accept_rate:.2f}): "
+                    f"<E>/N and C/N over {len(res.temperatures)} temperatures "
+                    f"[{res.temperatures.min():.3g}, {res.temperatures.max():.3g}] meV.")
+                memory_cache['thermal_mc'] = {
+                    'temperatures': res.temperatures, 'energy': res.energy,
+                    'heat_capacity': res.heat_capacity,
+                    'magnetization': res.magnetization,
+                    'susceptibility': res.susceptibility}
+                if save_data_flag:
+                    tf = final_config.get('output', {}).get('thermal_mc_filename',
+                                                            'thermal_mc.npz')
+                    if not os.path.isabs(tf):
+                        tf = os.path.join(config_dir, tf)
+                    _safe_makedirs(tf)
+                    np.savez(tf, temperatures=res.temperatures, energy=res.energy,
+                             heat_capacity=res.heat_capacity,
+                             magnetization=res.magnetization,
+                             susceptibility=res.susceptibility)
+                    logger.info(f"Thermal MC saved to {tf}")
+            except Exception as e:
+                logger.error(f"Thermal MC failed: {e}")
 
     # 4. Powder Average
     # NOTE on units: dispersion and S(Q,w) above interpret q_path entries as
