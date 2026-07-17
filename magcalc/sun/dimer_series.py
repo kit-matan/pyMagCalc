@@ -49,6 +49,9 @@ from .entangled import _embedded_spin_ops, _pair_matrix
 
 logger = logging.getLogger(__name__)
 
+# numpy 2 renamed trapz -> trapezoid; keep compat with older numpy
+_trapezoid = getattr(np, "trapezoid", None) or np.trapz
+
 
 # --------------------------------------------------------------------- PT engine
 def block_effective_series(E0, V_list, P_idx, order):
@@ -247,7 +250,7 @@ def dlog_pade_estimates(c, x=1.0):
         if _has_pole(b, x):
             continue
         vals = np.polyval(a[::-1], xs) / np.polyval(b[::-1], xs)
-        ests.append(float(c[0] * np.exp(np.trapz(vals, xs))))
+        ests.append(float(c[0] * np.exp(_trapezoid(vals, xs))))
     return ests
 
 

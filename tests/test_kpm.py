@@ -7,6 +7,8 @@ diagonalization broadened by the same Gaussian — to machine precision. No exte
 reference needed: it is pinned to the exact result the engine already trusts.
 """
 import numpy as np
+
+_trapezoid = getattr(np, "trapezoid", None) or np.trapz
 import pytest
 
 from magcalc.generic_model import GenericSpinModel
@@ -53,8 +55,8 @@ def test_kpm_converges_to_exact_diagonalization():
         errs = []
         for M in (120, 250, 500):
             r = kpm_sqw(sm, q, egrid, fwhm, n_moments=M, gamma=gam)
-            errs.append(np.trapz(np.abs(r.intensities - exact), egrid)
-                        / np.trapz(np.abs(exact), egrid))
+            errs.append(_trapezoid(np.abs(r.intensities - exact), egrid)
+                        / _trapezoid(np.abs(exact), egrid))
         assert errs[0] > errs[1] > errs[2], f"not converging: {errs}"
         assert errs[2] < 1e-3, f"high-order error too large: {errs[2]}"
 
@@ -67,6 +69,6 @@ def test_kpm_conserves_integrated_intensity():
     fwhm = 0.3
     for hk in [(0.25, 0.0), (0.5, 0.0)]:
         q = np.array([hk[0], hk[1], 0]) @ B
-        exact = np.trapz(exact_broadened_sqw(sm, q, egrid, fwhm), egrid)
+        exact = _trapezoid(exact_broadened_sqw(sm, q, egrid, fwhm), egrid)
         r = kpm_sqw(sm, q, egrid, fwhm, n_moments=500)
-        assert abs(np.trapz(r.intensities, egrid) - exact) < 1e-3 * exact
+        assert abs(_trapezoid(r.intensities, egrid) - exact) < 1e-3 * exact

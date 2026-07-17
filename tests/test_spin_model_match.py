@@ -98,12 +98,12 @@ def test_kfe3j_equivalence():
                 {'pair': ['Fe1', 'Fe0'], 'value': ['0.5*Dy', '0.5*sqrt(3)*Dy', 'Dz'], 'rij_offset': [0, 0, 0]},
                 {'pair': ['Fe1', 'Fe0'], 'value': ['0.5*Dy', '0.5*sqrt(3)*Dy', 'Dz'], 'rij_offset': [1, 0, 0]},
                 {'pair': ['Fe1', 'Fe2'], 'value': ['-0.5*Dy', '0.5*sqrt(3)*Dy', '-Dz'], 'rij_offset': [0, -1, 0]},
-                {'pair': ['Fe1', 'Fe2'], 'value': ['-0.5*Dy', '0.5*sqrt(3)*Dy', '-Dz'], 'rij_offset': [0, 0, 0]},
+                {'pair': ['Fe1', 'Fe2'], 'value': ['-0.5*Dy', '0.5*sqrt(3)*Dy', '-Dz'], 'rij_offset': [1, 0, 0]},
                 # Atom 2 Neighbors
                 {'pair': ['Fe2', 'Fe0'], 'value': ['Dy', 0, '-Dz'], 'rij_offset': [0, 0, 0]},
                 {'pair': ['Fe2', 'Fe0'], 'value': ['Dy', 0, '-Dz'], 'rij_offset': [0, 1, 0]},
                 {'pair': ['Fe2', 'Fe1'], 'value': ['0.5*Dy', '-0.5*sqrt(3)*Dy', 'Dz'], 'rij_offset': [-1, 0, 0]},
-                {'pair': ['Fe2', 'Fe1'], 'value': ['0.5*Dy', '-0.5*sqrt(3)*Dy', 'Dz'], 'rij_offset': [0, 0, 0]},
+                {'pair': ['Fe2', 'Fe1'], 'value': ['0.5*Dy', '-0.5*sqrt(3)*Dy', 'Dz'], 'rij_offset': [0, 1, 0]},
             ]
         },
         'parameters': {
@@ -221,26 +221,27 @@ def test_kfe3j_equivalence():
 
     print("Checking Hamiltonian...")
     ham_diff = (Ham_orig - Ham_generic).expand()
-    # Filter out Zeeman terms (linear in H_mag)
-    ham_diff = ham_diff.subs(sp.Symbol('H_mag'), 0)
-    ham_diff = ham_diff.simplify()
-    
-    # Allow small float diffs
-    is_zero = True
-    if ham_diff != 0:
-         # Check coefficients
-         coeffs = ham_diff.as_coefficients_dict()
-         for term, coeff in coeffs.items():
-             if abs(coeff) > 1e-5:
-                 is_zero = False
-                 print(f"Significant Mismatch Term: {coeff} * {term}")
-    
-    if not is_zero:
-        import warnings
-        warnings.warn(f"Hamiltonian Mismatch Detected (Likely due to sign convention differences): Diff starts with {str(ham_diff)[:200]}...")
-    else:
-        print("Hamiltonian Matched EXACTLY!")
-    
+
+    # Evaluate BOTH sides at the SAME numeric parameter values. The generic model
+    # resolves the config `parameters` numerically inside its symbolic Hamiltonian
+    # while the legacy one keeps J1/J2/Dy/Dz/H_mag symbolic, so a symbolic diff is
+    # trivially nonzero (legacy-symbolic minus generic-numeric). An old version of
+    # this test WARNED on that spurious mismatch and passed -- which hid a real
+    # transcription error (the Fe1<->Fe2 DM rows sat on the in-cell pair, which is
+    # at the J2 distance, instead of the NN image bonds where the legacy model has
+    # them; fixed above). Its H_mag -> 0 substitution also used sp.Symbol('H_mag')
+    # WITHOUT real=True -- a different symbol -- and silently did nothing.
+    pvals = config_data['parameters']
+    ham_diff = ham_diff.subs({J1s: pvals['J1'], J2s: pvals['J2'],
+                              Dys: pvals['Dy'], Dzs: pvals['Dz'],
+                              H_mags: pvals.get('H_mag', 0)})
+    ham_diff = sp.expand(ham_diff)
+    bad = [(t, c) for t, c in ham_diff.as_coefficients_dict().items()
+           if abs(complex(c)) > 1e-8]
+    assert not bad, (
+        f"Hamiltonian mismatch at the config parameter values: {bad[:8]}")
+    print("Hamiltonians match EXACTLY at the config parameter values.")
+
     print("\nSUCCESS: GenericSpinModel matches Legacy KFe3J Model!")
 
 if __name__ == "__main__":

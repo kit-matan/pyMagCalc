@@ -88,7 +88,19 @@ def _safe_eval(expr, ctx):
 
 from magcalc.runner import run_calculation
 
-app = FastAPI(title="MagCalc Designer Backend")
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def _lifespan(app):
+    """FastAPI lifespan handler (replaces the deprecated @app.on_event("startup")).
+    `_startup_event` is defined later in the module; it exists by the time the
+    server actually starts."""
+    await _startup_event()
+    yield
+
+
+app = FastAPI(title="MagCalc Designer Backend", lifespan=_lifespan)
 
 # Mount the project root to serve generated files (e.g. plots)
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -308,8 +320,7 @@ class StreamToLogger:
     def flush(self):
         self.original_stream.flush()
 
-@app.on_event("startup")
-async def startup_event():
+async def _startup_event():
     global MAIN_LOOP, LOGGING_INITIALIZED
     MAIN_LOOP = asyncio.get_running_loop()
 

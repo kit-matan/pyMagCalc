@@ -11,6 +11,8 @@ import os
 from types import SimpleNamespace
 
 import numpy as np
+
+_trapezoid = getattr(np, "trapezoid", None) or np.trapz
 import pytest
 
 import magcalc as mc
@@ -57,7 +59,7 @@ def test_broaden_spectrum_basic():
     out = broaden_spectrum(np.array([0.0]), np.array([1.0]), grid, width=0.4, kind="lorentzian")
     # Peak at the center, integrates to ~weight, symmetric.
     assert grid[np.argmax(out)] == pytest.approx(0.0, abs=0.05)
-    assert np.trapz(out, grid) == pytest.approx(1.0, rel=0.05)
+    assert _trapezoid(out, grid) == pytest.approx(1.0, rel=0.05)
     # Empty centers -> zeros.
     assert np.all(broaden_spectrum(np.array([]), np.array([]), grid) == 0)
 
