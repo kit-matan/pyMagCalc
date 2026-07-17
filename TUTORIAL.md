@@ -664,6 +664,109 @@ Writes `energy_cut_data.npz` (grid, panels, labels) and a panel figure
 
 ---
 
+## 4g. SU(N) mode and entangled units (dimers / trimers)
+
+Dipole LSWT expands each spin as a single Holstein–Primakoff boson about a
+classical moment. Two engines go beyond that, both selected under `calculation:`.
+
+### SU(N) mode — single-ion / multipolar excitations
+
+`calculation: {mode: SUN}` gives each site a full N = 2S+1 level Hilbert space with
+N−1 bosons (as in Sunny's `:SUN`). This captures single-ion (crystal-field /
+quadrupolar) excitations that dipole LSWT structurally cannot — e.g. the FeI₂
+quadrupolar band. For S=½ (N=2) it is identical to dipole LSWT.
+
+```yaml
+calculation: {mode: SUN}
+tasks: {dispersion: true, sqw_map: true}
+```
+
+It reuses the same `crystal_structure` / `interactions` / `magnetic_structure`
+blocks. Single-ion anisotropy and Stevens operators feed the on-site N×N term. See
+`examples/sunny_tutorials/S03_FeI2_SUN/`.
+
+### Entangled units — valence-bond solids (dimers, trimers)
+
+When the ground state is a product of **singlet dimers** (a valence-bond solid), the
+moment is zero and dipole/single-site LSWT see nothing. `calculation: {mode:
+entangled}` groups spins into units and treats each unit as ONE effective SU(N) site:
+the intra-unit coupling is diagonalized exactly (the reference is the unit ground
+state — e.g. a dimer singlet) and the excitations are the **triplons**.
+
+```yaml
+calculation: {mode: entangled}
+units: [[0, 1], [2, 3]]           # each unit = a list of site indices
+# a dimer that straddles the cell boundary: [i, [j, [ox, oy, oz]]]
+```
+
+Validated on a dimer chain (triplon `ω(q)=√(J²−JJ′cos2πq)`), Cu₅SbO₆, and the
+Rb₂Cu₃SnF₁₂ pinwheel VBS (`examples/entangled/`). The harmonic bond-operator level is
+exact only for weak inter-dimer coupling; for strong coupling (J′≈J) add the
+high-order **dimer series expansion**:
+
+```yaml
+calculation: {mode: entangled, series_order: 5, series_resum: dlog_pade}
+```
+
+`series_order: N` switches the dispersion to a linked-cluster expansion to order N in
+all inter-dimer couplings, resummed per band with Dlog-Padé (the method of Matan
+*et al.* / the Rb₂Cu₃SnF₁₂ analysis). See
+`examples/entangled/Rb2Cu3SnF12/series_dispersion.py`.
+
+## 4h. Beyond LSWT: diffuse, thermal, and dynamical methods
+
+Four tasks for regimes an expansion about an ordered state does not cover. The first
+three are classical and paramagnetic-friendly, so run **alone** they auto-skip the
+LSWT ground-state guard (no ordered state required); combine them with an LSWT task
+and the guard re-arms.
+
+```yaml
+# (a) SCGA — paramagnetic diffuse S(q) above T_N (self-consistent Gaussian)
+tasks: {scga: true}
+scga: {temperature: 1.5, mesh_density: 20, cross_section: perp}   # temperature = kT (meV)
+
+# (b) Thermal Monte-Carlo — <E>, C, magnetization, susceptibility vs T (parallel tempering)
+tasks: {thermal_mc: true}
+thermal_mc: {temperatures: [0.2, 0.5, 1, 2, 4], supercell: [6, 6, 1],
+             n_sweeps: 4000, n_equil: 1500}
+
+# (c) SampledCorrelations — classical-dynamics S(q,ω) (full thermal lineshape)
+tasks: {sampled_correlations: true}
+sampled_correlations: {temperature: 0.5, supercell: [16, 1, 1], dt: 0.02,
+                       n_steps: 2048, n_traj: 8, therm_sweeps: 2000}
+
+# (d) KPM — Chebyshev S(q,ω) with no diagonalization (large SU(N)/entangled cells)
+calculation: {mode: SUN}
+tasks: {kpm_sqw: true}
+kpm: {e_min: 0, e_max: 10, e_step: 0.05, fwhm: 0.1, tol: 0.02}    # or moments: N
+```
+
+Each evaluates on the config's `q_path` (SCGA / KPM / SampledCorrelations) or the
+temperature list (thermal MC) and writes an `.npz` (`scga.npz`, `thermal_mc.npz`,
+`sampled_correlations.npz`, `kpm_sqw.npz`). What each is validated against:
+
+| Task | Method | Independent oracle |
+|---|---|---|
+| `scga` | self-consistent Gaussian, `kT(λ+J(q))⁻¹` | Sunny SCGA (square + kagome) + exact chain |
+| `thermal_mc` | parallel-tempering Metropolis on a PBC supercell | Langevin function + exact classical dimer |
+| `sampled_correlations` | RK4 Landau–Lifshitz on thermal states, space-time FFT | Larmor freq., energy conservation, LSWT dispersion |
+| `kpm_sqw` | para-unitary Chebyshev of the LSWT spectral function | the engine's own exact diagonalization |
+
+## 4i. 1/S corrections
+
+Zero-point energy and ordered-moment reduction, the next order of the 1/S expansion:
+
+```yaml
+tasks: {corrections: true}
+corrections: {k_mesh: [16, 16, 16]}
+```
+
+Logs `dE` (add to the classical energy) and `dS_i` (⟨S^z⟩ = S − dS), and saves
+`corrections.npz`. Validated against Sunny and the textbook square-lattice Heisenberg
+antiferromagnet (`dE=−0.157947 J/site`, `dS=0.1966`).
+
+---
+
 ## 5. Default Python Library Usage (Advanced)
 
 For complex workflows (e.g., scanning over parameters), you can use `pyMagCalc` as a Python library.
@@ -691,17 +794,20 @@ print(energies)
 
 ---
 
-## 6. SpinW Tutorial Ports
+## 6. SpinW and Sunny Tutorial Ports
 
-pyMagCalc includes **19 ported SpinW tutorials** (SW01–SW19) under
-`examples/spinw_tutorials/`. Each tutorial is a self-contained, runnable
-`config.yaml` that reproduces the physics of the corresponding
-[SpinW tutorial](https://spinw.org/tutorials/).
+pyMagCalc includes **30 ported SpinW tutorials** (SW01–SW38) under
+`examples/spinw_tutorials/` and **9 ported Sunny.jl tutorials** (S01–S09) under
+`examples/sunny_tutorials/`. Each is a self-contained, runnable `config.yaml` that
+reproduces the physics of the corresponding
+[SpinW](https://spinw.org/tutorials/) or [Sunny.jl](https://github.com/SunnySuite/Sunny.jl)
+tutorial.
 
 ### Running a tutorial
 
 ```bash
 magcalc run examples/spinw_tutorials/SW01_FM_chain/config.yaml
+magcalc run examples/sunny_tutorials/S03_FeI2_SUN/config.yaml
 ```
 
 ### What is covered
@@ -713,6 +819,8 @@ magcalc run examples/spinw_tutorials/SW01_FM_chain/config.yaml
 | SW10–SW11 | Constant-energy cuts, La₂CuO₄ |
 | SW12–SW15 | Triangular easy-plane, LiNiPO₄, YVO₃, langasite spiral |
 | SW16–SW19 | Na₂IrO₃ Kitaev, symbolic LSWT, distorted kagome spiral, mixed-spin |
+| SW20–SW38 | Yb₂Ti₂O₇ g-tensor, YIG, biquadratic, Stevens operators, dipole-dipole, resolution |
+| S01–S09 (Sunny) | CoRh₂O₄, FeI₂ SU(N), finite-T dynamics, Ising MC, CP² skyrmions, dipole-dipole |
 
 ### Key conventions
 

@@ -5,15 +5,20 @@
 
 ## Introduction
 
-`pyMagCalc` is a Python package for performing Linear Spin-Wave Theory (LSWT) calculations. It allows users to define a spin model (Hamiltonian, magnetic structure, lattice) and compute spin-wave dispersion relations and dynamic structure factors S(Q,ω).
+`pyMagCalc` is a Python package for modeling magnetic excitations. Its core is Linear Spin-Wave Theory (LSWT) — define a spin model (Hamiltonian, magnetic structure, lattice) and compute spin-wave dispersions and dynamic structure factors S(Q,ω) — with a second **SU(N)** engine for single-ion/multipolar excitations and **entangled-unit** (dimer/trimer) modes for valence-bond solids. Beyond LSWT it also provides paramagnetic diffuse scattering (**SCGA**), finite-temperature **classical Monte-Carlo** and **spin dynamics**, a **KPM** spectral solver for large cells, and a high-order **dimer series expansion** for strongly-coupled dimer magnets. Every feature is validated against an independent reference — Sunny.jl, SpinW, or an exact analytic result.
 
 ## Key Features
 
 *   **pyMagCalc Studio:** Interactive modern web GUI for designing models from CIF files and symmetry-based bonding rules. Provides a seamless **Design -> Save -> Run** workflow with 3D visualization. Also available as a **native macOS & iOS app** (SwiftUI) with Metal-backed 3D rendering and embedded backend management.
 *   **Symmetry-Aware Mechanics:** Automatically propagates Heisenberg ($J$), DM ($D$), Anisotropic Exchange ($T$), **Kitaev ($K$)**, and full 3×3 **Interaction Matrices** across the crystal using space-group symmetry operators (via `pymatgen` and `spglib`).
 *   **Mixed-Spin Models:** Supports different spin magnitudes per site (e.g., Cu²⁺ S=½ + Fe²⁺ S=2). Each site's Holstein–Primakoff expansion is scaled by its own `spin_S`.
-*   **Spiral (Rotating-Frame) Structures:** Incommensurate magnetic orders are handled via a rotating-frame formulation (`type: spiral`) with an exact local-frame construction, validated against analytic helix dispersions.
-*   **SpinW Tutorial Ports:** 19 validated SpinW tutorials (SW01–SW19) ported as runnable `magcalc run` configurations, covering FM/AFM chains, kagome lattices, Kitaev honeycomb, spirals, mixed-spin models, and more.
+*   **Spiral (Rotating-Frame) Structures:** Incommensurate magnetic orders are handled via a rotating-frame formulation (`type: single_k`) with an exact local-frame construction, validated against analytic helix dispersions and Sunny `SpinWaveTheorySpiral`.
+*   **SU(N) Mode:** A second LSWT engine (`calculation.mode: SUN`, as in Sunny) where each site carries an N=2S+1 Hilbert space — capturing single-ion (multipolar) excitations that dipole LSWT structurally cannot. Validated against Sunny `:SUN` on FeI₂ (energy, all 8 bands, and intensities).
+*   **Entangled Units & Dimer Series:** Treat a cluster (dimer/trimer) as ONE effective SU(N) site (`calculation.mode: entangled`) — the reference is the unit ground state (e.g. a singlet dimer, invisible to dipole/single-site LSWT) and the excitations are its triplons. For strongly-coupled dimer magnets (J′≈J), a high-order **linked-cluster dimer series expansion + Dlog-Padé** resummation gives the quantitative dispersion. Reproduces published results on Cu₅SbO₆ and the Rb₂Cu₃SnF₁₂ pinwheel VBS.
+*   **Beyond LSWT — diffuse, thermal, dynamical:** **SCGA** paramagnetic diffuse S(q) above T_N (vs Sunny); **thermal Monte-Carlo** with parallel tempering for C(T)/M(T)/χ(T); **SampledCorrelations** finite-T classical spin dynamics S(q,ω); and a **KPM** Chebyshev spectral solver that computes S(q,ω) without diagonalization for large/disordered cells.
+*   **1/S Corrections:** Zero-point energy and ordered-moment reduction (`tasks: {corrections: true}`), validated against Sunny and the textbook square-lattice Heisenberg antiferromagnet.
+*   **Magnetic CIF (mCIF):** Import magnetic structures from mCIF / magnetic space groups (`from_mcif:`, `magcalc mcif`), validated against Sunny.
+*   **Tutorial Ports:** 30 validated SpinW tutorials (SW01–SW38) and 9 Sunny.jl tutorial ports (S01–S09), each a runnable `magcalc run` configuration — FM/AFM chains, kagome lattices, Kitaev honeycomb, spirals, mixed-spin, SU(N), finite-T, and dipole-dipole models.
 *   **Robust CIF Import:** Imports crystal structures from CIF files, automatically detecting symmetry and reducing to unique Wyckoff positions.
 *   **Security & Safety:** Replaced insecure `eval()` with a SymPy-based safe evaluator for mathematical expressions in Hamiltonian parameters.
 *   **Stable Runner Engine:** Standardized task architecture with concise keys and improved error handling to prevent runtime crashes.
@@ -22,6 +27,7 @@
 *   **Ground-State Search:** Monte-Carlo simulated annealing (`method: anneal`, SpinW `anneal` / Sunny `LocalSampler`) and local-field steepest descent (`method: steep`, SpinW `optmagsteep`), plus automatic **ground-state guards** that fail the run when the magnetic structure is not a classical minimum (LSWT about a non-minimum silently yields a meaningless spectrum).
 *   **Hamiltonian Terms:** Beyond bilinear exchange — anisotropic **per-site g-tensors** (incl. uniaxial about a *local* axis, for rare-earth pyrochlores), full 3×3 single-ion anisotropy, **Stevens operators** O_k^q (k=2/4/6, crystal fields), genuine **biquadratic** exchange (valid for non-collinear structures), long-range **dipole-dipole** coupling (validated against Sunny), and real-space **multi-k** structures.
 *   **Measurement Modeling:** Finite-temperature (Bose) intensities, magnetic/structural domain (twin) averaging, cross-section selection (perp/trace/tensor components), instrument resolution (energy-dependent FWHM polynomial, |Q| smoothing, direct-geometry Ei/two-theta kinematic masking), and first-class 2-D constant-energy cuts (`tasks.energy_cut`) — all config-driven.
+*   **Symmetry Analyzer CLI:** `magcalc symmetry <config>` prints the space group, the symmetry-inequivalent bond orbits, and the symmetry-**allowed** exchange matrix per bond (the Sunny `print_symmetry_table` analogue) — the fast way to pick `ref_pair` bonds and see which matrix entries symmetry zeros or ties.
 *   **Data Fitting:** Fits the spin Hamiltonian to inelastic-neutron-scattering data — magnon dispersion `E(Q)`, single-crystal `I(Q, ω)`, or powder `I(|Q|, ω)` — via [lmfit](https://lmfit.github.io/) (bounds, tied/fixed parameters, uncertainties, choice of optimizer). Dispersion fits use a **compile-once fast evaluator** (`DispersionEvaluator`) that skips all per-iteration symbolic work, making fits of large magnetic cells orders of magnitude faster.
 *   **Data Export (CSV):** Export results to `.csv` or `.npz` files for external analysis.
 *   **Validated Configurations:** Supports declarative YAML configurations validated against a robust **Pydantic schema** for immediate error feedback.
@@ -32,8 +38,14 @@
     *   `core.py`: Main `MagCalc` class, calculation logic, and the `DispersionEvaluator` fast dispersion engine.
     *   `generic_model.py`: `GenericSpinModel` for YAML-based model loading (mixed-spin, spiral, interaction matrices).
     *   `symbolic.py`: Symbolic Hamiltonian construction and Fourier transforms.
+    *   `sun/`: SU(N) and entangled-unit engines — `lswt.py` (SU(N) LSWT), `entangled.py` (dimer/trimer units), `dimer_series.py` (linked-cluster series + Dlog-Padé), `kpm.py` (Chebyshev spectral S(q,ω)).
+    *   `scga.py`: Self-consistent Gaussian approximation (paramagnetic diffuse S(q)).
+    *   `annealing.py` / `thermal_mc.py` / `classical_dynamics.py`: ground-state annealing, finite-T Monte-Carlo (parallel tempering), and classical spin dynamics (SampledCorrelations).
+    *   `corrections.py`: 1/S zero-point energy and ordered-moment reduction.
+    *   `spiral_opt.py`: Luttinger–Tisza ordering vector and spiral-energy optimization.
+    *   `mcif.py`: Magnetic CIF / magnetic space-group import.
     *   `fitting.py`: Data-fitting engine (`run_fit`, `FitProblem`) for dispersion / S(Q,ω) / powder data.
-    *   `runner.py`: Declarative task runner (minimization → dispersion → S(Q,ω) → powder → fit → plot).
+    *   `runner.py`: Declarative task runner (minimization → dispersion → S(Q,ω) → SCGA / thermal-MC / dynamics / corrections → powder → fit → plot).
     *   `linalg.py`: Matrix operations and Bogoliubov transformation utilities.
     *   `config_loader.py`: Utilities for loading and validating configurations.
     *   `schema.py`: Pydantic V2 models for robust configuration validation.
@@ -47,7 +59,10 @@
         *   `CCSF/`: Cs₂Cu₂SnF₁₂ — frustrated antiferromagnet.
         *   `ZnCVO/`: ZnCu₂V₂O₇.
         *   `FeI2/`: FeI₂ — triangular-lattice Ising-type antiferromagnet.
-    *   `spinw_tutorials/`: 19 ported SpinW tutorials (SW01–SW19), each a runnable `config.yaml`.
+        *   `mcif/`: Magnetic CIF import examples.
+    *   `entangled/`: Entangled-unit (dimer) models — `dimer_chain/`, `Cu5SbO6/` (dimer expansion), `Rb2Cu3SnF12/` (pinwheel VBS + dimer series).
+    *   `spinw_tutorials/`: 30 ported SpinW tutorials (SW01–SW38), each a runnable `config.yaml`.
+    *   `sunny_tutorials/`: 9 ported Sunny.jl tutorials (S01–S09) — CoRh₂O₄, FeI₂ SU(N), finite-T, MC, dipole-dipole.
     *   `fitting/`: Example fitting configuration and synthetic data.
     *   `plots/`: Centralized directory where all example scripts save their output plots.
 *   `tests/`: Unit and integration tests ensuring package reliability.
@@ -162,6 +177,17 @@ This writes an lmfit report (`fit_report.txt`), the best-fit parameters
 See **TUTORIAL.md** (§4b) for the full `fitting:` block reference, the
 compile-once fast dispersion path, and the `DispersionEvaluator` Python API.
 
+### 5. Inspect Symmetry and Import Magnetic CIFs
+Print the space group, symmetry-inequivalent bond orbits, and allowed exchange
+matrices (handy for choosing `ref_pair` bonds):
+```bash
+magcalc symmetry my_config.yaml --max-distance 5.0
+```
+Import a magnetic structure from an mCIF (magnetic space group):
+```bash
+magcalc mcif structure.mcif -o config_from_mcif.yaml
+```
+
 ## Graphical User Interface: pyMagCalc Studio
 
 The **pyMagCalc Studio** is a modern web application designed to simplify the creation of complex spin models using a "pure" (symmetry-based) approach.
@@ -271,7 +297,7 @@ The core of `pyMagCalc` is the declarative YAML configuration (e.g., `config.yam
 
 *   **Structure**: Lattice vectors, atoms (with per-atom `spin_S` for mixed-spin models), and optional `ion` for form factors.
 *   **Interactions**: Heisenberg ($J$), DM ($D$), Anisotropic Exchange ($K, \Gamma, \Gamma'$), Kitaev, full 3×3 Interaction Matrices, and Single-Ion Anisotropy (SIA) with arbitrary axes.
-*   **Magnetic Structure**: Collinear patterns (`generic`, `afm`, `fm`), or incommensurate spirals (`type: spiral` with `k`, `axis`).
+*   **Magnetic Structure**: Collinear patterns (`generic`, `afm`, `fm`), incommensurate spirals (`type: single_k` with `k`, `axis`), or `type: multi_k` with a magnetic supercell.
 *   **Minimization**: Initial guess (`initial_configuration`) and method.
 *   **Plotting**: Options like `show_plot`, `plot_structure`, and axis limits.
 
@@ -303,15 +329,14 @@ Examples are organized under `examples/` in three categories:
 *   **`ZnCVO/`**: ZnCu₂V₂O₇.
 *   **`FeI2/`**: FeI₂ — triangular-lattice antiferromagnet with long-range interactions (J3 at `rij_offset: [2,0,0]`).
 
-### SpinW Tutorial Ports (`examples/spinw_tutorials/`)
-19 SpinW tutorials (SW01–SW19) ported to pyMagCalc, each as a runnable `config.yaml`. These cover:
-*   FM/AFM chains (SW01–SW03), frustrated lattices (SW04), kagome models (SW05–SW09)
-*   Constant-energy cuts (SW10), real materials — La₂CuO₄, LiNiPO₄, YVO₃ (SW11, SW13, SW14)
-*   Spiral/incommensurate structures (SW03, SW08, SW15, SW18)
-*   Kitaev honeycomb with full 3×3 interaction matrices (SW16)
-*   Symbolic LSWT verification (SW17), mixed-spin models (SW19)
+### Entangled Units (`examples/entangled/`)
+Dimer/trimer valence-bond-solid models (`calculation.mode: entangled`):
+*   **`dimer_chain/`**: a chain of S=½ dimers whose triplon `ω(q)=√(J²−JJ′cos2πq)` matches the exact bond-operator result.
+*   **`Cu5SbO6/`**: reproduces the J1–J2–J4 dimer expansion of Piyakulworawat *et al.*, PRR **8**, 013247 (2026).
+*   **`Rb2Cu3SnF12/`**: the pinwheel VBS (Matan *et al.*, Nat. Phys. **6**, 865 (2010)) — single-dimer building block plus the full 6-dimer pinwheel via `series_dispersion.py` (linked-cluster + Dlog-Padé).
 
-See `examples/spinw_tutorials/README.md` for the full status table and physics conventions.
+### SpinW & Sunny Tutorial Ports
+30 SpinW tutorials (`examples/spinw_tutorials/`, SW01–SW38) and 9 Sunny.jl tutorials (`examples/sunny_tutorials/`, S01–S09), each a runnable `config.yaml`. These cover FM/AFM chains, frustrated and kagome lattices, constant-energy cuts, real materials (La₂CuO₄, LiNiPO₄, YVO₃, CoRh₂O₄, FeI₂), spiral/incommensurate structures, Kitaev honeycomb, SU(N), finite-T Monte-Carlo, and dipole-dipole models. See each directory's `README.md` for the full status table and physics conventions.
 
 ### Fitting (`examples/fitting/`)
 Example fitting configurations and synthetic data for dispersion / S(Q,ω) / powder fits.
