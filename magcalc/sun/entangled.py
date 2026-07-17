@@ -288,8 +288,12 @@ class EntangledCalculator:
             I = I * self._bose(E, temperature)
         return self._SqwResult(q_vectors=qs, energies=E, intensities=I)
 
-    def calculate_powder_average(self, *a, **k):
-        raise NotImplementedError("entangled-unit powder averaging is not implemented yet.")
+    def calculate_powder_average(self, q_magnitudes, num_samples=50, backend="numpy",
+                                  temperature=None, cross_section="perp", **_):
+        from ..numerical import powder_average_from_sqw
+        return powder_average_from_sqw(self, q_magnitudes, num_samples=num_samples,
+                                       backend=backend, temperature=temperature,
+                                       cross_section=cross_section)
 
     def stability_report(self, n_q=16, seed=0, q_cart=None):
         lat = np.asarray(self.sm.config["crystal_structure"]["lattice_vectors"], float)

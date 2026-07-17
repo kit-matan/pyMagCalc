@@ -43,12 +43,12 @@ def _observable_vectors(model, q_cart):
     D = model.L * model.M
     v = np.zeros((3, 2 * D), dtype=complex)
     for i in range(model.L):
-        base = (np.exp(1j * float(np.dot(q_cart, model.pos[i])))
-                if getattr(model, "pos", None) is not None else 1.0)
+        # NO intracell position phase: hamiltonian(q) is in the full-position gauge
+        # (see SUNModel.structure_factor); only the intra-unit d_k offsets phase.
         sl = slice(i * model.M, (i + 1) * model.M)
         slb = slice(D + i * model.M, D + (i + 1) * model.M)
         for (d_k, idx) in model.moment_terms[i]:
-            ph = base * np.exp(1j * float(np.dot(q_cart, d_k)))
+            ph = np.exp(1j * float(np.dot(q_cart, d_k)))
             for a in range(3):
                 v[a, sl] += ph * model.t[i, idx[a]]
                 v[a, slb] += ph * model.tb[i, idx[a]]
@@ -145,7 +145,7 @@ def kpm_sqw(model, q_cart, energies, fwhm, n_moments=None, tol=0.02,
             return (np.exp(-0.5 * ((E - w) / sigma) ** 2) / (sigma * np.sqrt(2 * np.pi))
                     * cutoff(E))
         c = _cheb_coefs(f, n_moments, gamma)
-        corr = np.tensordot(c, moments, axes=(0, 0)) / model.L      # (3,3)
+        corr = np.tensordot(c, moments, axes=(0, 0)) / getattr(model, "n_cells", 1)
         inten, clamp = contract_cross_section(corr[:, :, None], q_cart, cross_section)
         val = float(np.real(inten[0]))
         out[iw] = max(val, 0.0) if clamp else val

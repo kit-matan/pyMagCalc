@@ -335,7 +335,8 @@ N-1 bosons per site and the single-ion (multipolar) bands appear -- with intensi
   run the CP^(N-1) search (`tasks.minimization: true`).
 * Non-diagonal `magnetic_supercell` matrices are **only** supported in SU(N) mode; the
   dipole engine refuses them rather than silently using the chemical cell.
-* Not yet: powder averaging, domain averaging.
+* Powder averaging: supported (shared spherical average over calculate_sqw,
+  `tests/test_powder_sun.py`). Not yet: domain averaging.
 
 ### The two SU(N) traps, and what stops you
 
@@ -462,7 +463,8 @@ calculation: {mode: entangled, series_order: 5, series_resum: dlog_pade}  # | pa
   is interactive, 6+ is a batch run. S(Q,w) and the ground-state guards stay on the
   harmonic model. Reference: `examples/entangled/Rb2Cu3SnF12/series_dispersion.py`
   (the full pinwheel at J2 = 0.95 J1, gaps vs the measured 2.35 / 7.3 meV).
-* Not yet: powder/domain averaging (as for SU(N)).
+* Powder averaging: supported (same shared spherical average as SU(N)).
+  Not yet: domain averaging.
 
 Example: `examples/entangled/dimer_chain/` -- a chain of S=1/2 dimers whose triplon
 `omega(q) = sqrt(J^2 - J J' cos 2 pi q)` matches the exact bond-operator result.

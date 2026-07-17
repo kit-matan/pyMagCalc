@@ -172,8 +172,12 @@ class SUNCalculator:
             I = I * thermal_bose_prefactor(E, temperature)
         return SqwResult(q_vectors=qs, energies=E, intensities=I)
 
-    def calculate_powder_average(self, *a, **k):
-        raise NotImplementedError("SU(N) powder averaging is not implemented yet.")
+    def calculate_powder_average(self, q_magnitudes, num_samples=50, backend="numpy",
+                                  temperature=None, cross_section="perp", **_):
+        from ..numerical import powder_average_from_sqw
+        return powder_average_from_sqw(self, q_magnitudes, num_samples=num_samples,
+                                       backend=backend, temperature=temperature,
+                                       cross_section=cross_section)
 
     # -- the ground-state guards -------------------------------------------
     def stability_report(self, n_q=16, seed=0, q_cart=None):

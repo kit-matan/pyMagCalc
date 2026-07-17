@@ -146,6 +146,48 @@ class SqwResult:
     energies: npt.NDArray[np.float64]
     intensities: npt.NDArray[np.float64]
 
+def fibonacci_sphere_points(q_mag: float, num_samples: int) -> npt.NDArray[np.float64]:
+    """Uniform directions on the |q| sphere -- the SAME Fibonacci construction the
+    dipole engine's powder average uses (core.calculate_powder_average)."""
+    if q_mag < Q_ZERO_THRESHOLD:
+        return np.zeros((1, 3))
+    indices = np.arange(0, num_samples, dtype=float) + 0.5
+    phi = np.arccos(1 - 2 * indices / num_samples)
+    theta = np.pi * (1 + 5 ** 0.5) * indices
+    return np.column_stack((q_mag * np.sin(phi) * np.cos(theta),
+                            q_mag * np.sin(phi) * np.sin(theta),
+                            q_mag * np.cos(phi)))
+
+
+def powder_average_from_sqw(calculator, q_magnitudes, num_samples: int = 50,
+                            backend: str = "numpy", temperature=None,
+                            cross_section: str = "perp") -> SqwResult:
+    """Powder-average S(|q|, w) for ANY calculator exposing calculate_sqw.
+
+    Identical conventions to the dipole engine (core.calculate_powder_average):
+    Fibonacci-sphere sampling per |q| shell, one batched calculate_sqw call, then
+    the per-shell nanmean of the mode-resolved (energies, intensities). Used by the
+    SU(N) and entangled calculators; the averaging is an exact identity over their
+    own (independently validated) calculate_sqw, pinned by tests/test_powder_sun.py.
+    """
+    q_mags = np.asarray(q_magnitudes, dtype=float).ravel()
+    all_q, seg = [], []
+    for q_mag in q_mags:
+        pts = fibonacci_sphere_points(float(q_mag), num_samples)
+        all_q.extend(pts)
+        seg.append(len(pts))
+    res = calculator.calculate_sqw(np.asarray(all_q), backend=backend,
+                                   temperature=temperature,
+                                   cross_section=cross_section)
+    E, I, idx = [], [], 0
+    for count in seg:
+        E.append(np.nanmean(res.energies[idx:idx + count], axis=0))
+        I.append(np.nanmean(res.intensities[idx:idx + count], axis=0))
+        idx += count
+    q_out = np.column_stack((q_mags, np.zeros_like(q_mags), np.zeros_like(q_mags)))
+    return SqwResult(q_vectors=q_out, energies=np.array(E), intensities=np.array(I))
+
+
 # --- Global variable for worker processes ---
 _worker_HMat_func = None
 
