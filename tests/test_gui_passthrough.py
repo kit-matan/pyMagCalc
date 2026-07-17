@@ -78,6 +78,61 @@ def test_run_config_keeps_every_beyond_lswt_block(server):
     assert final["calculation"]["series_order"] == 4
 
 
+def test_cu5sbo6_entangled_runs_through_the_app_path(server, tmp_path):
+    """Regression for a user-reported failure: importing the Cu5SbO6 config in the web
+    app and running it died with "entangled mode needs a `units:` list" -- the YAML
+    importer never captured the top-level `units:` block. This test drives the REAL
+    Cu5SbO6 config through the server path exactly as the fixed frontend emits it
+    (units from doc.units, calculation merged from doc.calculation) and asserts the
+    entangled dispersion matches the CLI run bit-for-bit."""
+    import json
+    import numpy as np
+    import yaml as _yaml
+
+    doc = _yaml.safe_load(open(os.path.join(
+        ROOT, "examples", "entangled", "Cu5SbO6", "config.yaml")))
+    qp = {"G": [0, 0, 0], "X": [0.5, 0, 0.5], "path": ["G", "X"],
+          "points_per_segment": 4}
+
+    data = {
+        "crystal_structure": doc["crystal_structure"],
+        "interactions": doc["interactions"],
+        "magnetic_structure": doc.get("magnetic_structure", {}),
+        "parameters": doc.get("parameters", {}),
+        "parameter_order": doc.get("parameter_order"),
+        "tasks": {"dispersion": True, "sqw_map": False, "minimization": False},
+        "q_path": qp,
+        "plotting": {"save_plot": False, "show_plot": False},
+        "calculation": dict(doc.get("calculation") or {}),
+        "units": json.loads(json.dumps(doc["units"])),   # the UI field round-trip
+        "output": {"disp_data_filename": str(tmp_path / "app.npz"),
+                   "save_data": True},
+    }
+    expanded = asyncio.run(server.expand_config({"data": data}))
+    final = server._faithful_run_config(expanded, data)
+    assert final["units"] == doc["units"]
+    assert final["calculation"]["mode"] == "entangled"
+
+    from magcalc.runner import run_calculation
+    app_cfg = tmp_path / "app.yaml"
+    _yaml.safe_dump(final, open(app_cfg, "w"))
+    run_calculation(str(app_cfg))
+    app = np.sort(np.load(tmp_path / "app.npz")["energies"], axis=1)
+
+    cli_cfg = dict(doc)
+    cli_cfg["tasks"] = {"dispersion": True, "minimization": False}
+    cli_cfg["q_path"] = qp
+    cli_cfg["plotting"] = {"save_plot": False, "show_plot": False}
+    cli_cfg["output"] = {"disp_data_filename": str(tmp_path / "cli.npz"),
+                         "save_data": True}
+    cli_file = tmp_path / "cli.yaml"
+    _yaml.safe_dump(cli_cfg, open(cli_file, "w"))
+    run_calculation(str(cli_file))
+    cli = np.sort(np.load(tmp_path / "cli.npz")["energies"], axis=1)
+
+    assert np.abs(app - cli).max() == 0.0
+
+
 def test_absent_blocks_are_not_invented(server):
     data = _client_payload()
     for key in ("scga", "thermal_mc", "sampled_correlations", "kpm",
