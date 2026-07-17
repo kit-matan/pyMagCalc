@@ -468,6 +468,45 @@ Example: `examples/entangled/dimer_chain/` -- a chain of S=1/2 dimers whose trip
 `omega(q) = sqrt(J^2 - J J' cos 2 pi q)` matches the exact bond-operator result.
 Reference: `magcalc/sun/entangled.py`, `tests/test_entangled_units.py`.
 
+## 5g. Beyond LSWT: diffuse, thermal, and dynamical methods
+
+Four tasks for regimes LSWT (an expansion about an ordered state) does not cover.
+The first three are CLASSICAL and paramagnetic-friendly, so when run alone they
+auto-skip the LSWT ground-state guard (no ordered state required).
+
+```yaml
+tasks: {scga: true}                 # paramagnetic diffuse S(q) above T_N
+scga: {temperature: 1.5, mesh_density: 20, cross_section: perp}   # temperature = kT (meV)
+
+tasks: {thermal_mc: true}           # finite-T thermodynamics <E>,C,M,chi vs T
+thermal_mc: {temperatures: [0.2,0.5,1,2,4], supercell: [6,6,1], n_sweeps: 4000, n_equil: 1500}
+
+tasks: {sampled_correlations: true} # classical-dynamics S(q,w) (full thermal lineshape)
+sampled_correlations: {temperature: 0.5, supercell: [16,1,1], dt: 0.02, n_steps: 2048, n_traj: 8}
+
+calculation: {mode: SUN}            # KPM: Chebyshev S(q,w), no diagonalization (large cells)
+tasks: {kpm_sqw: true}
+kpm: {e_min: 0, e_max: 10, e_step: 0.05, fwhm: 0.1, tol: 0.02}    # or moments: N
+```
+
+* **SCGA** (`magcalc/scga.py`) -- self-consistent Gaussian approximation. `S(q) = kT
+  (lambda + J(q))^{-1}` with the same Fourier exchange matrix as the LT guard and a
+  single Lagrange multiplier lambda from the spin sum rule. Single symmetry class only
+  (Bravais + kagome/pyrochlore-type); refuses inequivalent sublattices. Validated vs
+  Sunny 0.8.1 SCGA (square + kagome) and the exact classical-chain closed form.
+* **Thermal MC** (`magcalc/thermal_mc.py`) -- parallel-tempering Metropolis on a PBC
+  supercell built from `spin_interactions` + `_resolve_field`, same classical energy
+  `1/2 m^T H m + b^T m` as `annealing`. Validated vs the Langevin function (free spins
+  in field) and the exact classical dimer ⟨E⟩(T), C(T).
+* **SampledCorrelations** (`magcalc/classical_dynamics.py`) -- undamped RK4
+  Landau-Lifshitz on Metropolis-thermalized states, S(q,w) by space-time FFT.
+  Validated: Larmor omega = g mu_B B, RK4 energy conservation, and the low-T
+  ferromagnet peaks fall on the exact LSWT dispersion.
+* **KPM** (`magcalc/sun/kpm.py`) -- para-unitary Chebyshev expansion of the LSWT
+  spectral function (Lane et al. / Sunny's `SpinWaveTheoryKPM`); O(D*M) matvecs, no
+  eigensolve, for large SU(N)/entangled cells. Validated: converges to the engine's
+  own exact `structure_factor` as the moment count grows.
+
 ## 6. Intensity / experiment layer
 
 Applies to S(Q,ω), powder, energy-cut **and FITTING** intensities (never to energies).

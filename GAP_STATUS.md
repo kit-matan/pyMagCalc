@@ -92,7 +92,7 @@ Runs on 38/47 example configs; the rest **refuse honestly** (incommensurate/spir
 supercell → not supported; mixed-spin → not yet; frustrated GS search not converging →
 guard refuses). Never silently wrong.
 
-### Tier 2 (capability parity)
+### Tier 2 (capability parity) — ✅ ALL DONE (only Wang–Landau within #6 remains)
 
 | # | Item | Status | Notes |
 |---|---|---|---|
