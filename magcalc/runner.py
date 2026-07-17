@@ -595,7 +595,7 @@ def run_calculation(config_file: str):
     # ground state, so the LSWT ground-state guard is irrelevant. Skip it when SCGA is the
     # only task (any LSWT task -- dispersion/sqw/corrections -- re-arms it).
     _lswt_tasks = ('dispersion', 'sqw_map', 'corrections', 'powder', 'energy_cut')
-    _classical_only = ('scga', 'thermal_mc')
+    _classical_only = ('scga', 'thermal_mc', 'sampled_correlations')
     if any(tasks.get(t) for t in _classical_only) and \
             not any(tasks.get(t) for t in _lswt_tasks):
         on_imaginary = 'off'
@@ -1127,6 +1127,47 @@ def run_calculation(config_file: str):
                     logger.info(f"Thermal MC saved to {tf}")
             except Exception as e:
                 logger.error(f"Thermal MC failed: {e}")
+
+    # 3g. SampledCorrelations -- classical-dynamics S(q,w) over the full q-path/energy
+    # grid in one shot (finite-T lineshapes, above or below T_N).
+    if tasks.get('sampled_correlations', False):
+        from magcalc import classical_dynamics as _cd
+        sd = final_config.get('sampled_correlations', {}) or {}
+        kT = sd.get('temperature', sd.get('kT'))
+        if kT is None:
+            logger.error("sampled_correlations needs `.temperature` (meV).")
+        else:
+            try:
+                B = compute_b_matrix(spin_model)
+                q_rlu = q_vectors if q_vectors is not None else \
+                    generate_q_path_from_config(final_config)
+                q_cart = np.asarray(q_rlu, float) @ B
+                res = _cd.sampled_correlations(
+                    spin_model, params_val, q_cart, float(kT),
+                    supercell=tuple(sd.get('supercell', [8, 1, 1])),
+                    dt=float(sd.get('dt', 0.02)),
+                    n_steps=int(sd.get('n_steps', 2048)),
+                    n_traj=int(sd.get('n_traj', 8)),
+                    therm_sweeps=int(sd.get('therm_sweeps', 2000)),
+                    cross_section=sd.get('cross_section', 'perp'),
+                    seed=int(sd.get('seed', 0)))
+                logger.info(
+                    f"SampledCorrelations (kT={kT} meV): S(q,w) {res.sqw.shape} "
+                    f"(E up to {res.energies.max():.3g} meV, {len(res.q_vectors)} q).")
+                memory_cache['sampled_correlations'] = {
+                    'q_vectors': res.q_vectors, 'energies': res.energies,
+                    'intensities': res.sqw}
+                if save_data_flag:
+                    cf = final_config.get('output', {}).get(
+                        'sampled_correlations_filename', 'sampled_correlations.npz')
+                    if not os.path.isabs(cf):
+                        cf = os.path.join(config_dir, cf)
+                    _safe_makedirs(cf)
+                    np.savez(cf, q_vectors=res.q_vectors, energies=res.energies,
+                             intensities=res.sqw)
+                    logger.info(f"SampledCorrelations saved to {cf}")
+            except Exception as e:
+                logger.error(f"SampledCorrelations failed: {e}")
 
     # 4. Powder Average
     # NOTE on units: dispersion and S(Q,w) above interpret q_path entries as
