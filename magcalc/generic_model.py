@@ -332,15 +332,19 @@ class GenericSpinModel:
         self.optimized_matrices = None
         self.parameter_order = self.config.get('parameter_order', [])
         
+        # Ion list for form factors -- must be initialized BEFORE _load_structure,
+        # which populates it from the atoms. (It used to be reset to [] AFTER the
+        # structure load, silently dropping the magnetic form factor from every
+        # intensity calculation -- caught because the Cu5SbO6 powder map carried
+        # far too much weight at high |Q| compared to PRR 8, 013247 Fig. 5.)
+        self._ion_list = []
+
         # Pre-load structure data
         self._load_structure()
         
         
         # Pre-calc neighbors
         self._atoms_ouc = self._generate_atom_pos_ouc()
-        
-        # Ion list for form factors
-        self._ion_list = []
         
         # Mimic module attribute for logging
         self.__name__ = "GenericSpinModel"

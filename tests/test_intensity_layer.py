@@ -352,8 +352,11 @@ def _ferri(J, temperature):
     lat = [[6.0, 0, 0], [0, 9.0, 0], [0, 0, 9.0]]
     cfg = {
         "crystal_structure": {"lattice_vectors": lat, "atoms_uc": [
-            {"label": "A", "pos": [0.0, 0.0, 0.0], "spin_S": 0.5, "ion": "Fe2+"},
-            {"label": "B", "pos": [0.5, 0.0, 0.0], "spin_S": 2.0, "ion": "Fe2+"}]},
+            # No `ion`: this test isolates the TEMPERATURE effect on the fit; a
+            # form factor would reweight the |Q| points and dilute the bias the
+            # test demonstrates (ff application is pinned in test_form_factor.py).
+            {"label": "A", "pos": [0.0, 0.0, 0.0], "spin_S": 0.5},
+            {"label": "B", "pos": [0.5, 0.0, 0.0], "spin_S": 2.0}]},
         "interactions": {"symmetry_rules": [
             {"type": "heisenberg", "distance": 3.0, "value": "J"}]},
         "parameters": {"J": J}, "parameter_order": ["J"],
