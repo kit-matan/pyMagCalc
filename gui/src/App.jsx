@@ -798,7 +798,12 @@ function App() {
             export_csv: t.export_csv ?? newConfig.tasks.export_csv,
             plot_dispersion: t.plot_dispersion ?? newConfig.tasks.plot_dispersion,
             plot_sqw_map: t.plot_sqw_map ?? newConfig.tasks.plot_sqw_map,
-            plot_structure: t.plot_structure ?? newConfig.tasks.plot_structure
+            plot_structure: t.plot_structure ?? newConfig.tasks.plot_structure,
+            corrections: t.corrections ?? newConfig.tasks.corrections,
+            scga: t.scga ?? newConfig.tasks.scga,
+            thermal_mc: t.thermal_mc ?? newConfig.tasks.thermal_mc,
+            sampled_correlations: t.sampled_correlations ?? newConfig.tasks.sampled_correlations,
+            kpm_sqw: t.kpm_sqw ?? newConfig.tasks.kpm_sqw
           };
         }
         if (doc.plotting) newConfig.plotting = { ...newConfig.plotting, ...doc.plotting }
@@ -812,6 +817,24 @@ function App() {
           newConfig.powder_average = { q_min: 0.1, q_max: 4.0, q_count: 50, num_samples: 50 }
         }
         if (doc.calculation) newConfig.calculation = { ...newConfig.calculation, ...doc.calculation }
+        // Top-level `units:` (entangled mode) -> the UI field, so the run payload
+        // re-emits it. Without this, imported dimer configs (e.g. Cu5SbO6) failed
+        // with "entangled mode needs a `units:` list" from the web app.
+        if (doc.units) {
+          newConfig.calculation = { ...newConfig.calculation, units_text: JSON.stringify(doc.units) }
+        }
+        const joinList = (v) => Array.isArray(v) ? v.join(', ') : v
+        if (doc.scga) newConfig.scga = { ...newConfig.scga, ...doc.scga }
+        if (doc.thermal_mc) newConfig.thermal_mc = {
+          ...newConfig.thermal_mc, ...doc.thermal_mc,
+          temperatures: joinList(doc.thermal_mc.temperatures) ?? newConfig.thermal_mc.temperatures,
+          supercell: joinList(doc.thermal_mc.supercell) ?? newConfig.thermal_mc.supercell
+        }
+        if (doc.sampled_correlations) newConfig.sampled_correlations = {
+          ...newConfig.sampled_correlations, ...doc.sampled_correlations,
+          supercell: joinList(doc.sampled_correlations.supercell) ?? newConfig.sampled_correlations.supercell
+        }
+        if (doc.kpm) newConfig.kpm = { ...newConfig.kpm, ...doc.kpm }
         if (doc.magnetic_structure) newConfig.magnetic_structure = { ...newConfig.magnetic_structure, ...doc.magnetic_structure }
         if (doc.q_path) {
           const { path, points_per_segment, ...points } = doc.q_path
@@ -829,6 +852,9 @@ function App() {
           interactions: doc.interactions,
           magnetic_structure: doc.magnetic_structure,
           parameter_order: doc.parameter_order,
+          // blocks with no UI editor yet: forwarded verbatim to the runner
+          corrections: doc.corrections,
+          energy_cut: doc.energy_cut,
         } : null
         setConfig(newConfig)
         alert('Configuration imported successfully! Previous state cleared.')
@@ -1357,6 +1383,8 @@ function App() {
       fitting: config.fitting,
       ...buildBeyondLswtBlocks()
     }
+    if (rawImportRef.current?.corrections) input.corrections = rawImportRef.current.corrections
+    if (rawImportRef.current?.energy_cut) input.energy_cut = rawImportRef.current.energy_cut
 
     // Per-run overrides (e.g. the Fitting panel forces `tasks: { fit: true }`
     // so only the fit runs, regardless of the Tasks panel's checkboxes).
