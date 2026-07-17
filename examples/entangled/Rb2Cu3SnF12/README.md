@@ -91,18 +91,23 @@ the Stot^z = ±1 doublet series is
 `18.75 − 10.11λ − 11.65λ² + 2.82λ³ + 2.80λ⁴ − 2.32λ⁵ − 0.51λ⁶` — strongly
 oscillating, the strong-coupling signature that forced the papers to 8th order:
 
-| Γ branch | order 4 | order 5 | order 6 | order 7 | experiment |
-|---|---|---|---|---|---|
-| doublet (Dlog-Padé) | 2.2 ± 1.0 | 6.3 (wide) | 1.6 | **2.40** (sum 2.80) | **2.35 / 2.4** |
-| singlet (Dlog-Padé) | 11.1 ± 0.8 | 10.2 | 9.9 ± 0.9 | 10.3 (sum 10.1) | **7.3 / 6.9** |
+| Γ branch | order 4 | order 5 | order 6 | order 7 | order 8 | experiment |
+|---|---|---|---|---|---|---|
+| doublet (Dlog-Padé) | 2.2 ± 1.0 | 6.3 (wide) | 1.6 | 2.40 (sum 2.80) | **1.9 ± 1.1** (sum 2.22) | **2.35 / 2.4** |
+| singlet (Dlog-Padé) | 11.1 ± 0.8 | 10.2 | 9.9 ± 0.9 | 10.3 (sum 10.1) | 10.2 ± 0.2 (sum 9.80) | **7.3 / 6.9** |
 
-At order 7 the doublet Dlog-Padé lands at **2.40 meV vs the measured 2.35(7)** —
-within the experimental uncertainty — with the plain sum (2.80) bracketing from
-above; the earlier orders oscillate around it exactly as a strong-coupling series
-should. The singlet converges more slowly (as its smaller low-order coefficients
-suggest) and still sits above the measured 7.3 at this order. A global sign flip of
-the DM pattern leaves every series coefficient invariant (checked to 0.0), as the
-mirror symmetry requires.
+At the papers' order 8 the **doublet** estimates (Dlog-Padé 1.9 ± 1.1, plain sum
+2.22) are consistent with the measured **2.35(7)** — the orders oscillate around it
+exactly as a strong-coupling series should, with ~1 meV approximant scatter (the
+papers' analysis, with its own resummation choices, quotes tighter bars). The
+**singlet**, however, converges cleanly to **≈ 10.2 meV** — about 3 meV ABOVE the
+measured 7.3(3) — an honest residual discrepancy. Candidate explanations, untested:
+the middle-pair angle assignment (J2 = 0.95 vs J3 = 0.85 assigned to the 136.2°
+vs 133.4° families by monotonicity — swapping them is a cheap sensitivity check),
+or a difference in how the intra-dimer DM feeds the Stot^z = 0 reference between
+this implementation and the papers'. A global sign flip of the DM pattern leaves
+every series coefficient invariant (checked to 0.0), as the mirror symmetry
+requires.
 
 Run `python series_dispersion.py [order]`. After the Sz-sector + structural-dedup +
 multiprocessing optimization: order 5 ≈ 10 s, order 6 ≈ 2 min, order 7 ≈ 30 min,
