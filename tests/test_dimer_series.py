@@ -133,6 +133,7 @@ def test_chain_first_order_is_the_analytic_dispersion():
         assert abs(s[1] - (-(0.3 / 2) * np.cos(2 * np.pi * qr))) < 1e-9
 
 
+@pytest.mark.slow
 def test_chain_series_matches_exact_diagonalization():
     """lambda = 0.4, order 6: the whole one-triplon band to < 5e-4 J vs ED (L = 16)."""
     lam, Nd, order = 0.4, 8, 6
@@ -144,6 +145,7 @@ def test_chain_series_matches_exact_diagonalization():
         assert abs(v - om[mm]) < 5e-4, f"k index {mm}: {v} vs ED {om[mm]}"
 
 
+@pytest.mark.slow
 def test_chain_strong_coupling_with_dlog_pade():
     """lambda = 0.8 (J'/J = 0.8, STRONG coupling): order 7 + Dlog-Pade reproduces the
     ED gap to better than 8%, and far better away from the gap. This is the regime

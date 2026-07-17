@@ -39,6 +39,7 @@ def test_spectral_bound_encloses_the_spectrum():
         assert gam < 2.0 * maxw, "bound should not be wildly loose"
 
 
+@pytest.mark.slow
 def test_kpm_converges_to_exact_diagonalization():
     """As the moment count grows, KPM S(q,ω) → the exact broadened spectrum; the
     error decreases monotonically and hits machine zero at high order."""
@@ -58,6 +59,7 @@ def test_kpm_converges_to_exact_diagonalization():
         assert errs[2] < 1e-3, f"high-order error too large: {errs[2]}"
 
 
+@pytest.mark.slow
 def test_kpm_conserves_integrated_intensity():
     """∫dω S(q,ω) (the per-q sum rule) must match the exact total to high order."""
     sm, B = _square_afm()

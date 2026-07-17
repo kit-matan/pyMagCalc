@@ -56,6 +56,7 @@ def _dimer_model(S=1.0, J=1.0):
     return GenericSpinModel(cfg)
 
 
+@pytest.mark.slow
 def test_classical_dimer_energy_and_heat_capacity():
     """Isolated classical Heisenberg dimers vs the exact <E>(T) and C(T)."""
     S, J = 1.0, 1.0
@@ -71,6 +72,7 @@ def test_classical_dimer_energy_and_heat_capacity():
         assert abs(res.heat_capacity[i] - C_exact) < 0.03, f"C kT={T}"
 
 
+@pytest.mark.slow
 def test_parallel_tempering_matches_independent_metropolis():
     """PT (with swaps) and independent single-T Metropolis (no swaps) must agree on
     <E>(T) within statistics — swaps change sampling efficiency, not the distribution."""

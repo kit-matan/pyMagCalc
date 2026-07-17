@@ -81,6 +81,7 @@ def test_expand_config_drops_symmetry_breaking_exchange_but_fix_restores_it(serv
     assert fixed["interactions"] == cfg["interactions"]
 
 
+@pytest.mark.slow
 def test_run_path_matches_cli_dispersion_for_advanced_config(server, tmp_path):
     """End-to-end: the server run-path config must give the SAME dispersion as
     `magcalc run` on the original. Uses SW09 (DM interaction_matrix on kagome) -- an

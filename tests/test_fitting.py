@@ -124,15 +124,15 @@ class _FakeCalc:
     def calculate_sqw(self, q_cart, backend="numpy", **kwargs):
         # **kwargs absorbs the measurement model (temperature / domains /
         # cross_section) that FitProblem now forwards to the real MagCalc.
+        # Direction-independent fake: each q maps to the shell whose |Q| is
+        # nearest 0.1/0.2/0.3, so the sample-resolved powder path (which asks for
+        # sphere points around each |Q|) sees the same fixed modes per shell.
         self.n_sqw_calls += 1
-        return SimpleNamespace(q_vectors=np.asarray(q_cart),
-                               energies=self._e, intensities=self._i)
-
-    def calculate_powder_average(self, q_mags, num_samples=50, backend="numpy",
-                                 **kwargs):
-        self.n_sqw_calls += 1
-        return SimpleNamespace(q_vectors=np.asarray(q_mags),
-                               energies=self._e, intensities=self._i)
+        qs = np.atleast_2d(np.asarray(q_cart, dtype=float))
+        mags = np.linalg.norm(qs, axis=1)
+        idx = np.clip(np.round(mags / 0.1).astype(int) - 1, 0, len(self._e) - 1)
+        return SimpleNamespace(q_vectors=qs,
+                               energies=self._e[idx], intensities=self._i[idx])
 
 
 def _intensity_fit(fit_type, tmp_path):

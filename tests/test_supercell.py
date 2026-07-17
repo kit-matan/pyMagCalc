@@ -140,6 +140,7 @@ def test_bond_wrapping():
 # SW03: auto supercell reproduces the hand-written 13-site reference
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 def test_sw03_supercell_matches_handwritten():
     import yaml
     cfg = chain_cfg(-1.0, 2.0, supercell='auto',
