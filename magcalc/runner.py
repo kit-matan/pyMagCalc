@@ -591,6 +591,12 @@ def run_calculation(config_file: str):
         raise ValueError(
             f"calculation.on_imaginary must be 'error', 'warn' or 'off', "
             f"got {on_imaginary!r}.")
+    # SCGA is a PARAMAGNETIC (disordered, above-T_N) calculation -- it needs no ordered
+    # ground state, so the LSWT ground-state guard is irrelevant. Skip it when SCGA is the
+    # only task (any LSWT task -- dispersion/sqw/corrections -- re-arms it).
+    _lswt_tasks = ('dispersion', 'sqw_map', 'corrections', 'powder', 'energy_cut')
+    if tasks.get('scga', False) and not any(tasks.get(t) for t in _lswt_tasks):
+        on_imaginary = 'off'
     if on_imaginary != 'off':
         # Guard 2 (independent of the imaginary check): does a downhill step from
         # the current structure find a LOWER energy? This catches the case the
@@ -994,6 +1000,42 @@ def run_calculation(config_file: str):
         except Exception as e:
             logger.error(f"1/S correction calculation failed: {e}")
             raise
+
+    # 3d. SCGA -- paramagnetic diffuse S(q) above T_N (self-consistent Gaussian).
+    if tasks.get('scga', False):
+        from magcalc import scga as _scga
+        sc = final_config.get('scga', {}) or {}
+        kT = sc.get('temperature', sc.get('kT'))
+        if kT is None:
+            logger.error("SCGA needs `scga.temperature` (in meV, i.e. kT).")
+        else:
+            try:
+                B = compute_b_matrix(spin_model)
+                q_rlu = q_vectors if q_vectors is not None else \
+                    generate_q_path_from_config(final_config)
+                q_cart = np.asarray(q_rlu, float) @ B
+                res = _scga.compute_scga(
+                    spin_model, params_val, q_cart, float(kT),
+                    nq=int(sc.get('mesh_density', 12)),
+                    cross_section=sc.get('cross_section', 'perp'))
+                logger.info(
+                    f"SCGA (kT={kT} meV, lambda={res.lam:.5f}, sum-rule residual "
+                    f"{res.sum_rule_residual:.1e}): S(q) over {len(q_cart)} points, "
+                    f"range [{res.intensities.min():.4g}, {res.intensities.max():.4g}].")
+                memory_cache['scga'] = {
+                    'q_vectors': q_cart, 'intensities': res.intensities,
+                    'lam': res.lam, 'temperature': res.temperature}
+                if save_data_flag:
+                    sf = final_config.get('output', {}).get('scga_filename', 'scga.npz')
+                    if not os.path.isabs(sf):
+                        sf = os.path.join(config_dir, sf)
+                    _safe_makedirs(sf)
+                    np.savez(sf, q_vectors=q_cart, intensities=res.intensities,
+                             lam=res.lam, temperature=res.temperature)
+                    logger.info(f"SCGA S(q) saved to {sf}")
+            except Exception as e:
+                logger.error(f"SCGA calculation failed: {e}")
+                raise
 
     # 4. Powder Average
     # NOTE on units: dispersion and S(Q,w) above interpret q_path entries as
