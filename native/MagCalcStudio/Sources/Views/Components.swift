@@ -55,6 +55,25 @@ struct IntField: View {
 }
 
 /// Card-style grouping used across all editor tabs.
+/// Labeled free-text field (comma-separated lists, JSON snippets).
+struct LabeledTextField: View {
+    let label: String
+    @Binding var text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if !label.isEmpty {
+                Text(label).font(.caption).foregroundStyle(.secondary)
+            }
+            TextField(label, text: $text)
+                .textFieldStyle(.roundedBorder)
+                #if os(iOS)
+                .autocorrectionDisabled()
+                #endif
+        }
+    }
+}
+
 struct SectionCard<Content: View>: View {
     let title: String
     var subtitle: String?

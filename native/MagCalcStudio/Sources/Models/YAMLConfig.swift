@@ -133,6 +133,22 @@ enum YAMLConfig {
         doc.append(("minimization", orderedDict(minAny)))
         doc.append(("output", ((try? JSONValue(encoding: config.output)) ?? .object([:])).anyValue))
 
+        // calculation + beyond-LSWT blocks, mirroring the run payload so the
+        // exported YAML runs identically via `magcalc run`.
+        var calcAny = ((try? JSONValue(encoding: config.calculation)) ?? .object([:])).objectValue ?? [:]
+        calcAny.removeValue(forKey: "units_text")
+        if !(config.calculation.mode == "entangled" && config.calculation.seriesOrder > 0) {
+            calcAny.removeValue(forKey: "series_order")
+        }
+        doc.append(("calculation", JSONValue.object(calcAny).anyValue))
+        if let payload = config.backendInput().objectValue {
+            for key in ["scga", "thermal_mc", "sampled_correlations", "kpm", "units"] {
+                if let block = payload[key] {
+                    doc.append((key, block.anyValue))
+                }
+            }
+        }
+
         let yaml = try Yams.serialize(node: yamlNode(doc))
         return collapseVectors(yaml)
     }
@@ -375,6 +391,43 @@ enum YAMLConfig {
             config.tasks.plotDispersion = flag("plot_dispersion") ?? config.tasks.plotDispersion
             config.tasks.plotSqwMap = flag("plot_sqw_map") ?? config.tasks.plotSqwMap
             config.tasks.plotStructure = flag("plot_structure") ?? config.tasks.plotStructure
+            config.tasks.corrections = flag("corrections") ?? config.tasks.corrections
+            config.tasks.scga = flag("scga") ?? config.tasks.scga
+            config.tasks.thermalMC = flag("thermal_mc") ?? config.tasks.thermalMC
+            config.tasks.sampledCorrelations = flag("sampled_correlations") ?? config.tasks.sampledCorrelations
+            config.tasks.kpmSqw = flag("kpm_sqw") ?? config.tasks.kpmSqw
+        }
+        if let sc = root["scga"]?.objectValue {
+            if let v = sc["temperature"]?.doubleValue { config.scga.temperature = v }
+            if let v = sc["mesh_density"]?.doubleValue { config.scga.meshDensity = Int(v) }
+        }
+        if let tm = root["thermal_mc"]?.objectValue {
+            if let arr = tm["temperatures"]?.arrayValue {
+                config.thermalMC.temperatures = arr.compactMap { $0.doubleValue }
+                    .map { String($0) }.joined(separator: ", ")
+            }
+            if let arr = tm["supercell"]?.arrayValue {
+                config.thermalMC.supercell = arr.compactMap { $0.doubleValue }
+                    .map { String(Int($0)) }.joined(separator: ", ")
+            }
+            if let v = tm["n_sweeps"]?.doubleValue { config.thermalMC.nSweeps = Int(v) }
+            if let v = tm["n_equil"]?.doubleValue { config.thermalMC.nEquil = Int(v) }
+        }
+        if let sd = root["sampled_correlations"]?.objectValue {
+            if let v = sd["temperature"]?.doubleValue { config.sampledCorrelations.temperature = v }
+            if let arr = sd["supercell"]?.arrayValue {
+                config.sampledCorrelations.supercell = arr.compactMap { $0.doubleValue }
+                    .map { String(Int($0)) }.joined(separator: ", ")
+            }
+            if let v = sd["dt"]?.doubleValue { config.sampledCorrelations.dt = v }
+            if let v = sd["n_steps"]?.doubleValue { config.sampledCorrelations.nSteps = Int(v) }
+            if let v = sd["n_traj"]?.doubleValue { config.sampledCorrelations.nTraj = Int(v) }
+        }
+        if let kp = root["kpm"]?.objectValue {
+            if let v = kp["e_min"]?.doubleValue { config.kpm.eMin = v }
+            if let v = kp["e_max"]?.doubleValue { config.kpm.eMax = v }
+            if let v = kp["e_step"]?.doubleValue { config.kpm.eStep = v }
+            if let v = kp["fwhm"]?.doubleValue { config.kpm.fwhm = v }
         }
         if let p = root["plotting"]?.objectValue {
             config.plotting.energyMin = p["energy_min"]?.doubleValue
@@ -406,6 +459,15 @@ enum YAMLConfig {
         if let calc = root["calculation"]?.objectValue {
             if let v = calc["cache_mode"]?.stringValue { config.calculation.cacheMode = v }
             if let v = calc["backend"]?.stringValue { config.calculation.backend = v }
+            if let v = calc["mode"]?.stringValue { config.calculation.mode = v }
+            if let v = calc["on_imaginary"]?.stringValue { config.calculation.onImaginary = v }
+            if let v = calc["cross_section"]?.stringValue { config.calculation.crossSection = v }
+            if let v = calc["temperature"]?.doubleValue { config.calculation.temperature = v }
+            if let v = calc["series_order"]?.doubleValue { config.calculation.seriesOrder = Int(v) }
+        }
+        if let units = root["units"], case .array(let arr) = units, !arr.isEmpty,
+           let data = try? JSONEncoder().encode(units) {
+            config.calculation.unitsText = String(data: data, encoding: .utf8) ?? ""
         }
         if let ms = root["magnetic_structure"]?.objectValue {
             if case .bool(let b)? = ms["enabled"] { config.magneticStructure.enabled = b }
@@ -463,9 +525,9 @@ extension MagCalcConfig {
         c.wyckoffAtoms = []
         c.magneticElements = ["Cu"]
         c.parameters = ["H_mag": .number(0), "H_dir": .array([0, 0, 1])]
-        c.tasks = Tasks(minimization: true, dispersion: true, plotDispersion: true,
-                        sqwMap: false, plotSqwMap: false, exportCSV: false,
-                        powderAverage: false, plotStructure: false)
+        c.tasks = Tasks()
+        c.tasks.sqwMap = false
+        c.tasks.plotSqwMap = false
         c.qPath = QPath(points: ["Gamma": [0, 0, 0]], path: ["Gamma"], pointsPerSegment: 100)
         c.plotting.energyMax = 20
         c.plotting.savePlot = true

@@ -24,8 +24,7 @@ Validated (tests/test_classical_dynamics.py) against exact/independent results:
   * the undamped integrator conserves energy to O(dt⁴) (RK4);
   * for a Heisenberg ferromagnet the low-T S(q,ω) peak positions fall on the exact
     LSWT magnon dispersion the pyMagCalc engine computes — tying the dynamics to the
-    validated spin-wave engine;
-  * the equal-time sum rule ∫dω S(q,ω) = ⟨|S(q)|²⟩.
+    validated spin-wave engine.
 """
 import logging
 from dataclasses import dataclass
