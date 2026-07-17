@@ -1037,6 +1037,57 @@ def run_calculation(config_file: str):
                 logger.error(f"SCGA calculation failed: {e}")
                 raise
 
+    # 3e. KPM dynamical S(q,w) -- Chebyshev spectral method (no full diagonalization),
+    # for large SU(N)/entangled cells. Needs a SUNModel-backed calculator (mode SUN or
+    # entangled).
+    if tasks.get('kpm_sqw', False):
+        model_obj = getattr(calculator, 'model', None)
+        if model_obj is None or not hasattr(model_obj, 'hamiltonian'):
+            logger.error("kpm_sqw needs `calculation.mode: SUN` or `entangled` "
+                         "(a SUNModel-backed calculator).")
+        else:
+            from magcalc.sun.kpm import kpm_sqw
+            kp = final_config.get('kpm', {}) or {}
+            e_min = kp.get('e_min', 0.0)
+            e_max = kp.get('e_max', 10.0)
+            e_step = kp.get('e_step', (e_max - e_min) / 200.0)
+            fwhm = kp.get('fwhm', 0.1)
+            energies = np.arange(e_min, e_max + 0.5 * e_step, e_step)
+            try:
+                B = compute_b_matrix(spin_model)
+                q_rlu = q_vectors if q_vectors is not None else \
+                    generate_q_path_from_config(final_config)
+                q_cart = np.asarray(q_rlu, float) @ B
+                ions = None
+                try:
+                    ions = spin_model.ion_list()
+                except Exception:
+                    ions = None
+                ion0 = ions[0] if ions else None
+                smap = np.zeros((len(energies), len(q_cart)))
+                nmom = kp.get('moments')
+                for iq, q in enumerate(q_cart):
+                    r = kpm_sqw(model_obj, q, energies, fwhm,
+                                n_moments=nmom, tol=kp.get('tol', 0.02),
+                                cross_section=kp.get('cross_section', 'perp'),
+                                ion=ion0)
+                    smap[:, iq] = r.intensities
+                logger.info(
+                    f"KPM S(q,w): {len(q_cart)} q x {len(energies)} E, "
+                    f"~{r.n_moments} moments (gamma={r.gamma:.3f}); "
+                    f"intensity range [{smap.min():.3g}, {smap.max():.3g}].")
+                memory_cache['kpm_sqw'] = {
+                    'q_vectors': q_cart, 'energies': energies, 'intensities': smap}
+                if save_data_flag:
+                    kf = final_config.get('output', {}).get('kpm_filename', 'kpm_sqw.npz')
+                    if not os.path.isabs(kf):
+                        kf = os.path.join(config_dir, kf)
+                    _safe_makedirs(kf)
+                    np.savez(kf, q_vectors=q_cart, energies=energies, intensities=smap)
+                    logger.info(f"KPM S(q,w) saved to {kf}")
+            except Exception as e:
+                logger.error(f"KPM calculation failed: {e}")
+
     # 4. Powder Average
     # NOTE on units: dispersion and S(Q,w) above interpret q_path entries as
     # reciprocal-lattice units (RLU) and multiply by the B-matrix internally,
