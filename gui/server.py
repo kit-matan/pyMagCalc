@@ -5,7 +5,7 @@ import numpy as np
 import spglib
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse, Response
+from fastapi.responses import PlainTextResponse, Response, FileResponse
 from ase.io import read
 from ase.data import atomic_numbers
 from typing import List, Dict, Any
@@ -87,6 +87,7 @@ def _safe_eval(expr, ctx):
         return 0.0
 
 from magcalc.runner import run_calculation
+from magcalc.yaml_io import dump as compact_yaml_dump
 
 from contextlib import asynccontextmanager
 
@@ -105,67 +106,6 @@ app = FastAPI(title="MagCalc Designer Backend", lifespan=_lifespan)
 # Mount the project root to serve generated files (e.g. plots)
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 app.mount("/files", StaticFiles(directory=project_root), name="files")
-
-
-def _faithful_run_config(expanded: Dict[str, Any], data: Dict[str, Any]) -> Dict[str, Any]:
-    """Overlay the client's structure/interaction blocks onto the expanded config so the
-    RUN matches `magcalc run` exactly.
-
-    `expand_config` re-derives crystal_structure (atoms, g-tensors) and flattens
-    interactions using builder-side symmetry detection. That diverges from the runner's
-    own (CLI) expansion for advanced cases -- an `interaction_matrix` that breaks the
-    lattice symmetry (silently DROPPED -> SW38 lost all exchange), a non-standard
-    primitive cell (SW21 YIG -> wrong bond set), `anisotropic_exchange` distance rules
-    (ZnCVO -> error), `magnetic_supercell` (SW03 auto -> wrong band count), `dipole_dipole`
-    and `from_mcif`. The runner (magcalc.runner) handles all of these natively, so hand it
-    the client's blocks unchanged instead of the re-derived ones. Verified: all example
-    configs then reproduce `magcalc run` to machine precision.
-    """
-    cs_in = data.get("crystal_structure") or {}
-
-    # from_mcif: the runner builds the whole crystal cell from the file; a re-derived
-    # (empty) crystal_structure would only conflict, so drop it and pass the file through.
-    if data.get("from_mcif"):
-        expanded["from_mcif"] = data["from_mcif"]
-        if data.get("mcif"):
-            expanded["mcif"] = data["mcif"]
-        expanded.pop("crystal_structure", None)
-    elif cs_in:
-        atom_mode = cs_in.get("atom_mode")
-        atoms = cs_in.get("wyckoff_atoms") or cs_in.get("atoms_uc") or []
-        cs_out: Dict[str, Any] = {"dimensionality": 3}
-        if cs_in.get("lattice_vectors"):
-            cs_out["lattice_vectors"] = cs_in["lattice_vectors"]
-            explicit = True
-        else:
-            cs_out["lattice_parameters"] = cs_in.get("lattice_parameters") or {}
-            explicit = (atom_mode == "explicit")
-        # In symmetry mode send ONLY wyckoff_atoms (+ space_group) so the runner expands
-        # the orbit -- exactly as the CLI does. The frontend duplicates atoms into both
-        # keys; keeping atoms_uc would make the runner treat the Wyckoff reps as the whole
-        # (unexpanded) cell.
-        if explicit:
-            cs_out["atoms_uc"] = atoms
-        else:
-            cs_out["wyckoff_atoms"] = atoms
-        for k in ("magnetic_elements", "magnetic_supercell"):
-            if cs_in.get(k) is not None:
-                cs_out[k] = cs_in[k]
-        expanded["crystal_structure"] = cs_out
-
-    # Interactions: pass through unflattened. Unwrap the designer "explicit" wrapper
-    # {list: [...]} -> [...], which config_loader expects as a bare list.
-    inter = data.get("interactions")
-    if isinstance(inter, dict) and "list" in inter:
-        expanded["interactions"] = inter["list"]
-    elif inter is not None:
-        expanded["interactions"] = inter
-
-    # SU(N) mode and other calculation flags must reach the runner.
-    if (data.get("calculation") or {}).get("mode"):
-        expanded.setdefault("calculation", {})["mode"] = data["calculation"]["mode"]
-
-    return expanded
 
 
 def _hydrate_builder(data: Dict[str, Any]) -> 'MagCalcConfigBuilder':
@@ -300,6 +240,11 @@ LOGGING_INITIALIZED = False
 # background thread (the previous approach) cannot be killed cooperatively.
 CURRENT_PROC = None
 
+# Directory of the last run, used by /run-artifact to serve the plots/data the
+# run produced. File-mode runs execute in the config file's own directory (like
+# the CLI), so outputs can land anywhere -- not just under the /files mount.
+LAST_RUN_DIR = None
+
 class StreamToLogger:
     """
     Redirects writes to a stream (stdout/stderr) to both the original stream and the broadcaster.
@@ -377,91 +322,104 @@ async def websocket_logs(websocket: WebSocket):
 
 # ... (rest of code)
 
-@app.post("/run-calculation")
-async def trigger_calculation(config: Dict[str, Any]):
-    """
-    Save config to a temporary run file and trigger magcalc.runner.run_calculation.
-    """
-    try:
-        # 0. Expand the Config (Crucial step: generates atoms_uc, bonds, etc.)
-        # We can reuse the logic from expand_config endpoint
-        expanded_data = await expand_config(config)
+def _pin_gui_outputs(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Force the plot/fit output filenames the UI knows how to fetch.
 
-        # 0.1 Make the RUN faithful to `magcalc run`: overlay the client's structure
-        # and interaction blocks so the runner does its own (CLI-identical) expansion,
-        # instead of the builder-side re-derivation that silently diverges for advanced
-        # Hamiltonians / non-standard cells. See _faithful_run_config.
-        expanded_data = _faithful_run_config(expanded_data, config.get("data", {}))
+    The ONLY transformation the GUI applies to a config before running it: it
+    pins output filenames to fixed names so the frontend can locate and display
+    the results. It does NOT touch the physics blocks (crystal_structure,
+    interactions, magnetic_structure, parameters, tasks) -- those are written
+    and run exactly as the CLI would read them. This is the whole point of the
+    file-backed design: `.config_gui_run.yaml` is a real, runnable config.
+    """
+    plotting = cfg.setdefault("plotting", {})
 
-        # 0.5 Clean up old plots to prevent stale results
-        gui_dir = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.dirname(gui_dir)
-        
+    # The GUI drives plotting via the `plotting` block; strip any explicit
+    # plot_* task toggles the editor may carry so they don't override it.
+    if "tasks" in cfg and isinstance(cfg["tasks"], dict):
+        for k in ["plot_structure", "plot_sqw_map", "plot_dispersion"]:
+            cfg["tasks"].pop(k, None)
+
+    plotting["save_plot"] = True
+    plotting["disp_plot_filename"] = "disp_plot.png"
+    plotting["sqw_plot_filename"] = "sqw_plot.png"
+    plotting["powder_plot_filename"] = "powder_plot.png"
+    plotting["structure_plot_filename"] = "mag_structure.png"
+    plotting["scga_plot_filename"] = "scga_plot.png"
+    plotting["thermal_mc_plot_filename"] = "thermal_mc_plot.png"
+    plotting["sampled_correlations_plot_filename"] = "sampled_correlations_plot.png"
+    plotting["kpm_plot_filename"] = "kpm_plot.png"
+    plotting["energy_cut_plot_filename"] = "energy_cut.png"
+
+    if cfg.get("tasks", {}).get("fit") or (cfg.get("fitting") or {}).get("enabled"):
+        plotting["fit_plot_filename"] = "fit_comparison.png"
+        output = cfg.setdefault("output", {})
+        output["fit_report_filename"] = "fit_report.txt"
+        output["fit_params_filename"] = "fit_params.yaml"
+    return cfg
+
+
+def _clean_stale_outputs(run_dir: str) -> None:
+    """Remove plots/structure JSON from a previous run so the UI never serves stale results."""
+    stale = glob.glob(os.path.join(run_dir, "*_plot.png"))
+    stale += [os.path.join(run_dir, f) for f in (
+        "mag_structure.png", "mag_structure.json", "disp_plot.png", "sqw_plot.png",
+        "scga_plot.png", "thermal_mc_plot.png", "sampled_correlations_plot.png",
+        "kpm_plot.png", "energy_cut.png", "fit_comparison.png")]
+    for p in stale:
         try:
-            old_plots = glob.glob(os.path.join(project_root, "*_plot.png"))
-            old_plots.extend(glob.glob(os.path.join(project_root, "mag_structure.png")))
-            old_plots.extend(glob.glob(os.path.join(project_root, "mag_structure.json")))
-            for p in old_plots:
-                try:
-                    os.remove(p)
-                except OSError:
-                    pass
-        except Exception:
+            os.remove(p)
+        except OSError:
             pass
 
-        # 1. Save Config
-        run_config_path = os.path.join(project_root, ".config_gui_run.yaml")
-        
-        # Force standard plot filenames so we can capture and serve them reliably
-        if "plotting" not in expanded_data:
-            expanded_data["plotting"] = {}
-            
-        # The GUI controls plots via the 'plotting' block, but App.jsx state might inject explicit 'false' into 'tasks', overriding everything.
-        # We strip these specific plot task keys so the runner.py correctly respects the UI's 'plotting' variables.
-        if "tasks" in expanded_data:
-            for k in ["plot_structure", "plot_sqw_map", "plot_dispersion"]:
-                expanded_data["tasks"].pop(k, None)
-        
-        expanded_data["plotting"]["save_plot"] = True
-        expanded_data["plotting"]["disp_plot_filename"] = "disp_plot.png"
-        expanded_data["plotting"]["sqw_plot_filename"] = "sqw_plot.png"
-        expanded_data["plotting"]["powder_plot_filename"] = "powder_plot.png"
-        expanded_data["plotting"]["structure_plot_filename"] = "mag_structure.png"
-        expanded_data["plotting"]["scga_plot_filename"] = "scga_plot.png"
-        expanded_data["plotting"]["thermal_mc_plot_filename"] = "thermal_mc_plot.png"
-        expanded_data["plotting"]["sampled_correlations_plot_filename"] = \
-            "sampled_correlations_plot.png"
-        expanded_data["plotting"]["kpm_plot_filename"] = "kpm_plot.png"
-        expanded_data["plotting"]["energy_cut_plot_filename"] = "energy_cut.png"
-        # remove stale copies so a run without the task doesn't serve old results
-        for _pf in ("scga_plot.png", "thermal_mc_plot.png",
-                    "sampled_correlations_plot.png", "kpm_plot.png", "energy_cut.png"):
-            try:
-                _p = os.path.join(project_root, _pf)
-                if os.path.exists(_p):
-                    os.remove(_p)
-            except OSError:
-                pass
 
-        # When a fit is requested, pin the comparison-plot and report filenames so
-        # the UI can capture and serve them reliably (same pattern as the plots).
-        if expanded_data.get("tasks", {}).get("fit") or \
-                (expanded_data.get("fitting") or {}).get("enabled"):
-            expanded_data["plotting"]["fit_plot_filename"] = "fit_comparison.png"
-            if "output" not in expanded_data:
-                expanded_data["output"] = {}
-            expanded_data["output"]["fit_report_filename"] = "fit_report.txt"
-            expanded_data["output"]["fit_params_filename"] = "fit_params.yaml"
-            try:
-                fc = os.path.join(project_root, "fit_comparison.png")
-                if os.path.exists(fc):
-                    os.remove(fc)
-            except OSError:
-                pass
-        
-        with open(run_config_path, 'w') as f:
-            yaml.dump(expanded_data, f, sort_keys=False)
-            
+@app.post("/run-calculation")
+async def trigger_calculation(payload: Dict[str, Any]):
+    """
+    Run a calculation from a config FILE, exactly as `magcalc run <file>` does.
+
+    The apps are editors of the config file: they send the config they hold and
+    the server writes it verbatim (canonical YAML) to `.config_gui_run.yaml`,
+    then hands that file to `magcalc.runner.run_calculation` -- the SAME entry
+    point the CLI uses. No builder re-derivation, no config translation: a GUI
+    run and `magcalc run .config_gui_run.yaml` are byte-for-byte the same run.
+
+    Accepted payloads:
+      - {"config": <config dict>}  -- write it and run it (the normal GUI path);
+      - {"path": "<file.yaml>"}    -- run an existing on-disk file IN PLACE
+                                      (its own directory as cwd), for when the
+                                      user has opened a real file to edit.
+    """
+    try:
+        gui_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(gui_dir)
+
+        # --- Determine what file to run and where ---------------------------
+        run_path = payload.get("path")
+        if run_path:
+            # File mode: run the on-disk file untouched, in its own directory.
+            run_config_path = os.path.abspath(run_path)
+            if not os.path.exists(run_config_path):
+                raise HTTPException(status_code=404,
+                                    detail=f"Config file not found: {run_config_path}")
+            run_dir = os.path.dirname(run_config_path)
+        else:
+            # Config mode: write the editor's config to the GUI run file and run it.
+            cfg = payload.get("config")
+            if cfg is None:
+                raise HTTPException(status_code=400,
+                                    detail="Payload must contain 'config' or 'path'.")
+            cfg = _pin_gui_outputs(dict(cfg))
+            run_dir = project_root
+            run_config_path = os.path.join(project_root, ".config_gui_run.yaml")
+            with open(run_config_path, 'w') as f:
+                compact_yaml_dump(cfg, f)
+
+        global LAST_RUN_DIR
+        LAST_RUN_DIR = run_dir
+
+        _clean_stale_outputs(run_dir)
+
         logging.getLogger().info(f"Starting calculation with config: {run_config_path}")
         # Explicit info for the UI
         if MAIN_LOOP:
@@ -502,7 +460,7 @@ async def trigger_calculation(config: Dict[str, Any]):
         proc = await asyncio.create_subprocess_exec(
             sys.executable, "-u", "-c", child_script,
             run_config_path,
-            cwd=project_root,
+            cwd=run_dir,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
@@ -528,31 +486,30 @@ async def trigger_calculation(config: Dict[str, Any]):
                 raise HTTPException(status_code=499, detail="Calculation stopped by user.")
             raise HTTPException(status_code=500, detail="Calculation failed. See logs for details.")
 
-        # 3. Check for outputs
-        # We expect disp_plot.png and sqw_plot.png in project root if plotting was enabled
+        # 3. Collect outputs from the run directory. They are served through
+        # /run-artifact (keyed on LAST_RUN_DIR) so both a project-root config run
+        # and an in-place file run in any directory display correctly.
         results = {
             "message": "Calculation completed successfully.",
-            "plots": []
+            "plots": [],
         }
-        
-        if os.path.exists(os.path.join(project_root, "disp_plot.png")):
-            results["plots"].append("/files/disp_plot.png")
-            
-        if os.path.exists(os.path.join(project_root, "sqw_plot.png")):
-            results["plots"].append("/files/sqw_plot.png")
-            
-        if os.path.exists(os.path.join(project_root, "powder_plot.png")):
-            results["plots"].append("/files/powder_plot.png")
 
-        for _pf in ("scga_plot.png", "thermal_mc_plot.png",
-                    "sampled_correlations_plot.png", "kpm_plot.png", "energy_cut.png"):
-            if os.path.exists(os.path.join(project_root, _pf)):
-                results["plots"].append(f"/files/{_pf}")
+        def _artifact(name: str) -> str:
+            # Clean path (the frontend cache-busts <img> tags itself, and keys on
+            # the trailing filename to tell PNG from JSON), served via /run-artifact.
+            return f"/api/run-artifact/{name}"
 
-        if os.path.exists(os.path.join(project_root, "fit_comparison.png")):
-            results["plots"].append("/files/fit_comparison.png")
+        for name in ("disp_plot.png", "sqw_plot.png", "powder_plot.png",
+                     "scga_plot.png", "thermal_mc_plot.png",
+                     "sampled_correlations_plot.png", "kpm_plot.png",
+                     "energy_cut.png"):
+            if os.path.exists(os.path.join(run_dir, name)):
+                results["plots"].append(_artifact(name))
+
+        if os.path.exists(os.path.join(run_dir, "fit_comparison.png")):
+            results["plots"].append(_artifact("fit_comparison.png"))
             # Surface the best-fit parameters to the UI alongside the plot.
-            fit_params_path = os.path.join(project_root, "fit_params.yaml")
+            fit_params_path = os.path.join(run_dir, "fit_params.yaml")
             if os.path.exists(fit_params_path):
                 try:
                     with open(fit_params_path) as fpf:
@@ -562,14 +519,13 @@ async def trigger_calculation(config: Dict[str, Any]):
                 except Exception:
                     pass
 
-        if os.path.exists(os.path.join(project_root, "mag_structure.png")):
-            # Check if JSON structure data exists (prefer it over the image if we support it in frontend)
-            # We send both, frontend can decide which to show
-            if os.path.exists(os.path.join(project_root, "mag_structure.json")):
-                 results["plots"].append("/files/mag_structure.json")
-            
-            results["plots"].append("/files/mag_structure.png")
-            
+        if os.path.exists(os.path.join(run_dir, "mag_structure.png")):
+            # Send the JSON structure data too (the 3D viewer prefers it); the
+            # frontend decides which to show.
+            if os.path.exists(os.path.join(run_dir, "mag_structure.json")):
+                results["plots"].append(_artifact("mag_structure.json"))
+            results["plots"].append(_artifact("mag_structure.png"))
+
         return results
 
     except HTTPException:
@@ -604,6 +560,77 @@ async def stop_calculation():
         pass
 
     return {"stopped": True, "message": "Calculation stopped."}
+
+
+@app.get("/run-artifact/{name}")
+async def run_artifact(name: str):
+    """
+    Serve a file (plot PNG, structure JSON, fit report) produced by the last run.
+
+    Keyed on LAST_RUN_DIR so it works whether the run wrote into the project root
+    (config mode) or into an opened file's own directory (file mode). Only a bare
+    basename is honoured, so this cannot read arbitrary paths.
+    """
+    if LAST_RUN_DIR is None:
+        raise HTTPException(status_code=404, detail="No calculation has been run yet.")
+    safe = os.path.basename(name)
+    path = os.path.join(LAST_RUN_DIR, safe)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail=f"Artifact not found: {safe}")
+    return FileResponse(path)
+
+
+@app.post("/load-config")
+async def load_config(payload: Dict[str, Any]):
+    """
+    Read a config file from disk and return its parsed contents plus raw text.
+
+    The app is an editor of the on-disk config file: this opens the exact file
+    `magcalc run` would read. The returned `config` is the parsed YAML (what the
+    editor populates its state from); `text` is the verbatim file for a raw view.
+    """
+    path = payload.get("path")
+    if not path:
+        raise HTTPException(status_code=400, detail="Payload must contain 'path'.")
+    abspath = os.path.abspath(path)
+    if not os.path.isfile(abspath):
+        raise HTTPException(status_code=404, detail=f"Config file not found: {abspath}")
+    try:
+        with open(abspath, "r") as f:
+            text = f.read()
+        config = yaml.safe_load(text) or {}
+    except yaml.YAMLError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid YAML in {abspath}: {e}")
+    return {"path": abspath, "config": config, "text": text}
+
+
+@app.post("/save-config")
+async def save_config(payload: Dict[str, Any]):
+    """
+    Write the editor's config to a file on disk, using the canonical serializer.
+
+    This is the "Save" action: it produces exactly the file `magcalc run` reads,
+    so a saved config is directly runnable from the CLI. Pass `config` (a dict,
+    serialized with the compact dumper) or `text` (verbatim, already-formatted
+    YAML) plus the target `path`.
+    """
+    path = payload.get("path")
+    if not path:
+        raise HTTPException(status_code=400, detail="Payload must contain 'path'.")
+    abspath = os.path.abspath(path)
+    try:
+        if payload.get("text") is not None:
+            with open(abspath, "w") as f:
+                f.write(payload["text"])
+        elif payload.get("config") is not None:
+            with open(abspath, "w") as f:
+                compact_yaml_dump(payload["config"], f)
+        else:
+            raise HTTPException(status_code=400,
+                                detail="Payload must contain 'config' or 'text'.")
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Could not write {abspath}: {e}")
+    return {"path": abspath, "saved": True}
 
 
 @app.post("/upload-fit-data")

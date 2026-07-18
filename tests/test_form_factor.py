@@ -45,6 +45,29 @@ def test_ion_list_survives_construction():
     assert m.ion_list() == ["Cu2+", "Cu2+"]
 
 
+def test_wyckoff_expansion_propagates_ion():
+    """Regression: the wyckoff_atoms -> atoms_uc expansion dropped the `ion` key
+    (add_wyckoff_atom was called without it, and the expanded atoms carried an
+    explicit `ion: None` that defeated the .get() fallback chain), so every
+    symmetry-mode config computed intensities with form factor 1.0 and logged
+    "Ion 'None' not found" (reported on the Cu2V2O7 example)."""
+    cfg = {"crystal_structure": {
+               "lattice_parameters": {"a": 6.0, "b": 6.0, "c": 8.0,
+                                      "alpha": 90.0, "beta": 90.0, "gamma": 120.0,
+                                      "space_group": 147},
+               "wyckoff_atoms": [{"label": "K", "pos": [0.5, 0.0, 0.0],
+                                  "spin_S": 0.5, "ion": "Cu2+"}],
+               "atom_mode": "symmetry"},
+           "interactions": {"symmetry_rules": [
+               {"type": "heisenberg", "distance": 3.0, "value": 1.0}]},
+           "parameters": {}, "parameter_order": [],
+           "magnetic_structure": {"type": "pattern",
+                                  "pattern_type": "ferromagnetic",
+                                  "direction": [0, 0, 1]}}
+    m = GenericSpinModel(cfg)
+    assert m.ion_list() == ["Cu2+"] * 3          # 3e orbit, ion on every site
+
+
 def test_intensities_carry_the_squared_form_factor():
     """I_with_ion / I_without must equal f_Cu2+(|Q|)^2 exactly, at every |Q|."""
     with_ion = EntangledCalculator(GenericSpinModel(_dimer_cfg(True)),

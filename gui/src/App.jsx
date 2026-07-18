@@ -31,6 +31,11 @@ function App() {
   const [interactionMenuOpen, setInteractionMenuOpen] = useState(false) // Dropdown menu state
   const [interactionMode, setInteractionMode] = useState('symmetry') // 'symmetry' or 'explicit'
   const [atomMode, setAtomMode] = useState('symmetry') // 'symmetry' or 'explicit'
+  // Path of the on-disk config file currently being edited (Open/Save target).
+  // Persisted so the working file survives a reload.
+  const [currentFilePath, setCurrentFilePath] = useState(
+    () => localStorage.getItem('magcalc_current_file') || null
+  )
   const [previewAtoms, setPreviewAtoms] = useState([]) // Expanded atoms for visualizer
   const [bonds, setBonds] = useState([]) // Bonds for visualizer
   const [hiddenBondLabels, setHiddenBondLabels] = useState(new Set()) // Labels of bonds to hide
@@ -54,6 +59,14 @@ function App() {
   // spiral/generic magnetic structures, ...) instead of being flattened into
   // the designer's a/b/c + Heisenberg model. Cleared on reset / CIF load.
   const rawImportRef = React.useRef(null)
+  // Retained File System Access handle for the opened config file, so "Save"
+  // writes back to the same file without re-prompting. Null when the file was
+  // loaded without a writable handle (browser <input>) or after a reset.
+  const fileHandleRef = React.useRef(null)
+  // Hidden <input type=file> used as the Open fallback where showOpenFilePicker
+  // is unavailable (Safari/Firefox and the pywebview native app) -- it opens the
+  // same native Finder dialog as "Load YAML".
+  const openFileInputRef = React.useRef(null)
 
   // Resizable layout state
   const [sidebarWidth, setSidebarWidth] = useState(280)
@@ -425,6 +438,11 @@ function App() {
     localStorage.setItem('magcalc_config', JSON.stringify(config));
   }, [config]);
 
+  React.useEffect(() => {
+    if (currentFilePath) localStorage.setItem('magcalc_current_file', currentFilePath);
+    else localStorage.removeItem('magcalc_current_file');
+  }, [currentFilePath]);
+
   // Symmetry Expansion Effect for Visualizer
   React.useEffect(() => {
     const updatePreview = async () => {
@@ -671,17 +689,17 @@ function App() {
       setConfig(DEMO_CONFIG);
       setInteractionMode('symmetry');
       setAtomMode('symmetry');
+      setCurrentFilePath(null);
       showNotify("Reset to defaults (aCVO)", "info");
     }
   }
 
-  const handleImport = (e) => {
-    const file = e.target.files[0]
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = (event) => {
-      try {
-        const doc = yaml.load(event.target.result)
+  // Populate the whole editor from a parsed config object. Shared by "Load YAML"
+  // (browser file -> yaml.load) and "Open File" (backend /load-config), so both
+  // routes hydrate the editor identically. `quiet` suppresses the alert for the
+  // path-backed open (which shows its own toast).
+  const applyImportedDoc = (doc, { quiet = false } = {}) => {
+    try {
         // RESET: Start with default clean config
         const newConfig = JSON.parse(JSON.stringify(DEFAULT_CONFIG))
 
@@ -740,7 +758,14 @@ function App() {
             newConfig.wyckoff_atoms = atomsSource.map(a => ({
               label: a.label || 'Atom',
               pos: a.pos || [0, 0, 0],
-              spin_S: a.spin_S !== undefined ? a.spin_S : 0.5
+              spin_S: a.spin_S !== undefined ? a.spin_S : 0.5,
+              // Preserve per-site form-factor ion (e.g. Cu2+), element, and
+              // g-tensor so the editor shows them and re-emits them on save --
+              // previously only label/pos/spin_S survived a load, blanking the
+              // ion field. Only set keys that are actually present.
+              ...(a.ion !== undefined ? { ion: a.ion } : {}),
+              ...(a.element !== undefined ? { element: a.element } : {}),
+              ...(a.g !== undefined ? { g: a.g } : {})
             }))
           }
           if (doc.crystal_structure.magnetic_elements) {
@@ -857,25 +882,129 @@ function App() {
           energy_cut: doc.energy_cut,
         } : null
         setConfig(newConfig)
-        alert('Configuration imported successfully! Previous state cleared.')
+        if (!quiet) alert('Configuration imported successfully! Previous state cleared.')
+        return true
       } catch (err) {
         alert('Error parsing YAML: ' + err.message)
+        return false
       }
+  }
+
+  const handleImport = (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      const doc = yaml.load(event.target.result)
+      // A browser-imported file has no writable handle, so it detaches the
+      // "current file" (Save will open a Save dialog for a destination).
+      if (applyImportedDoc(doc)) { fileHandleRef.current = null; setCurrentFilePath(null) }
     }
     reader.readAsText(file)
     e.target.value = ''
   }
 
-  const handleExportYaml = async () => {
-    // 1. Clean up and Re-order parameters for export
-    const rawParams = JSON.parse(JSON.stringify(config.parameters));
-    delete rawParams.S; // Remove misleading global S
+  // --- File editing via native Finder dialogs (Open / Save) -----------------
+  // The apps are editors of the config file. Open/Save use the File System
+  // Access API (a real Finder dialog, and a retained handle so Save writes back
+  // to the same file). Where that API is missing -- Safari/Firefox and the
+  // pywebview native app -- Open falls back to a hidden <input type=file> (the
+  // same Finder dialog "Load YAML" uses) and Save falls back to a download.
+  const FILE_PICKER_TYPES = [{ description: 'YAML Configuration',
+    accept: { 'text/yaml': ['.yaml', '.yml'] } }]
 
-    // Separate interactions from field parameters
+  // Read a picked File object, hydrate the editor, and set the current file.
+  const applyFileObject = async (file, handle) => {
+    const text = await file.text()
+    const doc = yaml.load(text)
+    if (applyImportedDoc(doc, { quiet: true })) {
+      fileHandleRef.current = handle
+      setCurrentFilePath(file.name)
+      showNotify(`Opened ${file.name}`, 'success')
+    }
+  }
+
+  const openConfigFile = async () => {
+    if (window.showOpenFilePicker) {
+      try {
+        const [handle] = await window.showOpenFilePicker({ types: FILE_PICKER_TYPES })
+        await applyFileObject(await handle.getFile(), handle)
+      } catch (err) {
+        if (err.name !== 'AbortError') showNotify('Open failed: ' + err.message, 'error')
+      }
+    } else {
+      openFileInputRef.current?.click()  // fallback: native Finder dialog
+    }
+  }
+
+  // onChange for the hidden open-fallback input.
+  const handleOpenFileFallback = async (e) => {
+    const file = e.target.files[0]
+    e.target.value = ''
+    if (file) await applyFileObject(file, null)
+  }
+
+  const saveConfigFile = async (saveAs = false) => {
+    let data
+    try {
+      data = serializeConfigText(buildConfigDict())
+    } catch (err) {
+      showNotify('Save failed: ' + err.message, 'error')
+      return
+    }
+
+    if (window.showSaveFilePicker) {
+      try {
+        let handle = (!saveAs && fileHandleRef.current) ? fileHandleRef.current : null
+        if (!handle) {
+          handle = await window.showSaveFilePicker({
+            suggestedName: currentFilePath || 'config.yaml',
+            types: FILE_PICKER_TYPES,
+          })
+        }
+        // Re-check write permission on a retained handle before writing.
+        if (handle.queryPermission) {
+          let perm = await handle.queryPermission({ mode: 'readwrite' })
+          if (perm !== 'granted' && handle.requestPermission) {
+            perm = await handle.requestPermission({ mode: 'readwrite' })
+          }
+          if (perm !== 'granted') throw new Error('Write permission denied')
+        }
+        const writable = await handle.createWritable()
+        await writable.write(data)
+        await writable.close()
+        fileHandleRef.current = handle
+        setCurrentFilePath(handle.name)
+        showNotify(`Saved ${handle.name}`, 'success')
+      } catch (err) {
+        if (err.name !== 'AbortError') showNotify('Save failed: ' + err.message, 'error')
+      }
+    } else {
+      // Fallback: download to the browser's Downloads folder.
+      const blob = new Blob([data], { type: 'text/yaml' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = currentFilePath || 'config.yaml'
+      link.click()
+      URL.revokeObjectURL(url)
+      showNotify('Saved (download).', 'success')
+    }
+  }
+
+  // THE single source of truth for the config both Export and Run use. It
+  // produces the canonical config dict exactly as `magcalc run` reads it, so a
+  // GUI run, an exported file, and a CLI run are all the same config. The
+  // backend writes this verbatim and hands it to magcalc.runner -- there is no
+  // separate "run payload" that can drift from what Export writes.
+  const buildConfigDict = () => {
+    // Parameters: drop the misleading global S, order interaction params then
+    // field params (H_dir before H_mag), round for a clean file.
+    const rawParams = JSON.parse(JSON.stringify(config.parameters));
+    delete rawParams.S;
     const fieldKeys = ['H_mag', 'H_dir'];
     const interactionKeys = Object.keys(rawParams).filter(k => !fieldKeys.includes(k)).sort();
     const sortedParamKeys = [...interactionKeys, ...fieldKeys].filter(k => rawParams[k] !== undefined);
-
     const cleanParams = {};
     sortedParamKeys.forEach(key => {
       let val = rawParams[key];
@@ -884,33 +1013,51 @@ function App() {
       cleanParams[key] = val;
     });
 
-    // 2. Clean up lattice and atoms
-    const cleanLattice = { ...config.lattice };
-    ['a', 'b', 'c', 'alpha', 'beta', 'gamma'].forEach(k => {
-      if (typeof cleanLattice[k] === 'number') cleanLattice[k] = Number(cleanLattice[k].toFixed(5));
-    });
+    const sp = buildStructPayload();
 
-    const cleanAtoms = config.wyckoff_atoms.map(a => ({
-      ...a,
-      pos: a.pos.map(v => Number(v.toFixed(5))),
-      spin_S: typeof a.spin_S === 'number' ? Number(a.spin_S.toFixed(5)) : a.spin_S
-    }));
+    // Crystal structure: emit ONLY the atom key that matches the mode, so the
+    // runner does its own (CLI-identical) symmetry expansion. (This is the
+    // canonicalisation the backend's removed _faithful_run_config used to do --
+    // now the editor produces the canonical file directly.)
+    let crystal_structure;
+    if (rawImportRef.current) {
+      crystal_structure = { ...sp.crystal_structure };
+      if (crystal_structure.atom_mode === 'explicit') delete crystal_structure.wyckoff_atoms;
+      else delete crystal_structure.atoms_uc;
+    } else {
+      const cleanLattice = { ...config.lattice };
+      ['a', 'b', 'c', 'alpha', 'beta', 'gamma'].forEach(k => {
+        if (typeof cleanLattice[k] === 'number') cleanLattice[k] = Number(cleanLattice[k].toFixed(5));
+      });
+      const cleanAtoms = config.wyckoff_atoms.map(a => ({
+        ...a,
+        pos: a.pos.map(v => Number(v.toFixed(5))),
+        spin_S: typeof a.spin_S === 'number' ? Number(a.spin_S.toFixed(5)) : a.spin_S
+      }));
+      crystal_structure = {
+        ...(config.lattice.lattice_vectors
+          ? { lattice_vectors: config.lattice.lattice_vectors }
+          : { lattice_parameters: cleanLattice }),
+        [atomMode === 'explicit' ? 'atoms_uc' : 'wyckoff_atoms']: cleanAtoms,
+        atom_mode: atomMode,
+        magnetic_elements: config.magnetic_elements || ["Cu"],
+        dimensionality: 3
+      };
+    }
 
-    // 3. Structure the input for Export
-    const sp = buildStructPayload()
-    let expanded = {
+    // Interactions: unwrap the designer "explicit" wrapper {list:[...]} to a
+    // bare list (config_loader's expected form); leave symmetry_rules/dict forms
+    // untouched so the runner expands them.
+    let interactions = sp.interactions;
+    if (interactions && !Array.isArray(interactions) && interactions.list) {
+      interactions = interactions.list;
+    }
+
+    const cfg = {
       parameter_order: sp.parameter_order || sortedParamKeys,
       parameters: cleanParams,
-      crystal_structure: rawImportRef.current
-        ? sp.crystal_structure
-        : {
-            lattice_parameters: cleanLattice,
-            wyckoff_atoms: cleanAtoms,
-            atom_mode: atomMode,
-            magnetic_elements: config.magnetic_elements || ["Cu"],
-            dimensionality: 3
-          },
-      interactions: sp.interactions,
+      crystal_structure,
+      interactions,
       magnetic_structure: sp.magnetic_structure,
       tasks: {
         ...config.tasks,
@@ -933,92 +1080,87 @@ function App() {
       },
       calculation: buildCalcPayload(),
       output: config.output,
+      powder_average: config.powder_average,
+      fitting: config.fitting,
       ...buildBeyondLswtBlocks()
-    }
+    };
 
-    try {
-      if (!config.magnetic_structure.enabled) {
-        delete expanded.magnetic_structure;
-      }
+    if (!config.magnetic_structure.enabled) delete cfg.magnetic_structure;
 
-      console.log('Expansion successful, generating file...')
-      let yamlStr = yaml.dump(expanded)
+    // Blocks with no editor yet: forwarded verbatim from the imported file.
+    if (rawImportRef.current?.corrections) cfg.corrections = rawImportRef.current.corrections;
+    if (rawImportRef.current?.energy_cut) cfg.energy_cut = rawImportRef.current.energy_cut;
 
-      // Post-process to make vectors inline [x, y, z] via simple regex
-      // Matches key followed by indented list of items
-      const collapseVectors = (str) => {
-        // Regex to match a key and a list of 2-8 items
-        // Note: JS regex multiline mode.
-        // We iterate through the string or use a robust pattern.
-        // Pattern: (indent)(key):\n(indent+2)- val\n...
+    return cfg;
+  };
 
-        const lines = str.split('\n');
-        const newLines = [];
-        let i = 0;
-
-        while (i < lines.length) {
-          const line = lines[i];
-          const keyMatch = line.match(/^(\s*)([\w\d_]+):\s*$/);
-          if (keyMatch) {
-            const indent = keyMatch[1];
-            const key = keyMatch[2];
-            const items = [];
-            let j = i + 1;
-            let valid = true;
-
-            // Collect list items
-            while (j < lines.length) {
-              const next = lines[j];
-              const itemMatch = next.match(new RegExp(`^${indent}  - (.+)$`));
-              if (!itemMatch) break;
-
-              const val = itemMatch[1].trim();
-              // Avoid nested objects
-              if (val.includes(':') && !val.match(/^['"].*['"]$/)) {
-                valid = false; break;
-              }
-              items.push(val);
-              j++;
-            }
-
-            if (valid && items.length >= 2 && items.length <= 8) {
-              newLines.push(`${indent}${key}: [${items.join(', ')}]`);
-              i = j;
-              continue;
-            }
-          }
-          newLines.push(line);
-          i++;
+  // Collapse js-yaml's block sequences of scalars into inline [x, y, z] flow
+  // style -- the browser-side twin of magcalc/yaml_io.py, so every file the app
+  // writes (Export, Save) has the same compact shape.
+  const collapseVectors = (str) => {
+    const lines = str.split('\n');
+    const newLines = [];
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      const keyMatch = line.match(/^(\s*)([\w\d_]+):\s*$/);
+      if (keyMatch) {
+        const indent = keyMatch[1];
+        const key = keyMatch[2];
+        const items = [];
+        let j = i + 1;
+        let valid = true;
+        while (j < lines.length) {
+          const next = lines[j];
+          const itemMatch = next.match(new RegExp(`^${indent}  - (.+)$`));
+          if (!itemMatch) break;
+          const val = itemMatch[1].trim();
+          if (val.includes(':') && !val.match(/^['"].*['"]$/)) { valid = false; break; }
+          items.push(val);
+          j++;
         }
-        return newLines.join('\n');
+        if (valid && items.length >= 2 && items.length <= 8) {
+          newLines.push(`${indent}${key}: [${items.join(', ')}]`);
+          i = j;
+          continue;
+        }
       }
+      newLines.push(line);
+      i++;
+    }
+    return newLines.join('\n');
+  }
 
-      const data = collapseVectors(yamlStr)
+  // The single browser-side config serializer. Fed by buildConfigDict() and used
+  // by both Save and Export, so they always produce the identical file.
+  const serializeConfigText = (cfg) => collapseVectors(yaml.dump(cfg))
 
+  const handleExportYaml = async () => {
+    // Export = "download a copy" (never writes back to the opened file). Save is
+    // the write-to-disk action; this just hands the browser a downloadable blob.
+    try {
+      const data = serializeConfigText(buildConfigDict())
       if ('showSaveFilePicker' in window) {
         try {
           const handle = await window.showSaveFilePicker({
-            suggestedName: 'config_designer.yaml',
-            types: [{
-              description: 'YAML Configuration',
-              accept: { 'text/yaml': ['.yaml', '.yml'] },
-            }],
+            suggestedName: currentFilePath || 'config_designer.yaml',
+            types: [{ description: 'YAML Configuration', accept: { 'text/yaml': ['.yaml', '.yml'] } }],
           });
           const writable = await handle.createWritable();
           await writable.write(data);
           await writable.close();
-          showNotify(`Success! Configuration exported.`)
+          showNotify(`Exported ${handle.name}`)
         } catch (err) {
           if (err.name !== 'AbortError') throw err;
         }
       } else {
-        // Fallback for browsers without showSaveFilePicker
         const blob = new Blob([data], { type: 'text/yaml' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = 'config_designer.yaml';
+        link.download = currentFilePath || 'config_designer.yaml';
         link.click();
+        URL.revokeObjectURL(url);
         showNotify(`Configuration exported (fallback download).`)
       }
     } catch (err) {
@@ -1354,49 +1496,20 @@ function App() {
     setJsonCache({}) // Clear 3D structure data cache
     setLogs([]) // Clear previous logs
 
-    // Construct payload as expected by expand-config logic backend
-    const sp = buildStructPayload()
-    const input = {
-      crystal_structure: sp.crystal_structure,
-      interactions: sp.interactions,
-      magnetic_structure: sp.magnetic_structure,
-      parameter_order: sp.parameter_order,
-      parameters: config.parameters,
-      tasks: config.tasks,
-      q_path: {
-        ...config.q_path.points,
-        path: config.q_path.path,
-        points_per_segment: config.q_path.points_per_segment
-      },
-      plotting: {
-        ...config.plotting,
-        energy_limits_disp: [config.plotting.energy_min, config.plotting.energy_max],
-        broadening_width: config.plotting.broadening
-      },
-      minimization: {
-        enabled: config.tasks.minimization,
-        ...config.minimization
-      },
-      powder_average: config.powder_average,
-      calculation: buildCalcPayload(),
-      output: config.output,
-      fitting: config.fitting,
-      ...buildBeyondLswtBlocks()
-    }
-    if (rawImportRef.current?.corrections) input.corrections = rawImportRef.current.corrections
-    if (rawImportRef.current?.energy_cut) input.energy_cut = rawImportRef.current.energy_cut
+    // Run the EXACT config the editor holds -- the same dict Export writes and
+    // the same file `magcalc run` reads. The backend writes it verbatim to
+    // .config_gui_run.yaml and runs it; there is no separate run-payload dialect.
+    const cfg = buildConfigDict()
 
     // Per-run overrides (e.g. the Fitting panel forces `tasks: { fit: true }`
     // so only the fit runs, regardless of the Tasks panel's checkboxes).
-    if (overrides.tasks) input.tasks = overrides.tasks
+    if (overrides.tasks) cfg.tasks = overrides.tasks
 
     try {
-      // First ensure backend can expand it (optional check, but good for robust config)
-      // Actually, run-calculation endpoint expects the raw data structure
       const response = await fetch('/api/run-calculation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: input }),
+        body: JSON.stringify({ config: cfg }),
       })
 
       if (!response.ok) {
@@ -1522,6 +1635,19 @@ function App() {
         onYamlImport={handleImport}
         onReset={resetToDefaults}
         onExportYaml={handleExportYaml}
+        onOpenFile={openConfigFile}
+        onSave={saveConfigFile}
+        currentFilePath={currentFilePath}
+      />
+
+      {/* Open-dialog fallback for environments without showOpenFilePicker
+          (Safari/Firefox, pywebview native app): opens the native Finder dialog. */}
+      <input
+        ref={openFileInputRef}
+        type="file"
+        accept=".yaml,.yml"
+        hidden
+        onChange={handleOpenFileFallback}
       />
 
       <main>

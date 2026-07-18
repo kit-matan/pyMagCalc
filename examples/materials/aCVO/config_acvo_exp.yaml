@@ -7,8 +7,6 @@ parameters:
   J3: 5.42
   H_mag: 20
   H_dir: [0, 0, 1]
-calculation:
-  cache_mode: none
 crystal_structure:
   lattice_parameters:
     a: 20.645
@@ -58,8 +56,19 @@ interactions:
 tasks:
   minimization: true
   dispersion: true
+  plot_dispersion: true
   sqw_map: true
+  plot_sqw_map: false
+  powder_average: false
   export_csv: false
+  plot_structure: false
+  corrections: false
+  scga: false
+  thermal_mc: false
+  sampled_correlations: false
+  kpm_sqw: false
+  calculate_dispersion: true
+  calculate_sqw_map: true
 q_path:
   Start: [0, 1, 0]
   End: [0, 3, 0]
@@ -71,6 +80,7 @@ plotting:
   broadening: 0.2
   energy_resolution: 0.05
   momentum_max: 4
+  auto_scale_disp: true
   save_plot: true
   disp_plot_filename: CVO_disp.png
   sqw_plot_filename: CVO_sqw.png
@@ -83,13 +93,43 @@ plotting:
   broadening_width: 0.2
 minimization:
   enabled: true
-  num_starts: 1000
+  method: anneal
+  num_starts: 4
+  n_sweeps: 2000
   n_workers: 8
   early_stopping: 20
-  method: TNC
+calculation:
+  cache_mode: none
+  backend: fortran
+  on_imaginary: error
+  mode: dipole
+  temperature: null
+  cross_section: perp
 output:
   disp_data_filename: disp_data.npz
   sqw_data_filename: sqw_data.npz
   disp_csv_filename: disp_data.csv
   sqw_csv_filename: sqw_data.csv
-  save_data: false
+  save_data: true
+powder_average:
+  q_min: 0.1
+  q_max: 4
+  q_count: 50
+  num_samples: 50
+fitting:
+  type: dispersion
+  data_file: ''
+  data_label: ''
+  method: leastsq
+  vary: []
+  bounds: {}
+  match: nearest
+  scale:
+    value: 1
+    vary: true
+  background:
+    value: 0
+    vary: true
+  energy_broadening:
+    value: 0.3
+    vary: false

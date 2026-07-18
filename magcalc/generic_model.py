@@ -474,7 +474,9 @@ class GenericSpinModel:
                      label=atom.get('label', 'Atom'),
                      pos=atom.get('pos', [0, 0, 0]),
                      spin=atom.get('spin_S', 0.5),
-                     species=atom.get('element', atom.get('label', 'Atom'))
+                     species=atom.get('element', atom.get('label', 'Atom')),
+                     ion=atom.get('ion'),
+                     element=atom.get('element')
                  )
                  
         # 3. Interactions
@@ -1067,7 +1069,10 @@ class GenericSpinModel:
              self._r_pos = np.dot(frac_pos, self._uc_vectors)
              
              # Extract ions
-             self._ion_list = [a.get('ion', a.get('element', a.get('label', 'Fe3+'))) for a in atoms]
+             # `or`-chain (not .get defaults): builder-expanded atoms carry an
+             # explicit `ion: None` key, which .get() would return as-is.
+             self._ion_list = [a.get('ion') or a.get('element') or a.get('label') or 'Fe3+'
+                               for a in atoms]
 
              # Extract per-atom spin magnitudes (enables mixed-spin models).
              self._spin_list = [float(a.get('spin_S', 0.5)) for a in atoms]

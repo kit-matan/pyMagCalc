@@ -737,7 +737,7 @@ class MagCalcConfigBuilder:
             if atom_name in [a['label'] for a in self.atoms_uc]:
                 # Collision? Fall back to indexed
                 atom_name = f"{label}0"
-            self._add_atom_raw(atom_name, orbit_positions[0], spin, species)
+            self._add_atom_raw(atom_name, orbit_positions[0], spin, species, ion=ion, element=element)
         else:
             # Determine starting index based on existing atoms
             start_idx = 0

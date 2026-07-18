@@ -123,10 +123,11 @@ from contextlib import asynccontextmanager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Manually trigger backend startup to initialize logging loop
-    # We import inside function to avoid circular imports if any, 
-    # though here it's fine.
-    from server import startup_event
-    await startup_event()
+    # (mounted sub-app lifespans don't run, so the backend's own lifespan
+    # never fires here). We import inside the function to avoid circular
+    # imports if any, though here it's fine.
+    from server import _startup_event
+    await _startup_event()
     yield
     # Shutdown logic if needed
 
