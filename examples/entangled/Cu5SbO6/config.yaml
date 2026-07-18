@@ -68,7 +68,7 @@ parameter_order: [J1, J2, J4]
 # so the rest of the pipeline is happy.
 magnetic_structure: {type: pattern, pattern_type: ferromagnetic, direction: [0, 0, 1]}
 
-tasks: {minimization: false, dispersion: true, powder_average: false}
+tasks: {minimization: false, dispersion: true, powder_average: true}
 
 # Powder-averaged S(|Q|, w), reproducing the paper's Fig. 5(b): the triplon band
 # spans ~11-21 meV with DOS (van Hove) peaks at the measured M1 = 15.0(1) and
@@ -77,7 +77,7 @@ tasks: {minimization: false, dispersion: true, powder_average: false}
 # `powder_average: true` in tasks to run it. (The powder task keeps every sphere
 # direction's own mode energies -- averaging them first, the old behaviour,
 # collapsed this 10 meV band into a blob at J1.)
-powder_average: {q_min: 0.5, q_max: 5.5, q_count: 60, num_samples: 80}
+powder_average: {q_min: 0.5, q_max: 5.5, q_count: 200, num_samples: 200}
 
 q_path:
   A:  [0.0, 0.0, 0.0]      # along the chain (q1): the J2 dispersion
