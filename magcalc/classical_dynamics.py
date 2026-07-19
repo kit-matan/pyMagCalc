@@ -28,7 +28,6 @@ Validated (tests/test_classical_dynamics.py) against exact/independent results:
 """
 import logging
 from dataclasses import dataclass
-from typing import Optional, Sequence, Tuple
 
 import numpy as np
 

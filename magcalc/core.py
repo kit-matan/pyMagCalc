@@ -21,7 +21,7 @@ Refactored by AI Assistant
 # import spin_model as sm # REMOVED: User-defined spin model will be passed explicitly
 from .generic_model import GenericSpinModel
 import sympy as sp
-from sympy import I, lambdify, Add
+from sympy import lambdify
 import numpy as np
 from scipy import linalg as la
 from scipy.optimize import minimize # Added for classical energy minimization
@@ -34,23 +34,15 @@ from tqdm import tqdm # Added for progress indication
 import hashlib  # For numerical cache key generation
 import logging
 import os  # Added for cpu_count
-import functools  # partial() for analytical energy/grad wrappers
 import json  # For metadata
 
 # Type Hinting Imports
 import types  # Added for ModuleType hint
-from dataclasses import dataclass
 import numpy.typing as npt
-from typing import List, Tuple, Dict, Any, Optional, Union, NoReturn
+from typing import List, Tuple, Dict, Any, Optional, Union
 
 # --- Modularized Imports ---
-from .symbolic import (
-    gen_HM,
-    _setup_hp_operators,
-    _rotate_spin_operators,
-    _build_ud_matrix,
-    _define_fourier_substitutions_generic,
-)
+from .symbolic import gen_HM
 from .numerical import (
     process_calc_disp,
     process_calc_Sqw,
@@ -59,11 +51,8 @@ from .numerical import (
     DispersionResult,
     SqwResult,
     ENERGY_IMAG_PART_THRESHOLD,
-    SQW_IMAG_PART_THRESHOLD,
-    Q_ZERO_THRESHOLD,
-    PROJECTION_CHECK_TOLERANCE,
+    fibonacci_sphere_points,
     thermal_bose_prefactor,
-    # substitute_expr, # Not used in core.py presumably
 )
 from .linalg import rotation_matrix
 # --- End Modularized Imports ---
@@ -100,63 +89,13 @@ except ImportError:
         raise ImportError(
             f"Failed to import local modules config_loader. Original error: {e}"
         ) from e
-import numpy.typing as npt
-
-# --- Modularized Linalg Imports ---
-try:
-    from .linalg import (
-        gram_schmidt,
-        _diagonalize_and_sort,
-        _apply_gram_schmidt,
-        _calculate_alpha_matrix,
-        _match_and_reorder_minus_q,
-        _calculate_K_Kd,
-        KKdMatrix,
-        DEGENERACY_THRESHOLD,
-        ZERO_MATRIX_ELEMENT_THRESHOLD,
-        ALPHA_MATRIX_ZERO_NORM_WARNING_THRESHOLD,
-        EIGENVECTOR_MATCHING_THRESHOLD
-    )
-except ImportError:
-     from linalg import (
-        gram_schmidt,
-        _diagonalize_and_sort,
-        _apply_gram_schmidt,
-        _calculate_alpha_matrix,
-        _match_and_reorder_minus_q,
-        _calculate_K_Kd,
-        KKdMatrix,
-        DEGENERACY_THRESHOLD,
-        ZERO_MATRIX_ELEMENT_THRESHOLD,
-        ALPHA_MATRIX_ZERO_NORM_WARNING_THRESHOLD,
-        EIGENVECTOR_MATCHING_THRESHOLD
-    )
-
 import matplotlib.pyplot as plt  # Added for plotting
 
-# --- Basic Logging Setup ---
 # --- Basic Logging Setup ---
 # Library should not configure basicConfig. Use NullHandler to silence by default.
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 # --- End Logging Setup ---
-
-# --- Numerical Constants ---
-# Constants moved to magcalc_linalg.py
-
-# Constants and worker global imported from numerical module
-
-
-
-# --- Helper functions (Keep outside class for easier multiprocessing pickling) ---
-
-
-
-
-
-
-# --- Main KKdMatrix Function (Keep outside class) ---
-# KKdMatrix is now imported from magcalc.linalg
 
 
 # --- Analytical classical energy (quadratic form in spin components) ---
@@ -306,22 +245,6 @@ def _minimize_worker(args):
             jac=jac_wrapper,
             **kwargs,
         )
-
-
-# --- gen_HM Helper Functions ---
-
-
-
-
-
-
-
-
-
-# --- Main gen_HM Function (Calls Helpers) ---
-
-
-# --- NEW HELPER for config-driven Fourier substitutions ---
 
 
 # --- Fast dispersion evaluator (for fitting / repeated parameter changes) ---
@@ -1284,6 +1207,7 @@ class MagCalc:
         """
         logger.info("Updating Hamiltonian parameters...")
         expected_len = len(self.params_sym)
+        expected_len_flat = len(self.params_sym_flat)
 
         if isinstance(new_hamiltonian_params, np.ndarray):
             new_hamiltonian_params = (
@@ -1291,11 +1215,20 @@ class MagCalc:
             )  # Convert numpy array
         if not isinstance(new_hamiltonian_params, list):
             raise TypeError("new_hamiltonian_params must be a list or NumPy array.")
-        if len(new_hamiltonian_params) != expected_len:
+        # Accept BOTH shapes: the nested form (vector parameters as sublists,
+        # matching params_sym) and the flat scalar form (matching
+        # params_sym_flat and self.hamiltonian_params itself). Without the flat
+        # form, round-tripping the object's own flat `hamiltonian_params`
+        # failed for any model with a vector parameter (e.g. H_dir).
+        n_given = len(new_hamiltonian_params)
+        all_scalars = all(isinstance(x, (int, float)) for x in new_hamiltonian_params)
+        if n_given != expected_len and not (all_scalars and n_given == expected_len_flat):
             raise ValueError(
-                f"Incorrect number of parameters provided. Expected {expected_len}, got {len(new_hamiltonian_params)}."
+                f"Incorrect number of parameters provided. Expected {expected_len} "
+                f"(nested; vectors as sublists) or {expected_len_flat} (flat scalars), "
+                f"got {n_given}."
             )
-        
+
         # Validate elements similarly to __init__
         if not all(isinstance(x, (int, float, list, tuple, np.ndarray)) for x in new_hamiltonian_params):
              raise TypeError("All elements in new_hamiltonian_params must be numbers or sequences (vectors).")
@@ -1377,6 +1310,13 @@ class MagCalc:
         except Exception:
             # Hashing should never break the calculation; fall back silently.
             hasher.update(b"HMat_sym_unhashable")
+        # 1c. Long-range dipolar (Ewald) spec. The Ewald term is added to H(q)
+        # NUMERICALLY (it never enters HMat_sym), so toggling or editing the
+        # dipole_dipole block would otherwise serve a stale cached result.
+        try:
+            hasher.update(repr(self._ewald_spec()).encode("utf-8"))
+        except Exception:
+            hasher.update(b"ewald_spec_unhashable")
         # 2. Spin magnitude
         hasher.update(str(self.spin_magnitude).encode("utf-8"))
         # 3. Hamiltonian parameters
@@ -1657,6 +1597,16 @@ class MagCalc:
             raise RuntimeError(
                 "Symbolic Hamiltonian not available; cannot compile evaluator."
             )
+        if self._ewald_spec() is not None:
+            # The Ewald dipolar term is added to H(q) numerically; the compiled
+            # evaluator only sees the symbolic HMat and would silently drop it,
+            # fitting a Hamiltonian missing the dipole-dipole interaction.
+            raise RuntimeError(
+                "Fast dispersion evaluator does not support dipole_dipole "
+                "(method: ewald): the dipolar A(q) is added to H(q) numerically "
+                "and would be silently omitted. Use the standard "
+                "calculate_dispersion path (fitting.fast: false falls back to it)."
+            )
         lambdify_symbols = [
             s for s in self.full_symbol_list if isinstance(s, sp.Symbol)
         ]
@@ -1675,66 +1625,6 @@ class MagCalc:
             spin_magnitude=self.spin_magnitude,
             default_params=list(self.hamiltonian_params),
         )
-
-    def calculate_sqw_generator(
-        self,
-        q_vectors: Union[List[npt.NDArray[np.float64]], npt.NDArray[np.float64]],
-        chunk_size: int = 100
-    ):
-        """
-        Generator yielding S(q,w) results incrementally.
-        
-        Useful for processing large datasets without loading everything into memory.
-        
-        Args:
-           q_vectors: List or array of q-vectors.
-           chunk_size: Chunk size for multiprocessing.
-
-        Yields:
-           Tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
-                (q_vector, energies, intensities) for each point.
-        """
-        # Input Validation (duplicate logic, could refactor)
-        if self.HMat_sym is None or self.Ud_numeric is None:
-            logger.error("Symbolic matrices not initialized.")
-            return
-
-        if isinstance(q_vectors, np.ndarray) and q_vectors.ndim == 2:
-            q_vectors_list = [q_vectors[i, :] for i in range(q_vectors.shape[0])]
-        elif isinstance(q_vectors, list):
-            q_vectors_list = [np.array(q) for q in q_vectors]
-        else:
-             logger.error("Invalid input for q_vectors.")
-             return
-             
-        ion_list = None
-        if hasattr(self.sm, 'ion_list'):
-            ion_list = self.sm.ion_list()
-
-        task_args = [
-            (
-                self.Ud_numeric,
-                q,
-                self.nspins,
-                self.spin_magnitude,
-                list(self.hamiltonian_params),
-                ion_list,
-            )
-            for q in q_vectors_list
-        ]
-        
-        try:
-             with Pool(
-                processes=os.cpu_count(),
-                initializer=_init_worker,
-                initargs=(self.HMat_sym, [s for s in self.full_symbol_list if isinstance(s, sp.Symbol)]),
-            ) as pool:
-                # yielding from imap
-                for result in pool.imap(process_calc_Sqw, task_args, chunksize=chunk_size):
-                    yield result
-        except Exception as e:
-            logger.exception(f"Error in S(q,w) generator: {e}")
-            raise
 
     @staticmethod
     def _locate_fmagcalc() -> Optional[str]:
@@ -1817,6 +1707,8 @@ class MagCalc:
 
             if np.isclose(e, best_e, atol=1e-6):
                 hits += 1
+                if e < best_e:      # same minimum, marginally better polish
+                    best_e, best_x = e, x
             elif e < best_e:
                 best_e, best_x, hits = e, x, 1
                 logger.info(f"New best energy found: {best_e:.6f} meV (run {run + 1})")
@@ -1914,9 +1806,9 @@ class MagCalc:
         cfg = getattr(self.sm, "config", None)
         if not isinstance(cfg, dict):
             return None
-        spec = (cfg.get("dipole_dipole")
-                or (cfg.get("interactions") or {}).get("dipole_dipole")
-                if isinstance(cfg.get("interactions"), dict) else cfg.get("dipole_dipole"))
+        spec = cfg.get("dipole_dipole")
+        if spec is None and isinstance(cfg.get("interactions"), dict):
+            spec = cfg["interactions"].get("dipole_dipole")
         if not isinstance(spec, dict):
             return None
         if str(spec.get("method", "truncated")).lower() != "ewald":
@@ -1924,8 +1816,18 @@ class MagCalc:
         return spec
 
     def _ewald_A(self, q_rlu):
-        """Ewald A(q) (n,n,3,3), cached per q."""
+        """Ewald A(q) (n,n,3,3), cached per q (bounded cache; the guard,
+        dispersion, and both S(q,w) branches would otherwise each redo the full
+        lattice sum for overlapping q sets)."""
         from .ewald import dipole_ewald_at_q
+
+        key = tuple(np.round(np.asarray(q_rlu, dtype=float), 10))
+        cache = getattr(self, "_ewald_A_cache", None)
+        if cache is None:
+            cache = self._ewald_A_cache = {}
+        hit = cache.get(key)
+        if hit is not None:
+            return hit
 
         spec = self._ewald_spec()
         cs = self.sm.config["crystal_structure"]
@@ -1934,7 +1836,11 @@ class MagCalc:
         frac = np.asarray([a["pos"] for a in atoms], dtype=float)
         demag = spec.get("demag")
         demag = np.asarray(demag, dtype=float) if demag is not None else None
-        return dipole_ewald_at_q(lat, frac, q_rlu, demag=demag)
+        A = dipole_ewald_at_q(lat, frac, q_rlu, demag=demag)
+        if len(cache) > 4096:   # keep memory bounded on very long q-paths
+            cache.clear()
+        cache[key] = A
+        return A
 
     def _ewald_g(self):
         atoms = self.sm.config["crystal_structure"]["atoms_uc"]
@@ -2021,18 +1927,6 @@ class MagCalc:
 
         Cheap: it diagonalizes the SAME H(q) the dispersion uses.
         """
-        if self.HMat_sym is None:
-            return 0.0
-        B = reciprocal_b_matrix(np.asarray(self.sm.unit_cell(), dtype=float))
-        rng = np.random.default_rng(seed)
-        q_sample = rng.uniform(-0.5, 0.5, size=(int(n_q), 3)) @ B
-        if q_cart is not None and len(q_cart) > 0:
-            extra = np.asarray(q_cart, dtype=float).reshape(-1, 3)
-            # cap the cost: a dense path can be thousands of points
-            if len(extra) > 256:
-                idx = np.linspace(0, len(extra) - 1, 256).astype(int)
-                extra = extra[idx]
-            q_sample = np.vstack([q_sample, extra])
         return self.stability_report(n_q=n_q, seed=seed, q_cart=q_cart)["max_imag"]
 
     def stability_report(
@@ -2104,8 +1998,18 @@ class MagCalc:
         layout lambdify would otherwise emit, so the result is bit-identical to
         the per-q path.
         """
-        lam = [s for s in self.full_symbol_list if isinstance(s, sp.Symbol)]
-        entry_func = lambdify(lam, list(self.HMat_sym), modules=["numpy"], cse=True)
+        # Lambdify once per symbolic matrix: this method is called by the
+        # stability guard on every run, by compute_corrections, and per Fortran
+        # call -- re-running CSE + lambdify each time dominated the cost for
+        # large cells. The cache key is the HMat_sym object itself (replaced on
+        # regeneration); parameter VALUES are passed as arguments, so they may
+        # change freely without invalidating the compiled function.
+        cached = getattr(self, "_h_stack_cache", None)
+        if cached is None or cached[0] is not self.HMat_sym:
+            lam = [s for s in self.full_symbol_list if isinstance(s, sp.Symbol)]
+            entry_func = lambdify(lam, list(self.HMat_sym), modules=["numpy"], cse=True)
+            self._h_stack_cache = (self.HMat_sym, entry_func)
+        entry_func = self._h_stack_cache[1]
         base = [S] + list(self.hamiltonian_params)
         two_n = 2 * int(self.nspins)
         nq = len(q_grid)
@@ -2544,22 +2448,10 @@ class MagCalc:
         all_q_vectors = []
         segment_sizes = []
 
-        # 1. Generate all Q-vectors upfront
+        # 1. Generate all Q-vectors upfront (shared Fibonacci-sphere construction;
+        # a |Q| ~ 0 shell collapses to the single point [0, 0, 0]).
         for q_mag in q_mags:
-            if q_mag < Q_ZERO_THRESHOLD:
-                # Special case for Q=0: just one point needed
-                vectors = np.array([[0.0, 0.0, 0.0]])
-            else:
-                # Fibonacci sphere sampling
-                indices = np.arange(0, num_samples, dtype=float) + 0.5
-                phi = np.arccos(1 - 2 * indices / num_samples)
-                theta = np.pi * (1 + 5**0.5) * indices
-
-                qx = q_mag * np.sin(phi) * np.cos(theta)
-                qy = q_mag * np.sin(phi) * np.sin(theta)
-                qz = q_mag * np.cos(phi)
-                vectors = np.column_stack((qx, qy, qz))
-            
+            vectors = fibonacci_sphere_points(float(q_mag), num_samples)
             all_q_vectors.extend(vectors)
             segment_sizes.append(len(vectors))
         
@@ -2962,6 +2854,9 @@ class MagCalc:
                         if res.success:
                             if np.isclose(res.fun, best_energy, atol=1e-6):
                                 hits += 1
+                                if res.fun < best_energy:
+                                    best_energy = res.fun
+                                    best_res = res
                             elif res.fun < best_energy:
                                 best_energy = res.fun
                                 best_res = res
@@ -2990,6 +2885,9 @@ class MagCalc:
                 if res.success:
                     if np.isclose(res.fun, best_energy, atol=1e-6):
                         hits += 1
+                        if res.fun < best_energy:
+                            best_energy = res.fun
+                            best_res = res
                     elif res.fun < best_energy:
                         best_energy = res.fun
                         best_res = res
@@ -3239,9 +3137,6 @@ def plot_magnetic_structure(
     ax.set_title(title)
     
     # Enforce Equal Aspect Ratio via cubic bounding box
-    # Find the max range to normalize the view
-    max_range = np.ptp(xs).max() # Placeholder, wait below
-    
     ranges = np.array([np.ptp(xs), np.ptp(ys), np.ptp(zs)])
     max_range = ranges.max()
     if max_range < 1e-6:
@@ -3282,273 +3177,3 @@ def plot_magnetic_structure(
     if show_plot:
         plt.show()
     plt.close()
-
-
-if __name__ == "__main__":
-    """
-    Example script demonstrating the usage of the MagCalc class.
-
-    1. Imports a spin model (`spin_model.py` by default).
-    2. Defines parameters, q-points, and cache settings.
-    3. Instantiates `MagCalc`.
-    4. Calculates and saves initial dispersion.
-    5. Updates parameters and recalculates/saves dispersion and S(q,w).
-    6. Optionally loads and plots S(q,w) from file.
-    """
-    # --- Control Flags for KFe3J Example ---
-    CALCULATE_NEW_DATA = True  # Calculate new data or use existing files for plotting
-    PLOT_FROM_DISP_FILE = False  # Plot dispersion from a saved file
-    PLOT_FROM_SQW_FILE = False  # Plot S(q,w) from a saved file
-    SHOW_PLOTS_AFTER_CALC = True  # Show plots immediately after calculation
-
-    # --- Import the KFe3J spin model ---
-    try:
-        # Assuming KFe3J package is in a directory accessible by Python
-        # If KFe3J is in the same directory as pyMagCalc or a subdirectory of project_root_dir
-        # and project_root_dir is in sys.path, this should work.
-        # For a typical project structure where KFe3J is a sibling to pyMagCalc:
-        current_script_dir_for_example = os.path.dirname(os.path.abspath(__file__))
-        project_root_dir_for_example = os.path.dirname(
-            current_script_dir_for_example
-        )  # pyMagCalc's parent
-        kfe3j_module_dir = os.path.join(project_root_dir_for_example, "KFe3J")
-        if kfe3j_module_dir not in sys.path:
-            sys.path.insert(0, kfe3j_module_dir)
-        import spin_model as kfe3j_spin_model
-    except ImportError:
-        logger.error(
-            "Failed to import 'KFe3J.spin_model'. Ensure KFe3J directory is accessible."
-        )
-        sys.exit(1)  # Exit if the model cannot be imported
-
-    # --- KFe3J User Configuration ---
-    spin_S_val: float = 2.5  # S for Fe3+
-    # Order for KFe3J model: J1, J2, Dy, Dz, H_field
-    hamiltonian_params_val: List[float] = [3.23, 0.11, 0.218, -0.195, 0.0]
-    cache_file_base_name: str = "kfe3j_example_cache"
-    cache_operation_mode: str = "w"  # Use 'w' to generate cache first time, then 'r'
-    output_filename_base: str = "kfe3j_example_results"
-
-    # Define q points for KFe3J (example path from test script)
-    q_points_list: List[List[float]] = []
-    # Gamma to M path (along kx up to 2*pi/sqrt(3))
-    N_gamma_m = 10
-    for qx_val in np.linspace(
-        0, 2 * np.pi / np.sqrt(3), N_gamma_m, endpoint=True
-    ):  # Include M
-        q_points_list.append([qx_val, 0, 0])
-
-    # M to K path (example, M is (2pi/sqrt(3),0,0), K is (2pi/sqrt(3), 2pi/3,0) )
-    # For this example, let's go from M towards K along ky
-    N_m_k_segment = 6  # Number of points from M (exclusive) to K (inclusive)
-    m_point = np.array([2 * np.pi / np.sqrt(3), 0, 0])
-    k_point_approx = np.array([2 * np.pi / np.sqrt(3), 2 * np.pi / 3, 0])
-
-    # Generate points from M (exclusive) to K (inclusive)
-    for i in range(1, N_m_k_segment + 1):
-        frac = i / N_m_k_segment
-        q_pt = m_point + frac * (k_point_approx - m_point)
-        q_points_list.append(q_pt.tolist())
-
-    q_points_array: npt.NDArray[np.float64] = np.array(q_points_list)
-    # --- End User Configuration ---
-
-    logger.info("Starting example calculation using MagCalc class...")
-
-    # Define q-path labels and positions (example)
-    # These should correspond to your q_points_array structure
-    # For KFe3J path: Gamma -> M -> K
-    q_path_distances = np.zeros(len(q_points_array))
-    for i in range(1, len(q_points_array)):
-        q_path_distances[i] = q_path_distances[i - 1] + np.linalg.norm(
-            q_points_array[i] - q_points_array[i - 1]
-        )
-
-    q_special_labels = ["Γ", "M", "K"]
-    q_special_positions = [
-        q_path_distances[0],  # Gamma
-        q_path_distances[N_gamma_m - 1],  # M
-        q_path_distances[-1],  # K
-    ]
-
-    disp_filename_initial = f"{output_filename_base}_disp_initial.npz"
-    disp_filename_updated = f"{output_filename_base}_disp_updated.npz"
-    sqw_filename_updated = f"{output_filename_base}_sqw_updated.npz"
-
-    if CALCULATE_NEW_DATA:
-        try:
-            # --- Instantiate the Calculator ---
-            calculator = MagCalc(
-                spin_magnitude=spin_S_val,
-                hamiltonian_params=hamiltonian_params_val,
-                cache_file_base=cache_file_base_name,
-                cache_mode=cache_operation_mode,  # Use 'w' to generate cache first time
-                spin_model_module=kfe3j_spin_model,
-            )
-
-            # --- Calculate and Save Dispersion (Initial Params) ---
-            logger.info("Calculating dispersion (Initial Params)...")
-            dispersion_energies_initial = calculator.calculate_dispersion(
-                q_points_array
-            )
-            if dispersion_energies_initial is not None:
-                calculator.save_results(
-                    disp_filename_initial,
-                    {
-                        "q_values_path": q_path_distances,
-                        "energies_list": dispersion_energies_initial,
-                        "q_labels": q_special_labels,
-                        "q_ticks_positions": q_special_positions,
-                    },
-                )
-                if SHOW_PLOTS_AFTER_CALC:
-                    plot_dispersion_from_data(
-                        q_path_distances,
-                        dispersion_energies_initial,
-                        title="Dispersion (Initial Params)",
-                        q_labels=q_special_labels,
-                        q_ticks_positions=q_special_positions,
-                    )
-            else:
-                logger.error("Initial dispersion calculation failed.")
-
-            # --- Update Parameters ---
-            logger.info("Updating parameters for recalculation...")
-            new_params = [
-                p * 1.1 for p in hamiltonian_params_val
-            ]  # Example: Increase params by 10%
-            calculator.update_hamiltonian_params(new_params)
-
-            # --- Recalculate and Save Dispersion (Updated Params) ---
-            logger.info("Calculating dispersion (Updated Params)...")
-            dispersion_energies_updated = calculator.calculate_dispersion(
-                q_points_array
-            )
-            if dispersion_energies_updated is not None:
-                calculator.save_results(
-                    disp_filename_updated,
-                    {
-                        "q_values_path": q_path_distances,
-                        "energies_list": dispersion_energies_updated,
-                        "q_labels": q_special_labels,
-                        "q_ticks_positions": q_special_positions,
-                    },
-                )
-                if SHOW_PLOTS_AFTER_CALC:
-                    plot_dispersion_from_data(
-                        q_path_distances,
-                        dispersion_energies_updated,
-                        title="Dispersion (Updated Params)",
-                        q_labels=q_special_labels,
-                        q_ticks_positions=q_special_positions,
-                    )
-            else:
-                logger.error("Updated dispersion calculation failed.")
-
-            # --- Calculate and Save S(q,w) (Using Updated Params) ---
-            logger.info("Calculating S(q,w) (Updated Params)...")
-            sqw_results = calculator.calculate_sqw(q_points_array)
-            q_vectors_out_sqw, energies_sqw, intensities_sqw = sqw_results
-            if (
-                q_vectors_out_sqw is not None  # q_vectors_out_sqw is a tuple of arrays
-                and energies_sqw is not None
-                and intensities_sqw is not None
-            ):
-                # For S(q,w) plotting, we typically use the same q_path_indices if q_vectors_out_sqw matches q_points_array
-                calculator.save_results(
-                    sqw_filename_updated,
-                    {  # Assuming q_vectors_out_sqw corresponds to q_path_distances
-                        "q_values_path": q_path_distances,
-                        "energies_list": energies_sqw,  # This is a tuple of arrays
-                        "intensities_list": intensities_sqw,  # This is a tuple of arrays
-                        "q_labels": q_special_labels,
-                        "q_ticks_positions": q_special_positions,
-                    },
-                )
-                if SHOW_PLOTS_AFTER_CALC:
-                    plot_sqw_from_data(
-                        q_path_distances,
-                        list(energies_sqw),
-                        list(intensities_sqw),
-                        title="S(q,w) Map (Updated Params)",
-                        energy_max=(
-                            np.nanmax(np.hstack(energies_sqw))
-                            if energies_sqw and any(e is not None for e in energies_sqw)
-                            else 10
-                        ),
-                        q_labels=q_special_labels,
-                        q_ticks_positions=q_special_positions,
-                    )
-            else:
-                logger.error("S(q,w) calculation failed.")
-
-        except (
-            FileNotFoundError,
-            AttributeError,
-            RuntimeError,
-            ValueError,
-            TypeError,
-            pickle.PickleError,
-        ) as e:
-            logger.error(
-                f"Calculation failed during setup or execution: {e}", exc_info=True
-            )
-        except Exception as e:
-            logger.exception("An unexpected error occurred during calculations.")
-
-    # --- Plotting from saved files ---
-    if PLOT_FROM_DISP_FILE:
-        logger.info(f"Attempting to plot dispersion from file: {disp_filename_updated}")
-        try:
-            data = np.load(disp_filename_updated, allow_pickle=True)
-            plot_dispersion_from_data(
-                data["q_values_path"],
-                list(data["energies_list"]),
-                title="Dispersion (Loaded from File)",
-                q_labels=(
-                    data["q_labels"].tolist() if "q_labels" in data else None
-                ),  # Convert back to list if saved as array
-                q_ticks_positions=(
-                    data["q_ticks_positions"].tolist()
-                    if "q_ticks_positions" in data
-                    else None
-                ),
-            )
-        except FileNotFoundError:
-            logger.error(f"Dispersion data file not found: {disp_filename_updated}")
-        except Exception as e:
-            logger.exception(f"Error plotting dispersion from file: {e}")
-
-    if PLOT_FROM_SQW_FILE:
-        logger.info(f"Attempting to plot S(q,w) from file: {sqw_filename_updated}")
-        try:
-            data = np.load(sqw_filename_updated, allow_pickle=True)
-            energies_list_sqw = list(
-                data["energies_list"]
-            )  # Convert tuple of arrays to list of arrays
-            intensities_list_sqw = list(data["intensities_list"])
-            plot_sqw_from_data(
-                data["q_values_path"],
-                energies_list_sqw,
-                intensities_list_sqw,
-                title="S(q,w) Map (Loaded from File)",  # Ensure energies_list_sqw is not empty before hstack
-                energy_max=(
-                    np.nanmax(np.hstack(energies_list_sqw))
-                    if energies_list_sqw
-                    and any(e is not None for e in energies_list_sqw)
-                    else 10
-                ),
-                q_labels=data["q_labels"].tolist() if "q_labels" in data else None,
-                q_ticks_positions=(
-                    data["q_ticks_positions"].tolist()
-                    if "q_ticks_positions" in data
-                    else None
-                ),
-            )
-        except FileNotFoundError:
-            logger.error(f"S(q,w) data file not found: {sqw_filename_updated}")
-        except Exception as e:
-            logger.exception(f"Error plotting S(q,w) from file: {e}")
-
-    logger.info("Example calculation finished.")
-

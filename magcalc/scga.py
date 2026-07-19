@@ -31,13 +31,11 @@ using one λ.
 """
 import logging
 from dataclasses import dataclass
-from typing import List, Optional, Sequence
 
 import numpy as np
 from scipy import optimize
 
 from .form_factors import get_form_factor
-from .numerical import contract_cross_section
 from .sun.entangled import _pair_matrix
 
 logger = logging.getLogger(__name__)
@@ -171,14 +169,16 @@ def solve_lambda(model, params, kT, nq=12, mesh=None):
 
 
 def scga_intensities(model, params, q_vectors, kT, nq=12, cross_section="perp",
-                     lam=None, mesh=None, apply_g=True):
+                     lam=None, mesh=None, apply_g=True, cache=None):
     """Static SCGA structure factor S(q) at the given cartesian q-vectors.
 
     S(q) = kT · contract[ Σ_{ij} f_i f_j e^{-iq·r_i} g_i (λ+J(q))^{-1}_{ij} g_j^T e^{+iq·r_j} ].
     With `apply_g` the neutron sees the magnetic moment g·S (Sunny's default); set it
-    False for the bare spin structure factor.
+    False for the bare spin structure factor. `cache` may carry a precomputed
+    _exchange_cache (compute_scga passes solve_lambda's, avoiding a rebuild).
     """
-    cache = _exchange_cache(model, params)
+    if cache is None:
+        cache = _exchange_cache(model, params)
     if lam is None:
         lam, lam_min, residual, cache, mesh = solve_lambda(model, params, kT, nq, mesh)
     N = cache["N"]
@@ -228,7 +228,8 @@ def compute_scga(model, params, q_vectors, kT, nq=12, cross_section="perp"):
     """Top-level: solve λ then evaluate S(q). Returns an SCGAResult."""
     lam, lam_min, residual, cache, mesh = solve_lambda(model, params, kT, nq)
     qs = np.asarray(q_vectors, float).reshape(-1, 3)
-    I = scga_intensities(model, params, qs, kT, nq, cross_section, lam=lam, mesh=mesh)
+    I = scga_intensities(model, params, qs, kT, nq, cross_section, lam=lam,
+                         mesh=mesh, cache=cache)
     logger.info("SCGA: kT=%.4g, λ=%.6g (λ_min=%.6g), %d q-mesh, sum-rule resid %.1e",
                 kT, lam, lam_min, len(mesh), residual)
     return SCGAResult(q_vectors=qs, intensities=I, lam=lam, temperature=kT,

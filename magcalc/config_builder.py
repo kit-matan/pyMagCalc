@@ -301,16 +301,11 @@ class MagCalcConfigBuilder:
 
         # Reference Bond
         ref_frac_diff = (pos_j_uc + best_offset) - pos_i # vector from i to j
-        ref_center_pos = pos_i # bond starts at i
         
         # 2. Apply Symmetry to find Orbit
         # We transform the bond vector and the bond center
-        rotations = self.symmetry_ops['rotations']
-        
-        orbit_bonds = [] # List of (atom_i_lbl, atom_j_lbl, offset_j, transformed_value)
         added_bonds_keys = set()
         
-        # Check if value is symbolic (contains strings)
         # Check if value is symbolic (contains strings)
         if isinstance(value, str):
             # Parse CSV string if needed (e.g. "0,-Dy,Dz" or "[0, -Dy, 0]")
@@ -1413,36 +1408,6 @@ class MagCalcConfigBuilder:
         # 3. Expand Interaction Rules
         self._expand_heisenberg_rules()
         self._expand_anisotropic_exchange_rules()
-        self._expand_interaction_matrix_rules()
-        self._expand_dm_rules()
-
-        # WRITE
-
-    def save(self, filename: str):
-        """Export configuration to YAML file."""
-        # 1. Ensure atoms are in config
-        config_atoms = []
-        for a in self.atoms_uc:
-            config_atoms.append({
-                "label": a["label"],
-                "pos": [float(x) for x in a["pos"]],
-                "spin_S": a["spin_S"]
-            })
-        self.config["crystal_structure"]["atoms_uc"] = config_atoms
-        
-        # 2. Derive magnetic_elements list (unique species)
-        species = sorted(list(set(a["species"] for a in self.atoms_uc if a.get("species"))))
-        if not species: 
-            # Fallback to labels if species not set, or first 1-2 chars
-            species = [] # Logic refinement needed if user doesn't provide
-            
-        self.config["crystal_structure"]["magnetic_elements"] = species
-        # Dimensionality removed
-
-
-        # 3. Expand Interaction Rules
-        self._expand_heisenberg_rules()
-        self._expand_anisotropic_exchange_rules()
         self._expand_dm_rules()
 
         # WRITE
@@ -1476,7 +1441,6 @@ class MagCalcConfigBuilder:
         # P_start = pos_i
         # P_end = pos_j_uc + offset
         vec_frac = (pos_j_uc + offset) - pos_i
-        midpoint = pos_i + 0.5 * vec_frac
         
         # 2. Find Little Group
         # Op R, t is in Little Group if:

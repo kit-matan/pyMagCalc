@@ -30,7 +30,7 @@ CONVENTIONS (both verified against the host, see tests):
 For S=1/2 (N=2) there is exactly one boson per site and this reduces IDENTICALLY to
 dipole LSWT -- the load-bearing test.
 """
-from typing import List, Optional, Sequence, Tuple
+from typing import Optional, Sequence, Tuple
 
 from itertools import product as _product
 
@@ -208,8 +208,7 @@ class SUNModel:
     def dispersion(self, q_cart: np.ndarray) -> np.ndarray:
         """The L*M positive magnon energies at q (ascending)."""
         ev = np.linalg.eigvals(self.hamiltonian(q_cart))
-        w = np.sort(np.real(ev))[self.L * self.M:]
-        return np.sort(w)
+        return np.sort(np.real(ev))[self.L * self.M:]
 
     def max_imaginary(self, q_cart: np.ndarray) -> float:
         ev = np.linalg.eigvals(self.hamiltonian(q_cart))
@@ -432,6 +431,22 @@ class SUNModel:
         rng = np.random.default_rng(seed)
         best_E, best_Z = np.inf, None
 
+        # Precompute what the self-consistency loop reuses every iteration:
+        # per-site spin matrices, the bonds leaving each site, and the summed
+        # on-site term. The old code rebuilt spin_matrices(S) per access and
+        # scanned the FULL bond list once per site per iteration (O(L*bonds)).
+        Sxyz_all = [spin_matrices(self.S[i]) for i in range(self.L)]
+        bonds_from = [[] for _ in range(self.L)]
+        for (bi, bj, dr, J) in self.bonds:
+            bonds_from[bi].append((bj, J))
+        onsite_by = [np.zeros((self.N, self.N), dtype=complex) for _ in range(self.L)]
+        for (k, A) in self.onsite:
+            onsite_by[k] = onsite_by[k] + A
+
+        def _s0_of(Z):
+            return np.array([[Zi.conj() @ Sxyz_all[i][a] @ Zi for a in range(3)]
+                             for i, Zi in enumerate(Z)])
+
         for r in range(max(int(n_restarts), 1)):
             if r == 0:
                 Z = [z.copy() for z in self.Z]                 # current state as a seed
@@ -442,21 +457,23 @@ class SUNModel:
                     Z.append(v / np.linalg.norm(v))
 
             E_prev = np.inf
+            s0 = _s0_of(Z)
             for _ in range(max_iter):
-                s0 = np.array([[Zi.conj() @ spin_matrices(self.S[i])[a] @ Zi
-                                for a in range(3)] for i, Zi in enumerate(Z)])
                 for i in range(self.L):
-                    h = self.local_field(i, s0)
+                    c = np.zeros(3)
+                    for (bj, J) in bonds_from[i]:
+                        c += J @ np.real(s0[bj])
+                    Sx, Sy, Sz = Sxyz_all[i]
+                    h = onsite_by[i] + c[0] * Sx + c[1] * Sy + c[2] * Sz
                     w, v = np.linalg.eigh(h)
                     Z[i] = v[:, int(np.argmin(w))]
-                    s0[i] = [Z[i].conj() @ spin_matrices(self.S[i])[a] @ Z[i]
-                             for a in range(3)]
-                E = self._energy_of(Z)
+                    s0[i] = [Z[i].conj() @ Sxyz_all[i][a] @ Z[i] for a in range(3)]
+                E = self._energy_of(Z, s0=s0)
                 if abs(E_prev - E) < tol:
                     break
                 E_prev = E
 
-            E = self._energy_of(Z)
+            E = self._energy_of(Z, s0=s0)
             if E < best_E - 1e-12:
                 best_E, best_Z = E, [z.copy() for z in Z]
 
@@ -464,9 +481,10 @@ class SUNModel:
         self._prepare()
         return best_E
 
-    def _energy_of(self, Z) -> float:
-        s0 = np.array([[Z[i].conj() @ spin_matrices(self.S[i])[a] @ Z[i]
-                        for a in range(3)] for i in range(self.L)])
+    def _energy_of(self, Z, s0=None) -> float:
+        if s0 is None:
+            s0 = np.array([[Z[i].conj() @ spin_matrices(self.S[i])[a] @ Z[i]
+                            for a in range(3)] for i in range(self.L)])
         E = 0.0
         for (i, j, dr, J) in self.bonds:
             E += 0.5 * float(np.real(s0[i] @ J @ s0[j]))

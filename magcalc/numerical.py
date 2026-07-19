@@ -2,10 +2,9 @@ import sys
 import logging
 import numpy as np
 import scipy.linalg as la
-import sympy as sp
 from sympy import lambdify
 from dataclasses import dataclass
-from typing import List, Tuple, Optional, Union, Dict, Any
+from typing import List, Tuple, Optional, Union
 import numpy.typing as npt
 
 # Internal imports
@@ -27,7 +26,6 @@ logger = logging.getLogger(__name__)
 ENERGY_IMAG_PART_THRESHOLD: float = 1e-5
 SQW_IMAG_PART_THRESHOLD: float = 1e-4
 Q_ZERO_THRESHOLD: float = 1e-10
-PROJECTION_CHECK_TOLERANCE: float = 1e-5
 KB_MEV_PER_K: float = 0.08617333262  # Boltzmann constant in meV/K
 
 
@@ -240,25 +238,13 @@ def _init_worker(HMat_sym, full_symbol_list):
     Lambdifies the symbolic Hamiltonian once per process.
     """
     global _worker_HMat_func
-    
+
     try:
-        # We need to import numpy inside the worker if used in lambdify modules
-        import numpy as np 
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
         _worker_HMat_func = lambdify(full_symbol_list, HMat_sym, modules=["numpy"], cse=True)
     except Exception as e:
         sys.stderr.write(f"Error in worker initialization: {e}\n")
         raise e
-
-def substitute_expr(
-    args: Tuple[sp.Expr, Union[Dict, List[Tuple[sp.Expr, sp.Expr]]]],
-) -> sp.Expr:
-    """
-    Perform symbolic substitution on a SymPy expression.
-    """
-    expr, subs_dict = args
-    result: sp.Expr = expr.subs(subs_dict, simultaneous=True)
-    return result
 
 def process_calc_disp(
     args: Tuple[
@@ -287,8 +273,7 @@ def process_calc_disp(
         h_dip,
     ) = args
     
-    global _worker_HMat_func
-    if _worker_HMat_func is None:
+    if _worker_HMat_func is None:   # set per process by _init_worker
         raise RuntimeError("Worker not initialized with HMat_func")
         
     q_label = f"q={q_vector}"
@@ -370,8 +355,7 @@ def process_calc_Sqw(
         h_dip_pair,
     ) = args
     
-    global _worker_HMat_func
-    if _worker_HMat_func is None:
+    if _worker_HMat_func is None:   # set per process by _init_worker
         raise RuntimeError("Worker not initialized with HMat_func")
         
     q_label = f"q={q_vector}"
@@ -420,7 +404,6 @@ def process_calc_Sqw(
                 f"Significant imaginary part in energy eigenvalues for {q_label}. Max imag: {np.max(imag_energy_mag)}"
             )
         energies = np.real(eigenvalues[0:nspins])
-        sqw_complex_accumulator = np.zeros(nspins, dtype=complex)
         
         q_norm_sq = np.dot(q_vector, q_vector)
         q_mag = np.sqrt(q_norm_sq)
@@ -536,8 +519,7 @@ def process_calc_Sqw_single_k(
         spin_magnitudes,
     ) = args
 
-    global _worker_HMat_func
-    if _worker_HMat_func is None:
+    if _worker_HMat_func is None:   # set per process by _init_worker
         raise RuntimeError("Worker not initialized with HMat_func")
 
     k_cart = np.asarray(k_cart, dtype=float)

@@ -24,15 +24,17 @@
 # plausible. With too few starts the minimizer settles in one of them and
 # LSWT is then built about a non-minimum, which shows up as IMAGINARY magnon
 # energies at every q. `num_starts: 200` + `early_stopping: 40` reaches the
-# true minimum, E = -5.716074 meV/cell -- reproducible from seeds 0/1/7/123,
-# with zero imaginary modes. (num_starts 24 / early_stopping 10 gave
-# -5.338 meV and imaginary modes everywhere.) If you retune this model,
-# check the energy is reproducible across seeds AND that no imaginary-part
-# warnings appear -- either one alone is not sufficient.
+# true minimum, E = -9.662153 meV/cell -- reproducible from seeds 0/1/7/123,
+# with zero imaginary modes. (num_starts 24 / early_stopping 10 settled in a
+# local minimum at -8.995 meV.) If you retune this model, check the energy is
+# reproducible across seeds AND that no imaginary-part warnings appear --
+# either one alone is not sufficient.
+# (Numbers re-measured after the 2026-07 Zeeman calibration fix; pre-fix
+# docs quoted -5.716074 meV with an accidentally half-strength field.)
 #
 # Result: a fully gapped spectrum (no Goldstone -- the field breaks every
-# continuous symmetry), gap 0.413 meV, bands to 1.109 meV. Field dependence
-# is monotonic in energy (0/2/5 T -> -2.220 / -3.430 / -5.716 meV) with the
+# continuous symmetry), gap 0.941 meV, bands to 1.675 meV. Field dependence
+# is monotonic in energy (0/2/5 T -> -2.220 / -4.945 / -9.662 meV) with the
 # gap softening near 2 T as the splayed FM reorients toward the field.
 #
 # The zero-field model lives in config.yaml (identical exchange; the

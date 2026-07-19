@@ -26,7 +26,6 @@ Validated (tests/test_thermal_mc.py) against EXACT results:
 """
 import logging
 from dataclasses import dataclass
-from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -58,7 +57,14 @@ def build_supercell(model, params, supercell=(4, 4, 1)):
     L1, L2, L3 = (int(x) for x in supercell)
     ncell = L1 * L2 * L3
     N = n * ncell
-    S = float(np.asarray(model.spin_magnitudes(), float)[0])
+    mags = np.asarray(model.spin_magnitudes(), float)
+    if mags.size and float(np.ptp(mags)) > 1e-12:
+        # A single |m_i| = S is assumed throughout the sampler; silently using
+        # site 0's spin for every site would give wrong thermodynamics.
+        raise NotImplementedError(
+            f"thermal_mc / sampled_correlations support a single spin magnitude; "
+            f"got mixed spins {sorted(set(mags.tolist()))}.")
+    S = float(mags[0])
 
     cells = [(a, b_, c_) for a in range(L1) for b_ in range(L2) for c_ in range(L3)]
     cell_id = {cc: k for k, cc in enumerate(cells)}

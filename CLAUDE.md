@@ -297,14 +297,16 @@ Methods:
   weaker than it looks. On SW20 in field it reached the true minimum in only
   **3 of 200 starts**; annealing reaches it in **1 run out of 1**.
 
-The SW20-in-field numbers (16 sites = 32 angles), true minimum -5.716074 meV:
+The SW20-in-field numbers (16 sites = 32 angles), true minimum -9.662153 meV
+(re-measured after the 2026-07 Zeeman calibration fix; the pre-fix docs quoted
+-5.716074 with a half-strength field):
 
 | method | budget | result |
 |---|---|---|
-| L-BFGS-B | 24 starts, early_stopping 10 | **-5.338112 (WRONG)** -- imaginary modes at every q |
-| L-BFGS-B | 200 starts, early_stopping 40 | -5.716074, hit by only 3/200 starts, ~2 s |
-| **anneal** | **1 run x 500 sweeps** | **-5.716074, ~0.8 s** |
-| anneal | 4 runs x 2000 sweeps | -5.716074, 4/4 runs, reproducible across seeds |
+| L-BFGS-B | 24 starts, early_stopping 10 | **-8.994590 (WRONG)** -- a local minimum |
+| L-BFGS-B | 200 starts, early_stopping 40 | -9.662153, hit by only 3/200 starts, ~1 s |
+| **anneal** | **1 run x 500 sweeps** | **-9.662153, ~0.9 s** |
+| anneal | 4 runs x 2000 sweeps | -9.662153, 4/4 runs, reproducible across seeds |
 
 All methods report `hits` (how many runs reached the best energy) and warn when
 `hits == 1`. `early_stopping` (multistart only) now defaults to

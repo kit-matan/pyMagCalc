@@ -2,7 +2,6 @@ import typer
 import yaml
 import os
 import logging
-from typing import Optional
 from typing_extensions import Annotated
 from magcalc import runner
 
