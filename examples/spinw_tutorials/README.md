@@ -336,16 +336,17 @@ minimization: {enabled: true, method: anneal, num_starts: 4, n_sweeps: 2000, see
   not a global search.
 * `L-BFGS-B` etc. — the legacy multistart path, kept for compatibility.
 
-On **SW20 in field** (16 sites = 32 angles; true minimum −5.716074 meV) the legacy
-path is startlingly weak — it optimizes in (θ, φ), whose polar coordinate
-singularities hurt it badly:
+On **SW20 in field** (16 sites = 32 angles; true minimum −9.662153 meV,
+re-measured after the 2026-07 Zeeman calibration fix — pre-fix docs quoted
+−5.716074 with a half-strength field) the legacy path is startlingly weak — it
+optimizes in (θ, φ), whose polar coordinate singularities hurt it badly:
 
 | method | budget | result |
 |---|---|---|
-| L-BFGS-B | 24 starts, early_stopping 10 | **−5.338112 — WRONG**, imaginary modes at every q |
-| L-BFGS-B | 200 starts, early_stopping 40 | −5.716074, reached by only **3 of 200** starts |
-| **anneal** | **1 run × 500 sweeps** | **−5.716074, ~0.8 s** |
-| anneal | 4 runs × 2000 sweeps | −5.716074, **4/4 runs**, reproducible across seeds |
+| L-BFGS-B | 24 starts, early_stopping 10 | **−8.994590 — WRONG**, a local minimum |
+| L-BFGS-B | 200 starts, early_stopping 40 | −9.662153, reached by only **3 of 200** starts |
+| **anneal** | **1 run × 500 sweeps** | **−9.662153, ~0.9 s** |
+| anneal | 4 runs × 2000 sweeps | −9.662153, **4/4 runs**, reproducible across seeds |
 
 Cross-checked against the verified multistart ground state on SW04, SW07, SW09,
 SW12, SW20 and CCSF: anneal and steep agree to <1e-5 meV everywhere, and anneal is

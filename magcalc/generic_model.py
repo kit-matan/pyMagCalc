@@ -1,8 +1,7 @@
 import logging
 import os
-import sys
 from itertools import product
-from typing import List, Dict, Any, Optional, Tuple, Union
+from typing import List, Dict, Any, Optional, Tuple
 
 import numpy as np
 from numpy import linalg as la
@@ -24,16 +23,6 @@ try:
 except ImportError:
     read_cif = None
     logger.warning("ASE not installed. CIF loading will be disabled.")
-
-# Ensure we can import cif_utils
-current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.insert(0, current_dir)
-
-try:
-    import cif_utils
-except ImportError:
-    pass # Will handle inside if needed
 
 # Helper functions for rotations
 def RotX(angle):
@@ -1163,8 +1152,6 @@ class GenericSpinModel:
         calc_settings = self.config.get('calculation_settings', {})
         neighbor_shells = calc_settings.get('neighbor_shells')
 
-        neighbor_offsets = []
-
         if not neighbor_shells:
             # Auto-size the shell so every explicit bond offset is reachable.
             required = self._required_neighbor_shells()
@@ -1292,6 +1279,20 @@ class GenericSpinModel:
                 param_map[name] = p[i]
         return param_map
 
+    def _dist_tol(self):
+        """Bond-matching distance tolerance (Angstrom).
+
+        Default 0.1 A. Absolute and fairly loose, so in distorted / low-symmetry
+        cells two genuinely distinct bond shells closer than the tolerance would
+        BOTH silently receive the coupling -- override with
+        `calculation: {distance_tolerance: <A>}` when shells are that close.
+        """
+        calc = self.config.get('calculation') or {}
+        try:
+            return float(calc.get('distance_tolerance', 0.1))
+        except (TypeError, ValueError):
+            return 0.1
+
     def spin_interactions(self, p):
         """
         Generates interaction matrices (Heisenberg, DM, Anisotropic) based on the
@@ -1321,7 +1322,7 @@ class GenericSpinModel:
         DM = [[None for _ in range(N_atom_ouc)] for _ in range(N_atom)]
         Kex = [[None for _ in range(N_atom_ouc)] for _ in range(N_atom)]
         
-        dist_tol = 0.1 # Increased slightly for robustness
+        dist_tol = self._dist_tol()
         param_map = self._resolve_param_map(p)
         param_counter = 0
         
@@ -1454,7 +1455,7 @@ class GenericSpinModel:
         apos = self.atom_pos()
         apos_ouc = self.atom_pos_ouc()
         N_atom, N_atom_ouc = len(apos), len(apos_ouc)
-        dist_tol = 0.1
+        dist_tol = self._dist_tol()
         atom_labels = [a.get('label') for a in
                        self.config.get('crystal_structure').get('atoms_uc')]
         label_to_idx = {lbl: idx for idx, lbl in enumerate(atom_labels)}
@@ -1751,13 +1752,20 @@ class GenericSpinModel:
         # 2. Extra Terms (SIA)
         HM += self._compute_sia_terms(Sxyz, p_rest, param_map)
 
-        # 3. Zeeman
-        # Default gamma=1.0. If users want g=2, they can provide g separately 
-        # or specify H such that it includes factors. 
-        # Actually, in most LSWT contexts, H = g*mu_B*H_field.
-        # If we use gamma=1.0, the shift will be 1 * mu_B * H.
-        # Given the reported doubling, setting gamma=1.0 should fix it.
-        gamma = 1.0 
+        # 3. Zeeman: H_zeeman = gamma * mu_B * B . S with gamma = 2 (electron g),
+        # so H_mag / Hx,Hy,Hz in TESLA reproduce the g = 2 Zeeman -- the SpinW /
+        # Sunny convention, and what SW29 documents (splitting 2*mu_B*H_mag).
+        #
+        # HISTORY (do not halve this again): gamma was once set to 1.0 to
+        # compensate a "reported doubling" -- which was the legacy S^0 parameter
+        # filter double-counting the H_mag*H_dir bilinear term. When the
+        # boson-degree truncation removed that double count, every in-field
+        # result was silently HALVED for months (SW29's verified 0.10622/1.72668
+        # became 0.511/1.322; caught 2026-07 by bisect + Sunny cross-check).
+        # gamma = 2 with the single, correctly-counted term is the calibrated
+        # convention; it also matches every other engine in this repo
+        # (spiral_opt, thermal_mc, entangled, dimer_series, all GAMMA = 2).
+        gamma = 2.0
         HM += self._compute_zeeman_terms(Sxyz, p_rest, param_map, gamma, mu_B)
 
         # 4. Substitution and Filtering
@@ -2126,12 +2134,10 @@ class GenericSpinModel:
             Bm = sp.Matrix(B_vec)
             for i in range(N_uc):
                 Si = sp.Matrix(Sxyz[i])
-                # The legacy global term is gamma*mu_B*H.S with gamma=1, calibrated
-                # (SW29) so that H_mag = B[Tesla] reproduces the electron g=2
-                # Zeeman. Scaling by g/2 makes an isotropic g=2 tensor reduce
-                # EXACTLY to the legacy term (asserted in tests), while g_xy != g_z
-                # now works.
-                HM += (mu_B / 2.0) * (Bm.T * g_tensors[i] * Si)[0]
+                # Physical Zeeman mu_B * B . g_i . S (SpinW addg / Sunny Moment(g=...)).
+                # An isotropic g = 2 tensor reduces EXACTLY to the legacy global
+                # term gamma*mu_B*B.S with gamma = 2 (asserted in tests).
+                HM += mu_B * (Bm.T * g_tensors[i] * Si)[0]
         else:
             for i in range(N_uc):
                 HM += gamma * mu_B * (
@@ -2233,18 +2239,13 @@ class GenericSpinModel:
         logger.debug("Using HM.expand()")
         HM = HM.expand()
         
-        # Check if we are doing LSWT (presence of 'c' operators) or Classical (no 'c')
-        # If any symbol starts with 'c', we assume LSWT and filter for quadratic terms.
-        # Otherwise, return full Hamiltonian (classical energy).
-        # Note: 'c' prefix is standard for bosonic operators in this codebase.
-        
-        has_c_ops = False
-        all_syms = HM.free_symbols
-        for s in all_syms:
-            if s.name.startswith('c'):
-                has_c_ops = True
-                break
-        
+        # Check if we are doing LSWT (presence of boson operators) or Classical.
+        # Bosons are the NON-COMMUTATIVE symbols; the old name-prefix test
+        # (`s.name.startswith('c')`) also matched any model parameter named
+        # c*, chi, c1, ... and silently DROPPED every Hamiltonian term carrying
+        # that parameter (its degree came out != 2).
+        has_c_ops = any(not s.is_commutative for s in HM.free_symbols)
+
         if has_c_ops:
              if hasattr(HM, 'as_ordered_terms'):
                   terms = HM.as_ordered_terms()
@@ -2254,15 +2255,15 @@ class GenericSpinModel:
                       pow_dict = term.as_powers_dict()
                       degree = 0
                       for s in syms:
-                          if s.name.startswith('c'):
+                          if not s.is_commutative:
                               degree += pow_dict.get(s, 0)
-                      
+
                       if degree == 2:
                           kept.append(term)
-                  
+
                   if len(kept) == 0:
                       logger.warning("All terms filtered out! HM will be zero.")
-                      
+
                   HM = sp.Add(*kept)
         else:
              logger.debug("No bosonic 'c' operators found. Skipping LSWT filtering (Classical Mode).")
@@ -2284,8 +2285,6 @@ class GenericSpinModel:
         # Get numerical interaction matrices
         Jex_sym, DM_sym, Kex_sym = self.spin_interactions(p_num)
         Jex, DM, Kex = interactions_to_numpy(Jex_sym, DM_sym, Kex_sym)
-        N = Jex.shape[0]
-        N_ouc = Jex.shape[1]
 
         # Prepare params
         params_dict = self._resolve_param_map(p_num)
@@ -2316,7 +2315,16 @@ class GenericSpinModel:
              # Let's rely on 'H' being in params dict.
              pass
 
-        S_val = float(params_dict.get('S', 0.5))
+        # NOTE: _resolve_param_map EXCLUDES 'S', so params_dict never contains it
+        # -- the old `params_dict.get('S', 0.5)` therefore ALWAYS returned 0.5,
+        # silently mis-weighting Zeeman vs exchange for any S != 1/2 model.
+        # Take S from the structure (parameters['S'] as an explicit override).
+        cfg_params = self.config.get('parameters') or {}
+        if isinstance(cfg_params.get('S'), (int, float)):
+            S_val = float(cfg_params['S'])
+        else:
+            mags = self.spin_magnitudes()
+            S_val = float(mags[0]) if mags else 0.5
         logger.info(f"Minimize Energy using S_val={S_val}")
              
         # Initial guess 
@@ -2466,16 +2474,15 @@ class GenericSpinModel:
             return None, None
 
         method = struct_config.get('type')
+        # NOTE: legacy types 'spiral' / 'propagation_vector' never reach here --
+        # normalize_magnetic_structure maps both onto 'single_k' at load time.
         if method == 'explicit':
             return self._generate_structure_explicit(struct_config)
-        elif method == 'single_k':
-            return self._generate_structure_single_k(struct_config)
-        elif method == 'propagation_vector':
-            return self._generate_structure_from_k(struct_config)
+        elif method in ('single_k', 'spiral', 'propagation_vector'):
+            return self._generate_structure_single_k(
+                normalize_magnetic_structure(struct_config, quiet=True))
         elif method == 'pattern':
             return self._generate_structure_from_pattern(struct_config)
-        elif method == 'spiral':
-            return self._generate_structure_spiral_local(struct_config)
         elif method == 'multi_k':
             return self._generate_structure_multi_k(struct_config)
         else:
@@ -2643,38 +2650,6 @@ class GenericSpinModel:
             phis.append(float(np.arctan2(v[1], v[0])))
         return thetas, phis
 
-    def _generate_structure_spiral_local(self, config):
-        """Local (rotating-frame) structure for a single-k spiral.
-
-        For ``type: spiral`` the interactions are transformed into the
-        rotating frame by ``_compute_rotated_interactions`` (each bond picks
-        up R(2*pi*k.r_ij) about ``axis``), so the spin directions stored on
-        the model are the LOCAL-frame ones. For a planar spiral these must
-        lie in the plane PERPENDICULAR to the rotation axis; without this the
-        LSWT is built on a non-ground state and the phason is spuriously
-        gapped. Optional ``local_directions`` (one per spin, applied
-        cyclically) sets the intra-cell pattern (e.g. a 120-degree
-        arrangement); the default is a single common direction perpendicular
-        to ``axis``.
-        """
-        atoms = self.atom_pos()
-        nspins = len(atoms)
-        axis = np.array(config.get('axis', [0, 0, 1]), dtype=float)
-        n = axis / (np.linalg.norm(axis) or 1.0)
-        dirs = config.get('local_directions', config.get('directions'))
-        if not dirs:
-            trial = np.array([1.0, 0.0, 0.0]) if abs(n[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
-            u = trial - np.dot(trial, n) * n
-            u /= np.linalg.norm(u)
-            dirs = [u.tolist()]
-        thetas, phis = [], []
-        for i in range(nspins):
-            v = np.array(dirs[i % len(dirs)], dtype=float)
-            v /= np.linalg.norm(v)
-            thetas.append(float(np.arccos(np.clip(v[2], -1.0, 1.0))))
-            phis.append(float(np.arctan2(v[1], v[0])))
-        return thetas, phis
-
     def _generate_structure_explicit(self, config):
         """Parse explicit angle list."""
         # Use same logic as runner.py legacy parser but cleaner
@@ -2738,51 +2713,6 @@ class GenericSpinModel:
 
         return thetas, phis
 
-    def _generate_structure_from_k(self, config):
-        """Generate spiral from propagation vector."""
-        k_vec = np.array(config.get('k', [0, 0, 0]), dtype=float)
-        # Type: 'planar', 'conical', 'complex'
-        stype = config.get('subtype', 'planar')
-        
-        # Basis vectors u, v (and normal n for conical?)
-        # Default planar in ab plane: u=[1,0,0], v=[0,1,0]
-        u_vec = np.array(config.get('u', [1, 0, 0]), dtype=float)
-        v_vec = np.array(config.get('v', [0, 1, 0]), dtype=float)
-        
-        atoms = self.atom_pos()
-        thetas = []
-        phis = []
-        
-        for i, pos in enumerate(atoms):
-            phase = np.dot(k_vec, pos) # k . r
-            
-            if stype == 'planar':
-                # S = u * cos(phase) + v * sin(phase)
-                # Assumes u, v orthogonal and S_mag matches
-                S_vec = u_vec * np.cos(phase) + v_vec * np.sin(phase)
-            elif stype == 'conical':
-                 # Add offset component?
-                 # n + u cos + v sin
-                 n_vec = np.array(config.get('n', [0, 0, 1]), dtype=float)
-                 cone_angle = np.radians(config.get('cone_angle_deg', 0)) # 0 = flat?
-                 # Interpretation: S = n * cos(cone) + (u cos(ph) + v sin(ph)) * sin(cone)
-                 # Wait, usually cone angle is deviation from n.
-                 # Let's assume standard cons.
-                 S_vec = n_vec * np.cos(cone_angle) + (u_vec * np.cos(phase) + v_vec * np.sin(phase)) * np.sin(cone_angle)
-            else:
-                S_vec = np.array([0, 0, 1])
-
-            # Normalize to safe guard
-            norm = np.linalg.norm(S_vec)
-            if norm > 1e-9:
-                S_vec /= norm
-                
-            th = np.arccos(S_vec[2])
-            ph = np.arctan2(S_vec[1], S_vec[0])
-            thetas.append(float(th))
-            phis.append(float(ph))
-            
-        return thetas, phis
     def _classical_energy_func(self, x, Jex, DM, Kex, H_vec, S_val=0.5):
         """
         Calculate total classical energy for angles x.
