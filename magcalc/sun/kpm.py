@@ -29,7 +29,6 @@ integrated), and the eigenvalue bound γ is verified to enclose the spectrum.
 """
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 import numpy as np
 

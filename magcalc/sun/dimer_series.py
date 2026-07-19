@@ -39,12 +39,10 @@ order L(cluster).
 import itertools
 import logging
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import scipy.sparse as sp
 
-from .operators import spin_matrices
 from .entangled import _embedded_spin_ops, _pair_matrix
 
 logger = logging.getLogger(__name__)
@@ -328,7 +326,6 @@ def _cluster_pt(levels_list, links_local, order, sz_list=None):
     """
     m = len(levels_list)
     nloc = len(levels_list[0])
-    nexc = nloc - 1
     dims = nloc ** m
 
     E0 = np.zeros(dims)

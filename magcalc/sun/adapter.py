@@ -6,7 +6,7 @@ stays exactly as it is. The adapter exposes the small slice of the MagCalc inter
 runner actually uses.
 """
 import logging
-from typing import List, Optional
+from typing import Optional
 
 import numpy as np
 

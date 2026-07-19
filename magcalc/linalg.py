@@ -1,6 +1,6 @@
 
 import logging
-from typing import List, Optional, Set, Tuple
+from typing import List, Optional, Tuple
 import numpy as np
 import numpy.typing as npt
 from scipy import linalg as la  # Matches magcalc.py usage
@@ -12,8 +12,6 @@ DEGENERACY_THRESHOLD: float = 1e-8
 ZERO_MATRIX_ELEMENT_THRESHOLD: float = 1e-6
 ALPHA_MATRIX_ZERO_NORM_WARNING_THRESHOLD: float = 1e-14
 EIGENVECTOR_MATCHING_THRESHOLD: float = 1e-4
-# PROJECTION_CHECK_TOLERANCE: float = 1e-5 # Not clearly used in extracted block, can add if needed.
-I = 1j  # Use pure complex for numerical arrays
 
 def rotation_matrix(
     axis: npt.NDArray[np.float64], angle_deg: float
@@ -42,6 +40,12 @@ def gram_schmidt(x: npt.NDArray[np.complex128]) -> npt.NDArray[np.complex128]:
     """
     Perform Gram-Schmidt orthogonalization on a set of vectors using QR decomposition.
 
+    Rank-deficient input columns (detected via near-zero diagonal entries of R --
+    numpy's QR always returns a full set of orthonormal columns, so the column
+    count alone cannot reveal deficiency) are zeroed rather than returned as
+    arbitrary orthonormal completions; downstream, _calculate_alpha_matrix then
+    treats them as zero-norm modes.
+
     Args:
         x (npt.NDArray[np.complex128]): A matrix where columns represent the vectors
                                        to be orthogonalized.
@@ -50,6 +54,17 @@ def gram_schmidt(x: npt.NDArray[np.complex128]) -> npt.NDArray[np.complex128]:
                                   same space as the input vectors.
     """
     q, r = np.linalg.qr(x, mode="reduced")
+    diag = np.abs(np.diag(r))
+    if diag.size:
+        tol = max(x.shape) * np.finfo(float).eps * diag.max()
+        deficient = diag <= tol
+        if deficient.any():
+            logger.warning(
+                f"Rank deficiency in degenerate block: {int(deficient.sum())} of "
+                f"{len(diag)} vectors are linearly dependent; zeroing them."
+            )
+            q = q.copy()
+            q[:, deficient] = 0.0
     return q
 
 def _diagonalize_and_sort(
@@ -451,56 +466,6 @@ def _spin_prefactor_vector(
     return np.repeat(np.sqrt(np.asarray(spin_magnitudes, dtype=float) / 2.0), 3)
 
 
-def _calculate_K_Kd(
-    Ud_numeric: npt.NDArray[np.complex128],
-    spin_magnitude: float,
-    nspins: int,
-    inv_T_p: npt.NDArray[np.complex128],
-    inv_T_m_reordered: npt.NDArray[np.complex128],
-    zero_threshold: float,
-    spin_magnitudes: Optional[List[float]] = None,
-) -> Tuple[npt.NDArray[np.complex128], npt.NDArray[np.complex128]]:
-    """
-    Calculate the K and Kd matrices for S(q,w) intensity calculation.
-
-    These matrices relate the original spin operators (in global coordinates)
-    to the diagonal magnon creation/annihilation operators.
-    S^alpha(q) = sum_mu [ K_{alpha, mu} * b_mu + Kd_{alpha, mu} * b_{-mu}^dagger ]
-
-    K = sqrt(S/2) * Ud * Udd * T^{-1}(+q)
-    Kd = sqrt(S/2) * Ud * Udd * T^{-1}(-q, reordered)
-    where Ud maps local spin axes to global, Udd maps spin components to bosons.
-
-    Args:
-        Ud_numeric (npt.NDArray[np.complex128]): Numerical rotation matrix (3N x 3N).
-        spin_magnitude (float): Numerical value of spin S.
-        nspins (int): Number of spins in the unit cell.
-        inv_T_p (npt.NDArray[np.complex128]): Inverse transformation matrix T^{-1} for +q.
-        inv_T_m_reordered (npt.NDArray[np.complex128]): Inverse transformation matrix T^{-1} for -q (reordered).
-        zero_threshold (float): Threshold below which matrix elements are set to zero.
-    Returns:
-        Tuple[npt.NDArray[np.complex128], npt.NDArray[np.complex128]]: K matrix (3N x 2N) and Kd matrix (3N x 2N).
-    """
-    Udd_local_boson_map: npt.NDArray[np.complex128] = np.zeros(
-        (3 * nspins, 2 * nspins), dtype=complex
-    )
-    for i in range(nspins):
-        Udd_local_boson_map[3 * i, i] = 1.0
-        Udd_local_boson_map[3 * i, i + nspins] = 1.0
-        Udd_local_boson_map[3 * i + 1, i] = 1.0 / I
-        Udd_local_boson_map[3 * i + 1, i + nspins] = -1.0 / I
-    pref = _spin_prefactor_vector(spin_magnitude, nspins, spin_magnitudes)[:, None]
-    K_matrix: npt.NDArray[np.complex128] = (
-        pref * (Ud_numeric @ Udd_local_boson_map @ inv_T_p)
-    )
-    Kd_matrix: npt.NDArray[np.complex128] = (
-        pref * (Ud_numeric @ Udd_local_boson_map @ inv_T_m_reordered)
-    )
-    K_matrix[np.abs(K_matrix) < zero_threshold] = 0
-    Kd_matrix[np.abs(Kd_matrix) < zero_threshold] = 0
-    return K_matrix, Kd_matrix
-
-
 def KKdMatrix(
     spin_magnitude: float,
     Hmat_plus_q: npt.NDArray[np.complex128],
@@ -591,9 +556,6 @@ def KKdMatrix(
     inv_T_m_reordered = eigvecs_m_final @ alpha_m_final
 
     # --- 9. K and Kd ---
-    # Optimized _calculate_K_Kd with vectorized Udd is needed?
-    # Actually _calculate_K_Kd in this file uses loop. We can optimize it here.
-    
     # Optimized Udd construction (Vectorized)
     # Udd_local_boson_map: (3*nspins, 2*nspins)
     # Blocks:

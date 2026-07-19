@@ -5,7 +5,7 @@ import timeit
 import logging
 import os  # for cpu_count
 from multiprocessing import Pool
-from typing import List, Tuple, Dict, Any, Optional, Union
+from typing import List, Tuple, Dict, Any, Union
 
 # Helper for type hinting
 import numpy.typing as npt
@@ -84,10 +84,15 @@ def _rotate_spin_operators(
 
 
 def boson_degree(term: sp.Expr) -> int:
-    """Total power of the Holstein-Primakoff boson operators (c*/cd*) in one term."""
+    """Total power of the Holstein-Primakoff boson operators (c*/cd*) in one term.
+
+    Bosons are the NON-COMMUTATIVE symbols -- identifying them by a "c" name
+    prefix (the old rule) silently miscounted any model parameter whose name
+    starts with "c" (chi, c1, ...), which dropped Hamiltonian terms.
+    """
     powers = term.as_powers_dict()
     return sum(
-        powers.get(s, 0) for s in term.atoms(sp.Symbol) if s.name.startswith("c")
+        powers.get(s, 0) for s in term.atoms(sp.Symbol) if not s.is_commutative
     )
 
 
@@ -380,108 +385,6 @@ def _fourier_transform_terms(
     return sp.Add(*new_terms)
 
 
-def _normal_order_terms(args: Tuple[sp.Expr, List[sp.Symbol], List[sp.Symbol], int]) -> sp.Expr:
-    """
-    Normal order quadratic boson terms in a Hamiltonian expression.
-    
-    Transforms terms like c_k * c_k_dagger into c_k_dagger * c_k + 1.
-    Keeps terms like c_k_dagger * c_k, c_k * c_minus_k, c_k_dagger * c_minus_k_dagger as is.
-    Assumes only quadratic terms are present.
-    
-    Args:
-        args: Tuple containing:
-            expr_terms (sp.Expr): A sum of terms to process.
-            ck_ops: List of ck operators.
-            ckd_ops: List of ckd operators.
-            nspins: Number of spins.
-            
-    Returns:
-        sp.Expr: The normal ordered expression.
-    """
-    expr, ck_ops, ckd_ops, nspins = args
-    
-    # Map operator names to objects for fast lookup
-    ck_map = {op.name: (i, 'c') for i, op in enumerate(ck_ops)}
-    ckd_map = {op.name: (i, 'cd') for i, op in enumerate(ckd_ops)}
-    cmk_map = {f"cmk{i}": (i, 'cm') for i in range(nspins)} # Assuming naming convention
-    cmkd_map = {f"cmkd{i}": (i, 'cmd') for i in range(nspins)}
-    
-    # Combined map
-    op_map = {**ck_map, **ckd_map, **cmk_map, **cmkd_map}
-    
-    terms = expr.as_ordered_terms()
-    new_terms = []
-    
-    for term in terms:
-        coeff, ops = term.as_coeff_Mul()
-        
-        # Identify operators in the term
-        # This part assumes simple structure: coeff * op1 * op2 or coeff * op1
-        # Complex terms might need rigorous parsing, but usually it's product of 2 non-commuting symbols
-        
-        non_commuting_factors = term.atoms(sp.Symbol)
-        non_commuting_factors = [s for s in non_commuting_factors if not s.is_commutative]
-        
-        nc_part = term / coeff
-        
-        if not non_commuting_factors:
-            new_terms.append(term)
-            continue
-            
-        if len(non_commuting_factors) != 2:
-            new_terms.append(term)
-            continue
-            
-        args_nc = nc_part.args
-        if not args_nc: 
-             new_terms.append(term)
-             continue
-             
-        # Extract the two operators in order
-        op1 = args_nc[0]
-        op2 = args_nc[1]
-        
-        # Handle powers (e.g. ck**2) 
-        if len(args_nc) == 1 and args_nc[0].is_Pow:
-             base, exp = args_nc[0].as_base_exp()
-             if exp == 2:
-                 op1 = base
-                 op2 = base
-             else:
-                 new_terms.append(term)
-                 continue
-        elif len(args_nc) > 2:
-             new_terms.append(term)
-             continue
-
-        if op1.name not in op_map or op2.name not in op_map:
-             new_terms.append(term)
-             continue
-             
-        idx1, type1 = op_map[op1.name]
-        idx2, type2 = op_map[op2.name]
-        
-        # Commutation Rules:
-        # [c_i, cd_j] = delta_ij
-        if type1 == 'c' and type2 == 'cd':
-            # Swap
-            new_term = coeff * op2 * op1
-            if idx1 == idx2:
-                new_term += coeff # +1 * coeff
-            new_terms.append(new_term)
-            
-        elif type1 == 'cm' and type2 == 'cmd':
-             # Swap
-            new_term = coeff * op2 * op1
-            if idx1 == idx2:
-                new_term += coeff
-            new_terms.append(new_term)
-        else:
-            new_terms.append(term)
-            
-    return Add(*new_terms)
-
-
 # Fanning these symbolic maps out to a multiprocessing Pool pickles SymPy
 # expressions to/from workers and pays a fixed spawn+teardown cost of ~2-3 s
 # (macOS 'spawn' re-imports the world in every worker). Profiling gen_HM showed
@@ -547,31 +450,14 @@ def _process_hamiltonian_terms(
         f"Fourier transform substitution took: {np.round(end_time_ft - start_time_ft, 2)} s"
     )
 
-    logger.info("Applying Normal Ordering (Commutation Rules)...")
-    start_time_comm = timeit.default_timer()
-    
-    k_terms = hamiltonian_k_space.as_ordered_terms()
-    
-    # Chunking terms for parallel processing
-    chunk_size = max(1, len(k_terms) // (num_cpus * 4))
-    chunks = [k_terms[i:i + chunk_size] for i in range(0, len(k_terms), chunk_size)]
-    
-    pool_args_no = [
-        (Add(*chunk), ck_ops, ckd_ops, nspins) for chunk in chunks
-    ]
-
-    results_no = _map_terms(_normal_order_terms, pool_args_no, len(k_terms))
-
-    hamiltonian_normal_ordered = Add(*results_no)
-    
-    # Expand one last time to ensure coeff * Op1 * Op2 structure
-    hamiltonian_normal_ordered = hamiltonian_normal_ordered.expand()
-    
-    logger.info(
-        f"Normal ordering took: {timeit.default_timer() - start_time_comm:.2f} s"
-    )
-
-    return hamiltonian_normal_ordered
+    # NOTE: no explicit normal-ordering pass. _build_TwogH2_matrix places a
+    # quadratic term coeff*op1*op2 into the same H2 element whichever order the
+    # two operators appear in (it tries the reversed row/col mapping), and the
+    # commutator c-number constants normal ordering would generate are dropped
+    # by the matrix construction anyway (LSWT discards the constant). The old
+    # pass therefore had no effect on the output matrix; it only re-walked
+    # every term.
+    return hamiltonian_k_space
 
 
 def _build_TwogH2_matrix(
@@ -689,142 +575,6 @@ def _build_ud_matrix(
     Ud_rotation_matrix = sp.diag(*Ud_rotation_matrix_blocks)
     return Ud_rotation_matrix
 
-
-def _define_fourier_substitutions_generic(
-    k_sym: List[sp.Symbol],
-    nspins_uc: int,
-    c_ops_ouc: List[sp.Symbol],  # (N_ouc)
-    cd_ops_ouc: List[sp.Symbol],  # (N_ouc)
-    ck_ops_uc: List[sp.Symbol],  # (N_uc)
-    ckd_ops_uc: List[sp.Symbol],  # (N_uc)
-    cmk_ops_uc: List[sp.Symbol],  # (N_uc)
-    cmkd_ops_uc: List[sp.Symbol],  # (N_uc)
-    atom_pos_uc_cart: np.ndarray,  # (N_uc, 3)
-    atom_pos_ouc_cart: np.ndarray,  # (N_ouc, 3)
-    Jex_sym_matrix: sp.Matrix,  # (N_uc, N_ouc)
-    DM_sym_matrix: sp.Matrix = None, # (N_uc, N_ouc) of 3x1
-    Kex_sym_matrix: sp.Matrix = None, # (N_uc, N_ouc) of 3x1
-) -> List[List[sp.Expr]]:
-    """
-    Define Fourier substitutions for the configuration-driven model.
-    """
-    nspins_ouc = len(atom_pos_ouc_cart)
-    # Basic checks skipped for brevity/duplication
-    
-    fourier_substitutions = []
-
-    for i_uc in range(nspins_uc):
-        for j_ouc in range(nspins_ouc):
-            # Check if ANY of the interaction matrices have non-zero for this pair
-            is_nonzero = (
-                _is_nonzero_at(Jex_sym_matrix, i_uc, j_ouc)
-                or _is_nonzero_at(DM_sym_matrix, i_uc, j_ouc)
-                or _is_nonzero_at(Kex_sym_matrix, i_uc, j_ouc)
-            )
-
-            if not is_nonzero:
-                continue
-
-            disp_vec = atom_pos_uc_cart[i_uc, :] - atom_pos_ouc_cart[j_ouc, :]
-            k_dot_dr = sum(k_comp * dr_comp for k_comp, dr_comp in zip(k_sym, disp_vec))
-
-            exp_plus_ikdr = sp.exp(I * k_dot_dr).rewrite(sp.sin)
-            exp_minus_ikdr = sp.exp(-I * k_dot_dr).rewrite(sp.sin)
-
-            idx_op1_real_space = i_uc
-            idx_op2_real_space = j_ouc
-
-            idx_op1_k_space = i_uc
-            idx_op2_k_space = j_ouc % nspins_uc
-
-            # ...
-            # Implementation moved from core.py
-            
-            idx_op1_real_space = i_uc
-            idx_op2_real_space = j_ouc
-
-            idx_op1_k_space = i_uc
-            idx_op2_k_space = j_ouc % nspins_uc
-
-            sub_list_for_pair = [
-                [
-                    cd_ops_ouc[idx_op1_real_space] * cd_ops_ouc[idx_op2_real_space],
-                    sp.S(1)
-                    / 2
-                    * (
-                        ckd_ops_uc[idx_op1_k_space]
-                        * cmkd_ops_uc[idx_op2_k_space]
-                        * exp_minus_ikdr
-                        + cmkd_ops_uc[idx_op1_k_space]
-                        * ckd_ops_uc[idx_op2_k_space]
-                        * exp_plus_ikdr
-                    ),
-                ],
-                [
-                    c_ops_ouc[idx_op1_real_space] * c_ops_ouc[idx_op2_real_space],
-                    sp.S(1)
-                    / 2
-                    * (
-                        ck_ops_uc[idx_op1_k_space]
-                        * cmk_ops_uc[idx_op2_k_space]
-                        * exp_plus_ikdr
-                        + cmk_ops_uc[idx_op1_k_space]
-                        * ck_ops_uc[idx_op2_k_space]
-                        * exp_minus_ikdr
-                    ),
-                ],
-                [
-                    cd_ops_ouc[idx_op1_real_space] * c_ops_ouc[idx_op2_real_space],
-                    sp.S(1)
-                    / 2
-                    * (
-                        ckd_ops_uc[idx_op1_k_space]
-                        * ck_ops_uc[idx_op2_k_space]
-                        * exp_minus_ikdr
-                        + cmkd_ops_uc[idx_op1_k_space]
-                        * cmk_ops_uc[idx_op2_k_space]
-                        * exp_plus_ikdr
-                    ),
-                ],
-                [
-                    c_ops_ouc[idx_op1_real_space] * cd_ops_ouc[idx_op2_real_space],
-                    sp.S(1)
-                    / 2
-                    * (
-                        ck_ops_uc[idx_op1_k_space]
-                        * ckd_ops_uc[idx_op2_k_space]
-                        * exp_plus_ikdr
-                        + cmk_ops_uc[idx_op1_k_space]
-                        * cmkd_ops_uc[idx_op2_k_space]
-                        * exp_minus_ikdr
-                    ),
-                ],
-            ]
-            fourier_substitutions.extend(sub_list_for_pair)
-
-    for j_ouc_diag in range(nspins_ouc):
-        j_uc_diag = j_ouc_diag % nspins_uc
-        fourier_substitutions.append(
-            [
-                cd_ops_ouc[j_ouc_diag] * c_ops_ouc[j_ouc_diag],
-                sp.S(1)
-                / 2
-                * (
-                    ckd_ops_uc[j_uc_diag] * ck_ops_uc[j_uc_diag]
-                    + cmkd_ops_uc[j_uc_diag] * cmk_ops_uc[j_uc_diag]
-                ),
-            ]
-        )
-
-    unique_substitutions = []
-    seen_keys = set()
-    for sub_pair in fourier_substitutions:
-        key = sub_pair[0]
-        if key not in seen_keys:
-            unique_substitutions.append(sub_pair)
-            seen_keys.add(key)
-
-    return unique_substitutions
 
 def gen_HM(
     spin_model_module,  

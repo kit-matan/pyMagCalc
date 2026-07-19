@@ -1,20 +1,25 @@
 """The Studio (web/native) run path must not drop the beyond-LSWT config blocks.
 
-Regression for a real integration bug: the server's /expand-config built the run
+Regression for a real integration bug: the server's old run path rebuilt the run
 config from a WHITELIST of top-level keys, silently dropping `scga`, `thermal_mc`,
 `sampled_correlations`, `kpm`, `corrections`, `energy_cut`, and `units` — so those
 features worked from the CLI but ran with defaults (or not at all) from the apps.
 
-These tests call the server's expand_config + _faithful_run_config directly (no
-HTTP) on a payload shaped exactly like the apps' /run-calculation body, and assert
-every block survives into the config handed to the runner.
+The server is now "config-as-source": /run-calculation takes the editor's config
+dict, applies ONLY `_pin_gui_outputs` (plot/fit output filenames), writes it as
+canonical YAML, and hands the file to the same `magcalc.runner.run_calculation`
+the CLI uses. These tests drive exactly that transform (no HTTP) and assert every
+block survives into the config the runner reads — pinning that no whitelist /
+translation layer creeps back in.
 """
-import asyncio
+import copy
 import importlib.util
+import io
 import os
 import sys
 
 import pytest
+import yaml
 
 HERE = os.path.dirname(__file__)
 ROOT = os.path.abspath(os.path.join(HERE, ".."))
@@ -30,8 +35,18 @@ def server():
     return mod
 
 
+def _through_run_path(server, cfg):
+    """Exactly what /run-calculation (config mode) hands to the runner:
+    _pin_gui_outputs on the client's config, canonical-YAML write, YAML
+    read-back (run_calculation re-reads the file)."""
+    pinned = server._pin_gui_outputs(copy.deepcopy(cfg))
+    buf = io.StringIO()
+    server.compact_yaml_dump(pinned, buf)
+    return yaml.safe_load(buf.getvalue())
+
+
 def _client_payload():
-    """A /run-calculation body with every beyond-LSWT block, as the apps send it."""
+    """A config with every beyond-LSWT block, as the editor holds it."""
     return {
         "crystal_structure": {
             "lattice_parameters": {"a": 5, "b": 5, "c": 5, "alpha": 90, "beta": 90,
@@ -64,11 +79,11 @@ def _client_payload():
 
 def test_run_config_keeps_every_beyond_lswt_block(server):
     data = _client_payload()
-    expanded = asyncio.run(server.expand_config({"data": data}))
-    final = server._faithful_run_config(expanded, data)
+    final = _through_run_path(server, data)
 
     for key in ("scga", "thermal_mc", "sampled_correlations", "kpm",
-                "corrections", "energy_cut", "units", "parameter_order"):
+                "corrections", "energy_cut", "units", "parameter_order",
+                "interactions", "parameters", "magnetic_structure", "q_path"):
         assert final.get(key) == data[key], f"block {key!r} was dropped or mangled"
 
     # tasks and calculation extras must survive too
@@ -80,42 +95,35 @@ def test_run_config_keeps_every_beyond_lswt_block(server):
 
 def test_cu5sbo6_entangled_runs_through_the_app_path(server, tmp_path):
     """Regression for a user-reported failure: importing the Cu5SbO6 config in the web
-    app and running it died with "entangled mode needs a `units:` list" -- the YAML
-    importer never captured the top-level `units:` block. This test drives the REAL
-    Cu5SbO6 config through the server path exactly as the fixed frontend emits it
-    (units from doc.units, calculation merged from doc.calculation) and asserts the
-    entangled dispersion matches the CLI run bit-for-bit."""
-    import json
+    app and running it died with "entangled mode needs a `units:` list" -- the old
+    run path never carried the top-level `units:` block. With config-as-source the
+    editor sends the whole config file; this drives the REAL Cu5SbO6 config through
+    the server transform and asserts the entangled dispersion matches the CLI run
+    bit-for-bit."""
     import numpy as np
-    import yaml as _yaml
 
-    doc = _yaml.safe_load(open(os.path.join(
+    doc = yaml.safe_load(open(os.path.join(
         ROOT, "examples", "entangled", "Cu5SbO6", "config.yaml")))
     qp = {"G": [0, 0, 0], "X": [0.5, 0, 0.5], "path": ["G", "X"],
           "points_per_segment": 4}
 
-    data = {
-        "crystal_structure": doc["crystal_structure"],
-        "interactions": doc["interactions"],
-        "magnetic_structure": doc.get("magnetic_structure", {}),
-        "parameters": doc.get("parameters", {}),
-        "parameter_order": doc.get("parameter_order"),
-        "tasks": {"dispersion": True, "sqw_map": False, "minimization": False},
-        "q_path": qp,
-        "plotting": {"save_plot": False, "show_plot": False},
-        "calculation": dict(doc.get("calculation") or {}),
-        "units": json.loads(json.dumps(doc["units"])),   # the UI field round-trip
-        "output": {"disp_data_filename": str(tmp_path / "app.npz"),
-                   "save_data": True},
-    }
-    expanded = asyncio.run(server.expand_config({"data": data}))
-    final = server._faithful_run_config(expanded, data)
+    app_cfg_dict = copy.deepcopy(doc)
+    app_cfg_dict["tasks"] = {"dispersion": True, "sqw_map": False,
+                             "minimization": False}
+    app_cfg_dict["q_path"] = qp
+    app_cfg_dict["output"] = {"disp_data_filename": str(tmp_path / "app.npz"),
+                              "save_data": True}
+
+    final = _through_run_path(server, app_cfg_dict)
     assert final["units"] == doc["units"]
     assert final["calculation"]["mode"] == "entangled"
 
     from magcalc.runner import run_calculation
+    # Disable plotting for the actual run (hermetic test); _pin_gui_outputs only
+    # pins plot filenames and never touches the physics blocks.
+    final["plotting"] = {"save_plot": False, "show_plot": False}
     app_cfg = tmp_path / "app.yaml"
-    _yaml.safe_dump(final, open(app_cfg, "w"))
+    yaml.safe_dump(final, open(app_cfg, "w"))
     run_calculation(str(app_cfg))
     app = np.sort(np.load(tmp_path / "app.npz")["energies"], axis=1)
 
@@ -126,7 +134,7 @@ def test_cu5sbo6_entangled_runs_through_the_app_path(server, tmp_path):
     cli_cfg["output"] = {"disp_data_filename": str(tmp_path / "cli.npz"),
                          "save_data": True}
     cli_file = tmp_path / "cli.yaml"
-    _yaml.safe_dump(cli_cfg, open(cli_file, "w"))
+    yaml.safe_dump(cli_cfg, open(cli_file, "w"))
     run_calculation(str(cli_file))
     cli = np.sort(np.load(tmp_path / "cli.npz")["energies"], axis=1)
 
@@ -138,8 +146,7 @@ def test_absent_blocks_are_not_invented(server):
     for key in ("scga", "thermal_mc", "sampled_correlations", "kpm",
                 "corrections", "energy_cut", "units"):
         data.pop(key)
-    expanded = asyncio.run(server.expand_config({"data": data}))
-    final = server._faithful_run_config(expanded, data)
+    final = _through_run_path(server, data)
     for key in ("scga", "thermal_mc", "sampled_correlations", "kpm",
                 "corrections", "energy_cut", "units"):
         assert key not in final, f"block {key!r} appeared from nowhere"

@@ -135,9 +135,10 @@ def plot_dispersion(
     """
     Plots the spin-wave dispersion relation.
 
-    When ``auto_scale`` is True (the default) the y-axis limits are derived
-    from the computed mode energies, ignoring any ``ylim`` passed in. Set
-    ``auto_scale`` to False to honour an explicit ``ylim``.
+    An explicit ``ylim`` is always honoured. When ``ylim`` is None the y-axis
+    limits are derived from the computed mode energies. (``auto_scale`` is kept
+    for API compatibility; it no longer overrides an explicit ``ylim`` — that
+    made `plotting.energy_limits_disp` silently ineffective.)
     """
     try:
         # Calculate path length
@@ -182,9 +183,9 @@ def plot_dispersion(
         plt.xlabel(r"Q Path Length ($\AA^{-1}$)")
         plt.ylabel("Energy (meV)")
 
-        # Auto-scale the y-axis from the mode energies unless the user asked
-        # for explicit limits (auto_scale=False with a concrete ylim).
-        if auto_scale or ylim is None:
+        # Auto-scale the y-axis from the mode energies only when no explicit
+        # limits were supplied.
+        if ylim is None:
             all_ens = []
             if isinstance(energies, np.ndarray):
                 all_ens = energies.flatten().tolist()

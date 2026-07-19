@@ -8,12 +8,8 @@ configuration from a YAML file.
 """
 import yaml
 import logging
-import logging
 import os
-from typing import Dict, Any, List, Tuple, Optional
-from dataclasses import dataclass
-import numpy as np
-import numpy.typing as npt
+from typing import Dict, Any
 
 # Added import for CIF handling
 try:

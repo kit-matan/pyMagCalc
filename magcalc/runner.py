@@ -594,7 +594,11 @@ def run_calculation(config_file: str):
     # SCGA is a PARAMAGNETIC (disordered, above-T_N) calculation -- it needs no ordered
     # ground state, so the LSWT ground-state guard is irrelevant. Skip it when SCGA is the
     # only task (any LSWT task -- dispersion/sqw/corrections -- re-arms it).
-    _lswt_tasks = ('dispersion', 'sqw_map', 'corrections', 'powder', 'energy_cut')
+    # NB: the powder task key is 'powder_average' (not 'powder') and fitting also
+    # runs LSWT -- listing the wrong key here silently disabled the guard for
+    # e.g. {scga: true, powder_average: true} runs.
+    _lswt_tasks = ('dispersion', 'sqw_map', 'corrections', 'powder_average',
+                   'energy_cut', 'fit')
     _classical_only = ('scga', 'thermal_mc', 'sampled_correlations')
     if any(tasks.get(t) for t in _classical_only) and \
             not any(tasks.get(t) for t in _lswt_tasks):
@@ -638,10 +642,10 @@ def run_calculation(config_file: str):
         # are precisely the q that will end up in the figure.
         q_guard = None
         try:
-            q_guard_rlu = q_vectors if q_vectors is not None else \
-                generate_q_path_from_config(final_config)
-            if q_guard_rlu is not None and len(q_guard_rlu) > 0:
-                q_guard = np.dot(np.array(q_guard_rlu), compute_b_matrix(spin_model))
+            if q_vectors is None:
+                q_vectors = generate_q_path_from_config(final_config)
+            if q_vectors is not None and len(q_vectors) > 0:
+                q_guard = np.dot(np.array(q_vectors), compute_b_matrix(spin_model))
         except Exception:
             logger.debug("Ground-state guard: no q-path available; using random q only.")
 
