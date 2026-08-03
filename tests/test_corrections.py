@@ -5,7 +5,6 @@ Validated against Sunny 0.8.1 AND the textbook S=1/2 square-lattice Heisenberg A
     ordered-moment reduction      dS =  0.1966       (<S^z> = S - dS)
 """
 import logging
-import warnings
 
 import numpy as np
 import pytest
@@ -14,7 +13,11 @@ import magcalc as mc
 from magcalc.corrections import _colpa, compute_corrections
 from magcalc.generic_model import GenericSpinModel
 
-warnings.filterwarnings("ignore")
+# Module-scoped, NOT a bare warnings.filterwarnings("ignore"): that is a
+# process-global side effect, so it silenced warnings for every test module
+# collected after this one alphabetically -- which is most of them. The
+# "zero pytest warnings" the suite claims was partly that.
+pytestmark = pytest.mark.filterwarnings("ignore")
 logging.disable(logging.CRITICAL)
 
 

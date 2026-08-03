@@ -598,8 +598,9 @@ def run_calculation(config_file: str):
     # runs LSWT -- listing the wrong key here silently disabled the guard for
     # e.g. {scga: true, powder_average: true} runs.
     _lswt_tasks = ('dispersion', 'sqw_map', 'corrections', 'powder_average',
-                   'energy_cut', 'fit')
-    _classical_only = ('scga', 'thermal_mc', 'sampled_correlations')
+                   'energy_cut', 'fit', 'static_sqw')
+    _classical_only = ('scga', 'thermal_mc', 'sampled_correlations',
+                       'static_correlations')
     if any(tasks.get(t) for t in _classical_only) and \
             not any(tasks.get(t) for t in _lswt_tasks):
         on_imaginary = 'off'
@@ -1008,6 +1009,56 @@ def run_calculation(config_file: str):
             raise
 
     # 3d. SCGA -- paramagnetic diffuse S(q) above T_N (self-consistent Gaussian).
+    if tasks.get('static_sqw', False):
+        # Energy-integrated LSWT S(q) -- Sunny's `intensities_static`. Just the band
+        # sum of S(q,w), so it inherits temperature/domains/cross_section like every
+        # other intensity.
+        from magcalc.numerical import static_intensities
+        try:
+            B = compute_b_matrix(spin_model)
+            q_rlu = q_vectors if q_vectors is not None else \
+                generate_q_path_from_config(final_config)
+            q_cart = np.asarray(q_rlu, float) @ B
+            sq = static_intensities(calc, q_cart, temperature=temperature,
+                                    domains=domains, cross_section=cross_section)
+            if sq is not None:
+                logger.info(f"Static S(q): {len(sq)} q-points, "
+                            f"max {np.max(sq):.4g} at q index {int(np.argmax(sq))}.")
+                memory_cache['static_sqw'] = {'q_vectors': np.asarray(q_rlu, float),
+                                              'sq': sq}
+        except Exception:
+            logger.exception("static_sqw failed.")
+
+    if tasks.get('static_correlations', False):
+        # Classical instantaneous S(q) from Metropolis samples -- Sunny's
+        # `SampledCorrelationsStatic`. No dynamics, no ordered state required.
+        from magcalc import thermal_mc as _tmc
+        sd = final_config.get('static_correlations', {}) or {}
+        kT = sd.get('temperature', sd.get('kT'))
+        if kT is None:
+            logger.error("static_correlations needs `.temperature` (meV).")
+        else:
+            try:
+                B = compute_b_matrix(spin_model)
+                q_rlu = q_vectors if q_vectors is not None else \
+                    generate_q_path_from_config(final_config)
+                q_cart = np.asarray(q_rlu, float) @ B
+                res = _tmc.static_correlations(
+                    spin_model, params_val, q_cart, float(kT),
+                    supercell=tuple(sd.get('supercell', [6, 6, 1])),
+                    n_samples=int(sd.get('n_samples', 200)),
+                    n_equil=int(sd.get('n_equil', 2000)),
+                    sample_every=int(sd.get('sample_every', 10)),
+                    cross_section=sd.get('cross_section', cross_section),
+                    seed=int(sd.get('seed', 0)))
+                logger.info(
+                    f"Static correlations (kT={kT} meV, {res.n_spins} spins, "
+                    f"{res.n_samples} samples): S(q) max {np.max(res.sq):.4g}.")
+                memory_cache['static_correlations'] = {
+                    'q_vectors': np.asarray(q_rlu, float), 'sq': res.sq}
+            except Exception:
+                logger.exception("static_correlations failed.")
+
     if tasks.get('scga', False):
         from magcalc import scga as _scga
         sc = final_config.get('scga', {}) or {}
@@ -1186,10 +1237,14 @@ def run_calculation(config_file: str):
                     n_traj=int(sd.get('n_traj', 8)),
                     therm_sweeps=int(sd.get('therm_sweeps', 2000)),
                     cross_section=sd.get('cross_section', 'perp'),
-                    seed=int(sd.get('seed', 0)))
+                    seed=int(sd.get('seed', 0)),
+                    classical_to_quantum=bool(
+                        sd.get('classical_to_quantum', True)))
                 logger.info(
                     f"SampledCorrelations (kT={kT} meV): S(q,w) {res.sqw.shape} "
-                    f"(E up to {res.energies.max():.3g} meV, {len(res.q_vectors)} q).")
+                    f"(E up to {res.energies.max():.3g} meV, {len(res.q_vectors)} q; "
+                    f"classical_to_quantum={'on' if res.classical_to_quantum else 'OFF'}"
+                    f").")
                 memory_cache['sampled_correlations'] = {
                     'q_vectors': res.q_vectors, 'energies': res.energies,
                     'intensities': res.sqw}

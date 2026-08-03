@@ -38,13 +38,13 @@ exists to avoid.
 
 ---
 
-## Phase 1 — quick wins (~1 week total)
+## Phase 1 — quick wins (~1 week total) — ✅ DONE (2026-08-03)
 
 Small, self-contained, and each removes a "not supported" from a path users already
 hit. Do these first; they are also the cheapest way to re-familiarize with the
 relevant modules.
 
-### #17 Classical-to-quantum correction for `sampled_correlations` — ~1 day
+### #17 Classical-to-quantum correction for `sampled_correlations` — ✅ DONE (~1 day)
 
 **What.** `magcalc/classical_dynamics.py` returns the classical S(q,ω), which is not
 on the quantum intensity scale. Sunny multiplies by the correspondence factor
@@ -63,7 +63,7 @@ Sunny, so this is a genuine cross-check, not a self-comparison).
 **Risk.** Low. Pure post-processing; no change to any existing number when the key
 is absent.
 
-### #23 Domain averaging in SU(N) / entangled — ~1 day
+### #23 Domain averaging in SU(N) / entangled — ✅ DONE (~1 day)
 
 **What.** `sun/adapter.py:155` and `sun/entangled.py:274` raise. The dipole path
 already does this at `core.py:2214-2243` by rotating q per domain and averaging with
@@ -82,7 +82,7 @@ domain-averaged result. Plus Sunny `domain_average`.
 **Risk.** Low, provided the cross-section guard is carried over rather than
 reimplemented.
 
-### #19 Static / energy-integrated correlations — ~2 days
+### #19 Static / energy-integrated correlations — ✅ DONE (~2 days)
 
 **What.** Two distinct things sharing a name in Sunny:
 
@@ -102,7 +102,7 @@ regime where SCGA is valid (two independent in-repo routes to the same quantity)
 
 **Risk.** Low. Note (1) is *not* the same as (2) — do not let one test cover both.
 
-### #27 Crystal utilities — ~2 days
+### #27 Crystal utilities — ✅ DONE (~2 days)
 
 **What.** `primitive_cell`, `standardize`, `subcrystal` (all thin spglib wrappers —
 spglib is already a dependency) and `print_irreducible_bz_paths`. Expose through the
@@ -312,10 +312,10 @@ that the harmonic triplon cannot give.
 
 | Phase | # | Item | Est. | Risk | Primary oracle |
 |---|---|---|---|---|---|
-| 1 | 17 | Classical→quantum correction | 1 d | low | Sunny `intensities(...; kT)`; low-T → LSWT |
-| 1 | 23 | Domain averaging in SU(N)/entangled | 1 d | low | hand-rotated structure (exact identity) |
-| 1 | 19 | Static / energy-integrated correlations | 2 d | low | Sunny `intensities_static`; SCGA agreement |
-| 1 | 27 | Crystal utilities + BZ paths | 2 d | low | spglib round-trip; seekpath |
+| ✅ 1 | 17 | Classical→quantum correction | 1 d | low | Sunny `intensities(...; kT)`; low-T → LSWT |
+| ✅ 1 | 23 | Domain averaging in SU(N)/entangled | 1 d | low | hand-rotated structure (exact identity) |
+| ✅ 1 | 19 | Static / energy-integrated correlations | 2 d | low | Sunny `intensities_static`; SCGA agreement |
+| ✅ 1 | 27 | Crystal utilities + BZ paths | 2 d | low | spglib round-trip; seekpath |
 | 2 | 25 | Blume–Maleev polarization frames | 2 d | low–med | Sunny `ssf_custom_bm`; P∥q reduces to `sf±` |
 | 2 | 21 | General pair couplings | 3 d | med | biquadratic via the general path (exact) |
 | 2 | 24a | Mixed-spin SU(N) | 3 d | med–high | decoupled sublattices (exact) |
@@ -326,7 +326,9 @@ that the harmonic triplon cannot give.
 | 4 | 16 | Site-level inhomogeneity | 1–2 w | high | x→0 clean limit; Sunny example 09 |
 | 4 | 26 | Entangled classical dynamics | 1–2 w | high | N=2 reduces to Landau–Lifshitz (exact) |
 
-Phases 1–3 total roughly five weeks and close 11 of the 13 line items (#24 is two).
+Phase 1 landed 2026-08-03 (see GAP_STATUS.md for what each was pinned to).
+Phases 2–3 total roughly four more weeks and close 7 of the 9 remaining line
+items (#24 is two).
 Phase 4 is deliberately open-ended.
 
 ## Non-goals

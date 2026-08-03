@@ -154,40 +154,57 @@ guard refuses). Never silently wrong.
 
 ---
 
-## Gap 4 — what is still missing vs Sunny 0.8.1 (audit, 2026-08-03)
+## Gap 4 — parity with Sunny 0.8.1 (audit 2026-08-03)
 
 A sweep of Sunny 0.8.1's full export list against the engine. Everything below was
-checked in code and, where a number was in question, measured.
+checked in code and, where a number was in question, measured. Implementation plan
+and per-item oracles: `GAP4_PLAN.md`.
 
-### Closed by this audit
+### Fixed by the audit itself (silent wrongness) — ✅ ALL DONE
 
 | Item | Was | Now |
 |---|---|---|
 | Magnetic form-factor table | invented Q-dependence, up to +113% intensity error at 5 Å⁻¹ | generated from Sunny; f(Q) pinned per ion, `<j2>` branch added |
+| Form-factor ion resolution | fell back to the SITE LABEL, so `Fe1`/`Cu2` silently became Fe¹⁺/Cu²⁺; `charge` was dropped by the Wyckoff expansion, so FeI₂ asked for NEUTRAL iron | `ion`, else element+charge, else neutral element, else none |
 | `biquadratic` in SU(N) | silently dropped | exact via operator-pair couplings; matches Sunny `:SUN` |
 | `biquadratic` in entangled, Ewald `dipole_dipole` in SU(N)/entangled | silently dropped | hard error naming the alternative |
 | Anisotropy renormalization | undocumented mismatch with Sunny's default `:dipole` | `calculation.anisotropy_renormalization: rcs`, both branches pinned |
 | "S(Q,ω) is 3/4 of Sunny's" | false caveat blocking absolute comparison | retired; absolute scale pinned |
 
-### Still open
+### Phase 1 (quick wins) — ✅ ALL DONE
 
-Ordered by how much they cost. None of these is silently wrong — each either
-refuses or is simply absent.
+| # | Item | Status | Key | Validated against |
+|---|---|---|---|---|
+| 17 | Classical→quantum correction | ✅ | `sampled_correlations.classical_to_quantum` (default on) | Sunny's `c2q` formula to 1e-9; detailed balance \|c2q(ω)/c2q(−ω)\| = e^{ω/kT}; FM weight becomes q-independent (raw spread 213% → 29%) |
+| 19 | Static / energy-integrated correlations | ✅ | `tasks.static_sqw` (LSWT) and `tasks.static_correlations` (classical) | Sunny `intensities_static` to 6e-9; free-spin sum rule 2S²/3 (perp) and S² (trace) EXACTLY, at every q and T |
+| 23 | Domain averaging in SU(N)/entangled | ✅ | `calculation.domains` (all three engines now) | rotate the crystal explicitly: S_rot(q) = S(Rᵀq) to 3e-15; average = weighted sum of separately built twins |
+| 27 | Crystal utilities + BZ paths | ✅ | `magcalc symmetry --cells / --species / --bz-path` | analytic bcc & rocksalt primitive cells (a³/2, a³/4); standardization idempotent; `seekpath` optional |
 
-| # | Item | Sunny | Notes |
-|---|---|---|---|
-| 16 | Site-level inhomogeneity | `to_inhomogeneous`, `set_vacancy_at!`, `set_field_at!`, `set_exchange_at!`, `remove_periodicity!` | no vacancies, per-site couplings/fields or open boundaries. Blocks dilution/disorder studies (Sunny example 09) |
-| 17 | Classical-to-quantum correction | `intensities(sc, ...; kT)` | `sampled_correlations` returns the classical S(q,ω) with no `\|ω/kT\|/(1−e^{−ω/kT})` factor, so it is not on the quantum intensity scale. Also no `set_spin_rescaling_for_static_sum_rule!` |
-| 18 | Langevin thermostat / symplectic integrator | `Langevin`, `ImplicitMidpoint`, `suggest_timestep` | pyMagCalc thermalizes by Metropolis and evolves with undamped RK4; no stochastic thermostat, no timestep guidance |
-| 19 | Static / energy-integrated correlations | `SampledCorrelationsStatic`, `intensities_static` | no instantaneous-correlation task |
-| 20 | Experiment-data binning | `BinningParameters`, `load_nxs` | no NeXus histogram import |
-| 21 | General pair couplings | `set_pair_coupling!(sys, op, bond)` | SU(N) now covers bilinear + biquadratic; arbitrary two-site operators are not exposed (the engine's coupling matrix could carry them) |
-| 22 | Wang–Landau | `WangLandau`, `ParallelWangLandau` | the one Tier-2 remnant |
-| 23 | Domain averaging in SU(N)/entangled | `domain_average` | raises; dipole mode has it |
-| 24 | Mixed-spin SU(N); Ewald + rotating-frame single-k | — | both refuse honestly |
-| 25 | Polarization frames | `ssf_custom_bm` | only P ∥ q (`perp`/`trace`/`chiral`/`sf±`/components); no Blume–Maleev |
-| 26 | Entangled classical dynamics | `EntangledSampledCorrelations` | — |
-| 27 | Crystal utilities | `print_irreducible_bz_paths`, `primitive_cell`, `standardize`, `subcrystal` | cosmetic |
+**Notes.** #17: the correction fixes the SHAPE of the classical S(q,ω); its absolute
+normalization against LSWT is still unreconciled (measured ≈220 where LSWT gives S=1
+on a low-T ferromagnet) — do not read absolute intensities off that path yet, and see
+the open item below. #23: intensity is compared per DEGENERATE MULTIPLET, since inside
+a degenerate subspace the split between individual bands is basis-dependent while the
+multiplet sum is an observable. #27: `seekpath` is an optional dependency; without it
+`--bz-path` raises an actionable ImportError and the rest still works.
+
+### Phase 2–4 — still open
+
+Ordered by how much they cost. None is silently wrong — each either refuses or is
+simply absent.
+
+| # | Item | Phase | Sunny | Notes |
+|---|---|---|---|---|
+| 25 | Blume–Maleev polarization frames | 2 | `ssf_custom_bm` | only P ∥ q (`perp`/`trace`/`chiral`/`sf±`/components) |
+| 21 | General pair couplings | 2 | `set_pair_coupling!` | SU(N) covers bilinear + biquadratic; the operator-pair machinery is already there, only the front end (tensor SVD) is missing |
+| 24a | Mixed-spin SU(N) | 2 | — | `sun/lswt.py` requires a uniform N; needs per-site block offsets |
+| 24b | Ewald + rotating-frame single-k | 2 | — | each q ± k channel needs its own A(q) |
+| 18 | Langevin / `ImplicitMidpoint` / `suggest_timestep` | 3 | `Langevin`, `ImplicitMidpoint` | thermalizes by Metropolis, evolves by undamped RK4 |
+| 22 | Wang–Landau | 3 | `WangLandau` | the one Tier-2 remnant |
+| 20 | Experiment-data binning | 3 | `BinningParameters`, `load_nxs` | `fitting.load_fit_data` reads CSV only. **Check demand first** |
+| 16 | Site-level inhomogeneity | 4 | `to_inhomogeneous`, `set_vacancy_at!`, … | no vacancies / per-site couplings / open boundaries; blocks disorder work |
+| 26 | Entangled classical dynamics | 4 | `EntangledSampledCorrelations` | needs CP^(N−1) equations of motion |
+| — | Classical S(q,ω) absolute normalization | 3 | — | opened by #17: the classical path's overall scale has never been reconciled with the LSWT/Sunny one. Shape is pinned, scale is not |
 
 Convention difference, not a gap: Sunny's `ssf_perp` applies the g-tensor by
 default (4× at g = 2). pyMagCalc's S(Q,ω) is spin-only = `apply_g=false`.

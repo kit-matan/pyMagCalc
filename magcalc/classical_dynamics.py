@@ -76,6 +76,7 @@ class DynamicsResult:
     energies: np.ndarray         # (Nω,) meV
     sqw: np.ndarray              # (Nω, Nq) S(q,ω)
     temperature: float
+    classical_to_quantum: bool = False   # was the c2q factor already applied?
 
 
 def dynamical_structure_factor(traj, pos, q_cart, dt, cross_section="perp"):
@@ -111,11 +112,48 @@ def _contract(tensor, q, cross_section):
     return np.einsum("ab,wab->w", P, tensor)
 
 
+
+def classical_to_quantum_factor(energies, kT):
+    """|w/kT| / (1 - exp(-w/kT)) -- the classical-to-quantum correspondence factor.
+
+    Classical spin dynamics equipartitions: every mode carries kT, so the classical
+    S(q,w) is NOT on the quantum intensity scale. The factor below maps it onto one,
+    and is what Sunny applies in `intensities(sc, ...; kT)`
+    (SampledCorrelations/DataRetrieval.jl). It is equivalent to
+    `abs(w/kT) * thermal_prefactor(w; kT)`, tends to 1 as w -> 0 (where classical
+    statistics are already right) and to |w|/kT in the quantum limit w >> kT, which
+    is exactly the Bose suppression a classical calculation is missing.
+
+    `kT` in meV, matching `energies`. Returns 1 everywhere for kT = None.
+    """
+    w = np.asarray(energies, float)
+    if kT is None:
+        return np.ones_like(w)
+    if kT <= 0:
+        raise ValueError(
+            f"classical_to_quantum needs a positive kT in meV, got {kT}. Pass "
+            f"`classical_to_quantum: false` to leave the classical scale alone.")
+    x = w / kT
+    out = np.ones_like(x)
+    nz = x != 0.0
+    # -expm1(-x), not 1 - exp(-x): the latter cancels catastrophically for small x
+    # (at x ~ 3e-9 it is already wrong in the 8th digit), which matters because the
+    # w -> 0 end of the grid is where the factor is supposed to be exactly 1.
+    out[nz] = np.abs(x[nz]) / -np.expm1(-x[nz])
+    return out
+
+
 def sampled_correlations(model, params, q_cart, kT, supercell=(6, 1, 1),
                          dt=0.02, n_steps=2048, n_traj=8, therm_sweeps=2000,
-                         record_every=1, cross_section="perp", seed=0):
+                         record_every=1, cross_section="perp", seed=0,
+                         classical_to_quantum=True):
     """Thermalize by Metropolis then evolve LL dynamics; average S(q,ω) over `n_traj`
-    independent thermal starts. Returns a DynamicsResult."""
+    independent thermal starts. Returns a DynamicsResult.
+
+    `classical_to_quantum` (default on) rescales the result onto the quantum
+    intensity scale -- see `classical_to_quantum_factor`. Without it the output is
+    the raw classical S(q,ω), which equipartitions and therefore carries far too
+    much weight at ħω >> kT; set it False only to inspect that raw quantity."""
     from .thermal_mc import build_supercell, _sweep
 
     H, b, N, S, pos = build_supercell(model, params, supercell)
@@ -135,5 +173,9 @@ def sampled_correlations(model, params, q_cart, kT, supercell=(6, 1, 1),
                                             cross_section)
         acc = sqw if acc is None else acc + sqw
         energies = e
+    sqw = acc / n_traj
+    if classical_to_quantum:
+        sqw = sqw * classical_to_quantum_factor(energies, kT)[:, None]
     return DynamicsResult(q_vectors=np.asarray(q_cart, float).reshape(-1, 3),
-                          energies=energies, sqw=acc / n_traj, temperature=kT)
+                          energies=energies, sqw=sqw, temperature=kT,
+                          classical_to_quantum=bool(classical_to_quantum))

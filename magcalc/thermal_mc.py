@@ -205,3 +205,62 @@ def run_thermal_mc(model, params, temperatures, supercell=(4, 4, 1),
     H, b, N, S, _pos = build_supercell(model, params, supercell)
     return parallel_tempering(H, b, N, S, temperatures, n_sweeps=n_sweeps,
                               n_equil=n_equil, seed=seed)
+
+@dataclass
+class StaticResult:
+    """Instantaneous (energy-integrated) classical structure factor."""
+    q_vectors: np.ndarray        # (Nq, 3) cartesian
+    sq: np.ndarray               # (Nq,) S(q), per site
+    temperature: float
+    n_spins: int
+    n_samples: int
+
+
+def static_correlations(model, params, q_cart, kT, supercell=(6, 6, 1),
+                        n_samples=200, n_equil=2000, sample_every=10,
+                        cross_section="perp", seed=0):
+    """Classical INSTANTANEOUS S(q) from Metropolis samples (Sunny's
+    `SampledCorrelationsStatic`).
+
+    No dynamics: thermalize, then average the equal-time correlation
+
+        S(q) = (1/N) sum_ab P_ab(q) < S^a(q) S^b(q)* >,   S^a(q) = sum_r e^{-i q.r} S^a_r
+
+    over decorrelated configurations, with P the neutron projector selected by
+    `cross_section`. The 1/N makes it PER SITE, so free isotropic spins give exactly
+    2S^2/3 in the `perp` channel and S^2 in `trace`, at every q and every
+    temperature -- the identity this is pinned to.
+
+    This is the classical, all-temperature counterpart of the LSWT band sum
+    (`numerical.static_intensities`): it needs no ordered state and so is valid above
+    T_N, where LSWT has nothing to say.
+    """
+    from .classical_dynamics import _contract
+
+    H, b, N, S, pos = build_supercell(model, params, supercell)
+    qs = np.asarray(q_cart, float).reshape(-1, 3)
+    rng = np.random.default_rng(seed)
+    beta = 1.0 / float(kT)
+
+    m = rng.standard_normal((N, 3))
+    m *= S / np.linalg.norm(m, axis=1, keepdims=True)
+    g = H @ m.ravel() + b
+    for _ in range(int(n_equil)):
+        _sweep(m, g, H, b, beta, S, rng)
+        g = H @ m.ravel() + b
+
+    phase = np.exp(-1j * (qs @ pos.T))            # (n_q, N)
+    acc = np.zeros((len(qs), 3, 3), dtype=complex)
+    for _ in range(int(n_samples)):
+        for _ in range(int(sample_every)):
+            _sweep(m, g, H, b, beta, S, rng)
+            g = H @ m.ravel() + b
+        Sq = phase @ m                            # (n_q, 3)
+        acc += np.einsum("qa,qb->qab", Sq.conj(), Sq)
+    acc /= (int(n_samples) * N)
+
+    sq = np.array([np.real(_contract(acc[i][None, :, :], qs[i], cross_section))[0]
+                   for i in range(len(qs))])
+    return StaticResult(q_vectors=qs, sq=sq, temperature=float(kT),
+                        n_spins=N, n_samples=int(n_samples))
+

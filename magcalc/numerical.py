@@ -223,6 +223,23 @@ def sqw_domain_average(compute, q_vectors, domains, cross_section="perp"):
     return np.concatenate(e_parts, axis=1), np.concatenate(i_parts, axis=1)
 
 
+
+def static_intensities(calc, q_cart, temperature=None, domains=None,
+                       cross_section="perp"):
+    """Energy-integrated LSWT S(q): the band sum of S(q,w) (Sunny
+    `intensities_static`).
+
+    Works for every engine, because it only uses `calculate_sqw`. With `domains` the
+    per-domain columns are already weighted, so summing them is the domain average.
+    """
+    res = calc.calculate_sqw(np.asarray(q_cart, float).reshape(-1, 3),
+                             temperature=temperature, domains=domains,
+                             cross_section=cross_section)
+    if res is None:
+        return None
+    return np.real(res.intensities).sum(axis=1)
+
+
 def fibonacci_sphere_points(q_mag: float, num_samples: int) -> npt.NDArray[np.float64]:
     """Uniform directions on the |q| sphere -- the SAME Fibonacci construction the
     dipole engine's powder average uses (core.calculate_powder_average)."""

@@ -2,6 +2,9 @@ import typer
 import yaml
 import os
 import logging
+from typing import Optional
+
+import numpy as np
 from typing_extensions import Annotated
 from magcalc import runner
 
@@ -143,6 +146,9 @@ def symmetry(
     config_file: Annotated[str, typer.Argument(help="Path to the config.yaml file")],
     max_distance: Annotated[float, typer.Option(help="Search bonds out to this distance (Å)")] = 8.0,
     as_json: Annotated[bool, typer.Option("--json", help="Emit the analysis as JSON")] = False,
+    cells: Annotated[bool, typer.Option("--cells", help="Also report the primitive and standardized cells")] = False,
+    bz_path: Annotated[bool, typer.Option("--bz-path", help="Also suggest an irreducible-BZ q-path (needs `seekpath`)")] = False,
+    species: Annotated[Optional[str], typer.Option("--species", help="Analyze only these species, comma-separated (sub-crystal)")] = None,
 ):
     """
     Crystal-symmetry analysis of a config: the space group, the symmetry-inequivalent
@@ -151,6 +157,11 @@ def symmetry(
 
     Use it to choose `ref_pair` reference bonds and to see which exchange-matrix entries
     symmetry forces to zero or ties together, before writing `interactions.symmetry_rules`.
+
+    `--cells` adds the primitive and standardized cells (Sunny `primitive_cell` /
+    `standardize`), `--species` restricts the analysis to a sub-crystal (Sunny
+    `subcrystal`), and `--bz-path` suggests a high-symmetry q-path through the
+    irreducible Brillouin zone (Sunny `print_irreducible_bz_paths`).
     """
     if not os.path.exists(config_file):
         typer.secho(f"Error: File {config_file} not found.", fg=typer.colors.RED)
@@ -182,6 +193,43 @@ def symmetry(
     if not b.atoms_uc:
         typer.secho("Error: no atoms could be built from the config.", fg=typer.colors.RED)
         raise typer.Exit(code=1)
+
+    from magcalc import cell_utils as _cu
+
+    if species:
+        wanted = [t.strip() for t in species.split(",") if t.strip()]
+        try:
+            sub = _cu.subcrystal(
+                {"lattice_vectors": np.asarray(b.lattice_vectors).tolist(),
+                 "atoms_uc": b.atoms_uc}, wanted)
+        except ValueError as e:
+            typer.secho(f"Error: {e}", fg=typer.colors.RED)
+            raise typer.Exit(code=1)
+        b.atoms_uc = sub["atoms_uc"]
+        b._atom_label_to_idx = {a.get("label", f"Atom{i}"): i
+                                for i, a in enumerate(b.atoms_uc)}
+        b.config["crystal_structure"]["atoms_uc"] = b.atoms_uc
+        b.detect_symmetry_from_structure()
+
+    cell_info = {}
+    if cells or bz_path:
+        try:
+            cell, species_order = _cu.cell_from_structure(
+                {"lattice_vectors": np.asarray(b.lattice_vectors).tolist(),
+                 "atoms_uc": b.atoms_uc})
+            order = sorted(set(species_order))
+            if cells:
+                cell_info["input"] = _cu.describe_cell(cell, order)
+                cell_info["primitive"] = _cu.describe_cell(
+                    _cu.primitive_cell(cell), order)
+                cell_info["standardized"] = _cu.describe_cell(
+                    _cu.standardize_cell(cell), order)
+            if bz_path:
+                cell_info["bz_path"] = _cu.irreducible_bz_path(cell)
+        except ImportError as e:
+            typer.secho(f"Note: {e}", fg=typer.colors.YELLOW)
+        except Exception as e:
+            typer.secho(f"Note: cell analysis failed: {e}", fg=typer.colors.YELLOW)
 
     sg = b.space_group_number
     given_sg = (section.get("crystal_structure", {}).get("lattice_parameters", {}) or {}).get("space_group")
@@ -227,7 +275,16 @@ def symmetry(
             "space_group": int(sg) if sg is not None else None,
             "space_group_source": sg_source, "n_symmetry_ops": n_ops,
             "n_atoms": len(b.atoms_uc), "max_distance": max_distance,
-            "bond_orbits": results}, indent=2))
+            "bond_orbits": results,
+            **({"cells": {k: v for k, v in cell_info.items() if k != "bz_path"}}
+               if cells and cell_info else {}),
+            **({"bz_path": {
+                "point_coords": cell_info["bz_path"]["point_coords"],
+                "path": [list(seg) for seg in cell_info["bz_path"]["path"]],
+                "spacegroup_number": cell_info["bz_path"]["spacegroup_number"],
+                "bravais": cell_info["bz_path"]["bravais"]}}
+               if bz_path and "bz_path" in cell_info else {}),
+        }, indent=2, default=float))
         return
 
     typer.secho(f"Crystal symmetry analysis: {config_file}", fg=typer.colors.GREEN, bold=True)
@@ -247,6 +304,28 @@ def symmetry(
         for row in r["allowed_matrix"]:
             typer.echo("        [ " + "  ".join(e.rjust(w) for e in row) + " ]")
         typer.echo(f"      free parameters: {', '.join(r['free_parameters']) or '(none)'}")
+
+    if cells and cell_info:
+        typer.secho("\nCells:", fg=typer.colors.CYAN)
+        for name in ("input", "primitive", "standardized"):
+            d = cell_info.get(name)
+            if not d:
+                continue
+            comp = " ".join(f"{k}{v}" for k, v in sorted(d["composition"].items()))
+            typer.echo(f"  {name:12} a,b,c = {d['a']:.4f}, {d['b']:.4f}, {d['c']:.4f} Å"
+                       f"   alpha,beta,gamma = {d['alpha']:.2f}, {d['beta']:.2f}, "
+                       f"{d['gamma']:.2f}°")
+            typer.echo(f"  {'':12} V = {d['volume']:.4f} Å³, {d['n_sites']} sites ({comp})")
+
+    if bz_path and "bz_path" in cell_info:
+        bz = cell_info["bz_path"]
+        typer.secho(f"\nIrreducible BZ path (space group {bz['spacegroup_number']}, "
+                    f"{bz['bravais']}):", fg=typer.colors.CYAN)
+        segs = " | ".join(f"{u}-{v}" for u, v in bz["path"])
+        typer.echo(f"  path: {segs}")
+        for label, coord in sorted(bz["point_coords"].items()):
+            typer.echo(f"    {label:8} {coord[0]:7.4f} {coord[1]:7.4f} {coord[2]:7.4f}")
+        typer.echo("  (reciprocal lattice units of seekpath's primitive cell)")
 
 
 @app.command()
