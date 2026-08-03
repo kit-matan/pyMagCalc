@@ -388,6 +388,10 @@ def _gaussian_expansion(coeffs: Tuple[float, ...], s2):
 
 
 def _warn_unknown(ion: str) -> None:
+    if ion is None:
+        # "no ion declared" is not a user error -- generic_model deliberately
+        # yields None rather than guessing one from the site label.
+        return
     logger.warning(
         f"Ion '{ion}' is not in the magnetic form-factor table; using f(Q) = 1 "
         f"(no form factor). Spell it like 'Fe2+' / 'Fe2', or 'Fe' for the neutral "

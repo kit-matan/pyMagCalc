@@ -10,7 +10,8 @@ from typing import Optional
 
 import numpy as np
 
-from ..numerical import DispersionResult, SqwResult, thermal_bose_prefactor
+from ..numerical import (DispersionResult, SqwResult, sqw_domain_average,
+                         thermal_bose_prefactor)
 from .lswt import SUNModel
 
 logger = logging.getLogger(__name__)
@@ -151,8 +152,6 @@ class SUNCalculator:
 
     def calculate_sqw(self, q_vectors, backend="numpy", satellites=None,
                       temperature=None, domains=None, cross_section="perp", **_):
-        if domains:
-            raise NotImplementedError("SU(N) does not support domain averaging yet.")
         qs = np.asarray(q_vectors, dtype=float).reshape(-1, 3)
         ions = None
         try:
@@ -161,13 +160,20 @@ class SUNCalculator:
             pass
         ion = ions[0] if ions else None
 
-        E, I = [], []
-        for q in qs:
-            w, inten = self.model.structure_factor(q, ion=ion,
-                                                   cross_section=cross_section)
-            E.append(w)
-            I.append(inten)
-        E, I = np.array(E), np.array(I)
+        def _one(q_list):
+            E, I = [], []
+            for q in q_list:
+                w, inten = self.model.structure_factor(q, ion=ion,
+                                                       cross_section=cross_section)
+                E.append(w)
+                I.append(inten)
+            return np.array(E), np.array(I)
+
+        # Twin/domain averaging: identical to the dipole engine's, because a domain
+        # rotated by R is equivalent to probing at R^T q -- nothing about that is
+        # engine-specific. Shared so the cross-section guard cannot drift apart.
+        averaged = sqw_domain_average(_one, list(qs), domains, cross_section)
+        E, I = averaged if averaged is not None else _one(qs)
         if temperature:
             I = I * thermal_bose_prefactor(E, temperature)
         return SqwResult(q_vectors=qs, energies=E, intensities=I)

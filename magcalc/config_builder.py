@@ -104,7 +104,8 @@ class MagCalcConfigBuilder:
                 b.add_wyckoff_atom(label=a.get('label', 'Atom'), pos=a.get('pos', [0, 0, 0]),
                                    spin=a.get('spin_S', 0.5),
                                    species=a.get('element', a.get('label', 'Atom')),
-                                   ion=a.get('ion'), element=a.get('element'))
+                                   ion=a.get('ion'), element=a.get('element'),
+                                   charge=a.get('charge'))
 
         # No space group given (lattice_vectors path): detect it from the structure so
         # the analyzer has operations to work with.
@@ -768,7 +769,7 @@ class MagCalcConfigBuilder:
 
     def add_wyckoff_atom(self, label: str, pos: List[float], spin: float, 
                          species: str = None, wyckoff_label: str = "",
-                         ion: str = None, element: str = None):
+                         ion: str = None, element: str = None, charge=None):
         """
         Add an atom defined by a Wyckoff position. 
         Expands to all equivalent positions using the loaded space group.
@@ -780,7 +781,8 @@ class MagCalcConfigBuilder:
         if not self.symmetry_ops:
             # No symmetry? Just add the one atom.
             # Use label exactly as provided (don't append 0)
-            self._add_atom_raw(label, pos, spin, species, ion=ion, element=element)
+            self._add_atom_raw(label, pos, spin, species, ion=ion, element=element,
+                               charge=charge)
             return
 
         pos_array = np.array(pos, dtype=float)
@@ -807,7 +809,8 @@ class MagCalcConfigBuilder:
             if atom_name in [a['label'] for a in self.atoms_uc]:
                 # Collision? Fall back to indexed
                 atom_name = f"{label}0"
-            self._add_atom_raw(atom_name, orbit_positions[0], spin, species, ion=ion, element=element)
+            self._add_atom_raw(atom_name, orbit_positions[0], spin, species, ion=ion,
+                               element=element, charge=charge)
         else:
             # Determine starting index based on existing atoms
             start_idx = 0
@@ -817,9 +820,11 @@ class MagCalcConfigBuilder:
                 
             for i, p in enumerate(orbit_positions):
                 atom_name = f"{label}{start_idx + i}"
-                self._add_atom_raw(atom_name, p, spin, species, ion=ion, element=element)
+                self._add_atom_raw(atom_name, p, spin, species, ion=ion, element=element,
+                                   charge=charge)
 
-    def _add_atom_raw(self, label, pos, spin, species, ion=None, element=None):
+    def _add_atom_raw(self, label, pos, spin, species, ion=None, element=None,
+                      charge=None):
         if species is None:
             # Guess from label (remove digits)
             species = "".join([c for c in label if c.isalpha()])
@@ -830,7 +835,11 @@ class MagCalcConfigBuilder:
             "pos": pos,
             "spin_S": spin,
             "ion": ion,
-            "element": element
+            "element": element,
+            # `charge` rides along so `element: Fe` + `charge: 2` can reconstruct the
+            # form-factor ion (GenericSpinModel._resolve_ion). Dropping it here is how
+            # FeI2 ended up asking for a NEUTRAL-iron form factor.
+            "charge": charge,
         })
         self.config["crystal_structure"]["atoms_uc"] = self.atoms_uc
         self._atom_label_to_idx[label] = len(self.atoms_uc) - 1

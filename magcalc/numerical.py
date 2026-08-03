@@ -19,6 +19,7 @@ except ImportError:
     from linalg import KKdMatrix
 
 from .form_factors import get_form_factor
+from .linalg import rotation_matrix
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +144,84 @@ class SqwResult:
     q_vectors: npt.NDArray[np.float64]
     energies: npt.NDArray[np.float64]
     intensities: npt.NDArray[np.float64]
+
+def parse_domains(domains) -> Optional[List[Tuple[npt.NDArray[np.float64], float]]]:
+    """Normalize a domain/twin specification into [(R, weight), ...].
+
+    Two accepted forms (angles in degrees, axes in Cartesian lab coordinates):
+      - shorthand dict {'axis': [0,0,1], 'n_fold': 3}: n equal-weight domains
+        rotated by k*360/n (k = 0..n-1), identity included;
+      - explicit list [{'axis': ..., 'angle': ..., 'weight': ...}, ...]. The
+        list is the COMPLETE set of domains — include {'angle': 0} for the
+        original orientation. 'weight' defaults to 1; weights are normalized
+        to sum to 1.
+
+    Returns None when no averaging is requested (empty/absent spec, or a
+    single identity domain).
+    """
+    if not domains:
+        return None
+    if isinstance(domains, dict):
+        n = int(domains.get('n_fold', 0))
+        if n < 1:
+            raise ValueError(
+                f"domains dict shorthand needs 'n_fold' >= 1, got {domains}.")
+        axis = domains.get('axis', [0, 0, 1])
+        entries = [{'axis': axis, 'angle': 360.0 * k / n, 'weight': 1.0}
+                   for k in range(n)]
+    else:
+        entries = list(domains)
+    if len(entries) == 0:
+        return None
+    out = []
+    for e in entries:
+        angle = float(e.get('angle', e.get('angle_deg', 0.0)))
+        R = rotation_matrix(e.get('axis', [0, 0, 1]), angle)
+        out.append((R, float(e.get('weight', 1.0))))
+    w_sum = sum(w for _, w in out)
+    if w_sum <= 0:
+        raise ValueError("Domain weights must sum to a positive number.")
+    out = [(R, w / w_sum) for R, w in out]
+    if len(out) == 1 and np.allclose(out[0][0], np.eye(3)):
+        return None
+    return out
+
+DOMAIN_SAFE_CROSS_SECTIONS = ("perp", "trace", "chiral", "sf+", "sf-",
+                              "sf_plus", "sf_minus")
+
+
+def sqw_domain_average(compute, q_vectors, domains, cross_section="perp"):
+    """Twin/domain average of an S(q,w) calculation, shared by all three engines.
+
+    `compute(qs)` must return `(energies, intensities)` for a list of CARTESIAN q,
+    each of shape (n_q, n_modes). A domain rotated by R is equivalent to rotating
+    the probe instead of the crystal, so each domain is evaluated at R^T q and the
+    results are CONCATENATED along the mode axis with the domain weight folded into
+    the intensity -- the same convention the dipole engine has always used, so a
+    domain-averaged map has n_domains * n_modes columns.
+
+    Returns `(energies, intensities)`, or None when no averaging was requested (the
+    caller then runs its ordinary single-domain path).
+    """
+    domain_list = parse_domains(domains)
+    if domain_list is None:
+        return None
+    cs = (cross_section or "perp").lower()
+    if cs not in DOMAIN_SAFE_CROSS_SECTIONS:
+        # A lab-frame component of a rotated crystal is not the same component of
+        # the unrotated one; rotating q alone would be silently wrong.
+        raise ValueError(
+            "domains averaging supports only rotation-covariant cross sections "
+            f"{DOMAIN_SAFE_CROSS_SECTIONS}, not '{cross_section}'.")
+    logger.info(f"Averaging over {len(domain_list)} domains...")
+    e_parts, i_parts = [], []
+    for R, weight in domain_list:
+        q_rot = [R.T @ np.asarray(q, dtype=float) for q in q_vectors]
+        e_d, i_d = compute(q_rot)
+        e_parts.append(np.asarray(e_d))
+        i_parts.append(np.asarray(i_d) * weight)
+    return np.concatenate(e_parts, axis=1), np.concatenate(i_parts, axis=1)
+
 
 def fibonacci_sphere_points(q_mag: float, num_samples: int) -> npt.NDArray[np.float64]:
     """Uniform directions on the |q| sphere -- the SAME Fibonacci construction the

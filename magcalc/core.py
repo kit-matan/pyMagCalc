@@ -44,6 +44,7 @@ from typing import List, Tuple, Dict, Any, Optional, Union
 # --- Modularized Imports ---
 from .symbolic import gen_HM
 from .numerical import (
+    parse_domains, sqw_domain_average,
     process_calc_disp,
     process_calc_Sqw,
     process_calc_Sqw_single_k,
@@ -107,47 +108,6 @@ logger.addHandler(logging.NullHandler())
 # faster per call, scales with N (not bond count), and is trivially picklable so
 # parallel workers need no per-task lambdify. These are module-level (not
 # closures) so they pickle cleanly to multiprocessing workers.
-
-def _parse_domains(domains) -> Optional[List[Tuple[npt.NDArray[np.float64], float]]]:
-    """Normalize a domain/twin specification into [(R, weight), ...].
-
-    Two accepted forms (angles in degrees, axes in Cartesian lab coordinates):
-      - shorthand dict {'axis': [0,0,1], 'n_fold': 3}: n equal-weight domains
-        rotated by k*360/n (k = 0..n-1), identity included;
-      - explicit list [{'axis': ..., 'angle': ..., 'weight': ...}, ...]. The
-        list is the COMPLETE set of domains — include {'angle': 0} for the
-        original orientation. 'weight' defaults to 1; weights are normalized
-        to sum to 1.
-
-    Returns None when no averaging is requested (empty/absent spec, or a
-    single identity domain).
-    """
-    if not domains:
-        return None
-    if isinstance(domains, dict):
-        n = int(domains.get('n_fold', 0))
-        if n < 1:
-            raise ValueError(
-                f"domains dict shorthand needs 'n_fold' >= 1, got {domains}.")
-        axis = domains.get('axis', [0, 0, 1])
-        entries = [{'axis': axis, 'angle': 360.0 * k / n, 'weight': 1.0}
-                   for k in range(n)]
-    else:
-        entries = list(domains)
-    if len(entries) == 0:
-        return None
-    out = []
-    for e in entries:
-        angle = float(e.get('angle', e.get('angle_deg', 0.0)))
-        R = rotation_matrix(e.get('axis', [0, 0, 1]), angle)
-        out.append((R, float(e.get('weight', 1.0))))
-    w_sum = sum(w for _, w in out)
-    if w_sum <= 0:
-        raise ValueError("Domain weights must sum to a positive number.")
-    out = [(R, w / w_sum) for R, w in out]
-    if len(out) == 1 and np.allclose(out[0][0], np.eye(3)):
-        return None
-    return out
 
 
 def _classical_spin_components(x, S, n):
@@ -2211,32 +2171,31 @@ class MagCalc:
              logger.error("Invalid input for q_vectors. Must be list of arrays or 2D array.")
              return None
 
-        domain_list = _parse_domains(domains)
-        if domain_list is not None:
-            cs = (cross_section or "perp").lower()
-            if cs not in ("perp", "trace", "chiral", "sf+", "sf-", "sf_plus", "sf_minus"):
-                # A lab-frame component of a rotated crystal is not the same
-                # component of the unrotated one; rotating q alone would be
-                # silently wrong.
-                raise ValueError(
-                    "domains averaging supports only cross_section 'perp' or "
-                    f"'trace', not '{cross_section}'.")
-            logger.info(f"Averaging over {len(domain_list)} domains...")
-            energies_parts = []
-            intensities_parts = []
-            for R, weight in domain_list:
-                q_rot = [R.T @ np.asarray(q, dtype=float) for q in q_vectors_list]
-                res_d = self._calculate_sqw_single_domain(
-                    q_rot, backend, satellites, cross_section)
-                if res_d is None:
-                    logger.error("Domain S(q,w) calculation failed; aborting average.")
-                    return None
-                energies_parts.append(res_d.energies)
-                intensities_parts.append(res_d.intensities * weight)
+        # Domain/twin averaging is shared with the SU(N) and entangled engines --
+        # see numerical.sqw_domain_average.
+        failed = []
+
+        def _one(qs):
+            res_d = self._calculate_sqw_single_domain(
+                qs, backend, satellites, cross_section)
+            if res_d is None:
+                failed.append(True)
+                raise RuntimeError("domain S(q,w) calculation failed")
+            return res_d.energies, res_d.intensities
+
+        try:
+            averaged = sqw_domain_average(_one, q_vectors_list, domains, cross_section)
+        except RuntimeError:
+            if failed:
+                logger.error("Domain S(q,w) calculation failed; aborting average.")
+                return None
+            raise
+        if averaged is not None:
+            e_avg, i_avg = averaged
             result = SqwResult(
                 q_vectors=np.array([np.asarray(q, dtype=float) for q in q_vectors_list]),
-                energies=np.concatenate(energies_parts, axis=1),
-                intensities=np.concatenate(intensities_parts, axis=1),
+                energies=e_avg,
+                intensities=i_avg,
             )
         else:
             result = self._calculate_sqw_single_domain(

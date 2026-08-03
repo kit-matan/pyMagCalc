@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 
+from ..numerical import sqw_domain_average
 from .lswt import SUNModel, _reject_unsupported_terms
 from .operators import spin_matrices
 
@@ -275,20 +276,25 @@ class EntangledCalculator:
 
     def calculate_sqw(self, q_vectors, backend="numpy", satellites=None,
                       temperature=None, domains=None, cross_section="perp", **_):
-        if domains:
-            raise NotImplementedError("entangled units do not support domain averaging yet.")
         qs = np.asarray(q_vectors, dtype=float).reshape(-1, 3)
         try:
             ions = self.sm.ion_list()
             ion = ions[0] if ions else None
         except Exception:
             ion = None
-        E, I = [], []
-        for q in qs:
-            w, inten = self.model.structure_factor(q, ion=ion, cross_section=cross_section)
-            E.append(w)
-            I.append(inten)
-        E, I = np.array(E), np.array(I)
+
+        def _one(q_list):
+            E, I = [], []
+            for q in q_list:
+                w, inten = self.model.structure_factor(q, ion=ion,
+                                                       cross_section=cross_section)
+                E.append(w)
+                I.append(inten)
+            return np.array(E), np.array(I)
+
+        # See SUNCalculator.calculate_sqw -- the same shared domain average.
+        averaged = sqw_domain_average(_one, list(qs), domains, cross_section)
+        E, I = averaged if averaged is not None else _one(qs)
         if temperature:
             I = I * self._bose(E, temperature)
         return self._SqwResult(q_vectors=qs, energies=E, intensities=I)

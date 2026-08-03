@@ -206,3 +206,31 @@ def test_cu5sbo6_powder_high_q_is_suppressed():
     ratio = tot / ana
     assert (ratio.max() - ratio.min()) / ratio.mean() < 0.2
     assert tot[-1] < 0.25 * tot[np.argmax(tot)]
+
+def test_ion_is_never_guessed_from_a_site_label():
+    """REGRESSION. `ion_list` used to fall back to the site LABEL and then to a
+    hardcoded 'Fe3+'. That was inert only while the form-factor table rejected
+    everything it did not recognise -- but the table now understands Sunny's bare
+    `Cu2` spelling, so a crystallographic label `Fe1`/`Cu2` (a SITE name, not an
+    oxidation state) would silently start applying an Fe(1+)/Cu(2+) form factor.
+    A guessed ion is worse than none."""
+    from magcalc.generic_model import GenericSpinModel as G
+    assert G._resolve_ion({"label": "Fe1"}) is None
+    assert G._resolve_ion({"label": "Cu2"}) is None
+    assert G._resolve_ion({}) is None
+    # ...but what the config actually declares is honoured
+    assert G._resolve_ion({"ion": "Cu2+"}) == "Cu2+"
+    assert G._resolve_ion({"element": "Fe", "charge": 2}) == "Fe2+"
+    assert G._resolve_ion({"element": "Fe"}) == "Fe"
+    # and an undeclared ion means f(Q) = 1, silently (it is not a user error)
+    assert get_form_factor(None, 2.5) == 1.0
+
+
+def test_charge_survives_the_wyckoff_expansion():
+    """FeI2 declares `element: Fe` + `charge: 2` on a Wyckoff site. `charge` was
+    dropped by the expansion (the same way `ion` once was), so the model asked for a
+    NEUTRAL-iron form factor. Both must reach ion_list."""
+    import yaml
+    doc = yaml.safe_load(open(os.path.join(
+        HERE, "..", "examples", "materials", "FeI2", "config_fei2_sun.yaml")))
+    assert set(GenericSpinModel(doc).ion_list()) == {"Fe2+"}

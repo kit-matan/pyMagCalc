@@ -477,7 +477,8 @@ class GenericSpinModel:
                      spin=atom.get('spin_S', 0.5),
                      species=atom.get('element', atom.get('label', 'Atom')),
                      ion=atom.get('ion'),
-                     element=atom.get('element')
+                     element=atom.get('element'),
+                     charge=atom.get('charge'),
                  )
                  
         # 3. Interactions
@@ -1069,11 +1070,20 @@ class GenericSpinModel:
               #     = [u v w] * [a; b; c]
              self._r_pos = np.dot(frac_pos, self._uc_vectors)
              
-             # Extract ions
-             # `or`-chain (not .get defaults): builder-expanded atoms carry an
+             # Extract ions for the magnetic form factor.
+             #
+             # This chain used to end `... or a.get('label') or 'Fe3+'`, i.e. it fell
+             # back to the SITE LABEL and then to a hardcoded guess. That was harmless
+             # only as long as the form-factor table rejected everything it did not
+             # recognise: crystallographic labels like `Cu1`, `Fe1`, `Cu2` are site
+             # names, not oxidation states, and the table now understands Sunny's bare
+             # `Cu2` spelling -- so `Fe1` would silently become Fe(1+) and `Cu2` would
+             # become Cu(2+), each applying a form factor the config never asked for.
+             # A guessed ion is worse than none, so: `ion`, else element+charge, else
+             # the neutral element, else nothing (form factor 1, with a warning).
+             # `or`-chains (not .get defaults) because builder-expanded atoms carry an
              # explicit `ion: None` key, which .get() would return as-is.
-             self._ion_list = [a.get('ion') or a.get('element') or a.get('label') or 'Fe3+'
-                               for a in atoms]
+             self._ion_list = [self._resolve_ion(a) for a in atoms]
 
              # Extract per-atom spin magnitudes (enables mixed-spin models).
              self._spin_list = [float(a.get('spin_S', 0.5)) for a in atoms]
@@ -1112,6 +1122,30 @@ class GenericSpinModel:
     def atom_pos_ouc(self):
         """Returns neighbor positions."""
         return self._atoms_ouc
+
+    @staticmethod
+    def _resolve_ion(atom):
+        """Form-factor ion for one atom entry, or None if it cannot be known.
+
+        `ion: Cu2+` wins. Otherwise `element` plus `charge` (both of which the
+        Wyckoff/CIF front end already carries) reconstructs it; `element` alone means
+        the neutral atom. The site LABEL is deliberately not consulted -- see
+        `_ion_list` -- and there is no default guess.
+        """
+        ion = atom.get('ion')
+        if ion:
+            return ion
+        element = atom.get('element')
+        if not element:
+            return None
+        charge = atom.get('charge')
+        if charge in (None, '', 0):
+            return str(element)
+        try:
+            c = int(charge)
+        except (TypeError, ValueError):
+            return str(element)
+        return f"{element}{abs(c)}{'+' if c > 0 else '-'}" if c else str(element)
 
     def ion_list(self):
         """Returns list of ion names for Each atom in the unit cell."""
