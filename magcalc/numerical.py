@@ -58,10 +58,112 @@ def thermal_bose_prefactor(
 _XYZ_INDEX = {"x": 0, "y": 1, "z": 2}
 
 
+_EPS_TENSOR = np.zeros((3, 3, 3))
+_EPS_TENSOR[0, 1, 2] = _EPS_TENSOR[1, 2, 0] = _EPS_TENSOR[2, 0, 1] = 1.0
+_EPS_TENSOR[0, 2, 1] = _EPS_TENSOR[2, 1, 0] = _EPS_TENSOR[1, 0, 2] = -1.0
+
+
+def _unit(v, what):
+    v = np.asarray(v, dtype=float).reshape(3)
+    n = float(np.linalg.norm(v))
+    if n < 1e-12:
+        raise ValueError(f"{what} must be a non-zero 3-vector, got {v.tolist()}.")
+    return v / n
+
+
+def blume_maleev_axes(q_vector, normal):
+    """The orthonormal BM axes (e1, e2, e3) as COLUMNS, Sunny's convention:
+
+        e3 = normal to the scattering plane,  e1 = qhat,  e2 = e3 x qhat
+
+    `normal` is the scattering-plane normal in CARTESIAN lab coordinates (as
+    `domains.axis` is). Raises if q lies outside the scattering plane -- in a
+    polarized experiment that is a mis-specified geometry, not something to
+    approximate, and Sunny refuses it too.
+    """
+    q = np.asarray(q_vector, dtype=float).reshape(3)
+    qn = float(np.linalg.norm(q))
+    if qn < 1e-12:
+        raise ValueError("the Blume-Maleev frame is undefined at q = 0.")
+    e3 = _unit(normal, "the scattering-plane normal")
+    e1 = q / qn
+    out_of_plane = float(abs(np.dot(e1, e3)))
+    if out_of_plane > 1e-8:
+        raise ValueError(
+            f"q = {q.tolist()} is not in the scattering plane with normal "
+            f"{e3.tolist()} (|qhat.n| = {out_of_plane:.2e}). The Blume-Maleev frame "
+            f"is only defined for q in the plane.")
+    e2 = np.cross(e3, e1)
+    e2 /= np.linalg.norm(e2)
+    return np.column_stack([e1, e2, e3])
+
+
+def normalize_cross_section(cross_section):
+    """Canonicalize a cross-section spec into (kind, params).
+
+    Accepts the historical strings ('perp', 'trace', 'chiral', 'sf+', 'sf-', 'xy',
+    ...) unchanged, plus two dict forms:
+
+      {'polarization': [x, y, z], 'channel': 'sf+'|'sf-'|'sf'|'nsf'}
+          Longitudinal polarization analysis about an ARBITRARY axis P (Cartesian).
+          P || q reproduces the existing 'sf+'/'sf-' exactly.
+
+      {'bm': {'normal': [x, y, z]} | {'u': [...], 'v': [...]}, 'component': 'xy'}
+          The correlation tensor rotated into the Blume-Maleev frame (Sunny
+          `ssf_custom_bm`); `component` indexes (e1, e2, e3) as 'x','y','z' or
+          '1','2','3'.
+    """
+    if cross_section is None:
+        return "perp", {}
+    if isinstance(cross_section, str):
+        return cross_section.lower(), {}
+    if not isinstance(cross_section, dict):
+        raise ValueError(
+            f"cross_section must be a string or a dict, got {type(cross_section)}.")
+
+    spec = dict(cross_section)
+    if "bm" in spec or "blume_maleev" in spec:
+        bm = spec.get("bm", spec.get("blume_maleev")) or {}
+        if "normal" in bm:
+            normal = _unit(bm["normal"], "bm.normal")
+        elif "u" in bm and "v" in bm:
+            normal = np.cross(_unit(bm["u"], "bm.u"), _unit(bm["v"], "bm.v"))
+            if np.linalg.norm(normal) < 1e-12:
+                raise ValueError("bm.u and bm.v are parallel; they must span a plane.")
+            normal = normal / np.linalg.norm(normal)
+        else:
+            raise ValueError(
+                "the `bm` cross-section needs either `normal` or both `u` and `v` "
+                "(Cartesian lab vectors spanning the scattering plane).")
+        comp = str(spec.get("component", "xx")).lower()
+        table = {"x": 0, "y": 1, "z": 2, "1": 0, "2": 1, "3": 2}
+        if len(comp) != 2 or comp[0] not in table or comp[1] not in table:
+            raise ValueError(
+                f"bm.component must be two of x/y/z or 1/2/3 (the BM axes e1,e2,e3), "
+                f"got {comp!r}.")
+        return "bm", {"normal": normal, "ab": (table[comp[0]], table[comp[1]])}
+
+    if "polarization" in spec or "channel" in spec:
+        if "polarization" not in spec:
+            raise ValueError(
+                "a polarized cross_section needs `polarization: [x, y, z]` "
+                "(Cartesian). Use the plain 'sf+'/'sf-' strings for P || q.")
+        channel = str(spec.get("channel", "sf")).lower().replace("_", "")
+        if channel not in ("sf", "sf+", "sf-", "sfplus", "sfminus", "nsf"):
+            raise ValueError(
+                f"cross_section.channel must be 'sf', 'sf+', 'sf-' or 'nsf', "
+                f"got {channel!r}.")
+        return "polarized", {"P": _unit(spec["polarization"], "polarization"),
+                             "channel": channel}
+    raise ValueError(
+        f"Unrecognized cross_section spec {cross_section!r}. Use a string, a "
+        f"`polarization`/`channel` dict, or a `bm` dict.")
+
+
 def contract_cross_section(
     spin_corr: npt.NDArray[np.complex128],
     q_vector: npt.NDArray[np.float64],
-    cross_section: str = "perp",
+    cross_section="perp",
 ) -> Tuple[npt.NDArray[np.complex128], bool]:
     """Contract the 3x3 spin-correlation tensor to a per-mode cross-section.
 
@@ -79,7 +181,42 @@ def contract_cross_section(
     numerical noise that should be clipped to zero (true for perp/trace and
     diagonal components).
     """
-    cs = (cross_section or "perp").lower()
+    cs, prm = normalize_cross_section(cross_section)
+
+    if cs == "bm":
+        # Rotate the tensor into the Blume-Maleev frame and take one component.
+        R = blume_maleev_axes(q_vector, prm["normal"])
+        rotated = np.einsum("ca,cdm,db->abm", R, spin_corr, R)
+        a, b = prm["ab"]
+        return rotated[a, b, :], a == b
+
+    if cs == "polarized":
+        # Longitudinal polarization analysis about an arbitrary axis P:
+        #     NSF(P) = P . Mperp . P
+        #     SF(P)  = Tr Mperp - NSF(P)  -/+ chiral(P)
+        # with Mperp the q-projected correlation tensor and
+        # chiral(P) = i eps_abc P_c S^ab. For P || q this is exactly the existing
+        # 'sf+'/'sf-' (NSF vanishes because Mperp is perpendicular to q), which is
+        # the reduction the tests pin.
+        P = prm["P"]
+        q_norm_sq = float(np.dot(q_vector, q_vector))
+        if q_norm_sq < Q_ZERO_THRESHOLD:
+            proj = np.eye(3)
+        else:
+            q_hat = np.asarray(q_vector, dtype=float) / np.sqrt(q_norm_sq)
+            proj = np.eye(3) - np.outer(q_hat, q_hat)
+        m_perp = np.einsum("ac,cdm,db->abm", proj, spin_corr, proj)
+        total = np.einsum("aam->m", m_perp)
+        nsf = np.einsum("a,abm,b->m", P, m_perp, P)
+        if prm["channel"] == "nsf":
+            return nsf, True
+        sf = total - nsf
+        if prm["channel"] == "sf":
+            return sf, True
+        chiral = 1j * np.einsum("abc,c,abm->m", _EPS_TENSOR, P, spin_corr)
+        sign = -1.0 if prm["channel"] in ("sf+", "sfplus") else +1.0
+        return sf + sign * chiral, True
+
     if cs == "perp":
         q_norm_sq = float(np.dot(q_vector, q_vector))
         if q_norm_sq < Q_ZERO_THRESHOLD:
@@ -109,10 +246,7 @@ def contract_cross_section(
                 return zero, False
             return np.einsum("aam->m", spin_corr), True
         q_hat = np.asarray(q_vector, dtype=float) / np.sqrt(q_norm_sq)
-        eps = np.zeros((3, 3, 3))
-        eps[0, 1, 2] = eps[1, 2, 0] = eps[2, 0, 1] = 1.0
-        eps[0, 2, 1] = eps[2, 1, 0] = eps[1, 0, 2] = -1.0
-        chiral = 1j * np.einsum("abc,c,abm->m", eps, q_hat, spin_corr)
+        chiral = 1j * np.einsum("abc,c,abm->m", _EPS_TENSOR, q_hat, spin_corr)
         if cs == "chiral":
             return chiral, False          # signed: do NOT clamp negatives
         polarization = np.eye(3) - np.outer(q_hat, q_hat)
@@ -206,7 +340,10 @@ def sqw_domain_average(compute, q_vectors, domains, cross_section="perp"):
     domain_list = parse_domains(domains)
     if domain_list is None:
         return None
-    cs = (cross_section or "perp").lower()
+    # A spec anchored to a LAB-frame direction (a component, a polarization axis, a
+    # scattering plane) is not the same measurement on a rotated crystal, so rotating
+    # q alone would be silently wrong -- the same reason the xx/zz components refuse.
+    cs, _ = normalize_cross_section(cross_section)
     if cs not in DOMAIN_SAFE_CROSS_SECTIONS:
         # A lab-frame component of a rotated crystal is not the same component of
         # the unrotated one; rotating q alone would be silently wrong.

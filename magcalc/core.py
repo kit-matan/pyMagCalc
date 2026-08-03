@@ -2153,14 +2153,28 @@ class MagCalc:
         # Validate the cross-section spec HERE: the pool workers swallow
         # exceptions into NaN results, so a typo would otherwise produce an
         # all-NaN map instead of an error.
-        cs_norm = (cross_section or "perp").lower()
-        _CS_NAMED = ("perp", "trace", "chiral", "sf+", "sf-", "sf_plus", "sf_minus")
+        from .numerical import blume_maleev_axes, normalize_cross_section
+        cs_norm, _cs_prm = normalize_cross_section(cross_section)  # raises on a bad dict
+        _CS_NAMED = ("perp", "trace", "chiral", "sf+", "sf-", "sf_plus", "sf_minus",
+                     "polarized", "bm")
         if cs_norm not in _CS_NAMED and not (
                 len(cs_norm) == 2 and set(cs_norm) <= set("xyz")):
             raise ValueError(
                 f"Unknown cross_section '{cross_section}'. Use 'perp', 'trace', "
-                f"'chiral', 'sf+'/'sf-' (polarized, P || q), or a component like "
-                f"'xx', 'yy', 'zz', 'xy'.")
+                f"'chiral', 'sf+'/'sf-' (polarized, P || q), a component like "
+                f"'xx', 'yy', 'zz', 'xy', or a dict: "
+                f"{{polarization: [x,y,z], channel: sf|nsf}} for an arbitrary "
+                f"polarization axis, or {{bm: {{u: ..., v: ...}}, component: '23'}} "
+                f"for a Blume-Maleev frame component.")
+
+        # The Blume-Maleev frame is only defined for q IN the scattering plane, and
+        # that depends on q, not just on the spec -- so it has to be checked here.
+        # Inside the per-q pool workers the exception is swallowed into a NaN, which
+        # is exactly the all-NaN-map failure this validator exists to prevent.
+        if cs_norm == "bm":
+            for _q in (q_vectors if not isinstance(q_vectors, np.ndarray)
+                       else np.asarray(q_vectors, float).reshape(-1, 3)):
+                blume_maleev_axes(np.asarray(_q, dtype=float), _cs_prm["normal"])
 
         # Convert q_vectors to list of arrays if it's a 2D array
         if isinstance(q_vectors, np.ndarray) and q_vectors.ndim == 2:

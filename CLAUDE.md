@@ -591,8 +591,28 @@ calculation:
 **Polarized / chiral.** With the polarization along q (longitudinal SF/NSF) all magnetic
 scattering is spin-flip and the beams differ by the chiral term:
 `M_ch = i q̂·[Σ ε_abc S^ab]`, `σ_SF^± = S_perp ∓ M_ch`. `cross_section: chiral` returns the
-signed M_ch (it vanishes identically for any collinear structure, and for a cycloid when
-q ⊥ the rotation axis). Sign convention pinned to Sunny — `tests/test_polarized.py`.
+signed M_ch. Sign convention pinned to Sunny — `tests/test_polarized.py`.
+
+Careful with "chiral vanishes for a collinear structure": that is true **per band only
+when P ∥ q**. A collinear magnet's two magnons are degenerate and *oppositely handed*, so
+for a general P the chirality is non-zero band by band and cancels only in the **band
+sum** — and how it splits between the degenerate pair is basis-dependent, so it is not an
+observable at all (Sunny and pyMagCalc split it differently, both correctly).
+
+**Arbitrary polarization axes and Blume–Maleev frames** (`tests/test_polarization_frames.py`):
+
+```yaml
+calculation:
+  cross_section: {polarization: [0, 0, 1], channel: sf}   # sf | sf+ | sf- | nsf
+  # or a Blume-Maleev frame component (Sunny `ssf_custom_bm`):
+  cross_section: {bm: {u: [1, 0, 0], v: [0, 1, 0]}, component: '23'}
+```
+
+`u`/`v` (or `normal`) are **Cartesian** lab vectors, as `domains.axis` is. The BM axes
+follow Sunny: `e1 = q̂`, `e3 = the scattering-plane normal`, `e2 = e3 × q̂`; q outside the
+plane is a hard error, checked up front rather than inside the per-q pool workers (where
+it would come back as an all-NaN map). `P ∥ q` reproduces the plain `sf+`/`sf-` strings
+exactly, and `SF + NSF = perp` for any P.
 
 **Absolute normalization: pyMagCalc's S(Q,ω) EQUALS Sunny's.** Pinned band-by-band on a
 ferromagnet (S = ½, 1, 2), a Néel antiferromagnet and a non-collinear helix by

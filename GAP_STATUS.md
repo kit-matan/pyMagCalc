@@ -188,14 +188,22 @@ a degenerate subspace the split between individual bands is basis-dependent whil
 multiplet sum is an observable. #27: `seekpath` is an optional dependency; without it
 `--bz-path` raises an actionable ImportError and the rest still works.
 
-### Phase 2–4 — still open
+### Phase 2 (parity for work you would publish)
+
+| # | Item | Status | Key | Validated against |
+|---|---|---|---|---|
+| 25 | Blume–Maleev / arbitrary polarization | ✅ | `cross_section: {polarization, channel}` or `{bm: {u, v}, component}` | Sunny `ssf_custom_bm` (8 components, screw + cycloid) and `ssf_custom` NSF/SF/chiral at general P; P ∥ q reproduces `sf±` bit-for-bit; SF + NSF = perp |
+| 21 | General pair couplings | ⬜ | — | — |
+| 24a | Mixed-spin SU(N) | ⬜ | — | — |
+| 24b | Ewald + rotating-frame single-k | ⬜ | — | — |
+
+### Phase 3–4 — still open
 
 Ordered by how much they cost. None is silently wrong — each either refuses or is
 simply absent.
 
 | # | Item | Phase | Sunny | Notes |
 |---|---|---|---|---|
-| 25 | Blume–Maleev polarization frames | 2 | `ssf_custom_bm` | only P ∥ q (`perp`/`trace`/`chiral`/`sf±`/components) |
 | 21 | General pair couplings | 2 | `set_pair_coupling!` | SU(N) covers bilinear + biquadratic; the operator-pair machinery is already there, only the front end (tensor SVD) is missing |
 | 24a | Mixed-spin SU(N) | 2 | — | `sun/lswt.py` requires a uniform N; needs per-site block offsets |
 | 24b | Ewald + rotating-frame single-k | 2 | — | each q ± k channel needs its own A(q) |
