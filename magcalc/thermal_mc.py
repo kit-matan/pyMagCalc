@@ -29,6 +29,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .annealing import energy as _cell_energy
 from .sun.entangled import _pair_matrix
 
 logger = logging.getLogger(__name__)
@@ -263,4 +264,155 @@ def static_correlations(model, params, q_cart, kT, supercell=(6, 6, 1),
                    for i in range(len(qs))])
     return StaticResult(q_vectors=qs, sq=sq, temperature=float(kT),
                         n_spins=N, n_samples=int(n_samples))
+
+@dataclass
+class WangLandauResult:
+    """Density of states g(E) and the thermodynamics reconstructed from it."""
+    energies: np.ndarray         # bin centres (total energy of the cell)
+    log_g: np.ndarray            # ln g(E), normalized so min(log_g[occupied]) = 0
+    histogram: np.ndarray        # final visit histogram
+    n_spins: int
+    f_final: float               # modification factor reached
+    n_refinements: int
+
+    def thermodynamics(self, temperatures):
+        """<E>/N, C/N from g(E) at any temperature -- one run, every T.
+
+        That is the point of Wang-Landau over Metropolis: the density of states is
+        temperature-independent, so the T sweep is a post-processing step rather than
+        a separate simulation each.
+        """
+        temps = np.atleast_1d(np.asarray(temperatures, float))
+        occ = self.histogram > 0
+        E, lg = self.energies[occ], self.log_g[occ]
+        e_out, c_out = [], []
+        for T in temps:
+            w = lg - E / T
+            w -= w.max()                       # stabilize before exponentiating
+            p = np.exp(w)
+            p /= p.sum()
+            e1 = float(np.sum(p * E))
+            e2 = float(np.sum(p * E * E))
+            e_out.append(e1 / self.n_spins)
+            c_out.append((e2 - e1 * e1) / (self.n_spins * T * T))
+        return np.array(e_out), np.array(c_out)
+
+
+def wang_landau(H, b, N, S, e_min, e_max, n_bins=100, f_init=1.0, f_final=1e-6,
+                flatness=0.8, sweeps_per_check=200, max_sweeps=4_000_000, seed=0):
+    """Density of states g(E) by flat-histogram (Wang-Landau) sampling.
+
+    A random walk in CONFIGURATION space that accepts a move with probability
+    min(1, g(E_old)/g(E_new)), so it spends equal time in every energy bin; each visit
+    multiplies g(E) by f and increments a histogram. When the histogram is flat to
+    `flatness`, f -> sqrt(f) and the histogram resets. Converged g(E) then gives the
+    thermodynamics at EVERY temperature from one run.
+
+    Energies outside [e_min, e_max] are rejected, so the window must actually contain
+    the states of interest -- `wang_landau_window` estimates it.
+
+    NB these are CONTINUOUS classical spins, so g(E) is a density and the bin width
+    enters as a constant offset in ln g; it cancels in every thermodynamic average.
+    """
+    rng = np.random.default_rng(seed)
+    e_min, e_max = float(e_min), float(e_max)
+    if not e_max > e_min:
+        raise ValueError(f"need e_max > e_min, got [{e_min}, {e_max}].")
+    edges = np.linspace(e_min, e_max, int(n_bins) + 1)
+    centres = 0.5 * (edges[:-1] + edges[1:])
+    width = edges[1] - edges[0]
+    log_g = np.zeros(int(n_bins))
+    hist = np.zeros(int(n_bins), dtype=np.int64)     # reset at every refinement
+    visits = np.zeros(int(n_bins), dtype=np.int64)   # never reset: occupancy record
+
+    def bin_of(E):
+        if E < e_min or E >= e_max:
+            return -1
+        return min(int((E - e_min) / width), int(n_bins) - 1)
+
+    # start from a configuration inside the window
+    m = rng.standard_normal((N, 3))
+    m *= S / np.linalg.norm(m, axis=1, keepdims=True)
+    E = _cell_energy(m.ravel(), H, b, 0.0)
+    for _ in range(20000):
+        if bin_of(E) >= 0:
+            break
+        a = rng.integers(N)
+        v = rng.standard_normal(3)
+        v *= S / np.linalg.norm(v)
+        old = m[a].copy()
+        m[a] = v
+        E = _cell_energy(m.ravel(), H, b, 0.0)
+        if bin_of(E) < 0:
+            m[a] = old
+            E = _cell_energy(m.ravel(), H, b, 0.0)
+    if bin_of(E) < 0:
+        raise RuntimeError(
+            f"could not find a configuration with energy in [{e_min}, {e_max}]; "
+            f"widen the window (see wang_landau_window).")
+
+    f = float(f_init)
+    n_ref, swept = 0, 0
+    g = H @ m.ravel() + b
+    while f > float(f_final) and swept < int(max_sweeps):
+        for _ in range(int(sweeps_per_check)):
+            swept += 1
+            for _ in range(N):
+                a = int(rng.integers(N))
+                sl = slice(3 * a, 3 * a + 3)
+                v = rng.standard_normal(3)
+                v *= S / np.linalg.norm(v)
+                d = v - m[a]
+                dE = float(g[sl] @ d + 0.5 * d @ (H[sl, sl] @ d))
+                E_new = E + dE
+                nb, ob = bin_of(E_new), bin_of(E)
+                if nb >= 0 and (log_g[ob] - log_g[nb] >= 0
+                                or rng.random() < np.exp(log_g[ob] - log_g[nb])):
+                    m[a] = v
+                    E = E_new
+                    g = H @ m.ravel() + b
+                    ob = nb
+                log_g[ob] += f
+                hist[ob] += 1
+                visits[ob] += 1
+        occ = hist > 0
+        if occ.sum() > 1 and hist[occ].min() >= flatness * hist[occ].mean():
+            f *= 0.5           # ln f -> ln f / 2, i.e. f -> sqrt(f) on g itself
+            hist[:] = 0
+            n_ref += 1
+
+    # `hist` is zeroed at each refinement, so the occupancy mask must come from the
+    # cumulative record -- otherwise a run that ends just after a refinement reports
+    # an empty density of states.
+    occ = visits > 0
+    if occ.any():
+        log_g = log_g - log_g[occ].min()
+    return WangLandauResult(energies=centres, log_g=log_g, histogram=visits,
+                            n_spins=N, f_final=f, n_refinements=n_ref)
+
+
+def wang_landau_window(H, b, N, S, n_samples=4000, pad=0.02, seed=0):
+    """A safe [e_min, e_max] for `wang_landau`, from a quench and random sampling.
+
+    Random configurations bracket the high-energy end and a steepest-descent quench
+    the low-energy end; the window is padded outward because a state outside it is
+    silently unreachable, which would bias g(E) rather than fail.
+    """
+    rng = np.random.default_rng(seed)
+    lo, hi = np.inf, -np.inf
+    for _ in range(int(n_samples)):
+        m = rng.standard_normal((N, 3))
+        m *= S / np.linalg.norm(m, axis=1, keepdims=True)
+        e = _cell_energy(m.ravel(), H, b, 0.0)
+        lo, hi = min(lo, e), max(hi, e)
+    m = rng.standard_normal((N, 3))
+    m *= S / np.linalg.norm(m, axis=1, keepdims=True)
+    for _ in range(500):                     # align each spin with its local field
+        fld = -(H @ m.ravel() + b).reshape(N, 3)
+        nrm = np.linalg.norm(fld, axis=1, keepdims=True)
+        ok = nrm[:, 0] > 1e-12
+        m[ok] = S * fld[ok] / nrm[ok]
+    lo = min(lo, _cell_energy(m.ravel(), H, b, 0.0))
+    span = max(hi - lo, 1e-9)
+    return lo - pad * span, hi + pad * span
 

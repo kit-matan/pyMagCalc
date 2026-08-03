@@ -54,14 +54,120 @@ def llg_rk4_step(H, b, m, dt, S):
     return m
 
 
-def evolve(H, b, S, m0, dt, n_steps, record_every=1):
-    """Deterministic LL trajectory. Returns (n_rec, N, 3) recorded configurations."""
+
+def implicit_midpoint_step(H, b, m, dt, S, tol=1e-12, max_iter=50):
+    """One step of dS/dt = -S x B by the IMPLICIT MIDPOINT rule (Sunny's
+    `ImplicitMidpoint`).
+
+        S_{n+1} = S_n + dt * f((S_n + S_{n+1}) / 2)
+
+    solved by fixed-point iteration. Unlike RK4 this is symplectic: it conserves the
+    energy and every |S_i| to the solver tolerance rather than to O(dt^4), so the
+    error stays BOUNDED over a long trajectory instead of drifting secularly. That
+    matters for S(q,w), where a slow energy drift smears the very peaks being
+    measured.
+
+    Note no renormalization is applied afterwards: the midpoint rule preserves |S_i|
+    exactly (the update is orthogonal to the midpoint spin), and rescaling would mask
+    a genuine solver failure.
+    """
+    m_new = m.copy()
+    for _ in range(max_iter):
+        mid = 0.5 * (m + m_new)
+        cand = m + dt * _deriv(H, b, mid)
+        delta = float(np.abs(cand - m_new).max())
+        m_new = cand
+        if delta < tol:
+            break
+    else:
+        logger.warning(
+            f"implicit midpoint did not converge in {max_iter} iterations "
+            f"(last step {delta:.2e}); reduce dt.")
+    return m_new
+
+
+def suggest_timestep(H, b, m, S, target=0.033):
+    """A time step resolving the fastest precession (Sunny `suggest_timestep`).
+
+    The fastest frequency in the system is set by the largest local field,
+    omega_max ~ |B_i|_max, so dt = target / omega_max with `target` a fraction of a
+    radian per step (Sunny's default accuracy knob is comparable). Returns a float in
+    the same time units the rest of this module uses.
+    """
+    B = local_field(H, b, m)
+    w_max = float(np.abs(B).max())
+    if w_max <= 0:
+        raise ValueError(
+            "suggest_timestep: the local field vanishes everywhere, so there is no "
+            "timescale to resolve (is the Hamiltonian empty?).")
+    return float(target) / w_max
+
+
+def langevin_step(H, b, m, dt, S, kT, damping, rng):
+    """One step of the stochastic Landau-Lifshitz (Langevin) equation.
+
+        dS/dt = -S x G + (lambda/S) S x (S x G) + noise,    G = dE/dS
+
+    MIND THE SIGN. `local_field` returns the energy GRADIENT G = dE/dS, not the
+    physical field B = -G, and the module's precession term is written -S x G to
+    match. The damping must then be +(lambda/S) S x (S x G): using -(...) relaxes
+    spins AWAY from the energy minimum, which shows up as a magnetization of the
+    right magnitude and the WRONG SIGN -- plausible enough to miss without an exact
+    reference. Check: for E = -h S^z (so G = -h zhat) and S along x,
+    S x (S x G) = +S^2 h zhat, i.e. toward +z, which is the minimum.
+
+    integrated by Heun's method. The noise amplitude is fixed by the
+    fluctuation-dissipation theorem, so the stationary distribution is Boltzmann at
+    `kT` -- which is the whole point, and what the tests check rather than assume.
+
+    This is a THERMOSTAT (Sunny's `Langevin`), an alternative to Metropolis for
+    preparing thermal states. Measurement trajectories should still be run
+    undamped/deterministic; damping distorts the lineshape.
+    """
+    lam = float(damping)
+    beta = 1.0 / float(kT)
+    # <xi_a(t) xi_b(t')> = 2 lambda kT delta_ab delta(t-t') / S  (FDT)
+    sigma = np.sqrt(2.0 * lam * float(kT) * dt / float(S))
+
+    def drift(x):
+        B = local_field(H, b, x)
+        return -np.cross(x, B) + (lam / float(S)) * np.cross(x, np.cross(x, B))
+
+    noise = sigma * rng.standard_normal(m.shape)
+    f0 = drift(m)
+    pred = m + dt * f0 - np.cross(m, noise)
+    f1 = drift(pred)
+    out = m + 0.5 * dt * (f0 + f1) - np.cross(0.5 * (m + pred), noise)
+    # |S| is conserved by the continuum equation but not by a finite Heun step
+    out *= float(S) / np.linalg.norm(out, axis=1, keepdims=True)
+    return out
+
+
+def langevin_thermalize(H, b, S, m, kT, dt, n_steps, damping=0.1, seed=0):
+    """Run the Langevin thermostat for `n_steps`, returning the final configuration."""
+    rng = np.random.default_rng(seed)
+    for _ in range(int(n_steps)):
+        m = langevin_step(H, b, m, dt, S, kT, damping, rng)
+    return m
+
+
+def evolve(H, b, S, m0, dt, n_steps, record_every=1, integrator="rk4"):
+    """Deterministic LL trajectory. Returns (n_rec, N, 3) recorded configurations.
+
+    `integrator`: "rk4" (default, historical) or "midpoint" (implicit midpoint --
+    symplectic, bounded energy error over long runs).
+    """
+    step_fn = {"rk4": llg_rk4_step,
+               "midpoint": implicit_midpoint_step}.get(str(integrator).lower())
+    if step_fn is None:
+        raise ValueError(
+            f"integrator must be 'rk4' or 'midpoint', got {integrator!r}.")
     m = m0.copy()
     rec = []
     for step in range(n_steps):
         if step % record_every == 0:
             rec.append(m.copy())
-        m = llg_rk4_step(H, b, m, dt, S)
+        m = step_fn(H, b, m, dt, S)
     return np.array(rec)
 
 

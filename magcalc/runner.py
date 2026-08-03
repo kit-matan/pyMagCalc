@@ -600,7 +600,7 @@ def run_calculation(config_file: str):
     _lswt_tasks = ('dispersion', 'sqw_map', 'corrections', 'powder_average',
                    'energy_cut', 'fit', 'static_sqw')
     _classical_only = ('scga', 'thermal_mc', 'sampled_correlations',
-                       'static_correlations')
+                       'static_correlations', 'wang_landau')
     if any(tasks.get(t) for t in _classical_only) and \
             not any(tasks.get(t) for t in _lswt_tasks):
         on_imaginary = 'off'
@@ -1009,6 +1009,41 @@ def run_calculation(config_file: str):
             raise
 
     # 3d. SCGA -- paramagnetic diffuse S(q) above T_N (self-consistent Gaussian).
+    if tasks.get('wang_landau', False):
+        # Density of states g(E) by flat-histogram sampling: one run gives the
+        # thermodynamics at EVERY temperature.
+        from magcalc import thermal_mc as _tmc
+        wd = final_config.get('wang_landau', {}) or {}
+        try:
+            H_mat, b_vec, N_spins, S_mag, _pos = _tmc.build_supercell(
+                spin_model, params_val,
+                tuple(wd.get('supercell', [4, 4, 1])))
+            e_min, e_max = wd.get('e_min'), wd.get('e_max')
+            if e_min is None or e_max is None:
+                e_min, e_max = _tmc.wang_landau_window(
+                    H_mat, b_vec, N_spins, S_mag, seed=int(wd.get('seed', 0)))
+                logger.info(f"Wang-Landau energy window estimated as "
+                            f"[{e_min:.4g}, {e_max:.4g}].")
+            res = _tmc.wang_landau(
+                H_mat, b_vec, N_spins, S_mag, e_min, e_max,
+                n_bins=int(wd.get('n_bins', 100)),
+                f_final=float(wd.get('f_final', 1e-6)),
+                flatness=float(wd.get('flatness', 0.8)),
+                seed=int(wd.get('seed', 0)))
+            temps = np.asarray(wd.get('temperatures', [0.25, 0.5, 1.0, 2.0, 4.0]),
+                               dtype=float)
+            E_of_T, C_of_T = res.thermodynamics(temps)
+            logger.info(
+                f"Wang-Landau: {int((res.histogram > 0).sum())} occupied bins, "
+                f"{res.n_refinements} refinements (f -> {res.f_final:.1e}); "
+                f"thermodynamics at {len(temps)} temperatures.")
+            memory_cache['wang_landau'] = {
+                'energies': res.energies, 'log_g': res.log_g,
+                'histogram': res.histogram, 'temperatures': temps,
+                'energy': E_of_T, 'heat_capacity': C_of_T}
+        except Exception:
+            logger.exception("wang_landau failed.")
+
     if tasks.get('static_sqw', False):
         # Energy-integrated LSWT S(q) -- Sunny's `intensities_static`. Just the band
         # sum of S(q,w), so it inherits temperature/domains/cross_section like every

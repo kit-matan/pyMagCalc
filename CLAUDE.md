@@ -565,6 +565,9 @@ thermal_mc: {temperatures: [0.2,0.5,1,2,4], supercell: [6,6,1], n_sweeps: 4000, 
 tasks: {sampled_correlations: true} # classical-dynamics S(q,w) (full thermal lineshape)
 sampled_correlations: {temperature: 0.5, supercell: [16,1,1], dt: 0.02, n_steps: 2048, n_traj: 8}
 
+tasks: {wang_landau: true}          # density of states g(E): ONE run, every temperature
+wang_landau: {supercell: [4,4,1], temperatures: [0.25,0.5,1,2,4], n_bins: 100, f_final: 1.0e-6}
+
 calculation: {mode: SUN}            # KPM: Chebyshev S(q,w), no diagonalization (large cells)
 tasks: {kpm_sqw: true}
 kpm: {e_min: 0, e_max: 10, e_step: 0.05, fwhm: 0.1, tol: 0.02}    # or moments: N
@@ -579,8 +582,19 @@ kpm: {e_min: 0, e_max: 10, e_step: 0.05, fwhm: 0.1, tol: 0.02}    # or moments: 
   supercell built from `spin_interactions` + `_resolve_field`, same classical energy
   `1/2 m^T H m + b^T m` as `annealing`. Validated vs the Langevin function (free spins
   in field) and the exact classical dimer ⟨E⟩(T), C(T).
-* **SampledCorrelations** (`magcalc/classical_dynamics.py`) -- undamped RK4
-  Landau-Lifshitz on Metropolis-thermalized states, S(q,w) by space-time FFT.
+* **Wang-Landau** (`magcalc/thermal_mc.py`) -- flat-histogram sampling of g(E), so
+  the whole T sweep is post-processing rather than one simulation per T. Validated on
+  the classical dimer, whose g(E) is EXACTLY FLAT in closed form.
+* **SampledCorrelations** (`magcalc/classical_dynamics.py`) -- Landau-Lifshitz on
+  thermalized states, S(q,w) by space-time FFT. Thermalize by Metropolis or by the
+  `langevin_step` thermostat; measure with `integrator='rk4'` or `'midpoint'` (the
+  implicit midpoint rule is symplectic: energy drift 1e-12 vs RK4's 8e-5 over a long
+  run, and |S| conserved exactly without renormalizing). `suggest_timestep` picks dt
+  from the largest local field.
+  MIND THE SIGN if you touch the damping: `local_field` returns the energy GRADIENT
+  G = dE/dS, not the field B = -G, so the Landau-Lifshitz damping is
+  +(lambda/S) S x (S x G). The textbook sign relaxes spins AWAY from the minimum and
+  produces a magnetization of the right magnitude and the wrong sign.
   Validated: Larmor omega = g mu_B B, RK4 energy conservation, and the low-T
   ferromagnet peaks fall on the exact LSWT dispersion.
 * **KPM** (`magcalc/sun/kpm.py`) -- para-unitary Chebyshev expansion of the LSWT

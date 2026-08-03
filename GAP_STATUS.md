@@ -92,7 +92,7 @@ Runs on 38/47 example configs; the rest **refuse honestly** (incommensurate/spir
 supercell → not supported; mixed-spin → not yet; frustrated GS search not converging →
 guard refuses). Never silently wrong.
 
-### Tier 2 (capability parity) — ✅ ALL DONE (only Wang–Landau within #6 remains)
+### Tier 2 (capability parity) — ✅ ALL DONE (Wang–Landau closed by Gap 4 #22)
 
 | # | Item | Status | Notes |
 |---|---|---|---|
@@ -197,7 +197,20 @@ multiplet sum is an observable. #27: `seekpath` is an optional dependency; witho
 | 24a | Mixed-spin SU(N) | ✅ | (automatic; per-site `spin_S`) | decoupled-sublattice identity for (½,1), (1,3/2), (½,3/2) — spectrum AND intensities are exactly the union of the two independent problems |
 | 24b | Ewald + rotating-frame single-k | ⬜ | (refuses honestly) | **estimate revised 3 d → 1 w**: the rotating frame is baked into the SYMBOLIC Hamiltonian per bond (`R_i^T J_ij R_j`), while Ewald's A(q) is a numeric LAB-frame lattice sum. Each channel needs a projector-weighted combination of A(q_c), A(q_c±k) — a derivation, not plumbing. See GAP4_PLAN.md |
 
-### Phase 3–4 — still open
+### Phase 3 (new machinery)
+
+| # | Item | Status | Key | Validated against |
+|---|---|---|---|---|
+| 18 | Langevin / `ImplicitMidpoint` / `suggest_timestep` | ✅ | `classical_dynamics.langevin_step`, `evolve(..., integrator='midpoint')` | exact free-spin Langevin function (the oracle the Metropolis sampler is already pinned to); midpoint energy drift 1e-12 vs RK4's 8e-5 and \|S\| exact without renormalizing |
+| 22 | Wang–Landau | ✅ | `tasks.wang_landau` + `wang_landau: {temperatures, supercell, n_bins, f_final}` | classical dimer's g(E) is EXACTLY FLAT (closed form); reconstructed ⟨E⟩(T) matches −JS²L(βJS²) to 0.01 across T; agrees with parallel tempering |
+| 20 | Experiment-data binning | ⬜ | — | deferred pending demand — see below |
+
+**#20 is deliberately not done.** `GAP4_PLAN` flagged it "check the value first": the
+existing `fitting.load_fit_data` CSV path may already cover how data leaves the
+reduction pipeline here, in which case NeXus import is work for nobody. It needs a
+one-line answer from the group before it is worth 4 days.
+
+### Phase 4 — still open
 
 Ordered by how much they cost. None is silently wrong — each either refuses or is
 simply absent.
@@ -207,9 +220,6 @@ simply absent.
 | 21 | General pair couplings | 2 | `set_pair_coupling!` | SU(N) covers bilinear + biquadratic; the operator-pair machinery is already there, only the front end (tensor SVD) is missing |
 | 24a | Mixed-spin SU(N) | 2 | — | `sun/lswt.py` requires a uniform N; needs per-site block offsets |
 | 24b | Ewald + rotating-frame single-k | 2 | — | each q ± k channel needs its own A(q) |
-| 18 | Langevin / `ImplicitMidpoint` / `suggest_timestep` | 3 | `Langevin`, `ImplicitMidpoint` | thermalizes by Metropolis, evolves by undamped RK4 |
-| 22 | Wang–Landau | 3 | `WangLandau` | the one Tier-2 remnant |
-| 20 | Experiment-data binning | 3 | `BinningParameters`, `load_nxs` | `fitting.load_fit_data` reads CSV only. **Check demand first** |
 | 16 | Site-level inhomogeneity | 4 | `to_inhomogeneous`, `set_vacancy_at!`, … | no vacancies / per-site couplings / open boundaries; blocks disorder work |
 | 26 | Entangled classical dynamics | 4 | `EntangledSampledCorrelations` | needs CP^(N−1) equations of motion |
 | — | Classical S(q,ω) absolute normalization | 3 | — | opened by #17: the classical path's overall scale has never been reconciled with the LSWT/Sunny one. Shape is pinned, scale is not |

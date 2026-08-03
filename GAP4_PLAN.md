@@ -120,7 +120,7 @@ porting Sunny's path tables by hand.
 
 ---
 
-## Phase 2 — parity for work you would publish (~2 weeks)
+## Phase 2 — parity for work you would publish — ✅ 3 of 4 DONE (2026-08-03)
 
 These affect results, not convenience. Each is contained but touches validated code,
 so each needs its identity test *before* the refactor, not after.
@@ -219,12 +219,12 @@ already names both workarounds: a `magnetic_supercell`, or
 
 ---
 
-## Phase 3 — new machinery (~2–3 weeks)
+## Phase 3 — new machinery — ✅ #18, #22 DONE (2026-08-04); #20 deferred
 
 Genuinely new code rather than extensions. Independent of each other; can be done in
 any order or in parallel.
 
-### #18 Langevin thermostat + `ImplicitMidpoint` + `suggest_timestep` — ~3 days
+### #18 Langevin thermostat + `ImplicitMidpoint` + `suggest_timestep` — ✅ DONE (~3 days)
 
 **What.** `classical_dynamics.py` thermalizes by Metropolis and evolves with undamped
 RK4. Add (a) Langevin dynamics (damping λ + noise) as an alternative thermalizer,
@@ -244,7 +244,7 @@ secularly.
 **Risk.** Low–medium. ImplicitMidpoint needs a fixed-point iteration per step; get its
 convergence tolerance into the config rather than hardcoding it.
 
-### #22 Wang–Landau — ~3 days
+### #22 Wang–Landau — ✅ DONE (~3 days)
 
 **What.** The one Tier-2 remnant. Flat-histogram sampling of the density of states
 g(E), then thermodynamics from g(E) at any T in one run.
@@ -252,8 +252,11 @@ g(E), then thermodynamics from g(E) at any T in one run.
 **Where.** `thermal_mc.py`, reusing `build_supercell` and the existing Metropolis
 proposal machinery.
 
-**Oracle.** The 2-D Ising model's **exact** g(E) (Beale's closed form) on a small
-lattice — a textbook exact result, not a Sunny number. Then: C(T) reconstructed from
+**Oracle (CORRECTED in flight).** Beale's exact 2-D Ising g(E) does NOT apply: these
+are continuous classical Heisenberg spins, not Ising. The exact result that does is
+better, because it pins g(E) itself: for ONE classical dimer, E = J S^2 cos(theta)
+and cos(theta) is uniform for random unit vectors, so **g(E) is exactly constant** on
+[-JS^2, +JS^2]. Then: C(T) reconstructed from
 g(E) must match the parallel-tempering C(T) that `test_thermal_mc.py` already
 validates, over the whole T range.
 
@@ -341,9 +344,9 @@ that the harmonic triplon cannot give.
 | ✅ 2 | 21 | General pair couplings | 3 d | med | biquadratic via the general path (exact) |
 | ✅ 2 | 24a | Mixed-spin SU(N) | 3 d | med–high | decoupled sublattices (exact) |
 | 2 | 24b | Ewald + rotating-frame single-k | **1 w** | med–high | commensurate k vs supercell (exact) |
-| 3 | 18 | Langevin / ImplicitMidpoint | 3 d | low–med | existing exact Langevin-function tests |
-| 3 | 22 | Wang–Landau | 3 d | low | Beale's exact 2-D Ising g(E) |
-| 3 | 20 | NeXus binning | 4 d | low | Sunny `load_nxs`; count conservation |
+| ✅ 3 | 18 | Langevin / ImplicitMidpoint | 3 d | low–med | existing exact Langevin-function tests |
+| ✅ 3 | 22 | Wang–Landau | 3 d | low | Beale's exact 2-D Ising g(E) |
+| ⏸ 3 | 20 | NeXus binning | 4 d | low | Sunny `load_nxs`; count conservation |
 | 4 | 16 | Site-level inhomogeneity | 1–2 w | high | x→0 clean limit; Sunny example 09 |
 | 4 | 26 | Entangled classical dynamics | 1–2 w | high | N=2 reduces to Landau–Lifshitz (exact) |
 
