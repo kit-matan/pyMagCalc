@@ -164,7 +164,7 @@ biquadratic path to machine precision — if the decomposition is wrong, that fa
 **Risk.** Medium. Keep the `n_ops` growth opt-in as biquadratic does; a general
 operator on a large N is expensive.
 
-### #24a Mixed-spin SU(N) — ~3 days
+### #24a Mixed-spin SU(N) — ✅ DONE (~3 days)
 
 **What.** `sun/lswt.py:130` raises when sites have different N. The engine assumes a
 uniform `M = N − 1` and computes block offsets as `i*M`.
@@ -181,20 +181,41 @@ mixed-spin ferrimagnet against Sunny `:SUN`.
 **Risk.** Medium–high — this is the validated core. Do the decoupled-sublattice test
 *first*, confirm it passes on the current uniform-N code, and only then refactor.
 
-### #24b Ewald + rotating-frame single-k — ~3 days
+### #24b Ewald + rotating-frame single-k — ~1 week (REVISED UP)
 
-**What.** Currently raises. The rotating frame builds three channels (q−k, q, q+k)
-and each needs its own `A(q)`; `core._ewald_nambu` builds one.
+**Status: not started. The estimate below was wrong and is corrected here.**
 
-**Where.** `core.py` (the single-k Hamiltonian assembly) + `ewald.py`.
+**What the plan originally said.** "The rotating frame builds three channels (q−k, q,
+q+k) and each needs its own `A(q)`; `core._ewald_nambu` builds one." That reads like
+plumbing. It is not.
 
-**Oracle.** The strongest identity available in the whole plan: at a **commensurate**
-k the same physics is reachable through `magnetic_supercell`, which already supports
-Ewald. The rotating-frame and supercell answers must agree band-for-band. If they do
-at several commensurate k, the incommensurate case is sound.
+**What the code actually does.** The rotating frame is baked into the SYMBOLIC
+Hamiltonian: `generic_model` forms the effective per-bond coupling
+`R_i^T J_ij R_j = R(φ)` (see `generic_model.py:1690-1728`) *before* the Fourier
+transform, and the three-channel worker then just evaluates that symbolic H at
+`q ± k` (`numerical.py`, `calculate_sqw_spiral_single_q`). The Ewald term cannot join
+that route: `A(q)` is an infinite lattice sum added NUMERICALLY in the LAB frame
+(`core._ewald_nambu`), so it never sees the rotation.
 
-**Risk.** Medium. Do not ship the incommensurate path without the commensurate
-identity passing.
+Rotating it means transforming the real-space dipolar coupling per pair,
+`R_i^T A(r_ij + R) R_j`, and only then summing over images. Because `R_j` depends on
+`k · (r_j + R)`, that sum carries `e^{±i k·R}` factors: the rotated dipolar Fourier
+matrix for one channel is a **projector-weighted combination of `A(q_c)`,
+`A(q_c + k)` and `A(q_c − k)`**, not `A(q_c)` alone. So it is a derivation (the
+dipolar analogue of Toth & Lake's three-channel exchange result), plus an Ewald sum
+at three shifted arguments per channel, plus the demagnetization/surface term needing
+its own treatment in the rotating frame.
+
+**Oracle (unchanged, and it is a good one).** At a COMMENSURATE k the same physics is
+reachable through `magnetic_supercell`, which already supports Ewald. The
+rotating-frame and supercell answers must agree band for band; if they do at several
+commensurate k, the incommensurate case is sound. Do not ship the incommensurate path
+without that.
+
+**Until then** the engine refuses honestly (`core.py`, "Ewald dipole-dipole is not yet
+supported together with a single-k (rotating-frame) structure"), and the message
+already names both workarounds: a `magnetic_supercell`, or
+`dipole_dipole.method: truncated`.
 
 ---
 
@@ -316,10 +337,10 @@ that the harmonic triplon cannot give.
 | ✅ 1 | 23 | Domain averaging in SU(N)/entangled | 1 d | low | hand-rotated structure (exact identity) |
 | ✅ 1 | 19 | Static / energy-integrated correlations | 2 d | low | Sunny `intensities_static`; SCGA agreement |
 | ✅ 1 | 27 | Crystal utilities + BZ paths | 2 d | low | spglib round-trip; seekpath |
-| 2 | 25 | Blume–Maleev polarization frames | 2 d | low–med | Sunny `ssf_custom_bm`; P∥q reduces to `sf±` |
-| 2 | 21 | General pair couplings | 3 d | med | biquadratic via the general path (exact) |
-| 2 | 24a | Mixed-spin SU(N) | 3 d | med–high | decoupled sublattices (exact) |
-| 2 | 24b | Ewald + rotating-frame single-k | 3 d | med | commensurate k vs supercell (exact) |
+| ✅ 2 | 25 | Blume–Maleev polarization frames | 2 d | low–med | Sunny `ssf_custom_bm`; P∥q reduces to `sf±` |
+| ✅ 2 | 21 | General pair couplings | 3 d | med | biquadratic via the general path (exact) |
+| ✅ 2 | 24a | Mixed-spin SU(N) | 3 d | med–high | decoupled sublattices (exact) |
+| 2 | 24b | Ewald + rotating-frame single-k | **1 w** | med–high | commensurate k vs supercell (exact) |
 | 3 | 18 | Langevin / ImplicitMidpoint | 3 d | low–med | existing exact Langevin-function tests |
 | 3 | 22 | Wang–Landau | 3 d | low | Beale's exact 2-D Ising g(E) |
 | 3 | 20 | NeXus binning | 4 d | low | Sunny `load_nxs`; count conservation |
