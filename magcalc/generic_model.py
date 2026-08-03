@@ -564,8 +564,10 @@ class GenericSpinModel:
                 ("sia_matrix", "sia_matrix"),
                 ("stevens", "stevens"),
                 ("biquadratic", "biquadratic"),
+                ("pair_operator", "pair_operator"),
             ]
-            for extra_key in ("sia_matrix", "stevens", "biquadratic"):
+            for extra_key in ("sia_matrix", "stevens", "biquadratic",
+                              "pair_operator"):
                 if extra_key in interactions_data:
                     builder.config["interactions"].setdefault(
                         extra_key, list(interactions_data[extra_key]))

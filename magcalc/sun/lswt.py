@@ -73,6 +73,15 @@ def _reject_unsupported_terms(model, engine: str = "SU(N)",
                     f"exactly) or dipole mode.")
 
 
+def _register_op(ops, A, tol=1e-10):
+    """Index of `A` in `ops`, appending it if it is not already there."""
+    for k, existing in enumerate(ops):
+        if existing.shape == A.shape and np.abs(existing - A).max() <= tol:
+            return k
+    ops.append(A)
+    return len(ops) - 1
+
+
 def _embed_block(J, n: int) -> np.ndarray:
     """Place a 3x3 bilinear coupling in the leading block of an n x n one."""
     C = np.zeros((n, n), dtype=float)
@@ -394,13 +403,63 @@ class SUNModel:
             for i, j in pairs:
                 biq_bonds.append((i, j % L, aouc[j] - apos[i], _num(Bval)))
 
-        n_ops = 3 + 9 if biq_bonds else 3
-        if biq_bonds:
+        # --- general pair operators (Sunny `set_pair_coupling!`) ---------------
+        # An arbitrary Hermitian two-site operator is decomposed into
+        # sum_k A_k (x) B_k (`operators.decompose_pair_operator`) and fed to the same
+        # operator-pair coupling the biquadratic path uses. The factors join the
+        # per-site operator list after the dipoles and the biquadratic products.
+        from .operators import decompose_pair_operator, pair_operator_from_spec
+
+        pair_op_bonds = []          # (i, j, dr, [(idx_A, idx_B), ...])
+        extra_ops = []              # site operators contributed by pair_operator
+        for inter in model.interactions_config:
+            if inter.get("type") not in ("pair_operator", "pair_coupling"):
+                continue
+            pairs = model._match_bond_pairs(inter)
+            if not pairs:
+                raise ValueError(
+                    f"pair_operator entry matched no bonds: {inter}. A term that "
+                    f"matches nothing would silently vanish from the Hamiltonian.")
+            for i, j in pairs:
+                s_i, s_j = spins[i], spins[j % L]
+                D, n_i, n_j = pair_operator_from_spec(inter, s_i, s_j)
+                if n_i != n_j:
+                    raise NotImplementedError(
+                        "pair_operator between sites of different S is not supported "
+                        "yet (the SU(N) engine requires a uniform N).")
+                # Both bond directions are listed by the user, as for heisenberg and
+                # biquadratic, and the engine supplies the 1/2. That is only
+                # consistent if the operator is symmetric under exchanging the two
+                # sites, so check it rather than silently realizing a different
+                # Hamiltonian on the reverse bond.
+                perm = _np.arange(n_i * n_j).reshape(n_i, n_j).T.reshape(-1)
+                if not _np.allclose(D[_np.ix_(perm, perm)], D, atol=1e-9):
+                    raise ValueError(
+                        f"pair_operator must be symmetric under exchanging the two "
+                        f"sites, because both bond directions are listed and the "
+                        f"engine applies the 1/2 over ordered pairs: {inter}")
+                idx = []
+                for A, B in decompose_pair_operator(D, n_i, n_j):
+                    # Deduplicate: every bond of an orbit yields the SAME factors,
+                    # and the H(q) assembly costs n_ops^2 per bond, so re-adding them
+                    # per bond would turn a 4-bond chain into 75 operators.
+                    idx.append((_register_op(extra_ops, A),
+                                _register_op(extra_ops, B)))
+                pair_op_bonds.append((i, j % L, aouc[j] - apos[i], idx))
+
+        n_biq = 9 if biq_bonds else 0
+        n_ops = 3 + n_biq + len(extra_ops)
+        if n_ops > 3:
             bonds = [(i, j, dr, _embed_block(J, n_ops)) for (i, j, dr, J) in bonds]
             for (i, j, dr, Bval) in biq_bonds:
                 C = _np.zeros((n_ops, n_ops), dtype=float)
                 for p in range(9):
                     C[3 + p, 3 + p] = Bval
+                bonds.append((i, j, dr, C))
+            for (i, j, dr, idx) in pair_op_bonds:
+                C = _np.zeros((n_ops, n_ops), dtype=float)
+                for ia, ib in idx:
+                    C[3 + n_biq + ia, 3 + n_biq + ib] += 1.0
                 bonds.append((i, j, dr, C))
 
         # --- on-site terms: SIA, 3x3 anisotropy tensor, Stevens ---------------
@@ -475,8 +534,11 @@ class SUNModel:
             operators = []
             for s in spins:
                 Sv = list(spin_matrices(s))
-                operators.append(Sv + [Sv[a] @ Sv[b] for a in range(3)
-                                       for b in range(3)])
+                ops_i = list(Sv)
+                if n_biq:
+                    ops_i += [Sv[a] @ Sv[b] for a in range(3) for b in range(3)]
+                ops_i += [_np.asarray(op, dtype=complex) for op in extra_ops]
+                operators.append(ops_i)
 
         mdl = cls.from_directions(spins, directions, bonds, onsite,
                                   operators=operators)

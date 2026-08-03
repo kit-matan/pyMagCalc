@@ -60,6 +60,7 @@ class InteractionsDict(BaseModel):
     sia_matrix: Optional[List[Dict[str, Any]]] = []       # full 3x3 anisotropy tensor
     stevens: Optional[List[Dict[str, Any]]] = []          # crystal field B_k^q O_k^q
     biquadratic: Optional[List[Dict[str, Any]]] = []      # B (S_i.S_j)^2
+    pair_operator: Optional[List[Dict[str, Any]]] = []    # arbitrary two-site operator (SU(N))
     # Long-range dipolar coupling: {cutoff: <Angstrom>, g: <optional>}
     dipole_dipole: Optional[Dict[str, Any]] = None
 

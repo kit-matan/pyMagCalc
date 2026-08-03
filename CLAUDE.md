@@ -216,6 +216,15 @@ interactions:
   biquadratic:
   - {pair: [A, B], rij_offset: [0, 0, 0], value: -0.037}
 
+  # Arbitrary two-site coupling (SU(N)/entangled only; Sunny `set_pair_coupling!`).
+  # `poly` is sum_n c_n (S_i.S_j)^n -- c1 = Heisenberg, c2 = biquadratic, higher n
+  # = ring-exchange-like. `matrix:` takes an explicit (2S+1)^2 Hermitian operator on
+  # the product space instead. Decomposed into sum_k A_k (x) B_k internally.
+  # Both bond directions are listed, as for heisenberg, so the operator must be
+  # SYMMETRIC under exchanging the two sites (checked; it raises otherwise).
+  pair_operator:
+  - {pair: [A, B], rij_offset: [0, 0, 0], poly: [0, 1.0, -0.4]}
+
   # Long-range dipolar coupling. Two methods:
   dipole_dipole: {method: ewald}                  # EXACT -- prefer this
   # dipole_dipole: {method: truncated, cutoff: 20.0}   # real-space sum, Angstrom
