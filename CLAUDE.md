@@ -399,6 +399,10 @@ N-1 bosons per site and the single-ion (multipolar) bands appear -- with intensi
   run the CP^(N-1) search (`tasks.minimization: true`).
 * Non-diagonal `magnetic_supercell` matrices are **only** supported in SU(N) mode; the
   dipole engine refuses them rather than silently using the chemical cell.
+* **Mixed spin is supported**: sites may carry different `spin_S` (S=½ gives 1 boson,
+  S=1 gives 2, S=3/2 gives 3), addressed through a per-site offsets table. `model.M`
+  and `model.N` are `None` for such a cell — use `Ms`/`Ns`/`D` — so anything still
+  assuming a uniform N fails loudly instead of silently using site 0's value.
 * Powder averaging: supported (shared spherical average over calculate_sqw,
   `tests/test_powder_sun.py`). Not yet: domain averaging.
 

@@ -135,12 +135,18 @@ class SUNModel:
 
         self.pos = None          # site positions (set by the bridge; needed for S(q,w))
         self.L = len(self.Z)
-        self.Ns = [len(z) for z in self.Z]       # N = local Hilbert-space dimension
-        if len(set(self.Ns)) != 1:
-            raise NotImplementedError(
-                "SU(N) currently requires all sites to have the same N.")
-        self.N = self.Ns[0]
-        self.M = self.N - 1                      # bosons per site
+        self.Ns = [len(z) for z in self.Z]       # N_i = local Hilbert-space dimension
+        self.Ms = [n - 1 for n in self.Ns]       # bosons on site i
+        # Nambu blocks are addressed through `offs`, not `i * M`: with mixed spin the
+        # sites have different boson counts (S = 1/2 -> 1, S = 1 -> 2, S = 3/2 -> 3).
+        self.offs = np.concatenate([[0], np.cumsum(self.Ms)]).astype(int)
+        self.D = int(self.offs[-1])              # total bosons in the cell
+        # Convenience aliases, valid only for a UNIFORM cell (most models, and what
+        # kpm.py and the adapter report). They are None otherwise so that anything
+        # still assuming uniformity fails loudly instead of silently using site 0.
+        uniform = len(set(self.Ns)) == 1
+        self.N = self.Ns[0] if uniform else None
+        self.M = self.Ms[0] if uniform else None
 
         # Local operators used by the bonds. Default: the 3 dipole components.
         if operators is None:
@@ -169,26 +175,28 @@ class SUNModel:
 
     def _prepare(self):
         """Rotate every local operator into the |Z> basis and cache the pieces."""
-        L, M, nop = self.L, self.M, self.n_ops
+        L, nop = self.L, self.n_ops
+        # Per-site (ragged) rather than one rectangular array: M_i varies with S_i.
         self.s0 = np.zeros((L, nop), dtype=complex)        # <Z|O^p|Z>
-        self.t = np.zeros((L, nop, M), dtype=complex)      # <0|O^p|m>  (coeff of b_m)
-        self.tb = np.zeros((L, nop, M), dtype=complex)     # <m|O^p|0>  (coeff of b_m^dag)
-        self.Q = np.zeros((L, nop, M, M), dtype=complex)   # O~_mn - delta O~_00
-        self.QA = np.zeros((L, M, M), dtype=complex)       # on-site (crystal field / intra-unit)
+        self.t = [np.zeros((nop, m), dtype=complex) for m in self.Ms]   # <0|O^p|m>
+        self.tb = [np.zeros((nop, m), dtype=complex) for m in self.Ms]  # <m|O^p|0>
+        self.Q = [np.zeros((nop, m, m), dtype=complex) for m in self.Ms]
+        self.QA = [np.zeros((m, m), dtype=complex) for m in self.Ms]
 
         for i in range(L):
+            M = self.Ms[i]
             U = local_basis(self.Z[i])
             for p in range(nop):
                 Ot = U.conj().T @ self.ops[i][p] @ U
                 self.s0[i, p] = Ot[0, 0]
-                self.t[i, p, :] = Ot[0, 1:]
-                self.tb[i, p, :] = Ot[1:, 0]
-                self.Q[i, p] = Ot[1:, 1:] - np.eye(M) * Ot[0, 0]
+                self.t[i][p, :] = Ot[0, 1:]
+                self.tb[i][p, :] = Ot[1:, 0]
+                self.Q[i][p] = Ot[1:, 1:] - np.eye(M) * Ot[0, 0]
 
         for (i, A) in self.onsite:
             U = local_basis(self.Z[i])
             At = U.conj().T @ A @ U
-            self.QA[i] += At[1:, 1:] - np.eye(M) * At[0, 0]
+            self.QA[i] += At[1:, 1:] - np.eye(self.Ms[i]) * At[0, 0]
 
     # ---------------------------------------------------------------- energy
     def energy_per_site(self) -> float:
@@ -213,9 +221,9 @@ class SUNModel:
 
     # ---------------------------------------------------------------- H(q)
     def hamiltonian(self, q_cart: np.ndarray) -> np.ndarray:
-        """g * H2(q), shape (2 L M, 2 L M). Eigenvalues come in +/- omega pairs."""
-        L, M = self.L, self.M
-        D = L * M
+        """g * H2(q), shape (2D, 2D) with D = sum_i M_i. +/- omega pairs."""
+        L, offs = self.L, self.offs
+        D = self.D
         H11 = np.zeros((D, D), dtype=complex)
         H22 = np.zeros((D, D), dtype=complex)
         H12 = np.zeros((D, D), dtype=complex)
@@ -224,40 +232,41 @@ class SUNModel:
 
         for (i, j, dr, J) in self.bonds:
             ph = np.exp(1j * float(np.dot(q, dr)))
-            bi, bj = i * M, j * M
+            bi, bj = offs[i], offs[j]
+            Mi, Mj = self.Ms[i], self.Ms[j]
             for a in range(self.n_ops):
                 for b in range(self.n_ops):
                     c = J[a, b]
                     if c == 0.0:
                         continue
-                    ti, tbi = self.t[i, a], self.tb[i, a]
-                    tj, tbj = self.t[j, b], self.tb[j, b]
+                    ti, tbi = self.t[i][a], self.tb[i][a]
+                    tj, tbj = self.t[j][b], self.tb[j][b]
                     # inter-site: hopping and anomalous (carry the phase)
-                    H11[bi:bi + M, bj:bj + M] += c * np.outer(tbi, tj) * ph
-                    H22[bi:bi + M, bj:bj + M] += c * np.outer(ti, tbj) * ph
-                    H12[bi:bi + M, bj:bj + M] += c * np.outer(tbi, tbj) * ph
-                    H21[bi:bi + M, bj:bj + M] += c * np.outer(ti, tj) * ph
+                    H11[bi:bi + Mi, bj:bj + Mj] += c * np.outer(tbi, tj) * ph
+                    H22[bi:bi + Mi, bj:bj + Mj] += c * np.outer(ti, tbj) * ph
+                    H12[bi:bi + Mi, bj:bj + Mj] += c * np.outer(tbi, tbj) * ph
+                    H21[bi:bi + Mi, bj:bj + Mj] += c * np.outer(ti, tj) * ph
                     # on-site mean field at i, weighted by <S^b>_j. NO phase: it is the
                     # q=0 sum. (Putting the phase here makes a ferromagnet's H(q)
                     # cancel to zero -- the same trap as in the dipole engine.)
-                    mf = c * self.Q[i, a] * self.s0[j, b]
-                    H11[bi:bi + M, bi:bi + M] += mf
-                    H22[bi:bi + M, bi:bi + M] += mf.T
+                    mf = c * self.Q[i][a] * self.s0[j, b]
+                    H11[bi:bi + Mi, bi:bi + Mi] += mf
+                    H22[bi:bi + Mi, bi:bi + Mi] += mf.T
 
         # single-ion / crystal field
         for i in range(L):
             if np.any(self.QA[i]):
-                bi = i * M
-                H11[bi:bi + M, bi:bi + M] += self.QA[i]
-                H22[bi:bi + M, bi:bi + M] += self.QA[i].T
+                bi, Mi = offs[i], self.Ms[i]
+                H11[bi:bi + Mi, bi:bi + Mi] += self.QA[i]
+                H22[bi:bi + Mi, bi:bi + Mi] += self.QA[i].T
 
         g = np.diag([1.0] * D + [-1.0] * D)
         return g @ np.block([[H11, H12], [H21, H22]])
 
     def dispersion(self, q_cart: np.ndarray) -> np.ndarray:
-        """The L*M positive magnon energies at q (ascending)."""
+        """The D = sum_i M_i positive magnon energies at q (ascending)."""
         ev = np.linalg.eigvals(self.hamiltonian(q_cart))
-        return np.sort(np.real(ev))[self.L * self.M:]
+        return np.sort(np.real(ev))[self.D:]
 
     def max_imaginary(self, q_cart: np.ndarray) -> float:
         ev = np.linalg.eigvals(self.hamiltonian(q_cart))
@@ -564,7 +573,7 @@ class SUNModel:
         changes nothing for a plain SU(N) model, but the products A_ab are not
         Hermitian individually).
         """
-        h = np.zeros((self.N, self.N), dtype=complex)
+        h = np.zeros((self.Ns[i], self.Ns[i]), dtype=complex)
         for (bi, bj, dr, J) in self.bonds:
             if bi != i:
                 continue
@@ -606,7 +615,7 @@ class SUNModel:
         bonds_from = [[] for _ in range(self.L)]
         for (bi, bj, dr, J) in self.bonds:
             bonds_from[bi].append((bj, J))
-        onsite_by = [np.zeros((self.N, self.N), dtype=complex) for _ in range(self.L)]
+        onsite_by = [np.zeros((n, n), dtype=complex) for n in self.Ns]
         for (k, A) in self.onsite:
             onsite_by[k] = onsite_by[k] + A
 
@@ -620,7 +629,7 @@ class SUNModel:
             else:
                 Z = []
                 for i in range(self.L):
-                    v = rng.normal(size=self.N) + 1j * rng.normal(size=self.N)
+                    v = rng.normal(size=self.Ns[i]) + 1j * rng.normal(size=self.Ns[i])
                     Z.append(v / np.linalg.norm(v))
 
             E_prev = np.inf
@@ -673,7 +682,7 @@ class SUNModel:
     def _bogoliubov(self, q_cart):
         """Colpa diagonalisation of H(q). Returns (omega, T) with Psi = T Phi,
         Psi = (b, b^dag), Phi = (beta, beta^dag), and omega the L*M positive energies."""
-        D = self.L * self.M
+        D = self.D
         g = np.diag([1.0] * D + [-1.0] * D)
         H2 = g @ self.hamiltonian(q_cart)        # hamiltonian() returns g*H2
         H2 = 0.5 * (H2 + H2.conj().T)            # symmetrise away round-off
@@ -725,18 +734,18 @@ class SUNModel:
         """
         from ..numerical import contract_cross_section
 
-        D = self.L * self.M
+        D = self.D
         w, T = self._bogoliubov(q_cart)
 
         v = np.zeros((3, 2 * D), dtype=complex)
         for i in range(self.L):
-            sl, slb = slice(i * self.M, (i + 1) * self.M), \
-                slice(D + i * self.M, D + (i + 1) * self.M)
+            o, Mi = self.offs[i], self.Ms[i]
+            sl, slb = slice(o, o + Mi), slice(D + o, D + o + Mi)
             for (d_k, idx) in self.moment_terms[i]:
                 ph = np.exp(1j * float(np.dot(q_cart, d_k)))
                 for a in range(3):
-                    v[a, sl] += ph * self.t[i, idx[a]]
-                    v[a, slb] += ph * self.tb[i, idx[a]]
+                    v[a, sl] += ph * self.t[i][idx[a]]
+                    v[a, slb] += ph * self.tb[i][idx[a]]
 
         M = (v @ T)[:, D:]                        # (3, D): amplitude per band
         # Normalise per CHEMICAL CELL (Sunny's ssf convention): divide by the number of

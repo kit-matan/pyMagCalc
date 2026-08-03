@@ -90,7 +90,7 @@ class SUNCalculator:
                 n_restarts=int(min_cfg.get("num_starts", 20)),
                 seed=int(min_cfg.get("seed", 0) or 0))
             logger.info(f"SU(N) ground state: E/site = {E / self.model.L:.8f} meV "
-                        f"({self.model.L} sites, {self.model.M} bosons/site)")
+                        f"({self.model.L} sites, {self.model.D} bosons total)")
         else:
             self._audit_supplied_state(config)
 

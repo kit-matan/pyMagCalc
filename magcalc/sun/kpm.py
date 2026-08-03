@@ -39,18 +39,18 @@ def _observable_vectors(model, q_cart):
     """The neutron observable in the Nambu basis Ψ=(b, b†): v[a] (a=x,y,z), shape
     (3, 2D). Identical construction to `SUNModel.structure_factor`, so the KPM and the
     exact path expand the SAME spectral function."""
-    D = model.L * model.M
+    D = model.D
     v = np.zeros((3, 2 * D), dtype=complex)
     for i in range(model.L):
         # NO intracell position phase: hamiltonian(q) is in the full-position gauge
         # (see SUNModel.structure_factor); only the intra-unit d_k offsets phase.
-        sl = slice(i * model.M, (i + 1) * model.M)
-        slb = slice(D + i * model.M, D + (i + 1) * model.M)
+        sl = slice(model.offs[i], model.offs[i] + model.Ms[i])
+        slb = slice(D + model.offs[i], D + model.offs[i] + model.Ms[i])
         for (d_k, idx) in model.moment_terms[i]:
             ph = np.exp(1j * float(np.dot(q_cart, d_k)))
             for a in range(3):
-                v[a, sl] += ph * model.t[i, idx[a]]
-                v[a, slb] += ph * model.tb[i, idx[a]]
+                v[a, sl] += ph * model.t[i][idx[a]]
+                v[a, slb] += ph * model.tb[i][idx[a]]
     return v
 
 

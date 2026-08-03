@@ -169,9 +169,17 @@ def test_gate3_dipole_mode_misses_the_single_ion_band():
     assert np.min(np.abs(sun[0] - dip[0][0])) > 0.5
 
 
-def test_sun_rejects_mixed_spin_for_now():
-    with pytest.raises(NotImplementedError, match="same N"):
-        SUNModel.from_directions([0.5, 1.0], [[0, 0, 1], [0, 0, 1]], [])
+def test_sun_supports_mixed_spin():
+    """This used to assert a NotImplementedError ("SU(N) currently requires all sites
+    to have the same N"). Gap 4 #24a removed the limitation: each site now carries its
+    own M_i = N_i - 1 and the Nambu blocks are addressed through an offsets table.
+    The physics is pinned by the decoupled-sublattice identity in
+    tests/test_mixed_spin_sun.py; here we only check the layout."""
+    mdl = SUNModel.from_directions([0.5, 1.0], [[0, 0, 1], [0, 0, 1]], [])
+    assert mdl.Ns == [2, 3]
+    assert mdl.Ms == [1, 2]
+    assert mdl.D == 3
+    assert mdl.M is None and mdl.N is None      # no meaningful uniform value
 
 
 # ----------------------------------------------------------------- config bridge

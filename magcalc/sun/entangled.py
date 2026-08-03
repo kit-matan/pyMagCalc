@@ -253,7 +253,7 @@ class EntangledCalculator:
         self.series_resum = str(calc_cfg.get("series_resum", "dlog_pade"))
         self._series = None
         logger.info("Entangled units: %d unit(s), N=%d per unit (%d bosons), %d bond(s).",
-                    self.model.L, self.model.N, self.model.M, len(self.model.bonds))
+                    self.model.L, self.model.Ns[0], self.model.Ms[0], len(self.model.bonds))
 
     def _series_model(self):
         if self._series is None:
