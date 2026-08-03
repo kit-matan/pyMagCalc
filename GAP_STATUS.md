@@ -192,6 +192,19 @@ plausible-but-wrong spectra that looked fine:
   too much weight at high |Q| vs PRR 8, 013247 Fig. 5. Pinned by
   `tests/test_form_factor.py` (ion_list survives construction; I_ion/I_bare ==
   f(Q)^2 exactly; the dimer powder modulation (1-sin(Qd)/Qd) f(Q)^2).
+- a `ref_pair` symmetry rule without an explicit `offset` chose its reference bond
+  by FLOATING-POINT NOISE. In CCSF's P2_1/n cell the two screw-related Cu2-Cu2
+  (J12) images are the same length to ~9e-16 A -- one ULP -- and the resolver's
+  `<` took whichever won that rounding. The reference bond fixes the orientation
+  convention for the whole orbit (2_1 and the n glide both act on axial vectors as
+  C2x = diag(1,-1,-1)), so the other choice realizes -C2x.D: `D12x` silently flips
+  sign. Same 24 bonds, same J's, plausible spectrum, different Hamiltonian -- and
+  the config's meaning was not even stable across BLAS/coordinate perturbations.
+  Invisible to every self-consistent check; caught only by diffing the expanded
+  bond table against an independently derived model. The resolver now enumerates
+  all candidates and RAISES on a tie (directional rules) or on a `distance` window
+  spanning two orbit lengths (all rules); pinned by
+  `tests/test_ref_bond_ambiguity.py`.
 
 Every one was caught by an **independent oracle or an exact identity**, never by
 inspection. So: validate against Sunny (in-repo) or a textbook analytic result; prefer

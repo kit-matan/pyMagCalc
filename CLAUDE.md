@@ -66,7 +66,7 @@ run `magcalc symmetry <config> [--max-distance Å] [--json]` — it lists the sp
 group, the symmetry-inequivalent bond orbits, and the allowed exchange matrix
 for each (the Sunny `print_symmetry_table` analogue).
 
-Two rules the engine now **enforces with a hard error** (they used to be silent
+Three rules the engine now **enforces with a hard error** (they used to be silent
 failures — a WARNING plus a Hamiltonian quietly missing a term):
 
 1. **`distance` without `ref_pair` is valid only for `type: heisenberg`.** A
@@ -81,6 +81,25 @@ failures — a WARNING plus a Hamiltonian quietly missing a term):
    given `distance`, you get an error naming the rule instead of a Hamiltonian
    silently missing that interaction. Check the distance against the real bond
    lengths.
+
+3. **An ambiguous reference bond raises.** A `ref_pair` without `offset` has to
+   choose which periodic image is the reference. Two cases now error instead of
+   guessing: (a) several images of the pair are the *same length* and the rule
+   carries a direction (`dm`, `interaction_matrix`, `anisotropic_exchange`,
+   `kitaev`); (b) the `distance` window spans more than one bond length, i.e.
+   more than one orbit — an error for every type, scalar included. Fix either by
+   pinning `offset: [u, v, w]` (the error names the candidates). A scalar
+   `heisenberg` rule in case (a) is left alone: it expands to the whole orbit, so
+   the bond table does not depend on which image was the reference.
+
+   This one bit CCSF. In P2₁/n the two screw-related Cu2–Cu2 (J12) bonds from a
+   site have *identical* length, and the two candidates differed by ~9e-16 Å — one
+   ULP — so the old `<` comparison picked between them by floating-point rounding.
+   The chosen bond sets the orientation convention for the whole orbit: the 2₁
+   screw and the *n* glide both act on axial vectors as C2x = diag(1,−1,−1), so
+   the other choice realizes −C2x·**D**, silently flipping the sign of `D12x`.
+   Identical bond count, plausible spectrum, different Hamiltonian — caught only
+   by diffing the bond table against an independent model.
 
 Cell-image searches are sized from the target distance everywhere (Heisenberg,
 DM, matrix, anisotropic, and the `ref_pair` reference-bond lookup), so

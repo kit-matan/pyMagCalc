@@ -8,6 +8,22 @@ from typing import List, Dict, Tuple, Optional, Union, Any
 # Configure logger
 logger = logging.getLogger(__name__)
 
+# Reference-bond resolution tolerances (Angstrom).
+# DEGEN: two images this close in length are the same bond length physically;
+# the choice between them must never be made by floating-point noise.
+# DIST: window a `distance:` key must match within. It has to stay loose enough
+# for hand-typed distances, which is why a window spanning two distinct bond
+# lengths is an error rather than a silent first-match.
+_REF_BOND_DEGEN_TOL = 1e-6
+_REF_BOND_DIST_TOL = 0.05
+
+# Rule types whose `value` carries a direction, so that *which* member of a
+# degenerate set of reference bonds is picked changes the Hamiltonian:
+# D_ji = -D_ij, and symmetry-related bonds carry point-group images of D.
+_DIRECTIONAL_RULE_TYPES = frozenset({
+    "dm", "dm_manual", "anisotropic_exchange", "interaction_matrix", "kitaev",
+})
+
 class MagCalcConfigBuilder:
     """
     Builder class for generating MagCalc configuration YAML files.
@@ -264,32 +280,91 @@ class MagCalcConfigBuilder:
         if offset is not None:
             best_offset = np.array(offset)
         else:
-            # Find the specific image of j that matches "distance" (or assume nearest)
-            # We need the relative vector r_ij in CARTESIAN to check distance, but fractional for symmetry.
-            # Let's search nearest images.
-            best_dist = 1e9
+            # Find the specific image of j that matches "distance" (or assume
+            # nearest). We need the relative vector r_ij in CARTESIAN to check
+            # distance, but fractional for symmetry.
+            #
+            # Every candidate is enumerated before one is chosen: a first-match
+            # `break` (or a running minimum with a strict `<`) resolves ties by
+            # enumeration order and by ULP-level rounding in the Cartesian
+            # distance, so a symmetry-degenerate pair of reference bonds would
+            # be picked between silently and unreproducibly.
 
             # Sized from the target distance so a reference bond beyond one
             # cell image is still found (an explicit `offset` skips this).
             offsets_to_check = self._offset_shell(distance)
 
+            images = []
             for off in offsets_to_check:
                 off_vec = np.array(off)
                 pos_j_img = pos_j_uc + off_vec
-                
+
                 # Cartesian distance
                 d_vec_cart = (pos_j_img - pos_i) @ self.lattice_vectors
-                dist = np.linalg.norm(d_vec_cart)
-                
+                dist_img = float(np.linalg.norm(d_vec_cart))
+
+                if dist_img > 0.01:
+                    images.append((dist_img, tuple(int(v) for v in off)))
+
+            if images:
                 if distance:
-                    if abs(dist - distance) < 0.05:
-                         best_offset = off_vec
-                         break
+                    candidates = [im for im in images
+                                  if abs(im[0] - distance) < _REF_BOND_DIST_TOL]
                 else:
-                    if dist < best_dist and dist > 0.01:
-                        best_dist = dist
-                        best_offset = off_vec
-        
+                    d_min = min(im[0] for im in images)
+                    candidates = [im for im in images
+                                  if im[0] - d_min < _REF_BOND_DEGEN_TOL]
+
+                if candidates:
+                    # Canonical order: shortest bond, then the image closest to
+                    # the home cell, then lexicographic. Rounding the distance
+                    # before sorting keeps exactly-degenerate images from being
+                    # ordered by floating-point noise.
+                    candidates.sort(key=lambda im: (round(im[0], 9),
+                                                    sum(abs(v) for v in im[1]),
+                                                    im[1]))
+                    win_dist, win_off = candidates[0]
+                    best_offset = np.array(win_off)
+
+                    lengths = sorted({round(im[0], 6) for im in candidates})
+                    tied = [im[1] for im in candidates
+                            if abs(im[0] - win_dist) < _REF_BOND_DEGEN_TOL]
+
+                    if len(lengths) > 1:
+                        # Distinct bond lengths inside the match window: these
+                        # are different orbits, so the rule would attach `value`
+                        # to whichever the search happened to reach first. Wrong
+                        # for every rule type, scalar ones included.
+                        raise ValueError(
+                            f"Ambiguous reference bond for {ref_pair} "
+                            f"(rule type '{type}'): distance={distance} matches "
+                            f"{len(lengths)} distinct bond lengths {lengths} A "
+                            f"within the {_REF_BOND_DIST_TOL} A window, i.e. more "
+                            f"than one symmetry orbit. Give an exact `distance:` "
+                            f"or pin the reference bond with an explicit "
+                            f"`offset: [u, v, w]`. Candidate images: "
+                            f"{[im[1] for im in candidates]}."
+                        )
+
+                    if len(tied) > 1 and str(type).lower() in _DIRECTIONAL_RULE_TYPES:
+                        # Same length, several images: one symmetry orbit, so a
+                        # scalar J is unaffected, but a direction-carrying value
+                        # is not. Attaching D to the other member realizes a
+                        # point-group image of it (for a 2_1 screw or glide,
+                        # D -> -C2.D, i.e. a sign flip on one component) with no
+                        # visible symptom - identical bond count, plausible
+                        # spectrum, silently different Hamiltonian.
+                        raise ValueError(
+                            f"Ambiguous reference bond for {ref_pair} "
+                            f"(rule type '{type}'): {len(tied)} symmetry-equivalent "
+                            f"images are all at d = {win_dist:.6f} A, offsets "
+                            f"{tied}. Which one carries `value` changes the sign "
+                            f"or orientation of the propagated vector, so the "
+                            f"choice cannot be made automatically. Pin it with an "
+                            f"explicit `offset: [u, v, w]` "
+                            f"(e.g. `offset: {list(tied[0])}`)."
+                        )
+
         if best_offset is None:
              raise ValueError(f"Could not identify reference bond for {ref_pair} near distance {distance}")
 
