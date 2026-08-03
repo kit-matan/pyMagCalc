@@ -77,9 +77,17 @@ def test_cu5sbo6_powder_matches_published_spectrum():
     from scipy.signal import find_peaks
     pk, _ = find_peaks(spec, height=0.3 * spec.max())
     peaks = grid[pk]
-    assert len(peaks) == 2, f"expected 2 DOS peaks, got {peaks}"
-    assert abs(peaks[0] - 14.92) < 0.3, f"M1 peak at {peaks[0]} (paper: 15.0(1))"
-    assert abs(peaks[1] - 17.94) < 0.3, f"M2 peak at {peaks[1]} (paper: 18.0(2))"
+    # The published statement is WHERE the two DOS peaks are, so assert that: the
+    # two STRONGEST peaks must be M1 and M2. (This used to assert `len(peaks) == 2`,
+    # which is a property of the 0.3*max cut rather than of the physics -- a third,
+    # weaker van Hove feature near 12.4 meV sits right at that threshold and crossed
+    # it when the Cu2+ form factor was corrected to the Int-Tables <j0>, which
+    # reweights the |Q| shells of the powder sum by a few percent over 1-3 A^-1.)
+    assert len(peaks) >= 2, f"expected at least 2 DOS peaks, got {peaks}"
+    order = np.argsort(spec[pk])[::-1][:2]
+    top2 = np.sort(peaks[order])
+    assert abs(top2[0] - 14.92) < 0.3, f"M1 peak at {top2[0]} (paper: 15.0(1))"
+    assert abs(top2[1] - 17.94) < 0.3, f"M2 peak at {top2[1]} (paper: 18.0(2))"
     # band edges: significant weight from ~11 to ~21 meV, nothing outside
     nz = grid[spec > 0.02 * spec.max()]
     assert 10.4 < nz[0] < 11.6 and 20.2 < nz[-1] < 21.6

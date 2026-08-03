@@ -205,6 +205,8 @@ interactions:
   # Crystal field: sum_kq B_k^q O_k^q. Classical (large-s) Stevens polynomials,
   # Sunny `stevens_matrices(Inf)` convention. k in {2,4,6} (even: time reversal),
   # -k <= q <= k. THE ROUTE FOR RARE EARTHS.
+  # NB: un-renormalized, i.e. Sunny's `:dipole_uncorrected` -- see
+  # `calculation.anisotropy_renormalization` in section 5b1 below.
   stevens:
   - {B: {'2,0': B20, '4,0': B40, '4,3': B43}, atoms: [Yb0]}
 
@@ -264,6 +266,38 @@ supercell), so every k must be commensurate.
 
 Caveat that bit once: an on-site/bond term that matches **no** bonds, or an
 unsupported Stevens order, RAISES -- it is never silently dropped.
+
+### 5b1. Anisotropy renormalization — dipole mode is Sunny's `:dipole_uncorrected`
+
+Dipole LSWT replaces an on-site operator by its **classical (s → ∞) polynomial**, which
+overestimates a rank-k term at finite s. Sunny's DEFAULT `:dipole` mode corrects for this
+(RCS, D. Dahlbom et al., arXiv:2304.03874): every rank-k Stevens coefficient is scaled by
+
+    λ_k(s),   λ_2 = 1 − 1/(2s):   0 at s = ½,  ½ at s = 1,  ⅔ at s = 3/2  → 1
+
+so that `:dipole` agrees with the exact `:SUN`. Its `:dipole_uncorrected` mode does not.
+**pyMagCalc's dipole engine has always been the uncorrected one** — the same as SpinW, and
+what every config in this repo means — and the difference is large:
+
+| model | pyMagCalc default | Sunny `:dipole` |
+|---|---|---|
+| s = 1, `sia` D = −0.5 | every band +0.5 meV | matches `:SUN` |
+| s = 2, `stevens` B₄⁰ | gap 13.13 meV | 1.53 meV (λ₄ = 0.09375) |
+
+Opt in per config; it applies to `sia`, `sia_matrix`, `stevens` and `biquadratic`, in
+dipole mode only (SU(N)/entangled carry the full operator and are already exact):
+
+```yaml
+calculation:
+  anisotropy_renormalization: rcs      # none (default) | rcs
+```
+
+λ₂(½) = 0 is the sanity check: (S·n)² *is* a constant for s = ½, so a quadratic
+anisotropy can have no effect there — the un-renormalized classical polynomial wrongly
+says otherwise. For biquadratic, RCS scales the *quadrupole* part and shifts the bilinear
+part by −B/2 (Sunny's `adapt_for_biquad`), not the raw coefficient. Both branches are
+pinned to Sunny in `tests/test_rcs_renormalization.py`. If you want the accurate finite-s
+answer and can afford it, `mode: SUN` is exact and needs no factor at all.
 
 ### The ground state is the #1 source of silently wrong physics
 
@@ -560,10 +594,19 @@ scattering is spin-flip and the beams differ by the chiral term:
 signed M_ch (it vanishes identically for any collinear structure, and for a cycloid when
 q ⊥ the rotation axis). Sign convention pinned to Sunny — `tests/test_polarized.py`.
 
-**Absolute normalization caveat:** pyMagCalc's S(Q,ω) is **3/4 of Sunny's**. This is a
-pre-existing convention difference that affects every channel identically (verified on
-`perp`), so ratios and fitted parameters are unaffected — a fit's free `scale` absorbs it.
-Do not compare ABSOLUTE intensities with Sunny without this factor.
+**Absolute normalization: pyMagCalc's S(Q,ω) EQUALS Sunny's.** Pinned band-by-band on a
+ferromagnet (S = ½, 1, 2), a Néel antiferromagnet and a non-collinear helix by
+`tests/test_absolute_normalization.py` + `tests/test_polarized.py`. This entry used to
+say the opposite — "pyMagCalc's S(Q,ω) is 3/4 of Sunny's, a pre-existing convention
+difference; do not compare absolute intensities" — which was wrong. The 4/3 lived in
+hardcoded reference numbers in `test_polarized.py`, and that test compared only the
+ratio chiral/perp, in which an overall factor cancels; the caveat then explained the
+leftover away. A clean constant factor is a bug until proven otherwise (GAP_STATUS says
+exactly this), so it should never have been documented as a convention.
+
+The one real difference, which is *not* an overall factor: Sunny's `ssf_perp` applies
+the g-tensor by DEFAULT, i.e. it measures moments (g·S) and is 4× ours at g = 2.
+Compare against `ssf_perp(sys; apply_g=false)`.
 
 **Ignoring temperature biases fits.** Not a rounding effect: on a ferrimagnet, fitting
 40 K data with a T=0 model returns J = 1.07 instead of 1.30 (a 17% error), because the

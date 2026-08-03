@@ -9,7 +9,7 @@ import sympy as sp
 from scipy.optimize import minimize
 from tqdm import tqdm
 
-from .stevens import stevens_polynomial
+from .stevens import rcs_lambda, stevens_polynomial
 
 # mu0 * muB^2 / (4*pi), in meV * Angstrom^3. Cross-checked against Sunny 0.8.1,
 # whose Units(:meV, :angstrom).vacuum_permeability = 0.6745817653 is mu0*muB^2
@@ -320,7 +320,19 @@ class GenericSpinModel:
         self.interactions_config = self.config.get('interactions', [])
         self.optimized_matrices = None
         self.parameter_order = self.config.get('parameter_order', [])
-        
+
+        # Classical-to-quantum renormalization of on-site / biquadratic terms.
+        # 'none' (the default) reproduces SpinW and Sunny's :dipole_uncorrected;
+        # 'rcs' reproduces Sunny's DEFAULT :dipole. See `_rcs` and stevens.rcs_lambda.
+        _rn = str((self.config.get('calculation') or {}).get(
+            'anisotropy_renormalization', 'none')).lower()
+        if _rn not in ('none', 'rcs'):
+            raise ValueError(
+                f"calculation.anisotropy_renormalization must be 'none' or 'rcs', "
+                f"got {_rn!r}. 'none' (default) = SpinW / Sunny :dipole_uncorrected; "
+                f"'rcs' = Sunny's default :dipole.")
+        self._rcs_enabled = (_rn == 'rcs')
+
         # Ion list for form factors -- must be initialized BEFORE _load_structure,
         # which populates it from the atoms. (It used to be reset to [] AFTER the
         # structure load, silently dropping the magnetic form factor from every
@@ -1519,7 +1531,25 @@ class GenericSpinModel:
             for i, j in pairs:
                 dot = (Sxyz[i][0]*Sxyz[j][0] + Sxyz[i][1]*Sxyz[j][1]
                        + Sxyz[i][2]*Sxyz[j][2])
-                HM += 0.5 * B * dot**2
+                if not self._rcs_enabled:
+                    HM += 0.5 * B * dot**2
+                    continue
+                # RCS acts on the QUADRUPOLE part, not on B itself. Sunny
+                # (PairExchange.jl `adapt_for_biquad`) rewrites the coupling with
+                # the OPERATOR identity
+                #     Q_i . g Q_j = (S_i.S_j)^2 + (S_i.S_j)/2 - S_i^2 S_j^2 / 3
+                # (Q = the five Stevens quadrupoles), scales the Q.Q coefficient by
+                # lambda_2(s_i) lambda_2(s_j), and shifts the bilinear part by
+                # -B/2 to compensate. Classically Q.Q is the HOMOGENEOUS quartic
+                # (S_i.S_j)^2 - s_i^2 s_j^2 / 3 -- the linear piece is O(s^3) and
+                # drops -- so, discarding constants,
+                #     B (S_i.S_j)^2  ->  L B (S_i.S_j)^2 - (B/2) (S_i.S_j).
+                # The -B/2 shift belongs to the rewrite, not to L: Sunny applies it
+                # in :dipole/:SUN and NOT in :dipole_uncorrected, which is why the
+                # un-renormalized branch above is the plain quartic.
+                # j indexes the OVER-cell; fold it back to its unit-cell parent.
+                L = self._rcs(2, i) * self._rcs(2, j % len(self.atom_pos()))
+                HM += 0.5 * (L * B * dot**2 - (B / 2.0) * dot)
         return HM
 
     def _check_rotational_symmetry(self, Jex, DM, Kex, theta=0.01):
@@ -1937,10 +1967,10 @@ class GenericSpinModel:
                     n /= norm
                 for i in target_idx:
                     S_dot_n = Sxyz[i][0]*n[0] + Sxyz[i][1]*n[1] + Sxyz[i][2]*n[2]
-                    HM += D_sia * (S_dot_n)**2
+                    HM += self._rcs(2, i) * D_sia * (S_dot_n)**2
             else:
                 for i in target_idx:
-                    HM += D_sia * (Sxyz[i][2])**2
+                    HM += self._rcs(2, i) * D_sia * (Sxyz[i][2])**2
 
         # --- General 3x3 anisotropy tensor: sum_ab A_ab S^a S^b ---
         HM += self._compute_sia_matrix_terms(Sxyz, param_map, label_to_idx, N_uc)
@@ -1966,6 +1996,29 @@ class GenericSpinModel:
             return [label_to_idx[l] for l in labels if l in label_to_idx]
         return list(range(N_uc))
 
+    def _rcs(self, k: int, i: int) -> float:
+        """lambda_k(s_i) when `calculation.anisotropy_renormalization: rcs`, else 1.
+
+        Dipole LSWT uses the s -> infinity classical polynomial of an on-site
+        operator, which overestimates a rank-k term at finite s. Sunny's DEFAULT
+        `:dipole` mode rescales the coefficient by lambda_k so that it agrees with
+        `:SUN`; its `:dipole_uncorrected` mode does not, and that is what pyMagCalc
+        has always computed (and what SpinW computes). Measured on an s = 1 chain
+        with D = -0.5: every band sits 0.5 meV above Sunny's `:dipole` and exactly
+        on its `:dipole_uncorrected`.
+
+        OFF by default, because turning it on would silently change the meaning of
+        every existing config and every SpinW-tutorial port. It is a per-config
+        opt-in for users who want the more accurate finite-s answer -- or, better,
+        `calculation: {mode: SUN}`, which is exact and needs no factor at all.
+
+        SU(N)/entangled mode ignores this: those engines carry the full operator
+        and are already exact (`sun/lswt.py` builds its on-site terms itself).
+        """
+        if not self._rcs_enabled:
+            return 1.0
+        return rcs_lambda(k, self.spin_magnitudes()[i])
+
     def _compute_sia_matrix_terms(self, Sxyz, param_map, label_to_idx, N_uc):
         """`type: sia_matrix` -- full 3x3 single-ion anisotropy tensor A.
 
@@ -1988,7 +2041,7 @@ class GenericSpinModel:
             A = (A + A.T) / 2  # only the symmetric part survives S_i^T A S_i
             for i in self._sia_target_indices(interaction, label_to_idx, N_uc):
                 Si = sp.Matrix(Sxyz[i])
-                HM += (Si.T * A * Si)[0]
+                HM += self._rcs(2, i) * (Si.T * A * Si)[0]
         return HM
 
     def _compute_stevens_terms(self, Sxyz, param_map, label_to_idx, N_uc):
@@ -2026,7 +2079,8 @@ class GenericSpinModel:
                     raise ValueError(
                         f"stevens B_{k}^{q} resolved to None in {interaction}")
                 for i in targets:
-                    HM += B * stevens_polynomial(k, q, Sxyz[i][0], Sxyz[i][1], Sxyz[i][2])
+                    HM += self._rcs(k, i) * B * stevens_polynomial(
+                        k, q, Sxyz[i][0], Sxyz[i][1], Sxyz[i][2])
         return HM
 
     def _compute_zeeman_terms(self, Sxyz: List[Any], p_rest: List[Any], param_map: Dict[str, Any], gamma: float, mu_B: float) -> sp.Expr:

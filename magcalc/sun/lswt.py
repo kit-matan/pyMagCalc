@@ -40,6 +40,46 @@ from .operators import (coherent_from_direction, local_basis, spin_matrices,
                         stevens_matrices)
 
 
+def _reject_unsupported_terms(model, engine: str = "SU(N)",
+                              supports_biquadratic: bool = True) -> None:
+    """Refuse, loudly, any interaction term this engine would otherwise DROP.
+
+    Both of these used to vanish without a word: `from_generic_model` reads only
+    (Jex, DM, Kex) plus the on-site SIA/Stevens terms, so `interactions.biquadratic`
+    and an Ewald `interactions.dipole_dipole` never reached the Hamiltonian. The
+    spectrum came back plausible and simply did not contain the term -- and for
+    Ewald the model even LOGGED "Ewald summation (no real-space bonds generated)"
+    while nothing consumed it. Silence is the failure mode this project exists to
+    avoid, so an unsupported term is now a hard error naming the alternative.
+
+    `dipole_dipole: {method: truncated}` is fine: it expands into ordinary bond
+    matrices upstream, which this engine does read.
+    """
+    dd = model.config.get("dipole_dipole") or {}
+    if isinstance(dd, dict) and str(dd.get("method", "truncated")).lower() == "ewald":
+        raise NotImplementedError(
+            f"{engine} mode does not support `dipole_dipole: {{method: ewald}}`. "
+            f"Ewald adds a long-range A(q) directly to the dipole engine's dynamical "
+            f"matrix, and the {engine} Hamiltonian is built separately. Use "
+            f"`method: truncated` with a converged `cutoff` (raise it until the answer "
+            f"stops moving), or run the model in dipole mode.")
+
+    if not supports_biquadratic:
+        for inter in model.interactions_config:
+            if inter.get("type") in ("biquadratic", "biq"):
+                raise NotImplementedError(
+                    f"{engine} mode does not support `interactions.biquadratic` yet. "
+                    f"Use `calculation: {{mode: SUN}}` (which expands (S_i.S_j)^2 "
+                    f"exactly) or dipole mode.")
+
+
+def _embed_block(J, n: int) -> np.ndarray:
+    """Place a 3x3 bilinear coupling in the leading block of an n x n one."""
+    C = np.zeros((n, n), dtype=float)
+    C[:3, :3] = np.asarray(J, dtype=float)
+    return C
+
+
 class SUNModel:
     """A minimal SU(N) LSWT model.
 
@@ -112,11 +152,11 @@ class SUNModel:
 
     # ---------------------------------------------------------------- setup
     @classmethod
-    def from_directions(cls, spins, directions, bonds, onsite=None):
+    def from_directions(cls, spins, directions, bonds, onsite=None, operators=None):
         """Reference state = the spin coherent state pointing along `directions` -- the
         SU(N) state that corresponds to the classical dipole."""
         Z = [coherent_from_direction(s, d) for s, d in zip(spins, directions)]
-        return cls(spins, Z, bonds, onsite)
+        return cls(spins, Z, bonds, onsite, operators=operators)
 
     def _prepare(self):
         """Rotate every local operator into the |Z> basis and cache the pieces."""
@@ -284,6 +324,7 @@ class SUNModel:
         import numpy as _np
 
         params = list(params if params is not None else [])
+        _reject_unsupported_terms(model)
         Jex, DM, Kex = model.spin_interactions(params)
 
         apos = _np.asarray(model.atom_pos(), dtype=float)
@@ -321,10 +362,50 @@ class SUNModel:
                 if _np.any(J):
                     bonds.append((i, j % L, aouc[j] - apos[i], J))
 
+        # --- biquadratic B (S_i.S_j)^2 ----------------------------------------
+        # EXACT in SU(N), via the engine's generalized operator-pair couplings:
+        #
+        #   (S_i.S_j)^2 = (sum_a S_i^a S_j^a)(sum_b S_i^b S_j^b)
+        #               = sum_ab (S_i^a S_i^b) (S_j^a S_j^b)
+        #
+        # so it is a diagonal coupling on the 9 on-site products A_ab = S^a S^b.
+        # The site operator list therefore grows 3 -> 12 (dipoles first, so the
+        # neutron moment operator and `local_field` keep their meaning), and the
+        # bilinear J is embedded in the leading 3x3 block. A_ab is not Hermitian
+        # for a != b, but the (ab) and (ba) terms are conjugates of each other, so
+        # every quantity the engine forms from the pair stays Hermitian.
+        #
+        # Done only when a biquadratic term is present: n_ops = 12 costs ~16x in
+        # the H(q) assembly, which is not worth paying on every SU(N) run.
+        pmap = model._resolve_param_map(params)
+        biq_bonds = []
+        for inter in model.interactions_config:
+            if inter.get("type") not in ("biquadratic", "biq"):
+                continue
+            Bval = model._resolve_scalar(
+                inter.get("value", inter.get("B")), pmap)
+            if Bval is None:
+                raise ValueError(f"biquadratic entry needs a `value`: {inter}")
+            pairs = model._match_bond_pairs(inter)
+            if not pairs:
+                raise ValueError(
+                    f"biquadratic entry matched no bonds: {inter}. A term that "
+                    f"matches nothing would silently vanish from the Hamiltonian.")
+            for i, j in pairs:
+                biq_bonds.append((i, j % L, aouc[j] - apos[i], _num(Bval)))
+
+        n_ops = 3 + 9 if biq_bonds else 3
+        if biq_bonds:
+            bonds = [(i, j, dr, _embed_block(J, n_ops)) for (i, j, dr, J) in bonds]
+            for (i, j, dr, Bval) in biq_bonds:
+                C = _np.zeros((n_ops, n_ops), dtype=float)
+                for p in range(9):
+                    C[3 + p, 3 + p] = Bval
+                bonds.append((i, j, dr, C))
+
         # --- on-site terms: SIA, 3x3 anisotropy tensor, Stevens ---------------
         onsite = []
         Sops = {s: spin_matrices(s) for s in set(spins)}
-        pmap = model._resolve_param_map(params)
         for inter in model.interactions_config:
             t = inter.get("type")
             if t not in ("sia", "sia_matrix", "anisotropy_matrix", "stevens"):
@@ -387,7 +468,18 @@ class SUNModel:
                 reps = len(spins) // len(directions)
                 directions = directions * reps
 
-        mdl = cls.from_directions(spins, directions, bonds, onsite)
+        operators = None
+        if n_ops > 3:
+            # built AFTER the supercell replication, so there is one entry per
+            # magnetic-cell site
+            operators = []
+            for s in spins:
+                Sv = list(spin_matrices(s))
+                operators.append(Sv + [Sv[a] @ Sv[b] for a in range(3)
+                                       for b in range(3)])
+
+        mdl = cls.from_directions(spins, directions, bonds, onsite,
+                                  operators=operators)
         mdl.pos = _np.asarray(positions, dtype=float)
         mdl.n_cells = len(spins) // L if supercell is not None else 1
         return mdl
@@ -399,17 +491,25 @@ class SUNModel:
         E = (1/2) sum_bonds <S_i> J <S_j> + sum_i <A_i>, and with both bond directions
         listed (and J_ji = J_ij^T) the derivative collapses to
 
-            h_i = sum_{bonds starting at i} sum_ab J_ab <S_j>^b S^a  +  A_i
+            h_i = sum_{bonds starting at i} sum_ab J_ab <O_j>^b O_i^a  +  A_i
+
+        Runs over the FULL operator set, not just the three dipoles: with a
+        biquadratic term the coupling also acts on the 9 products S^a S^b, and a
+        mean field that ignored them would make the CP^(N-1) search minimize a
+        different Hamiltonian than `hamiltonian()` diagonalizes -- the exact trap
+        that produced wrong ground states in the dipole engine. <O_j>^b is kept
+        COMPLEX for the same reason (it is real for the Hermitian dipoles, so this
+        changes nothing for a plain SU(N) model, but the products A_ab are not
+        Hermitian individually).
         """
-        Sxyz = spin_matrices(self.S[i])
         h = np.zeros((self.N, self.N), dtype=complex)
         for (bi, bj, dr, J) in self.bonds:
             if bi != i:
                 continue
-            for a in range(3):
-                for b in range(3):
+            for a in range(self.n_ops):
+                for b in range(self.n_ops):
                     if J[a, b]:
-                        h += J[a, b] * np.real(s0[bj, b]) * Sxyz[a]
+                        h += J[a, b] * s0[bj, b] * self.ops[i][a]
         for (k, A) in self.onsite:
             if k == i:
                 h += A
@@ -435,7 +535,12 @@ class SUNModel:
         # per-site spin matrices, the bonds leaving each site, and the summed
         # on-site term. The old code rebuilt spin_matrices(S) per access and
         # scanned the FULL bond list once per site per iteration (O(L*bonds)).
-        Sxyz_all = [spin_matrices(self.S[i]) for i in range(self.L)]
+        # NB this runs over the FULL operator set (self.ops), which is the three
+        # dipoles for an ordinary SU(N) model but 3 + 9 products when a biquadratic
+        # term is present. Hardcoding the dipoles here would minimize a different
+        # Hamiltonian than hamiltonian() diagonalizes.
+        nop = self.n_ops
+        ops_all = self.ops
         bonds_from = [[] for _ in range(self.L)]
         for (bi, bj, dr, J) in self.bonds:
             bonds_from[bi].append((bj, J))
@@ -444,8 +549,8 @@ class SUNModel:
             onsite_by[k] = onsite_by[k] + A
 
         def _s0_of(Z):
-            return np.array([[Zi.conj() @ Sxyz_all[i][a] @ Zi for a in range(3)]
-                             for i, Zi in enumerate(Z)])
+            return np.array([[Zi.conj() @ ops_all[i][a] @ Zi for a in range(nop)]
+                             for i, Zi in enumerate(Z)], dtype=complex)
 
         for r in range(max(int(n_restarts), 1)):
             if r == 0:
@@ -460,14 +565,16 @@ class SUNModel:
             s0 = _s0_of(Z)
             for _ in range(max_iter):
                 for i in range(self.L):
-                    c = np.zeros(3)
+                    c = np.zeros(nop, dtype=complex)
                     for (bj, J) in bonds_from[i]:
-                        c += J @ np.real(s0[bj])
-                    Sx, Sy, Sz = Sxyz_all[i]
-                    h = onsite_by[i] + c[0] * Sx + c[1] * Sy + c[2] * Sz
+                        c += J @ s0[bj]
+                    h = onsite_by[i].copy()
+                    for a in range(nop):
+                        if c[a]:
+                            h += c[a] * ops_all[i][a]
                     w, v = np.linalg.eigh(h)
                     Z[i] = v[:, int(np.argmin(w))]
-                    s0[i] = [Z[i].conj() @ Sxyz_all[i][a] @ Z[i] for a in range(3)]
+                    s0[i] = [Z[i].conj() @ ops_all[i][a] @ Z[i] for a in range(nop)]
                 E = self._energy_of(Z, s0=s0)
                 if abs(E_prev - E) < tol:
                     break
@@ -483,8 +590,9 @@ class SUNModel:
 
     def _energy_of(self, Z, s0=None) -> float:
         if s0 is None:
-            s0 = np.array([[Z[i].conj() @ spin_matrices(self.S[i])[a] @ Z[i]
-                            for a in range(3)] for i in range(self.L)])
+            s0 = np.array([[Z[i].conj() @ self.ops[i][a] @ Z[i]
+                            for a in range(self.n_ops)] for i in range(self.L)],
+                          dtype=complex)
         E = 0.0
         for (i, j, dr, J) in self.bonds:
             E += 0.5 * float(np.real(s0[i] @ J @ s0[j]))

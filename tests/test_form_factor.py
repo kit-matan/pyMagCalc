@@ -1,11 +1,22 @@
-"""Magnetic form factor application (regression for a silent ordering bug).
+"""Magnetic form factors: the VALUES (vs Sunny) and their application.
 
-GenericSpinModel.__init__ used to RESET `_ion_list = []` AFTER `_load_structure`
-had populated it -- so `ion_list()` was empty for every config and the magnetic
-form factor was silently dropped from ALL intensity calculations (dipole, SU(N),
-entangled). Invisible to every Sunny/SpinW cross-check (those were computed
-form-factor-free on both sides); caught physically: the Cu5SbO6 powder map carried
-far too much intensity at high |Q| compared to PRR 8, 013247 Fig. 5.
+Two independent failure modes are pinned here.
+
+1. THE VALUES. The hand-written coefficient table this module used to carry was
+   wrong. Every entry was normalized so that f(0) = 1 -- so a Q -> 0 check passed
+   -- but the Q-dependence was not the tabulated one, reaching +22% in intensity
+   at |Q| = 2.5 A^-1, +53% at 3.8 A^-1 and +113% at 5 A^-1 (Mn2+). It was
+   invisible because the only test compared I_ion / I_bare against
+   get_form_factor(...)**2, which is self-consistent BY CONSTRUCTION: the same
+   wrong f(Q) appears on both sides. `test_j0_matches_sunny` fixes that by pinning
+   f(Q) itself to an independent oracle.
+
+2. THE APPLICATION. GenericSpinModel.__init__ used to RESET `_ion_list = []` AFTER
+   `_load_structure` had populated it -- so `ion_list()` was empty for every config
+   and the form factor was silently dropped from ALL intensities (dipole, SU(N),
+   entangled). Invisible to every Sunny/SpinW cross-check (those were computed
+   form-factor-free on both sides); caught physically: the Cu5SbO6 powder map
+   carried far too much intensity at high |Q| compared to PRR 8, 013247 Fig. 5.
 """
 import os
 
@@ -13,12 +24,87 @@ import numpy as np
 import pytest
 import yaml
 
-from magcalc.form_factors import get_form_factor
+from magcalc.form_factors import get_form_factor, get_j0
 from magcalc.generic_model import GenericSpinModel
 from magcalc.numerical import powder_sample_modes
 from magcalc.sun.entangled import EntangledCalculator
 
 HERE = os.path.dirname(__file__)
+
+# --------------------------------------------------------------------------
+# The values themselves, against Sunny 0.8.1 (the standard P. J. Brown /
+# International Tables <j0>, <j2> expansions). Generated with
+#
+#   julia -e 'using Sunny; ff = FormFactor("Cu2");
+#             println(Sunny.compute_form_factor(ff, Q^2))'
+#
+# NOT transcribed from a paper and NOT self-generated.
+# --------------------------------------------------------------------------
+FF_QS = [0.0, 0.5, 1.25, 2.5, 3.75, 5.0, 6.5]          # 1/Angstrom
+
+SUNNY_J0 = {
+    "Cu2": [1.000000000, 0.987884886, 0.927772939, 0.751876969, 0.548723675,
+            0.370997868, 0.214916238],
+    "Fe2": [1.000000000, 0.983985990, 0.905460497, 0.685760046, 0.453978553,
+            0.272847976, 0.131803286],
+    "Fe3": [0.999700000, 0.986608044, 0.921210419, 0.727044981, 0.502863048,
+            0.313131311, 0.156815139],
+    "Mn2": [0.999200000, 0.981925716, 0.897173038, 0.661061208, 0.418456000,
+            0.238384267, 0.106173274],
+    "Ni2": [0.999800000, 0.986644321, 0.921470131, 0.732379302, 0.519233551,
+            0.339523289, 0.187646871],
+    "Co2": [0.998600000, 0.984617070, 0.915185390, 0.713399470, 0.489369234,
+            0.307542188, 0.161064878],
+    "Cr3": [1.000100000, 0.983582092, 0.902099821, 0.670693645, 0.424571263,
+            0.235856960, 0.096822280],
+    "Yb3": [0.999700000, 0.992202805, 0.954159656, 0.834278081, 0.677506794,
+            0.518736317, 0.353203979],
+    "Nd3": [1.000000000, 0.987120182, 0.923142788, 0.735945882, 0.521543048,
+            0.336400368, 0.176495731],
+    # 5d, configuration-dependent: keeps Sunny's disambiguating suffix.
+    "Ir0a": [0.999000000, 0.953745593, 0.752717629, 0.344586150, 0.091299704,
+             -0.011583499, -0.028261066],
+}
+
+# g != 2 activates the <j2> term of the dipole approximation.
+SUNNY_G_LANDE = {
+    ("Yb3", 1.2): [0.999700000, 0.994217679, 0.966217837, 0.876000900,
+                   0.753286934, 0.622655573, 0.477220334],
+    ("Nd3", 0.7272): [1.000000000, 0.996097515, 0.975658148, 0.904454282,
+                      0.796524290, 0.670684184, 0.520245591],
+    ("Fe2", 1.5): [1.000000000, 0.986105636, 0.917687499, 0.723144156,
+                   0.510836997, 0.337049468, 0.193033011],
+}
+
+
+@pytest.mark.parametrize("ion", sorted(SUNNY_J0))
+def test_j0_matches_sunny(ion):
+    """f(Q) itself, not a ratio in which it cancels."""
+    got = np.array([get_form_factor(ion, q) for q in FF_QS])
+    assert got == pytest.approx(np.array(SUNNY_J0[ion]), abs=1e-9)
+
+
+@pytest.mark.parametrize("key", sorted(SUNNY_G_LANDE))
+def test_dipole_approximation_with_lande_g_matches_sunny(key):
+    """f(Q) = <j0> + ((2-g)/g) <j2> -- the <j2> branch, which used to be missing
+    entirely (and whose docstring formula had the wrong sign)."""
+    ion, g = key
+    got = np.array([get_form_factor(ion, q, g=g) for q in FF_QS])
+    assert got == pytest.approx(np.array(SUNNY_G_LANDE[key]), abs=1e-9)
+
+
+def test_ion_spellings_are_equivalent():
+    """'Fe2+' (pyMagCalc), 'Fe2' (Sunny) and 'Fe' (neutral) all resolve."""
+    for q in FF_QS:
+        assert get_form_factor("Fe2+", q) == get_form_factor("Fe2", q)
+        assert get_form_factor("Fe", q) == get_j0("Fe0", q)
+
+
+def test_unknown_ion_falls_back_to_unity(caplog):
+    """An unrecognised label must warn and return f = 1, never a wrong number."""
+    with caplog.at_level("WARNING"):
+        assert get_form_factor("Unobtainium3+", 2.5) == 1.0
+    assert "form-factor table" in caplog.text
 
 
 def _dimer_cfg(with_ion):

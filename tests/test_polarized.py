@@ -10,11 +10,16 @@ term:
 M_ch is the antisymmetric (imaginary) part of the correlation tensor, so it vanishes
 identically for any collinear structure and is nonzero only for a chiral one.
 
-NORMALIZATION. pyMagCalc's absolute S(q,w) is 3/4 of Sunny's -- a pre-existing
-convention difference that affects the ordinary `perp` channel identically (verified),
-and which a fit's free `scale` absorbs. So these tests compare the
-normalization-INDEPENDENT ratio chiral/perp, which is what actually pins the sign
-convention and the physics.
+NORMALIZATION. There is none to correct for: pyMagCalc's absolute S(q,w) EQUALS
+Sunny's, here and on a collinear ferromagnet and Neel antiferromagnet
+(`test_absolute_normalization.py`). This file used to carry hardcoded Sunny numbers
+that were uniformly 4/3 too large, which was written up -- in this docstring, in
+CLAUDE.md and in GAP_STATUS.md -- as a "pre-existing 3/4 convention difference" that
+users were told to apply before comparing absolute intensities with Sunny. It was not
+a convention; the reference numbers were simply wrong, and the tests could not see it
+because they only ever compared the ratio chiral/perp, in which any overall factor
+cancels. The values below were regenerated from Sunny 0.8.1 and are now asserted
+ABSOLUTELY, so a normalization regression fails here.
 """
 import copy
 
@@ -31,8 +36,10 @@ LAT = [[3 * A, 0, 0], [0, 9.0, 0], [0, 0, 9.0]]      # 3-site supercell along a
 def _model(directions):
     """J1-J2 chain, J2 = J1/2 -> commensurate k = 1/3 helix, as an explicit 3-site cell
     (so this is plain LSWT in both codes -- no rotating frame, no convention gap)."""
-    atoms = [{"label": f"S{i}", "pos": [i / 3.0, 0.0, 0.0], "spin_S": 1.0,
-              "ion": "Fe2+"} for i in range(3)]
+    # No `ion`: the Sunny reference is form-factor-free, so this compares the
+    # spin correlation function itself rather than f(Q)^2 times it.
+    atoms = [{"label": f"S{i}", "pos": [i / 3.0, 0.0, 0.0], "spin_S": 1.0}
+             for i in range(3)]
     cfg = {
         "crystal_structure": {"lattice_vectors": LAT, "atoms_uc": atoms},
         "interactions": {"symmetry_rules": [
@@ -62,19 +69,26 @@ CYCLOID = [[np.cos(2 * np.pi * i / 3), np.sin(2 * np.pi * i / 3), 0.0] for i in 
 
 HS = [0.10, 0.20, 0.45]
 
-# Sunny 0.8.1 (chiral via ssf_custom, perp via ssf_perp), bands sorted by energy
-SUNNY_E = {0.10: [0.84326, 1.17364, 1.35592],
-           0.20: [0.96139, 1.44517, 1.55379],
-           0.45: [0.91255, 1.32395, 1.47572]}
-SUNNY_CHIRAL = {0.10: [0.40561, -0.62277, 0.0],
-                0.20: [0.47561, 0.0, -1.7594],
-                0.45: [0.0, 0.75704, -2.09444]}
-SUNNY_PERP = {0.10: [0.40561, 0.62277, 0.0],
-              0.20: [0.47561, 0.0, 1.7594],
-              0.45: [0.0, 0.75704, 2.09444]}
+# Sunny 0.8.1, regenerated (bands sorted by energy). ssf_perp / ssf_custom, both
+# with apply_g=false and no form factor:
+#
+#   chiral = ssf_custom(sys; apply_g=false) do q, ssf
+#       qh = q / max(norm(q), 1e-12)
+#       Float64(real(im * (qh[1]*(ssf[2,3]-ssf[3,2]) + qh[2]*(ssf[3,1]-ssf[1,3])
+#                          + qh[3]*(ssf[1,2]-ssf[2,1]))))
+#   end
+SUNNY_E = {0.10: [0.8432638, 1.1736404, 1.3559224],
+           0.20: [0.9613918, 1.4451732, 1.5537861],
+           0.45: [0.9125506, 1.3239505, 1.4757244]}
+SUNNY_CHIRAL = {0.10: [0.3042106, -0.4670783, 0.0],
+                0.20: [0.3567096, 0.0, -1.3195507],
+                0.45: [0.0, 0.5677769, -1.5708310]}
+SUNNY_PERP = {0.10: [0.3042106, 0.4670783, 0.0],
+              0.20: [0.3567096, 0.0, 1.3195507],
+              0.45: [0.0, 0.5677769, 1.5708310]}
 
 
-def test_chiral_matches_sunny_sign_and_magnitude():
+def test_chiral_and_perp_match_sunny_absolutely():
     calc = _model(SCREW)
     qs = _q(HS)
     ch = calc.calculate_sqw(qs, cross_section="chiral")
@@ -90,10 +104,15 @@ def test_chiral_matches_sunny_sign_and_magnitude():
         c_su = np.array(SUNNY_CHIRAL[h])
         p_su = np.array(SUNNY_PERP[h])
 
-        # normalization-independent: chiral / perp, band by band
+        # ABSOLUTE, band by band -- magnitude as well as sign.
+        assert np.allclose(p_py, p_su, atol=1e-6), (
+            f"perp mismatch at q={h}: {p_py} vs {p_su}")
+        assert np.allclose(c_py, c_su, atol=1e-6), (
+            f"chiral mismatch at q={h}: {c_py} vs {c_su}")
+
+        # and the ratio, which is what pins the sign convention itself
         m = p_py > 1e-9
-        assert np.allclose(c_py[m] / p_py[m], c_su[m] / p_su[m], atol=1e-4), (
-            f"chiral/perp mismatch at q={h}: {c_py[m]/p_py[m]} vs {c_su[m]/p_su[m]}")
+        assert np.allclose(c_py[m] / p_py[m], c_su[m] / p_su[m], atol=1e-6)
 
 
 def test_proper_screw_magnons_are_fully_circularly_polarized():

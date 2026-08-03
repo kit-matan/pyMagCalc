@@ -154,6 +154,46 @@ guard refuses). Never silently wrong.
 
 ---
 
+## Gap 4 — what is still missing vs Sunny 0.8.1 (audit, 2026-08-03)
+
+A sweep of Sunny 0.8.1's full export list against the engine. Everything below was
+checked in code and, where a number was in question, measured.
+
+### Closed by this audit
+
+| Item | Was | Now |
+|---|---|---|
+| Magnetic form-factor table | invented Q-dependence, up to +113% intensity error at 5 Å⁻¹ | generated from Sunny; f(Q) pinned per ion, `<j2>` branch added |
+| `biquadratic` in SU(N) | silently dropped | exact via operator-pair couplings; matches Sunny `:SUN` |
+| `biquadratic` in entangled, Ewald `dipole_dipole` in SU(N)/entangled | silently dropped | hard error naming the alternative |
+| Anisotropy renormalization | undocumented mismatch with Sunny's default `:dipole` | `calculation.anisotropy_renormalization: rcs`, both branches pinned |
+| "S(Q,ω) is 3/4 of Sunny's" | false caveat blocking absolute comparison | retired; absolute scale pinned |
+
+### Still open
+
+Ordered by how much they cost. None of these is silently wrong — each either
+refuses or is simply absent.
+
+| # | Item | Sunny | Notes |
+|---|---|---|---|
+| 16 | Site-level inhomogeneity | `to_inhomogeneous`, `set_vacancy_at!`, `set_field_at!`, `set_exchange_at!`, `remove_periodicity!` | no vacancies, per-site couplings/fields or open boundaries. Blocks dilution/disorder studies (Sunny example 09) |
+| 17 | Classical-to-quantum correction | `intensities(sc, ...; kT)` | `sampled_correlations` returns the classical S(q,ω) with no `\|ω/kT\|/(1−e^{−ω/kT})` factor, so it is not on the quantum intensity scale. Also no `set_spin_rescaling_for_static_sum_rule!` |
+| 18 | Langevin thermostat / symplectic integrator | `Langevin`, `ImplicitMidpoint`, `suggest_timestep` | pyMagCalc thermalizes by Metropolis and evolves with undamped RK4; no stochastic thermostat, no timestep guidance |
+| 19 | Static / energy-integrated correlations | `SampledCorrelationsStatic`, `intensities_static` | no instantaneous-correlation task |
+| 20 | Experiment-data binning | `BinningParameters`, `load_nxs` | no NeXus histogram import |
+| 21 | General pair couplings | `set_pair_coupling!(sys, op, bond)` | SU(N) now covers bilinear + biquadratic; arbitrary two-site operators are not exposed (the engine's coupling matrix could carry them) |
+| 22 | Wang–Landau | `WangLandau`, `ParallelWangLandau` | the one Tier-2 remnant |
+| 23 | Domain averaging in SU(N)/entangled | `domain_average` | raises; dipole mode has it |
+| 24 | Mixed-spin SU(N); Ewald + rotating-frame single-k | — | both refuse honestly |
+| 25 | Polarization frames | `ssf_custom_bm` | only P ∥ q (`perp`/`trace`/`chiral`/`sf±`/components); no Blume–Maleev |
+| 26 | Entangled classical dynamics | `EntangledSampledCorrelations` | — |
+| 27 | Crystal utilities | `print_irreducible_bz_paths`, `primitive_cell`, `standardize`, `subcrystal` | cosmetic |
+
+Convention difference, not a gap: Sunny's `ssf_perp` applies the g-tensor by
+default (4× at g = 2). pyMagCalc's S(Q,ω) is spin-only = `apply_g=false`.
+
+---
+
 ## How things were validated (and the recurring trap)
 
 The single most important lesson from this work, stated for the next session:
@@ -205,6 +245,39 @@ plausible-but-wrong spectra that looked fine:
   all candidates and RAISES on a tie (directional rules) or on a `distance` window
   spanning two orbit lengths (all rules); pinned by
   `tests/test_ref_bond_ambiguity.py`.
+
+- the magnetic form-factor COEFFICIENT TABLE was not the tabulated one. Every
+  entry was normalized so that f(0) = 1 -- so a Q -> 0 check passed -- but the
+  Q-dependence was invented: against Sunny (the standard P. J. Brown / Int-Tables
+  <j0>) the intensity error reached +22% at |Q| = 2.5 A^-1, +53% at 3.8 and +113%
+  at 5 for Mn2+, with Cu2+, Fe2+, Ni2+ and Co2+ comparably wrong. Straight onto
+  the Cu5SbO6 powder work, which is Cu2+ out to 5 A^-1. Invisible because the only
+  test compared I_ion/I_bare against `get_form_factor(...)**2` -- SELF-CONSISTENT
+  BY CONSTRUCTION, the same wrong f(Q) on both sides. The table is now generated
+  mechanically from Sunny (as `stevens.py` is) and `tests/test_form_factor.py`
+  pins f(Q) ITSELF for 10 ions x 7 |Q| values, plus the <j2> (g != 2) branch.
+- `interactions.biquadratic` and `dipole_dipole: {method: ewald}` were SILENTLY
+  DROPPED in SU(N) and entangled mode: `from_generic_model` reads only
+  (Jex, DM, Kex) + sia/sia_matrix/stevens, so the term never reached the
+  Hamiltonian. Measured: adding a biquadratic B = -0.4 changed the SU(N) spectrum
+  by exactly 0.0 (control: an SIA moved it 0.9 meV). The Ewald case even LOGGED
+  "Ewald summation (no real-space bonds generated)" while nothing consumed it.
+  Biquadratic is now expanded exactly in SU(N) via the engine's generalized
+  operator-pair couplings -- (S_i.S_j)^2 = sum_ab (S_i^a S_i^b)(S_j^a S_j^b), so
+  n_ops goes 3 -> 12 -- and matches Sunny `:SUN` band-for-band; the rest raise.
+  `tests/test_sun_missing_terms.py`.
+- **a "convention difference" that was a wrong reference number.** CLAUDE.md,
+  this file and `test_polarized.py` all stated that pyMagCalc's absolute S(Q,w)
+  is 3/4 of Sunny's, and told the reader not to compare absolute intensities.
+  It is 1.0 -- verified band-by-band on a ferromagnet (S = 1/2, 1, 2), a Neel
+  antiferromagnet in two orientations, and the non-collinear helix. The 4/3 was
+  in hardcoded `SUNNY_PERP`/`SUNNY_CHIRAL` values, and the test compared only the
+  RATIO chiral/perp, in which any overall factor cancels -- so the number was
+  never checked, and the caveat then explained the leftover away permanently.
+  This is the same rule as everywhere else on this list, applied to ourselves:
+  **a clean constant factor is a bug until proven otherwise, and "it's a
+  convention" is not a proof.** Now pinned absolutely by
+  `tests/test_absolute_normalization.py`.
 
 Every one was caught by an **independent oracle or an exact identity**, never by
 inspection. So: validate against Sunny (in-repo) or a textbook analytic result; prefer

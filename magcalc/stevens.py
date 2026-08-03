@@ -69,3 +69,47 @@ def stevens_polynomial(k: int, q: int, Sx: Any, Sy: Any, Sz: Any) -> Any:
     sx, sy, sz = sp.symbols("Sx Sy Sz")
     expr = sp.sympify(STEVENS_POLY[key], locals={"Sx": sx, "Sy": sy, "Sz": sz})
     return expr.subs({sx: Sx, sy: Sy, sz: Sz}, simultaneous=True)
+
+
+# Renormalized-classical-spin (RCS) factors lambda_k, from D. Dahlbom et al.,
+# arXiv:2304.03874 -- transcription-checked against Sunny 0.8.1 `rcs_factors`
+# (src/System/OnsiteCoupling.jl). See `rcs_lambda` for what they are for.
+_RCS_LAMBDA = {
+    0: lambda s: 1.0,
+    1: lambda s: 1.0,
+    2: lambda s: 1 - (1 / 2) / s,
+    3: lambda s: 1 - (3 / 2) / s + (1 / 2) / s ** 2,
+    4: lambda s: 1 - 3 / s + (11 / 4) / s ** 2 - (3 / 4) / s ** 3,
+    5: lambda s: 1 - 5 / s + (35 / 4) / s ** 2 - (25 / 4) / s ** 3 + (3 / 2) / s ** 4,
+    6: lambda s: (1 - (15 / 2) / s + (85 / 4) / s ** 2 - (225 / 8) / s ** 3
+                  + (137 / 8) / s ** 4 - (15 / 4) / s ** 5),
+}
+
+
+def rcs_lambda(k: int, s: float) -> float:
+    """The order-k classical-to-quantum renormalization factor for spin s.
+
+    Dipole LSWT replaces an operator by its classical polynomial, i.e. formally
+    takes s -> infinity. For a rank-k on-site term that systematically
+    OVERESTIMATES the energy at finite s, because <O_k^q> of a coherent state is
+    not the classical polynomial of <S>. Multiplying the coefficient by
+    lambda_k(s) restores agreement with the exact SU(N) answer:
+
+        lambda_2 = 1 - 1/(2s):  0 at s = 1/2, 1/2 at s = 1, 2/3 at s = 3/2 -> 1.
+
+    lambda_2(1/2) = 0 is the sanity check -- (S.n)^2 IS a constant for s = 1/2,
+    so a quadratic anisotropy can have no effect there, and the un-renormalized
+    classical polynomial wrongly says otherwise.
+
+    This is what Sunny's default `:dipole` mode applies and its
+    `:dipole_uncorrected` mode does not. pyMagCalc leaves it OFF by default
+    (matching SpinW, and every existing config here); turn it on per config with
+    `calculation: {anisotropy_renormalization: rcs}`.
+    """
+    k = int(k)
+    if k not in _RCS_LAMBDA:
+        raise ValueError(f"no RCS factor for rank k={k} (0..6 available).")
+    s = float(s)
+    if s <= 0:
+        raise ValueError(f"RCS factor needs a positive spin, got s={s}.")
+    return float(_RCS_LAMBDA[k](s))

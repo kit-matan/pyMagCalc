@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 
-from .lswt import SUNModel
+from .lswt import SUNModel, _reject_unsupported_terms
 from .operators import spin_matrices
 
 logger = logging.getLogger(__name__)
@@ -82,6 +82,11 @@ def build_entangled_model(model, params: Optional[Sequence[float]] = None,
     numeric parameters (as for the other engines).
     """
     params = list(params if params is not None else [])
+    # Terms this builder does not read must fail loudly, never vanish -- see
+    # lswt._reject_unsupported_terms. Biquadratic is supported in SU(N) but not
+    # here: a unit's operator basis is already the embedded constituent spins, so
+    # (S_i.S_j)^2 would need the products of THOSE, not of a single site's dipoles.
+    _reject_unsupported_terms(model, engine="entangled", supports_biquadratic=False)
     Jex, DM, Kex = model.spin_interactions(params)
     apos = np.asarray(model.atom_pos(), dtype=float)        # CARTESIAN site positions
     aouc = np.asarray(model.atom_pos_ouc(), dtype=float)    # CARTESIAN over-cell positions
