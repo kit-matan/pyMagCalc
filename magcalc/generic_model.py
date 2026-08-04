@@ -2698,7 +2698,12 @@ class GenericSpinModel:
             local_dirs = [u.copy() for _ in range(nspins)]
 
         # --- Cone angle (deviation from the axis) ---
-        cone_deg = float(config.get('cone_angle_deg', 0.0))
+        # `or 0.0`: the deprecated propagation_vector -> single_k mapping inserts
+        # `cone_angle_deg: None` explicitly, so .get() returns None rather than the
+        # default and float(None) raises. Line ~895 already guards it this way; this
+        # site did not, which silently broke every legacy propagation_vector config
+        # (the runner catches it, logs, and carries on with no structure).
+        cone_deg = float(config.get('cone_angle_deg', 0.0) or 0.0)
         if cone_deg > 0.0:
             c = np.radians(cone_deg)
             coned = []
