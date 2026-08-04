@@ -291,7 +291,7 @@ Mechanically checking every documented config key against `tests/`:
 
 | key | in examples | note |
 |---|---|---|
-| `interactions.kitaev` | 0 | an entire interaction TYPE, in neither tests nor examples |
+| `interactions.kitaev` | 0 | an entire interaction TYPE, in no example; one test, tautological (see below) |
 | `tasks.powder_average` | 9 | 9 configs use it; the tests call `powder_sample_modes` directly |
 | `tasks.export_csv` | 4 | — |
 | `tasks.sun_sampled_correlations` | 2 | added today; its wiring bug was caught by hand, not by a test |
@@ -318,6 +318,109 @@ the axes that actually interact: engine mode x field x anisotropy x structure ty
 **Suggested order**, cheapest and highest-risk first: a smoke test that RUNS each
 example config through the runner (catches every wiring bug at once, needs no
 physics); then `kitaev`; then the guard tolerances; then the combination matrix.
+
+### Progress
+
+**1. Config smoke test — ✅ DONE.** `tests/test_config_smoke.py` runs all 52 shipped
+configs and fails on an ERROR *log record*, not just an exception (the runner catches
+and logs, so exception-only assertions see nothing). It immediately found a live bug:
+the deprecated `propagation_vector -> single_k` mapping inserts `cone_angle_deg: None`
+explicitly, and one of the two read sites lacked the `or 0.0` guard, so `float(None)`
+raised — **every legacy `propagation_vector` config had been running with no magnetic
+structure at all**, logged and carried on. FeI2 was the config that exposed it.
+
+**2. `kitaev` — ✅ DONE.** `tests/test_kitaev.py`, 19 tests, pinned to the type's
+EXACT `interaction_matrix` equivalent (K on one Cartesian diagonal entry), so no
+external oracle is needed. The audit table above said "0 tests"; the truth was worse
+than "none" — there was one, `test_new_interactions.py::test_kitaev_interaction`,
+asserting
+
+    assert any(str(s) in ['kx','ky','kz'] for s in hm.free_symbols) or len(...) >= 0
+
+whose `or` clause is `len(...) >= 0`, always true. The only live assertion was "H is
+not identically zero". **A test that cannot fail reads as coverage in every audit,
+including this one** — the key-grep counted it as absent for the wrong reason and got
+the right answer by luck. It has been rewritten around a K-linearity identity.
+
+Three silent-drop bugs were sitting behind that gap, all now hard errors:
+
+- an unresolvable `value` logged a WARNING and `continue`d, dropping the bond;
+- an unrecognised `axis` fell through `.get(axis, 2)` to **z**, so `axis: c` or any
+  typo silently built a z-Kitaev term;
+- **`type: kitaev` under `symmetry_rules` had no propagation branch at all.** The rule
+  ran the reference-bond search, looped over all 48 symmetry ops, and added ZERO
+  bonds in silence — while CLAUDE.md §2 documented `ref_pair` as *required* for
+  exactly this type. Measured on simple cubic: the `interaction_matrix` rule adds 6
+  bonds, the equivalent `kitaev` rule added none.
+
+The third is now implemented (a Kitaev term is converted to its diagonal matrix and
+propagated by the tested `R J R^T` path — on cubic, one z-axis reference bond
+correctly generates K^xx on the x bonds, K^yy on the y, K^zz on the z), and the
+dispatch grew an `else: raise`, so no future rule type can vanish the same way.
+**The root cause was structural: an if/elif chain over rule types with no else.**
+
+**3. Guard tolerances — ✅ DONE.** `tests/test_guard_tolerances.py`, 13 tests. The
+guards themselves were well covered; nothing checked that their thresholds are READ
+or that they move in the right direction. The model is a Néel chain tilted by θ, which
+gives an exact handle — ΔE(θ) = 2·J·S²·(1 − cos θ), verified at θ = 2°, 5°, 10° — so
+each knob is bracketed above and below a drop of *known* size instead of a golden
+number. The same structure carries imaginary magnons, so one model exercises both
+guards and loosening the energy audit visibly hands off to the imaginary one.
+
+No bug in the tolerances: all four read sites work. Two things did come out of it:
+
+- **`calculation.imaginary_rel_tolerance` is a third tolerance documented NOWHERE** —
+  not CLAUDE.md, not TUTORIAL.md, not `schema.py` — and guard 1 fires only when the
+  absolute AND relative thresholds are both exceeded, so lowering
+  `imaginary_tolerance` alone cannot make it fire. Now documented, and the AND is
+  pinned (an AND→OR mutation fails two tests).
+- **A key-level audit is structurally blind to undocumented keys.** The audit
+  enumerated *documented* config keys and checked them against `tests/`; a knob that
+  is in neither place is invisible to exactly the process meant to find gaps. This is
+  the same shape as the `kitaev` finding one item earlier — there, a test that could
+  not fail counted as coverage. **Both times the audit's own instrument was the blind
+  spot, not the thing being audited.** Any future coverage sweep should enumerate from
+  the CODE (`calc_config.get(...)` call sites) as well as from the docs.
+
+Verified by MUTATION, not just by passing: hardcoding `energy_tolerance` fails 4
+tests, hardcoding `imaginary_tolerance` fails 1, and flipping the guard's AND to OR
+fails 2. A tolerance test that passes when the knob is ignored would be worth nothing.
+
+**4. Combination matrix — ✅ DONE.** `tests/test_combination_matrix.py`, 26 tests over
+engine mode x field (magnitude and direction) x anisotropy x structure type. Built on
+identities that hold across the whole grid rather than per-cell reference numbers:
+rotational invariance of an isotropic Hamiltonian; S=1/2 SU(N) ≡ dipole LSWT; supercell
+band folding ({omega(q), omega(q+1/2)}, exact to 1e-15); the closed-form dimer triplon
+sqrt(J^2 - J J' cos 2pi q) and its Zeeman splitting.
+
+**It found a live silently-dropped term.** `single_ion_anisotropy`, `sia_matrix` and
+`stevens` never reached the ENTANGLED engine: `build_entangled_model` assembled each
+unit's on-site block from `_pair_matrix(Jex, DM, Kex, ...)` plus the Zeeman and read no
+on-site anisotropy at all, while `_reject_unsupported_terms` let them through — its
+docstring says the builder reads "the on-site SIA/Stevens terms", which is true of
+plain SU(N) (`lswt.from_generic_model`) and was never true here. Measured: D = -5 meV
+on an S=1 dimer moved the triplon by EXACTLY 0.000. Now implemented (embedded per
+constituent, folded in before the reference state is chosen) and pinned against exact
+diagonalization of the isolated unit — matching to ~1e-14 for easy-axis, easy-plane,
+with a competing field, and at S=3/2.
+
+Why no earlier audit could see it: every one of those keys is used in many dipole and
+SU(N) tests, so a key-level sweep counts them covered. It is a mode x anisotropy
+*combination* that was missing — the exact dimension this item exists to cover.
+It also hid behind real physics: at S=1/2 an (S.n)^2 anisotropy IS a constant, so it
+correctly has no effect, and every shipped entangled example is S=1/2.
+
+Both historical field bugs were re-introduced as mutations to confirm the grid catches
+them: dropping the SU(N) Zeeman fails 5 tests (including a non-slow one), and forcing
+the field to +z fails 6. A third mutation (desyncing one module's mu_B) fails the
+constant-consistency test, which reads the literal out of all six files that define it.
+
+**A test of mine was vacuous, and the mutation run is what said so.** The first
+entangled invariance test used the ISOTROPIC dimer — whose reference is a singlet with
+no ordered moment, so its spectrum depends on |H| alone and the test survived the
+forced-to-+z mutation untouched. It now uses an anisotropic unit, where the direction
+is observable. Writing a test is not evidence that it can fail; running the bug against
+it is.
 
 **Method note:** the first version of this audit reported 22 keys, because `\b`
 inside a character class is a backspace, not a word boundary. A confidently wrong
@@ -439,6 +542,54 @@ plausible-but-wrong spectra that looked fine:
      faulty helper.** "SU(N) == dipole for four field directions" would have PASSED
      while the direction bug was live, because both engines were equally wrong. The
      test therefore also asserts that a transverse field differs from a z field.
+
+- **`type: kitaev` under `symmetry_rules` expanded to ZERO bonds, in silence.**
+  `add_symmetry_interaction` dispatches on rule type through an if/elif chain with
+  branches for `dm`, `heisenberg`, `anisotropic_exchange` and `interaction_matrix` —
+  **and no `else`.** A `kitaev` rule therefore ran the whole reference-bond search,
+  looped over all 48 symmetry ops of the cell, matched no branch, and added nothing;
+  the run succeeded with the interaction simply absent from H. CLAUDE.md §2 has
+  listed `kitaev` among the types for which `ref_pair` is REQUIRED the entire time.
+  Two smaller silent drops sat alongside it in the explicit-bond path: an unresolved
+  `value` warned and `continue`d, and an unrecognised `axis` fell through
+  `.get(axis, 2)` to z, so `axis: c` built a z-Kitaev term without comment.
+
+  Three lessons:
+
+  1. **A dispatch over a closed set of types needs an `else` that raises.** This is
+     the same shape as the SU(N) missing-terms bug above (`from_generic_model` reads
+     the terms it knows and ignores the rest) — the second time an unhandled case
+     has meant "drop it quietly". Both now raise.
+  2. **A test that cannot fail reads as coverage.** `kitaev` did have a test, whose
+     live content was "H is not identically zero" after an `or len(...) >= 0`
+     tautology neutralized the real assertion. It passed for a wrong axis, a wrong
+     sign, and a term propagated to zero bonds by a different code path.
+  3. **Documentation is not evidence that a path works.** The `symmetry_rules`
+     kitaev route was documented in detail and had never once been executed. Prefer
+     an oracle the feature cannot supply itself: here the exact
+     `interaction_matrix` equivalent, which needs no external reference at all.
+
+- **on-site anisotropy was SILENTLY DROPPED in `mode: entangled`.**
+  `build_entangled_model` folded the bilinear pair terms and the Zeeman into each
+  unit's on-site block and never read `single_ion_anisotropy` / `sia_matrix` /
+  `stevens`. `_reject_unsupported_terms` did not catch it because its docstring's
+  premise — that the builder reads "the on-site SIA/Stevens terms" — describes
+  `lswt.from_generic_model`, not this engine. D = -5 meV on an S=1 dimer moved the
+  triplon by exactly 0.000. Now implemented and pinned against exact diagonalization
+  of the isolated unit (~1e-14, incl. S=3/2 and a competing field).
+
+  Two lessons:
+
+  1. **The guard against silent drops was itself guarded by a stale comment.** A
+     rejection list that enumerates what an engine "does not support" has to be
+     derived from what the builder actually reads, or it drifts into permitting
+     exactly what it exists to forbid. This is the third instance on this list of a
+     term vanishing because a dispatch or a filter did not know about it.
+  2. **Physics can hide a bug from the very test that would find it.** At S=1/2 an
+     (S.n)^2 anisotropy IS a constant and correctly has no effect — and every shipped
+     entangled example is S=1/2, so even a careful "does the anisotropy change the
+     spectrum?" check written against them would have concluded, correctly and
+     uselessly, "no". Only S >= 1 discriminates.
 
 Every one was caught by an **independent oracle or an exact identity**, never by
 inspection. So: validate against Sunny (in-repo) or a textbook analytic result; prefer
