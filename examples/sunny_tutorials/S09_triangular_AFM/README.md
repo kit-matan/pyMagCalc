@@ -19,6 +19,12 @@ modes at Γ and at the K-point ordering wavevector `[1/3, 1/3, 0]`.
 The tutorial's actual subject is **disorder broadening** computed with
 `SpinWaveTheoryKPM` (kernel polynomial method) on a large inhomogeneous supercell
 with stochastic exchange constants and g-factors (modelling Mg/Ga site disorder
-in YbMgGaO₄). pyMagCalc has neither KPM (Gap Tier 2 #10) nor per-bond disorder /
-`to_inhomogeneous`, so the disorder-broadened spectrum is out of scope. The clean
-120° dispersion above is the coherent spectrum that the disorder broadens.
+in YbMgGaO₄).
+
+**KPM now exists** (`magcalc/sun/kpm.py`, Gap Tier 2 #10 — this README used to say it
+did not). What is still missing is the other half: **per-bond disorder in LSWT**, i.e.
+Sunny's `to_inhomogeneous` + `set_exchange_at!` on a large supercell. Vacancies and
+open boundaries landed for the *classical* samplers (Gap 4 #16a); the LSWT half is
+Gap 4 **#16b**, still open, so the disorder-broadened spectrum remains out of reach.
+
+The clean 120° dispersion above is the coherent spectrum that the disorder broadens.

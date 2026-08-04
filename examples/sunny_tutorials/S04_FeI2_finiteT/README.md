@@ -6,8 +6,11 @@ coupling to a thermal bath, thermalises a 16×16×4 supercell at 2.3–3.5 K, an
 measures the dynamical structure factor `S(Q,ω)` from those trajectories
 (`SampledCorrelations`), including the paramagnetic phase above ordering.
 
-**pyMagCalc does not implement finite-temperature (SU(N) or dipole) classical
-spin dynamics** — Gap Tier 2 #5 in `GAP_STATUS.md`, not done. It provides the
+**pyMagCalc implements finite-temperature DIPOLE classical spin dynamics**
+(`magcalc/classical_dynamics.py`, Gap Tier 2 #5 — this README used to say it did
+not), but this tutorial needs the **SU(N)** version: coherent states evolving under
+the CP^(N−1) equations of motion, which is a different integrator, not a wrapper on
+the Landau–Lifshitz one. That is Gap 4 **#26**, still open. It provides the
 *linear* SU(N) spin-wave spectrum at T = 0, not thermally-sampled correlations.
 
 **Closest available:** the FeI₂ SU(3) LSWT spectrum at T = 0 —

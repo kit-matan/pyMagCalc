@@ -8,7 +8,7 @@
 # at T = 16 K and measures the instantaneous structure factor with
 # `SampledCorrelationsStatic` / `intensities_static`.
 #
-# pyMagCalc's equivalent is `tasks: {static_correlations: true}` (Gap 4 #19), which
+# pyMagCalc's equivalent is `tasks: {static_correlations: true, sampled_correlations: true}` (Gap 4 #19), which
 # is the same observable: the equal-time correlation <|S(q)|^2> averaged over
 # thermally sampled configurations, per site.
 #
@@ -99,6 +99,7 @@ magnetic_structure:
   - *id002
 tasks:
   static_correlations: true
+  sampled_correlations: true
 static_correlations:
   temperature: 1.3788
   supercell: [4, 4, 4]
@@ -114,6 +115,16 @@ q_path:
   Gamma2: [0.0, 0.0, 0.0]
   path: [Gamma, X, W, Gamma2]
   points_per_segment: 160
+sampled_correlations:
+  temperature: 1.3788
+  supercell: [4, 4, 4]
+  dt: 0.02
+  n_steps: 512
+  n_traj: 4
+  therm_sweeps: 1500
+  cross_section: perp
+  classical_to_quantum: true
+  seed: 0
 plotting:
   save_plot: true
   show_plot: false

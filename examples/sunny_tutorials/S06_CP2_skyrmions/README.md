@@ -9,7 +9,9 @@ density in real time.
 
 **pyMagCalc implements neither SU(N) real-space Langevin dynamics nor
 non-equilibrium quench simulation nor topological-charge diagnostics.** These are
-time-dependent, finite-*T*, real-space dynamics (related to Gap Tier 2 #5/#6 in
+time-dependent, finite-*T*, real-space dynamics of SU(3) COHERENT STATES. The
+dipole-sector prerequisites (Gap Tier 2 #5/#6) are now done; the blocker is the
+CP^(N−1) equations of motion, Gap 4 **#26**, still open. (Formerly cited as Tier 2 #5/#6 in
 `GAP_STATUS.md`) — categorically outside a linear-spin-wave engine, which computes
 only the harmonic excitation spectrum about a static equilibrium.
 
