@@ -241,6 +241,24 @@ default (4× at g = 2). pyMagCalc's S(Q,ω) is spin-only = `apply_g=false`.
 
 ---
 
+## Sunny tutorial ports — audited 2026-08-04
+
+`examples/sunny_tutorials/README.md` has the per-tutorial detail. Summary: of Sunny's
+nine examples, **four are ported and pinned** (01, 03, 08 and the clean part of 09),
+**one is ported but only transitively justified** (07 — the Ewald engine is pinned to
+Sunny, that config's own bands are not), and **four are not ported**. Two of those
+four (02, 05) are unblocked and simply not done; two (04, 06) plus the disordered half
+of 09 are blocked on Gap 4 #26 and #16b.
+
+The audit found the README was stale in BOTH directions: it called 02/04/05/06 "out of
+scope" (Tier 2 has since implemented classical dynamics and thermal MC, so 02 and 05
+are now portable), and it claimed S01's bands were "cross-checked against Sunny" when
+nothing asserted it — S01 has no `magnetic_structure`, so the test helper could not
+drive it and it was schema-checked only. It does match Sunny exactly, band for band,
+and now says so in a test.
+
+---
+
 ## How things were validated (and the recurring trap)
 
 The single most important lesson from this work, stated for the next session:

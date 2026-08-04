@@ -69,6 +69,10 @@ def _lattice_from_params(p):
     return np.array([v_a, v_b, [cx, cy, cz]], float)
 
 
+def _load(name):
+    return yaml.safe_load(open(os.path.join(ROOT, CONFIGS[name])))
+
+
 def test_all_ported_configs_validate():
     from magcalc.schema import MagCalcConfig
     for name, rel in CONFIGS.items():
@@ -99,3 +103,59 @@ def test_S09_triangular_120_matches_analytic_max_and_is_gapless_at_K():
     w_max_analytic = 3 * 1.0 * 0.5 * np.sqrt(9 / 8)     # = 1.59099
     assert abs(w[:-1].max() - w_max_analytic) < 5e-3, f"{w[:-1].max()} vs {w_max_analytic}"
     assert w[-1] < 1e-3, f"not gapless at K: {w[-1]}"    # Goldstone at K
+
+# ---------------------------------------------------------------------------
+# S01: pinned to Sunny 0.8.1, band by band. The README claimed this was
+# "cross-checked against Sunny" but nothing asserted it -- the config has no
+# `magnetic_structure` (it relies on tasks.minimization), so the helper above could
+# not drive it and it was only schema-checked.
+#
+#   cryst = Crystal(lattice_vectors(8.5031,...,90,90,90), [[1/8,1/8,1/8]], 227)
+#   sys = System(cryst, [1 => Moment(s=3/2, g=2)], :dipole)
+#   set_exchange!(sys, 0.63, Bond(2, 3, [0,0,0]))     # NB Bond(2,3), d = 3.68195 A
+#   randomize_spins!(sys); minimize_energy!(sys)
+#   dispersion(SpinWaveTheory(sys; measure=nothing), qs)
+# ---------------------------------------------------------------------------
+S01_QS = [[0, 0, 0], [0.25, 0, 0], [0.5, 0, 0], [0.5, 0.25, 0], [0.5, 0.5, 0],
+          [0.25, 0.25, 0]]
+S01_SUNNY = [
+    [0.0, 0.0, 3.78, 3.78, 3.78, 3.78, 3.78, 3.78],
+    [1.446543, 1.446543, 3.492265, 3.492265, 3.78, 3.78, 3.78, 3.78],
+    [2.672864, 2.672864, 2.672864, 2.672864, 3.78, 3.78, 3.78, 3.78],
+    [2.861895, 2.861895, 2.861895, 2.861895, 3.638977, 3.638977, 3.638977, 3.638977],
+    [3.273576, 3.273576, 3.273576, 3.273576, 3.273576, 3.273576, 3.273576, 3.273576],
+    [1.969400, 1.969400, 3.535866, 3.535866, 3.535866, 3.535866, 3.739246, 3.739246],
+]
+
+
+def test_S01_dispersion_matches_sunny_band_by_band():
+    """CoRh2O4: every band at every q, against Sunny.
+
+    The diamond lattice is two interpenetrating fcc sublattices, so the Neel state is
+    Co0..Co3 up / Co4..Co7 down; it is supplied explicitly here rather than found by
+    the annealer, so the test measures the SPECTRUM and not the minimizer.
+    Sunny's Goldstone mode comes back as 2.75e-4 rather than 0 -- that is its
+    minimizer's residual, not a disagreement, hence the absolute tolerance.
+    """
+    cfg = _load("S01")
+    cfg["magnetic_structure"] = {"type": "pattern", "pattern_type": "generic",
+                                 "directions": [[0, 0, 1]] * 4 + [[0, 0, -1]] * 4}
+    cfg["calculation"] = {"on_imaginary": "off"}
+    m = GenericSpinModel(cfg)
+    th, ph = m.generate_magnetic_structure()
+    m.set_magnetic_structure(th, ph)
+    calc = mc.MagCalc(spin_model_module=m, spin_magnitude=1.5, cache_mode="none",
+                      cache_file_base="s01_pin",
+                      hamiltonian_params=[cfg["parameters"]["J"]])
+    L = _lattice_from_params(cfg["crystal_structure"]["lattice_parameters"])
+    B = 2 * np.pi * np.linalg.inv(L).T
+    got = np.sort(np.real(calc.calculate_dispersion(
+        [np.array(q, float) @ B for q in S01_QS]).energies), axis=1)
+    assert got == pytest.approx(np.array(S01_SUNNY), abs=5e-4)
+
+
+def test_S01_classical_energy_is_the_exact_neel_value():
+    """-2 J s^2 = -2.835 meV/site for the diamond Neel state (z = 4, the 1/2 over
+    ordered pairs). Sunny's minimizer lands on exactly this."""
+    assert -2 * 0.63 * 1.5 ** 2 == pytest.approx(-2.835, abs=1e-12)
+
