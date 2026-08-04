@@ -229,7 +229,7 @@ disordered system, which is a different question and should wait until one is as
 
 | # | Item | Phase | Why it is open |
 |---|---|---|---|
-| 24b | Ewald + rotating-frame single-k | 2 | each channel needs a projector-weighted combination of A(q_c), A(q_c±k) — a derivation, not plumbing. Refuses honestly meanwhile. ~1 week |
+| 24b | Ewald + rotating-frame single-k | 2 | **ready to implement** — method taken from Sunny (five-term projector algebra; Ewald folds into the same `Jq` as the exchange). Sketch and two-stage oracle in GAP4_PLAN. **Blocks no example**: nothing in `examples/` combines `single_k` with `dipole_dipole: ewald` |
 | — | Classical S(q,ω) absolute normalization | 3 | opened by #17: the classical path's overall scale has never been reconciled with the LSWT/Sunny one. Shape is pinned, scale is not |
 | — | `magcalc validate` field-direction coverage | — | the two field bugs below were invisible because no test applied a field off z. Worth auditing what else the suite never exercises |
 
