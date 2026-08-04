@@ -216,7 +216,7 @@ one-line answer from the group before it is worth 4 days.
 |---|---|---|---|---|
 | 16a | Vacancies + open boundaries, **classical** | ✅ | `disorder: {vacancy_concentration, seed}` or `{vacancies: […]}`, `periodic: [b,b,b]` on any of `thermal_mc` / `sampled_correlations` / `static_correlations` / `wang_landau` | exact identities: x→0 is bit-identical to clean; a vacancy is exactly the restriction of H to the survivors; analytic bond counts (32 periodic vs 24 open on 4×4); self-averaging across seeds |
 | 16b | Disorder in **LSWT** | ⬜ | — | needs a large disordered supercell + the existing KPM engine (Sunny example 09's recipe). ~1 week |
-| 26 | Entangled classical dynamics | ⬜ | — | needs CP^(N−1) equations of motion — a different integrator, not a wrapper. ~1–2 weeks |
+| 26 | SU(N) / entangled classical dynamics | ⚠️ **PARTIAL** | `magcalc/sun/dynamics.py` | **Dynamics: closed and pinned.** i dZ_i/dt = h_i Z_i with h_i the same mean field the CP^(N−1) search builds; at N=2 it reproduces Landau–Lifshitz to **4.8e-10**, energy and \|Z_i\| conserved to 1e-8 / 1e-12. **S(q,ω): NOT validated** — peaks at ~half the LSWT energy (ratio 1.95, stable in kT, real spectral weight). Unexplained; a clean factor of 2 is a bug until proven otherwise. Marked xfail, not shipped as usable |
 
 **Why 16a stops here.** GAP4_PLAN says "ship step 1 and stop if that answers the
 question", and it plausibly does: dilution thermodynamics, open-boundary/finite-size

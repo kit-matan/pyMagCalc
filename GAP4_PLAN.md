@@ -317,7 +317,7 @@ realization.
 
 **Risk.** High, mostly in scope. Ship step 1 and stop if that answers the question.
 
-### #26 `EntangledSampledCorrelations` — ~1–2 weeks
+### #26 SU(N) classical dynamics — ⚠️ PARTIAL (2026-08-04)
 
 **What.** Finite-T classical dynamics for entangled units. Requires evolving SU(N)
 coherent states under the CP^(N−1) equations of motion — a different integrator from
@@ -327,8 +327,17 @@ the dipole Landau–Lifshitz one in `classical_dynamics.py`, not a wrapper aroun
 the existing Landau–Lifshitz result — the same "S=½ SU(N) ≡ dipole" gate that
 load-bears in `tests/test_sun.py`. Then Sunny.
 
-**Risk.** High, low demand. Defer unless a dimer material needs a finite-T lineshape
-that the harmonic triplon cannot give.
+**Outcome.** The equations of motion turned out to be the cheap part -- the generator
+is `SUNModel.local_field`, already built for the ground-state search, so propagating
+instead of minimizing is a few dozen lines. The N=2 dipole-limit gate passes to
+4.8e-10, which is the strong result here.
+
+What did NOT close is the finite-T S(q,ω) built on top: it peaks at roughly HALF the
+SU(N) LSWT energy (1.95x, stable across kT, with real spectral weight, so not noise).
+The EOM and integrator are independently verified, so the defect lies between the
+trajectory and the spectrum -- CP^(N-1) thermal sampling, the moment operator, or a
+genuine factor in the N > 2 correspondence. Left as a visible xfail rather than
+guessed at. **S04 and S06 remain blocked** on resolving it.
 
 ---
 
