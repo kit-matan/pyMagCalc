@@ -210,6 +210,19 @@ existing `fitting.load_fit_data` CSV path may already cover how data leaves the
 reduction pipeline here, in which case NeXus import is work for nobody. It needs a
 one-line answer from the group before it is worth 4 days.
 
+### Phase 4 (large; gated on a real calculation needing them)
+
+| # | Item | Status | Key | Validated against |
+|---|---|---|---|---|
+| 16a | Vacancies + open boundaries, **classical** | ✅ | `disorder: {vacancy_concentration, seed}` or `{vacancies: […]}`, `periodic: [b,b,b]` on any of `thermal_mc` / `sampled_correlations` / `static_correlations` / `wang_landau` | exact identities: x→0 is bit-identical to clean; a vacancy is exactly the restriction of H to the survivors; analytic bond counts (32 periodic vs 24 open on 4×4); self-averaging across seeds |
+| 16b | Disorder in **LSWT** | ⬜ | — | needs a large disordered supercell + the existing KPM engine (Sunny example 09's recipe). ~1 week |
+| 26 | Entangled classical dynamics | ⬜ | — | needs CP^(N−1) equations of motion — a different integrator, not a wrapper. ~1–2 weeks |
+
+**Why 16a stops here.** GAP4_PLAN says "ship step 1 and stop if that answers the
+question", and it plausibly does: dilution thermodynamics, open-boundary/finite-size
+effects and diluted S(q,ω) are all reachable now. 16b buys LSWT *spectra* of a
+disordered system, which is a different question and should wait until one is asked.
+
 ### Phase 4 — still open
 
 Ordered by how much they cost. None is silently wrong — each either refuses or is
@@ -220,7 +233,6 @@ simply absent.
 | 21 | General pair couplings | 2 | `set_pair_coupling!` | SU(N) covers bilinear + biquadratic; the operator-pair machinery is already there, only the front end (tensor SVD) is missing |
 | 24a | Mixed-spin SU(N) | 2 | — | `sun/lswt.py` requires a uniform N; needs per-site block offsets |
 | 24b | Ewald + rotating-frame single-k | 2 | — | each q ± k channel needs its own A(q) |
-| 16 | Site-level inhomogeneity | 4 | `to_inhomogeneous`, `set_vacancy_at!`, … | no vacancies / per-site couplings / open boundaries; blocks disorder work |
 | 26 | Entangled classical dynamics | 4 | `EntangledSampledCorrelations` | needs CP^(N−1) equations of motion |
 | — | Classical S(q,ω) absolute normalization | 3 | — | opened by #17: the classical path's overall scale has never been reconciled with the LSWT/Sunny one. Shape is pinned, scale is not |
 

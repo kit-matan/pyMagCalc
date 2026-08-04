@@ -281,12 +281,12 @@ so this drops to Phase 4. Ask before building.
 
 ---
 
-## Phase 4 — large, and only if a real calculation needs them
+## Phase 4 — ✅ #16 step 1 DONE (2026-08-04); the rest still gated
 
 Both are multi-week. Neither is on the critical path for anything currently in
 `examples/`. Do not start either without a specific calculation that requires it.
 
-### #16 Site-level inhomogeneity — ~1–2 weeks
+### #16 Site-level inhomogeneity — step 1 ✅ DONE (~3 days); step 2 still open
 
 **What.** Vacancies, per-site fields/couplings, open boundaries (Sunny
 `to_inhomogeneous`, `set_vacancy_at!`, `set_field_at!`, `set_exchange_at!`,
@@ -347,7 +347,8 @@ that the harmonic triplon cannot give.
 | ✅ 3 | 18 | Langevin / ImplicitMidpoint | 3 d | low–med | existing exact Langevin-function tests |
 | ✅ 3 | 22 | Wang–Landau | 3 d | low | Beale's exact 2-D Ising g(E) |
 | ⏸ 3 | 20 | NeXus binning | 4 d | low | Sunny `load_nxs`; count conservation |
-| 4 | 16 | Site-level inhomogeneity | 1–2 w | high | x→0 clean limit; Sunny example 09 |
+| ✅ 4 | 16a | Vacancies + open boundaries (classical) | 3 d | — | exact restriction identity; analytic bond counts |
+| 4 | 16b | Disorder in LSWT (via KPM) | 1 w | high | Sunny example 09 |
 | 4 | 26 | Entangled classical dynamics | 1–2 w | high | N=2 reduces to Landau–Lifshitz (exact) |
 
 Phase 1 landed 2026-08-03 (see GAP_STATUS.md for what each was pinned to).

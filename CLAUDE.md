@@ -565,6 +565,14 @@ thermal_mc: {temperatures: [0.2,0.5,1,2,4], supercell: [6,6,1], n_sweeps: 4000, 
 tasks: {sampled_correlations: true} # classical-dynamics S(q,w) (full thermal lineshape)
 sampled_correlations: {temperature: 0.5, supercell: [16,1,1], dt: 0.02, n_steps: 2048, n_traj: 8}
 
+# Site-level disorder, available to ALL the real-space classical samplers below
+# (thermal_mc, sampled_correlations, static_correlations, wang_landau). A vacancy
+# DELETES the site's rows/columns from the classical energy, so it removes every bond
+# it took part in; `periodic: false` on an axis drops the bonds that wrap it.
+# LSWT does not support disorder (its front end is symbolic and per-cell).
+thermal_mc: {supercell: [8,8,1], disorder: {vacancy_concentration: 0.1, seed: 0},
+             periodic: [true, true, false]}
+
 tasks: {wang_landau: true}          # density of states g(E): ONE run, every temperature
 wang_landau: {supercell: [4,4,1], temperatures: [0.25,0.5,1,2,4], n_bins: 100, f_final: 1.0e-6}
 

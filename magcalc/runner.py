@@ -182,6 +182,13 @@ def _advise_sun_mode(spin_model):
     )
 
 
+def _disorder_opts(block):
+    """`disorder` / `periodic` from a task block, for the real-space classical
+    samplers (Gap 4 #16). Absent keys mean a clean, fully periodic supercell."""
+    return {"disorder": (block or {}).get("disorder"),
+            "periodic": tuple((block or {}).get("periodic", (True, True, True)))}
+
+
 def run_calculation(config_file: str):
     """
     Main execution logic for running a MagCalc calculation.
@@ -1017,7 +1024,7 @@ def run_calculation(config_file: str):
         try:
             H_mat, b_vec, N_spins, S_mag, _pos = _tmc.build_supercell(
                 spin_model, params_val,
-                tuple(wd.get('supercell', [4, 4, 1])))
+                tuple(wd.get('supercell', [4, 4, 1])), **_disorder_opts(wd))
             e_min, e_max = wd.get('e_min'), wd.get('e_max')
             if e_min is None or e_max is None:
                 e_min, e_max = _tmc.wang_landau_window(
@@ -1085,7 +1092,8 @@ def run_calculation(config_file: str):
                     n_equil=int(sd.get('n_equil', 2000)),
                     sample_every=int(sd.get('sample_every', 10)),
                     cross_section=sd.get('cross_section', cross_section),
-                    seed=int(sd.get('seed', 0)))
+                    seed=int(sd.get('seed', 0)),
+                    **_disorder_opts(sd))
                 logger.info(
                     f"Static correlations (kT={kT} meV, {res.n_spins} spins, "
                     f"{res.n_samples} samples): S(q) max {np.max(res.sq):.4g}.")
@@ -1215,7 +1223,8 @@ def run_calculation(config_file: str):
                     supercell=tuple(tm.get('supercell', [4, 4, 1])),
                     n_sweeps=int(tm.get('n_sweeps', 4000)),
                     n_equil=int(tm.get('n_equil', 1500)),
-                    seed=int(tm.get('seed', 0)))
+                    seed=int(tm.get('seed', 0)),
+                    **_disorder_opts(tm))
                 logger.info(
                     f"Thermal MC ({res.n_spins} spins, accept {res.accept_rate:.2f}): "
                     f"<E>/N and C/N over {len(res.temperatures)} temperatures "
@@ -1274,7 +1283,8 @@ def run_calculation(config_file: str):
                     cross_section=sd.get('cross_section', 'perp'),
                     seed=int(sd.get('seed', 0)),
                     classical_to_quantum=bool(
-                        sd.get('classical_to_quantum', True)))
+                        sd.get('classical_to_quantum', True)),
+                    **_disorder_opts(sd))
                 logger.info(
                     f"SampledCorrelations (kT={kT} meV): S(q,w) {res.sqw.shape} "
                     f"(E up to {res.energies.max():.3g} meV, {len(res.q_vectors)} q; "

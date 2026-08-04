@@ -252,7 +252,8 @@ def classical_to_quantum_factor(energies, kT):
 def sampled_correlations(model, params, q_cart, kT, supercell=(6, 1, 1),
                          dt=0.02, n_steps=2048, n_traj=8, therm_sweeps=2000,
                          record_every=1, cross_section="perp", seed=0,
-                         classical_to_quantum=True):
+                         classical_to_quantum=True, disorder=None,
+                         periodic=(True, True, True)):
     """Thermalize by Metropolis then evolve LL dynamics; average S(q,ω) over `n_traj`
     independent thermal starts. Returns a DynamicsResult.
 
@@ -262,7 +263,8 @@ def sampled_correlations(model, params, q_cart, kT, supercell=(6, 1, 1),
     much weight at ħω >> kT; set it False only to inspect that raw quantity."""
     from .thermal_mc import build_supercell, _sweep
 
-    H, b, N, S, pos = build_supercell(model, params, supercell)
+    H, b, N, S, pos = build_supercell(model, params, supercell, disorder=disorder,
+                                      periodic=periodic)
     rng = np.random.default_rng(seed)
     beta = 1.0 / kT
 

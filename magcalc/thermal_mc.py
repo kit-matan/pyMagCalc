@@ -38,13 +38,28 @@ MU_B = 5.788e-2      # meV / T
 GAMMA = 2.0          # electron g (matches the LSWT/entangled Zeeman convention)
 
 
-def build_supercell(model, params, supercell=(4, 4, 1)):
+def build_supercell(model, params, supercell=(4, 4, 1), disorder=None,
+                    periodic=(True, True, True)):
     """Assemble (H, b, N, S, pos) for a periodic L₁×L₂×L₃ supercell.
 
     H (3N×3N) is the exchange/anisotropy Hessian; b (3N,) the Zeeman field term, so
     E = ½ mᵀH m + bᵀm. Bonds come from `spin_interactions` (both directions, giving a
     symmetric H — the ½ convention), the field from `_resolve_field` with the
     per-site g-tensor (default g=2), matching the LSWT engine.
+
+    SITE-LEVEL INHOMOGENEITY (Gap 4 #16, classical half). Two options:
+
+    `disorder`: {'vacancy_concentration': x, 'seed': n} to remove a random fraction
+        x of sites, or {'vacancies': [flat site indices]} for named ones. A vacancy is
+        implemented by DELETING its rows/columns from H and its entries from b, which
+        removes every bond it took part in — no bookkeeping to get wrong, and E is
+        exactly the restriction of the clean energy to the surviving sites.
+        Sunny's `set_vacancy_at!`.
+    `periodic`: per-axis booleans. False drops the bonds that wrap around that axis,
+        i.e. an open boundary (Sunny's `remove_periodicity!`).
+
+    Both act on the explicit real-space supercell, which is why they are available
+    here and not in the symbolic LSWT front end.
     """
     from .spiral_opt import _resolve_field
     from .scga import _g_tensors
@@ -73,6 +88,19 @@ def build_supercell(model, params, supercell=(4, 4, 1)):
     def site(cc, i):
         return cell_id[(cc[0] % L1, cc[1] % L2, cc[2] % L3)] * n + i
 
+    per = tuple(bool(x) for x in periodic)
+    dims = (L1, L2, L3)
+
+    def wraps(cc, off):
+        """Does this bond cross a boundary that has been opened?"""
+        for ax in range(3):
+            if per[ax]:
+                continue
+            t = cc[ax] + off[ax]
+            if t < 0 or t >= dims[ax]:
+                return True
+        return False
+
     H = np.zeros((3 * N, 3 * N))
     for i in range(n):
         for j in range(len(aouc)):
@@ -82,6 +110,8 @@ def build_supercell(model, params, supercell=(4, 4, 1)):
             jc = j % n
             off = np.round((aouc[j] - apos[jc]) @ inv).astype(int)
             for cc in cells:
+                if wraps(cc, off):
+                    continue
                 a = site(cc, i)
                 bnb = site((cc[0] + off[0], cc[1] + off[1], cc[2] + off[2]), jc)
                 H[3 * a:3 * a + 3, 3 * bnb:3 * bnb + 3] += M
@@ -100,7 +130,56 @@ def build_supercell(model, params, supercell=(4, 4, 1)):
     for cc in cells:
         for i in range(n):
             pos[site(cc, i)] = apos[i] + np.array(cc, float) @ lat
-    return 0.5 * (H + H.T), b, N, S, pos
+
+    H = 0.5 * (H + H.T)
+    keep = _surviving_sites(N, disorder)
+    if keep is not None:
+        if len(keep) == 0:
+            raise ValueError(
+                "disorder removed every site; lower `vacancy_concentration`.")
+        idx = np.concatenate([[3 * a, 3 * a + 1, 3 * a + 2] for a in keep])
+        H = H[np.ix_(idx, idx)]
+        b = b[idx]
+        pos = pos[keep]
+        N = len(keep)
+    return H, b, N, S, pos
+
+
+def _surviving_sites(N, disorder):
+    """Flat indices of the sites left after `disorder`, or None if there are none
+    removed. Raises on a spec that cannot mean what it says."""
+    if not disorder:
+        return None
+    spec = dict(disorder)
+    vac = spec.get("vacancies")
+    x = spec.get("vacancy_concentration", spec.get("concentration"))
+    if vac is not None and x is not None:
+        raise ValueError(
+            "give `vacancies` (explicit indices) or `vacancy_concentration`, "
+            "not both.")
+    if vac is not None:
+        vac = sorted({int(v) for v in vac})
+        bad = [v for v in vac if v < 0 or v >= N]
+        if bad:
+            raise ValueError(
+                f"vacancy indices {bad} are outside the supercell (0..{N - 1}).")
+    elif x is not None:
+        x = float(x)
+        if not 0.0 <= x < 1.0:
+            raise ValueError(
+                f"vacancy_concentration must be in [0, 1), got {x}.")
+        if x == 0.0:
+            return None
+        rng = np.random.default_rng(int(spec.get("seed", 0)))
+        n_vac = int(round(x * N))
+        vac = sorted(rng.choice(N, size=n_vac, replace=False).tolist())
+    else:
+        raise ValueError(
+            f"disorder needs `vacancies` or `vacancy_concentration`, got "
+            f"{sorted(spec)}.")
+    if not vac:
+        return None
+    return np.array([a for a in range(N) if a not in set(vac)], dtype=int)
 
 
 @dataclass
@@ -201,9 +280,11 @@ def parallel_tempering(H, b, N, S, temperatures, n_sweeps=4000, n_equil=1500,
 
 
 def run_thermal_mc(model, params, temperatures, supercell=(4, 4, 1),
+                   disorder=None, periodic=(True, True, True),
                    n_sweeps=4000, n_equil=1500, seed=0):
     """Convenience: build the supercell and run parallel tempering."""
-    H, b, N, S, _pos = build_supercell(model, params, supercell)
+    H, b, N, S, _pos = build_supercell(model, params, supercell,
+                                       disorder=disorder, periodic=periodic)
     return parallel_tempering(H, b, N, S, temperatures, n_sweeps=n_sweeps,
                               n_equil=n_equil, seed=seed)
 
@@ -219,7 +300,8 @@ class StaticResult:
 
 def static_correlations(model, params, q_cart, kT, supercell=(6, 6, 1),
                         n_samples=200, n_equil=2000, sample_every=10,
-                        cross_section="perp", seed=0):
+                        cross_section="perp", seed=0, disorder=None,
+                        periodic=(True, True, True)):
     """Classical INSTANTANEOUS S(q) from Metropolis samples (Sunny's
     `SampledCorrelationsStatic`).
 
@@ -238,7 +320,8 @@ def static_correlations(model, params, q_cart, kT, supercell=(6, 6, 1),
     """
     from .classical_dynamics import _contract
 
-    H, b, N, S, pos = build_supercell(model, params, supercell)
+    H, b, N, S, pos = build_supercell(model, params, supercell, disorder=disorder,
+                                      periodic=periodic)
     qs = np.asarray(q_cart, float).reshape(-1, 3)
     rng = np.random.default_rng(seed)
     beta = 1.0 / float(kT)
