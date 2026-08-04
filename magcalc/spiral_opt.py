@@ -153,13 +153,39 @@ def _resolve_field(model: GenericSpinModel, p_num) -> Optional[np.ndarray]:
     for name in ('H', 'H_mag', 'H_field'):
         if name in params_dict:
             h_val = params_dict[name]
-            h_dir = params_dict.get('H_dir')
             if isinstance(h_val, (list, tuple, np.ndarray)):
                 return np.asarray(h_val, dtype=float)
-            if h_dir is not None and isinstance(h_dir, (list, tuple, np.ndarray)):
-                return np.asarray(h_dir, dtype=float) * float(h_val)
+            h_dir = _field_direction(model, params_dict)
+            if h_dir is not None:
+                return h_dir * float(h_val)
             return np.array([0.0, 0.0, float(h_val)])
     return None
+
+
+def _field_direction(model, params_dict):
+    """`H_dir` as a 3-vector, or None.
+
+    `_resolve_param_map` FLATTENS vector-valued parameters, so `H_dir: [1, 0, 0]`
+    comes back as the scalar 1.0. The old code tested `isinstance(h_dir, (list, ...))`
+    on that scalar, the test failed, and it fell through to a hardcoded [0, 0, H]:
+    EVERY field was silently forced along +z, whatever `H_dir` said. Prefer a genuine
+    3-vector from the parameter map (so a fitted direction still works) and otherwise
+    fall back to the config, which holds the authoritative value.
+    """
+    h_dir = params_dict.get('H_dir')
+    if isinstance(h_dir, (list, tuple, np.ndarray)) and len(np.ravel(h_dir)) == 3:
+        v = np.asarray(h_dir, dtype=float).ravel()
+    else:
+        raw = ((getattr(model, 'config', None) or {}).get('parameters') or {}).get('H_dir')
+        if raw is None or np.ravel(np.asarray(raw, dtype=float)).size != 3:
+            return None
+        v = np.asarray(raw, dtype=float).ravel()
+    # NOT normalized: the dipole engine (the pinned reference, see
+    # tests/test_zeeman_calibration.py) uses H_dir as given, so a non-unit vector
+    # scales the field there. Normalizing here would make the two engines disagree
+    # by |H_dir| -- 0.2% for a direction like [0.3, -0.5, 0.81] -- which is exactly
+    # the sort of small, plausible discrepancy that is hard to notice later.
+    return v if float(np.linalg.norm(v)) > 0 else None
 
 
 def _spins_from_angles(angles):

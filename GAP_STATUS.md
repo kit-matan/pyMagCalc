@@ -344,6 +344,35 @@ plausible-but-wrong spectra that looked fine:
   convention" is not a proof.** Now pinned absolutely by
   `tests/test_absolute_normalization.py`.
 
+- **the magnetic field was SILENTLY DROPPED in `mode: SUN`.**
+  `SUNModel.from_generic_model` built its on-site terms from sia / sia_matrix /
+  stevens and nothing else, so the Zeeman term never reached the Hamiltonian: every
+  SU(N)-in-field calculation quietly solved the ZERO-FIELD problem. The entangled
+  engine had always applied it, so this was an oversight, not a choice. Fixed and
+  pinned by extending the load-bearing gate -- S=1/2 SU(N) is IDENTICAL to dipole
+  LSWT -- to finite field, which checks the term's presence and its sign at once
+  against an engine whose Zeeman convention is separately pinned. Agreement: 0.0.
+- **and every field was forced along +z.** `_resolve_param_map` FLATTENS
+  vector-valued parameters, so `H_dir: [1, 0, 0]` came back as the scalar 1.0;
+  `_resolve_field` tested `isinstance(h_dir, list)` on that scalar, the test failed,
+  and it fell through to a hardcoded `[0, 0, H]`. Wider than the first bug --
+  `_resolve_field` is shared by SU(N), entangled, thermal_mc and annealing -- and
+  nastier, because the field was PRESENT and of the right MAGNITUDE, merely pointing
+  the wrong way. `tests/test_sun_zeeman.py`.
+
+  Two lessons, both general:
+
+  1. **A field-free test suite cannot see a dropped field term**, however many tests
+     it has. The SU(N) suite is thorough -- Gate 1/2/3, FeI2 bands AND intensities
+     against Sunny to 1e-4 -- and not one of its models applies a field. Both bugs
+     surfaced only from porting Sunny's skyrmion tutorial, where a field competing
+     with an easy-plane anisotropy IS the mechanism. Count coverage in physics
+     exercised, not in tests passing.
+  2. **Agreement between two implementations is not evidence when they share the
+     faulty helper.** "SU(N) == dipole for four field directions" would have PASSED
+     while the direction bug was live, because both engines were equally wrong. The
+     test therefore also asserts that a transverse field differs from a z field.
+
 Every one was caught by an **independent oracle or an exact identity**, never by
 inspection. So: validate against Sunny (in-repo) or a textbook analytic result; prefer
 identities (decoupled-sublattice sum, S=1/2 SU(N)≡dipole, ferromagnet has zero

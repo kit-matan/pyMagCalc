@@ -210,3 +210,106 @@ def sampled_correlations(model, q_cart, kT, dt=0.02, n_steps=512, n_traj=4,
     if classical_to_quantum:
         sqw = sqw * classical_to_quantum_factor(energies, kT)[:, None]
     return energies, sqw
+
+def damped_deriv(model, Z, damping):
+    """dZ_i/dt = -i h_i Z_i - lambda (h_i - <h_i>) Z_i -- dissipative CP^(N-1) flow.
+
+    The SU(N) analogue of Landau-Lifshitz-Gilbert, and what a QUENCH needs: Sunny's
+    `Langevin(; damping, kT=0)`. Two exact properties fix the form and its sign, and
+    both are asserted in `tests/test_sun_dynamics.py` rather than assumed -- the
+    dipole damping sign was wrong on first writing (Gap 4 #18) and produced a
+    right-magnitude, wrong-sign answer:
+
+      * NORM. d|Z|^2/dt = 2 Re[-i<h> - lambda(<h> - <h>)] = 0, since <h> is real for
+        Hermitian h. So |Z_i| = 1 is preserved by the flow itself.
+      * ENERGY. dE/dt = 2 Re<dZ|h|Z> = -2 lambda (<h^2> - <h>^2) = -2 lambda Var(h),
+        which is <= 0 and vanishes exactly when Z is an EIGENVECTOR of h -- the
+        self-consistent mean-field condition. So the flow relaxes to a stationary
+        state of the same equations the ground-state search solves.
+
+    Sign check, single site: with eigenvalues eps_0 < eps_1 and Z = a|0> + b|1>, the
+    |1> component obeys db/dt = -lambda(eps_1 - <h>) b and eps_1 - <h> = |a|^2
+    (eps_1 - eps_0) > 0, so |b| decays: population flows toward the ground state.
+    """
+    lam = float(damping)
+    hs = local_hamiltonians(model, Z)
+    out = []
+    for i in range(model.L):
+        hZ = hs[i] @ Z[i]
+        exp_h = np.real(Z[i].conj() @ hZ)
+        out.append(-1j * hZ - lam * (hZ - exp_h * Z[i]))
+    return out
+
+
+def damped_step(model, Z, dt, damping):
+    """One RK4 step of the damped flow."""
+    def f(state):
+        return damped_deriv(model, state, damping)
+    k1 = f(Z)
+    k2 = f([Z[i] + 0.5 * dt * k1[i] for i in range(model.L)])
+    k3 = f([Z[i] + 0.5 * dt * k2[i] for i in range(model.L)])
+    k4 = f([Z[i] + dt * k3[i] for i in range(model.L)])
+    out = [Z[i] + (dt / 6.0) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i])
+           for i in range(model.L)]
+    return _renormalize(out)
+
+
+def quench(model, Z0, dt, n_steps, damping=0.05, record_at=()):
+    """Damped relaxation from `Z0` (Sunny's randomize + Langevin at kT = 0).
+
+    Returns (final state, {step: snapshot}). A quench is NOT the same as finding the
+    ground state: it lands in whatever metastable texture the initial condition flows
+    to, which for the right parameters is a skyrmion lattice. Metropolis or
+    `minimize_energy` would destroy exactly the object of interest.
+    """
+    Z = [np.asarray(z, complex).copy() for z in Z0]
+    want = set(int(t) for t in record_at)
+    snaps = {}
+    for step in range(int(n_steps) + 1):
+        if step in want:
+            snaps[step] = [z.copy() for z in Z]
+        if step < int(n_steps):
+            Z = damped_step(model, Z, dt, damping)
+    return Z, snaps
+
+
+def dipole_field(model, Z):
+    """<S^a_i> for every site, shape (L, 3) -- the texture a skyrmion plot shows."""
+    return np.array([[np.real(Z[i].conj() @ model.ops[i][a] @ Z[i]) for a in range(3)]
+                     for i in range(model.L)])
+
+
+def topological_charge(spins, neighbours):
+    """Berg-Luescher skyrmion number of a 2-D texture.
+
+    `spins` is (N, 3); `neighbours` a list of oriented triangles (i, j, k). The solid
+    angle of each spherical triangle is summed and divided by 4 pi, which gives an
+    INTEGER for any smooth closed texture -- a quantized observable, so it can be
+    asserted rather than eyeballed off a plot.
+    """
+    s = np.asarray(spins, float)
+    s = s / np.linalg.norm(s, axis=1, keepdims=True)
+    total = 0.0
+    for (i, j, k) in neighbours:
+        a, b, c = s[i], s[j], s[k]
+        num = float(np.dot(a, np.cross(b, c)))
+        den = 1.0 + float(np.dot(a, b)) + float(np.dot(b, c)) + float(np.dot(c, a))
+        total += 2.0 * np.arctan2(num, den)
+    return total / (4.0 * np.pi)
+
+
+def triangulate_lattice(pos, a1, a2, n1, n2):
+    """Oriented triangles of an n1 x n2 lattice laid out cell-major (2 per cell).
+
+    `pos` is only used for its length; the connectivity comes from the periodic
+    index arithmetic, which is what makes the charge well defined on a torus.
+    """
+    def idx(u, v):
+        return (u % n1) * n2 + (v % n2)
+    tris = []
+    for u in range(n1):
+        for v in range(n2):
+            tris.append((idx(u, v), idx(u + 1, v), idx(u, v + 1)))
+            tris.append((idx(u + 1, v), idx(u + 1, v + 1), idx(u, v + 1)))
+    return tris
+

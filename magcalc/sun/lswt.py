@@ -516,6 +516,27 @@ class SUNModel:
                         A = A + B * stevens_matrices(spins[i], k_, q_)
                     onsite.append((i, A))
 
+        # --- Zeeman -----------------------------------------------------------
+        # SILENTLY DROPPED until 2026-08-04: the entangled engine applied the field
+        # (sun/entangled.py) but plain SU(N) mode never did, so every `mode: SUN`
+        # calculation in a field quietly solved the zero-field problem. No pinned
+        # test caught it because none of them uses a field -- FeI2 included. Found
+        # while porting Sunny tutorial 06, whose skyrmions exist only because a field
+        # competes with an easy-plane anisotropy: with the field missing the texture
+        # decayed to the trivial |m=0> state.
+        from ..spiral_opt import _resolve_field as _sun_resolve_field
+        _MU_B, _GAMMA = 5.788e-2, 2.0
+        try:
+            H_vec = _sun_resolve_field(model, params)
+        except Exception:
+            H_vec = None
+        if H_vec is not None and _np.linalg.norm(H_vec) > 0:
+            for i in range(L):
+                Sx_i, Sy_i, Sz_i = Sops[spins[i]]
+                onsite.append((i, _GAMMA * _MU_B * (float(H_vec[0]) * Sx_i
+                                                    + float(H_vec[1]) * Sy_i
+                                                    + float(H_vec[2]) * Sz_i)))
+
         if supercell is not None:
             lat = _np.asarray(model.config["crystal_structure"]["lattice_vectors"],
                               dtype=float)
