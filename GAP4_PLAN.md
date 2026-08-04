@@ -194,41 +194,60 @@ mixed-spin ferrimagnet against Sunny `:SUN`.
 **Risk.** Medium–high — this is the validated core. Do the decoupled-sublattice test
 *first*, confirm it passes on the current uniform-N code, and only then refactor.
 
-### #24b Ewald + rotating-frame single-k — ~1 week (REVISED UP)
+### #24b Ewald + rotating-frame single-k — ⚠️ MAY BE STRUCTURALLY INVALID
 
-**Status: not started. The estimate below was wrong and is corrected here.**
+**Status: not implemented, and the derivation suggests it should not be, by this
+route. Estimate withdrawn rather than revised again.**
 
-**What the plan originally said.** "The rotating frame builds three channels (q−k, q,
-q+k) and each needs its own `A(q)`; `core._ewald_nambu` builds one." That reads like
-plumbing. It is not.
+**The derivation.** The three-channel trick works because a rotation about the spiral
+axis n has the spectral decomposition
 
-**What the code actually does.** The rotating frame is baked into the SYMBOLIC
-Hamiltonian: `generic_model` forms the effective per-bond coupling
-`R_i^T J_ij R_j = R(φ)` (see `generic_model.py:1690-1728`) *before* the Fourier
-transform, and the three-channel worker then just evaluates that symbolic H at
-`q ± k` (`numerical.py`, `calculate_sqw_spiral_single_q`). The Ewald term cannot join
-that route: `A(q)` is an infinite lattice sum added NUMERICALLY in the LAB frame
-(`core._ewald_nambu`), so it never sees the rotation.
+    R(theta) = R2 + R1 e^{i theta} + R1* e^{-i theta},
+    R1 = (I - i[n]x - n n^T)/2,   R2 = n n^T
 
-Rotating it means transforming the real-space dipolar coupling per pair,
-`R_i^T A(r_ij + R) R_j`, and only then summing over images. Because `R_j` depends on
-`k · (r_j + R)`, that sum carries `e^{±i k·R}` factors: the rotated dipolar Fourier
-matrix for one channel is a **projector-weighted combination of `A(q_c)`,
-`A(q_c + k)` and `A(q_c − k)`**, not `A(q_c)` alone. So it is a derivation (the
-dipolar analogue of Toth & Lake's three-channel exchange result), plus an Ewald sum
-at three shifted arguments per channel, plus the demagnetization/surface term needing
-its own treatment in the rotating frame.
+(exactly the projectors `numerical.spiral_channel_tensors` already builds for the
+intensity side — Rodrigues' formula rearranged). If a coupling A(d) COMMUTES with
+rotations about n, then in the rotating frame its Fourier transform is
 
-**Oracle (unchanged, and it is a good one).** At a COMMENSURATE k the same physics is
-reachable through `magnetic_supercell`, which already supports Ewald. The
-rotating-frame and supercell answers must agree band for band; if they do at several
-commensurate k, the incommensurate case is sound. Do not ship the incommensurate path
-without that.
+    A_rot(q) = A(q) R2 + A(q+k) R1 + A(q-k) R1*
 
-**Until then** the engine refuses honestly (`core.py`, "Ewald dipole-dipole is not yet
-supported together with a single-k (rotating-frame) structure"), and the message
-already names both workarounds: a `magnetic_supercell`, or
-`dipole_dipole.method: truncated`.
+i.e. exactly the "each channel needs A at three shifted arguments" that the earlier
+note guessed at, and `core._ewald_A` already computes A(q) for any q. On that
+reading the item is a few hours.
+
+**But the premise fails for dipole-dipole.** That step assumes the coupling is
+rotationally invariant about n. The dipolar tensor is
+`A(d) ∝ (I - 3 dhat dhat^T)/|d|^3` — inherently ANISOTROPIC, tied to the bond
+direction, and it does not commute with rotations about an arbitrary n. So the
+factorization above is not available for the one interaction #24b is about.
+
+This is the same condition pyMagCalc already warns about for exchange
+(`magnetic_structure.enforce_rotational_symmetry`: "the rotating-frame method is
+unreliable when DM is not parallel to the axis, the SIA axis is not parallel, or the
+field is not parallel"). Long-range dipolar coupling violates it generically, not
+occasionally.
+
+**So the honest reframing.** #24b is probably not "implement the missing channels";
+it is "the rotating-frame method may be inapplicable to dipolar coupling in
+general". Before any implementation, someone should settle:
+
+1. whether a correct rotating-frame treatment of an anisotropic long-range coupling
+   exists at all (Toth & Lake assume rotational invariance; check what Sunny's
+   `SpinWaveTheorySpiral` does when `enable_dipole_dipole!` is on — it may refuse
+   too, which would be a strong hint);
+2. if it does not, then the current hard error is the CORRECT behaviour and this item
+   closes as "refuses, correctly", with the reason documented — a better outcome
+   than an implementation that is quietly wrong for every non-uniaxial geometry.
+
+**The oracle is unchanged and still the right gate**: at commensurate k the same
+physics is reachable via `magnetic_supercell`, which already supports Ewald, so any
+proposed implementation must agree with it band-for-band at several commensurate k.
+Note that oracle can only ever validate the commensurate case; the incommensurate
+one — the only case where the rotating frame earns its keep — has no independent
+check, which is a further reason for caution.
+
+**Until then** the engine refuses honestly, and the message already names both
+workarounds: a `magnetic_supercell`, or `dipole_dipole.method: truncated`.
 
 ---
 

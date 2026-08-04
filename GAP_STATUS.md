@@ -195,7 +195,7 @@ multiplet sum is an observable. #27: `seekpath` is an optional dependency; witho
 | 25 | Blume–Maleev / arbitrary polarization | ✅ | `cross_section: {polarization, channel}` or `{bm: {u, v}, component}` | Sunny `ssf_custom_bm` (8 components, screw + cycloid) and `ssf_custom` NSF/SF/chiral at general P; P ∥ q reproduces `sf±` bit-for-bit; SF + NSF = perp |
 | 21 | General pair couplings | ✅ | `interactions.pair_operator` (`poly` or `matrix`) | biquadratic via the general path == the dedicated path to 1e-10; Sunny `set_pair_coupling!` on c₁(S·S)+c₂(S·S)²+c₃(S·S)³, 3 coefficient sets |
 | 24a | Mixed-spin SU(N) | ✅ | (automatic; per-site `spin_S`) | decoupled-sublattice identity for (½,1), (1,3/2), (½,3/2) — spectrum AND intensities are exactly the union of the two independent problems |
-| 24b | Ewald + rotating-frame single-k | ⬜ | (refuses honestly) | **estimate revised 3 d → 1 w**: the rotating frame is baked into the SYMBOLIC Hamiltonian per bond (`R_i^T J_ij R_j`), while Ewald's A(q) is a numeric LAB-frame lattice sum. Each channel needs a projector-weighted combination of A(q_c), A(q_c±k) — a derivation, not plumbing. See GAP4_PLAN.md |
+| 24b | Ewald + rotating-frame single-k | ⚠️ | (refuses honestly) | **The premise may be invalid.** The three-channel factorization A_rot(q) = A(q)R2 + A(q+k)R1 + A(q−k)R1* needs the coupling to COMMUTE with rotations about the spiral axis. The dipolar tensor (I − 3 d̂d̂ᵀ)/|d|³ is inherently anisotropic and does not — the same condition `enforce_rotational_symmetry` already warns about for exchange, but violated generically here. Settle whether a correct treatment exists before implementing; if not, the current refusal IS the answer. See GAP4_PLAN |
 
 ### Phase 3 (new machinery)
 
