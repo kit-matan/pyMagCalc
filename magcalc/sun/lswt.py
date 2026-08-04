@@ -30,6 +30,7 @@ CONVENTIONS (both verified against the host, see tests):
 For S=1/2 (N=2) there is exactly one boson per site and this reduces IDENTICALLY to
 dipole LSWT -- the load-bearing test.
 """
+import logging
 from typing import Optional, Sequence, Tuple
 
 from itertools import product as _product
@@ -38,6 +39,8 @@ import numpy as np
 
 from .operators import (coherent_from_direction, local_basis, spin_matrices,
                         stevens_matrices)
+
+logger = logging.getLogger(__name__)
 
 
 def _reject_unsupported_terms(model, engine: str = "SU(N)",
@@ -785,3 +788,61 @@ class SUNModel:
             from ..form_factors import get_form_factor
             inten = inten * get_form_factor(ion, float(np.linalg.norm(q_cart))) ** 2
         return w, inten
+
+def apply_bond_disorder(model, sigma, seed=0, kind="relative"):
+    """Randomize the exchange on every bond of `model`, in place (Gap 4 #16b).
+
+    Sunny's `to_inhomogeneous` + `set_exchange_at!` with a noisy coupling, which is
+    what its disorder tutorial (`09_Disorder_KPM.jl`) needs. Combine with the KPM
+    solver (`sun/kpm.py`), which needs no eigensolve, to get the disorder-broadened
+    spectrum of a large supercell.
+
+    `kind="relative"` scales each bond by (1 + sigma * xi); `"absolute"` adds
+    sigma * xi to it. xi is standard normal, drawn ONCE PER BOND.
+
+    BOTH DIRECTIONS OF A BOND MUST GET THE SAME DRAW. pyMagCalc lists every bond as
+    (i, j, dr, J) and (j, i, -dr, J^T) -- that is how `H = (1/2) sum_ordered` is
+    encoded -- so perturbing them independently would make H(q) non-Hermitian and
+    produce complex "energies" that the ground-state guard reports as an instability
+    rather than as the bookkeeping error it is. The pairing below is explicit, and
+    `tests/test_bond_disorder.py` asserts the spectrum stays real.
+
+    The model must be built on a SUPERCELL: disorder on the chemical cell is not
+    disorder, it is a different clean model repeated.
+    """
+    rng = np.random.default_rng(int(seed))
+    kind = str(kind).lower()
+    if kind not in ("relative", "absolute"):
+        raise ValueError(f"kind must be 'relative' or 'absolute', got {kind!r}.")
+
+    # index the bonds so each (i, j, dr) can find its (j, i, -dr) partner
+    def key(i, j, dr):
+        return (int(i), int(j), tuple(np.round(np.asarray(dr, float), 8)))
+
+    index = {}
+    for n, (i, j, dr, J) in enumerate(model.bonds):
+        index.setdefault(key(i, j, dr), []).append(n)
+
+    done = set()
+    new_bonds = list(model.bonds)
+    n_pairs = 0
+    for n, (i, j, dr, J) in enumerate(model.bonds):
+        if n in done:
+            continue
+        xi = float(rng.standard_normal())
+        factor = (1.0 + float(sigma) * xi) if kind == "relative" else None
+        partners = index.get(key(j, i, -np.asarray(dr, float)), [])
+        group = [n] + [m for m in partners if m not in done]
+        for m in group:
+            bi, bj, bdr, bJ = model.bonds[m]
+            bJ = (factor * bJ) if kind == "relative" \
+                else (bJ + float(sigma) * xi * np.sign(bJ))
+            new_bonds[m] = (bi, bj, bdr, bJ)
+            done.add(m)
+        n_pairs += 1
+    model.bonds = new_bonds
+    model._prepare()
+    logger.info(f"bond disorder: sigma={sigma} ({kind}) applied to {n_pairs} bond "
+                f"pairs over {len(model.bonds)} directed bonds.")
+    return model
+

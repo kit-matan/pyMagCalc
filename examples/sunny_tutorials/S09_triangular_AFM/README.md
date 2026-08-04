@@ -21,10 +21,22 @@ The tutorial's actual subject is **disorder broadening** computed with
 with stochastic exchange constants and g-factors (modelling Mg/Ga site disorder
 in YbMgGaO₄).
 
-**KPM now exists** (`magcalc/sun/kpm.py`, Gap Tier 2 #10 — this README used to say it
-did not). What is still missing is the other half: **per-bond disorder in LSWT**, i.e.
-Sunny's `to_inhomogeneous` + `set_exchange_at!` on a large supercell. Vacancies and
-open boundaries landed for the *classical* samplers (Gap 4 #16a); the LSWT half is
-Gap 4 **#16b**, still open, so the disorder-broadened spectrum remains out of reach.
+**Both ingredients now exist.** KPM is `magcalc/sun/kpm.py` (Gap Tier 2 #10) and
+per-bond disorder is `sun.lswt.apply_bond_disorder(model, sigma, seed)` (Gap 4 #16b),
+the analogue of Sunny's `to_inhomogeneous` + `set_exchange_at!`. Disorder must be
+applied to a model built on a SUPERCELL — on the chemical cell it is not disorder,
+just a different clean model repeated.
+
+**The port is still not finished**, and the honest reason is the reference state, not
+the machinery. This folder's clean config uses the rotating-frame `single_k` 120°
+order, which the SU(N)/KPM path does not consume; driving disorder + KPM needs the
+120° state as an explicit real-space supercell. Run on a ferromagnetic placeholder
+instead — which is *not* the ground state of a triangular AFM — the spectrum is not
+physical (measured: disorder narrowed the KPM width rather than broadening it, which
+is what expanding about a non-minimum buys you).
+
+So what remains is building the 120° state on a real-space supercell and then
+applying disorder + KPM. The disorder itself is validated independently
+(`tests/test_bond_disorder.py`).
 
 The clean 120° dispersion above is the coherent spectrum that the disorder broadens.

@@ -215,7 +215,7 @@ one-line answer from the group before it is worth 4 days.
 | # | Item | Status | Key | Validated against |
 |---|---|---|---|---|
 | 16a | Vacancies + open boundaries, **classical** | ✅ | `disorder: {vacancy_concentration, seed}` or `{vacancies: […]}`, `periodic: [b,b,b]` on any of `thermal_mc` / `sampled_correlations` / `static_correlations` / `wang_landau` | exact identities: x→0 is bit-identical to clean; a vacancy is exactly the restriction of H to the survivors; analytic bond counts (32 periodic vs 24 open on 4×4); self-averaging across seeds |
-| 16b | Disorder in **LSWT** | ⬜ | — | needs a large disordered supercell + the existing KPM engine (Sunny example 09's recipe). ~1 week |
+| 16b | Bond disorder in **LSWT** | ✅ | `sun.lswt.apply_bond_disorder(model, sigma, seed)` on a supercell, then `sun/kpm.py` | σ=0 bit-identical to clean; Hermiticity preserved to 9e-16 (both bond directions get ONE draw); band spread grows monotonically with σ; self-averaging across seeds. `tests/test_bond_disorder.py` |
 | 26 | SU(N) / entangled classical dynamics | ✅ (conservative; dissipative quench NOT done — blocks tutorial 06) | `magcalc/sun/dynamics.py` | i dZ_i/dt = h_i Z_i with h_i the same mean field the CP^(N−1) search builds. N=2 reproduces Landau–Lifshitz to **4.8e-10**; energy and \|Z_i\| conserved to 1e-8 / 1e-12; on a supercell the low-T S(q,ω) peak sits within **1.1%** of the SU(N) LSWT band and hardens monotonically toward it on cooling (0.79 → 0.95 → 0.99 as kT falls) |
 
 **Why 16a stops here.** GAP4_PLAN says "ship step 1 and stop if that answers the
