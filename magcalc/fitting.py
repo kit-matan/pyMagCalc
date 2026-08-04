@@ -85,6 +85,17 @@ def load_fit_data(fit_type: str, path: str) -> Dict[str, np.ndarray]:
     powder: like ``sqw`` but with a single ``|Q|`` magnitude column instead of hkl.
         Returns ``{q (N,), energy (N,), intensity (N,), error (N,)}``.
     """
+    # NeXus histograms (Gap 4 #20). Dispatch on the extension so the CSV path --
+    # which is how data usually leaves a reduction pipeline here -- is untouched.
+    if str(path).lower().endswith((".nxs", ".nxspe", ".h5", ".hdf5")):
+        from .binning import load_nxs
+        nx = load_nxs(path)
+        xx, ee = np.meshgrid(nx["x"], nx["energy"], indexing="ij")
+        return {"q_mag": xx.ravel(), "energy": ee.ravel(),
+                "intensity": np.asarray(nx["signal"], float).ravel(),
+                "error": np.sqrt(np.abs(np.asarray(nx["signal"], float).ravel())),
+                "binning": nx["params"]}
+
     if not os.path.exists(path):
         raise FileNotFoundError(f"Fit data file not found: {path}")
 

@@ -9,9 +9,8 @@ firm part and the numbers as indicative.
 
 > **Status 2026-08-04.** All four phases worked through. Closed: #17, #19, #23, #27
 > (Phase 1); #25, #21, #24a (Phase 2); #18, #22 (Phase 3); #16a, #16b, #26 (Phase 4).
-> Open: **#24b** (estimate revised 3 d → 1 w, derivation written up below), **#20**
-> (awaiting a demand decision, not work), and the classical S(q,ω) absolute
-> normalization opened by #17.
+> Open: **#24b** (estimate revised 3 d → 1 w, derivation written up below) and the
+> classical S(q,ω) absolute normalization opened by #17. **#20 closed 2026-08-04.**
 >
 > Two SHIPPED BUGS were found along the way, both in field handling and both silent:
 > the Zeeman term was dropped entirely in `mode: SUN`, and `H_dir` was flattened to a
@@ -276,7 +275,7 @@ validates, over the whole T range.
 
 **Risk.** Low. Self-contained, and the oracle is unusually strong.
 
-### #20 Experiment-data binning (`BinningParameters`, `load_nxs`) — ~4 days
+### #20 Experiment-data binning — ✅ DONE (2026-08-04, ~2 h)
 
 **What.** Bin computed S(q,ω) onto an experimental histogram grid, and read NeXus
 files. Today `fitting.py::load_fit_data` (line 73) reads CSV only via `np.loadtxt`.
@@ -369,7 +368,7 @@ guessed at. **S04 and S06 remain blocked** on resolving it.
 | 2 | 24b | Ewald + rotating-frame single-k | **1 w** | med–high | commensurate k vs supercell (exact) |
 | ✅ 3 | 18 | Langevin / ImplicitMidpoint | 3 d | low–med | existing exact Langevin-function tests |
 | ✅ 3 | 22 | Wang–Landau | 3 d | low | Beale's exact 2-D Ising g(E) |
-| ⏸ 3 | 20 | NeXus binning | 4 d | low | Sunny `load_nxs`; count conservation |
+| ✅ 3 | 20 | NeXus binning | 4 d | low | Sunny `load_nxs`; count conservation |
 | ✅ 4 | 16a | Vacancies + open boundaries (classical) | 3 d | — | exact restriction identity; analytic bond counts |
 | ✅ 4 | 16b | Bond disorder in LSWT (via KPM) | ~2 h | — | σ=0 bit-identical; Hermiticity 9e-16; spread monotone in σ |
 | ✅ 4 | 26 | SU(N) classical dynamics | ~1 d | — | N=2 reduces to Landau–Lifshitz to 4.8e-10; low-T S(q,ω) within 1.1% of the LSWT band |

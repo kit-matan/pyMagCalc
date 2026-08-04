@@ -203,12 +203,14 @@ multiplet sum is an observable. #27: `seekpath` is an optional dependency; witho
 |---|---|---|---|---|
 | 18 | Langevin / `ImplicitMidpoint` / `suggest_timestep` | ✅ | `classical_dynamics.langevin_step`, `evolve(..., integrator='midpoint')` | exact free-spin Langevin function (the oracle the Metropolis sampler is already pinned to); midpoint energy drift 1e-12 vs RK4's 8e-5 and \|S\| exact without renormalizing |
 | 22 | Wang–Landau | ✅ | `tasks.wang_landau` + `wang_landau: {temperatures, supercell, n_bins, f_final}` | classical dimer's g(E) is EXACTLY FLAT (closed form); reconstructed ⟨E⟩(T) matches −JS²L(βJS²) to 0.01 across T; agrees with parallel tempering |
-| 20 | Experiment-data binning | ⬜ | — | deferred pending demand — see below |
+| 20 | Experiment-data binning | ✅ | `magcalc/binning.py`: `BinningParameters`, `bin_mode_list`, `rebin`, `load_nxs`; `fitting.load_fit_data` dispatches on `.nxs`/`.nxspe`/`.h5` | exact identities, no oracle needed: weight conserved to 1e-12; a delta lands in the bin containing it; `rebin(fine) == bin(coarse)` exactly. `load_nxs` pinned by a round trip (reader ⟷ writer) — which is what that proves and all it proves |
 
-**#20 is deliberately not done.** `GAP4_PLAN` flagged it "check the value first": the
-existing `fitting.load_fit_data` CSV path may already cover how data leaves the
-reduction pipeline here, in which case NeXus import is work for nobody. It needs a
-one-line answer from the group before it is worth 4 days.
+**#20 note.** The binning half needs no extra dependency and is pinned by exact
+identities. `load_nxs` needs `h5py` (present here) and is pinned only by a ROUND TRIP
+through a file this module writes: that proves reader and writer agree, not that any
+given instrument's NeXus dialect is understood — there are many. `nxs_report` lists a
+file's datasets for when the reader cannot find a histogram. Point it at a real file
+from the reduction pipeline before trusting it.
 
 ### Phase 4 (large; gated on a real calculation needing them)
 
@@ -228,7 +230,6 @@ disordered system, which is a different question and should wait until one is as
 | # | Item | Phase | Why it is open |
 |---|---|---|---|
 | 24b | Ewald + rotating-frame single-k | 2 | each channel needs a projector-weighted combination of A(q_c), A(q_c±k) — a derivation, not plumbing. Refuses honestly meanwhile. ~1 week |
-| 20 | Experiment-data binning (NeXus) | 3 | **awaiting a decision, not work**: if the reduction pipeline already yields CSV that `fitting.load_fit_data` reads, this is work for nobody |
 | — | Classical S(q,ω) absolute normalization | 3 | opened by #17: the classical path's overall scale has never been reconciled with the LSWT/Sunny one. Shape is pinned, scale is not |
 | — | `magcalc validate` field-direction coverage | — | the two field bugs below were invisible because no test applied a field off z. Worth auditing what else the suite never exercises |
 
