@@ -194,72 +194,71 @@ mixed-spin ferrimagnet against Sunny `:SUN`.
 **Risk.** Medium–high — this is the validated core. Do the decoupled-sublattice test
 *first*, confirm it passes on the current uniform-N code, and only then refactor.
 
-### #24b Ewald + rotating-frame single-k — harder than 3 channels, but VALID
+### #24b Ewald + rotating-frame single-k — METHOD FOUND IN SUNNY, ready to implement
 
-**Status: not implemented. Estimate withdrawn pending the derivation below being
-finished — but it IS a derivation to finish, not a dead end.**
+**Status: not implemented, but no longer a derivation problem.** Sunny.jl is MIT
+licensed and in-repo at `../Sunny.jl-main`; this project already takes conventions
+from it (the Stevens table in `stevens.py` was generated from it). Take the METHOD
+from `src/Spiral/SpinWaveTheorySpiral.jl` rather than re-deriving — my own attempts
+produced three wrong characterizations in a row (see the history at the end).
 
-**Correction, same session.** An earlier version of this section argued the method
-might be structurally inapplicable to dipolar coupling. That claim was too strong and
-is retracted: Sunny CONSTRUCTS `SpinWaveTheorySpiral` on a system with
-`enable_dipole_dipole!` without objection (it fails later, in the ground-state guard,
-only because the k I passed was not an optimized spiral wavevector). So a correct
-treatment evidently exists; what follows explains why it is more work than the first
-guess, not why it is impossible.
+**THE KEY INSIGHT, and it makes the item much smaller: Ewald is not special-cased at
+all.** `fourier_bilinear_interaction!` (line 54) builds the Fourier bilinear matrix
+`Jq` from the exchange bonds and then simply ADDS the dipolar term into the same
+matrix (line 78):
 
-**The derivation.** The three-channel trick works because a rotation about the spiral
-axis n has the spectral decomposition
+```julia
+if !isnothing(sys.ewald)
+    Aq = precompute_dipole_ewald_at_wavevector(cryst, (1,1,1), demag, -q_reshaped) * μ0_μB²
+    for i in 1:Na, j in 1:Na
+        Jq[i, j] += gs[i]' * Aq[i, j] * gs[j]          # note the g-tensors
+    end
+end
+```
 
-    R(theta) = R2 + R1 e^{i theta} + R1* e^{-i theta},
-    R1 = (I - i[n]x - n n^T)/2,   R2 = n n^T
+Everything downstream — all the rotating-frame channel algebra — then operates on
+`Jq` without knowing or caring that part of it came from an infinite lattice sum. So
+there is no separate "Ewald channel machinery" to build. pyMagCalc already has both
+halves: `core._ewald_A(q_rlu)` is the analogue of `precompute_dipole_ewald_at_wavevector`,
+and `_ewald_g()` supplies the g-tensors.
 
-(exactly the projectors `numerical.spiral_channel_tensors` already builds for the
-intensity side — Rodrigues' formula rearranged). If a coupling A(d) COMMUTES with
-rotations about n, then in the rotating frame its Fourier transform is
+**The projector algebra is FIVE terms, not three and not nine** (line 133, with the
+`k_case` branch at 136 dropping to three when the satellites coincide). With
+`R2 = axis axisᵀ` and `R1 = (I − i[axis]× − R2)/2`:
 
-    A_rot(q) = A(q) R2 + A(q+k) R1 + A(q-k) R1*
+```julia
+J = R2*J(q)*R2 + conj(R1)*J(q+k)*conj(R1) + R1*J(q−k)*R1
+                + R1*J(q+k)*conj(R1) + conj(R1)*J(q−k)*R1
+```
 
-i.e. exactly the "each channel needs A at three shifted arguments" that the earlier
-note guessed at, and `core._ewald_A` already computes A(q) for any q. On that
-reading the item is a few hours.
+My guesses were wrong in both directions — first three terms (assuming commutation),
+then nine (assuming none of it collapses). The cross terms `R1 J(q+k) R1*` and
+`R1* J(q−k) R1` are exactly the ones a commutation-based derivation drops and a naive
+9-term expansion over-counts.
 
-**But the premise fails for dipole-dipole.** That step assumes the coupling is
-rotationally invariant about n. The dipolar tensor is
-`A(d) ∝ (I - 3 dhat dhat^T)/|d|^3` — inherently ANISOTROPIC, tied to the bond
-direction, and it does not commute with rotations about an arbitrary n. So the
-factorization above is not available for the one interaction #24b is about.
+**Implementation sketch for pyMagCalc.**
 
-This is the same condition pyMagCalc already warns about for exchange
-(`magnetic_structure.enforce_rotational_symmetry`: "the rotating-frame method is
-unreliable when DM is not parallel to the axis, the SIA axis is not parallel, or the
-field is not parallel"). Long-range dipolar coupling violates it generically, not
-occasionally.
+1. Build the rotating-frame `J(q)` including the Ewald contribution — i.e. make the
+   single-k channel evaluation consume a Fourier matrix that already has `A(q)`
+   folded in, mirroring `fourier_bilinear_interaction!`. Mind the g-tensors.
+2. Apply the five-term projector combination at `q`, `q±k`, plus the same for the
+   `q = 0` on-site term (`J0`, line 134 — it is built identically from `J(0)`,
+   `J(±k)`).
+3. Keep the `k_case` branch: three terms when 2k is a reciprocal-lattice vector.
+4. Delete the refusal in `core.py`.
 
-**So the honest reframing: NINE terms, not three.** Without commutation the product
-`R(-theta_i) A(d) R(theta_j)` must be expanded in the R1/R2 basis on BOTH sides, not
-one, giving 3 x 3 = 9 projector-sandwiched terms per bond rather than 3:
+**Oracle, unchanged and still the right gate:** at commensurate k the same physics is
+reachable via `magnetic_supercell`, which already supports Ewald, so the result must
+agree band-for-band. Do that first. Then — and this is worth the extra step, since
+the incommensurate case has no independent check — compare directly against Sunny's
+`SpinWaveTheorySpiral` with `enable_dipole_dipole!` at incommensurate k.
 
-    A_rot(q) = sum_{a,b in {R2, R1, R1*}}  P_a  A(q + s_a + s_b)  P_b
-
-with the shift s determined by which projector sits on each side. The commuting case
-collapses this to the familiar three because the left and right projectors pair up.
-That is bookkeeping-heavy but entirely mechanical, and `core._ewald_A` already
-supplies A at any argument.
-
-Before implementing, read how Sunny actually assembles it (`Spiral/SpinWaveTheorySpiral.jl`
-together with its Ewald path) rather than re-deriving from scratch — the nine-term
-structure is exactly the sort of thing where an independent derivation and an
-independent implementation can both be self-consistent and disagree.
-
-**The oracle is unchanged and still the right gate**: at commensurate k the same
-physics is reachable via `magnetic_supercell`, which already supports Ewald, so any
-proposed implementation must agree with it band-for-band at several commensurate k.
-Note that oracle can only ever validate the commensurate case; the incommensurate
-one — the only case where the rotating frame earns its keep — has no independent
-check, which is a further reason for caution.
-
-**Until then** the engine refuses honestly, and the message already names both
-workarounds: a `magnetic_supercell`, or `dipole_dipole.method: truncated`.
+**History, as a caution.** This item was estimated at 3 days, then a week, then
+"possibly structurally invalid", then "nine terms" — four characterizations, each
+from a closer look that changed its nature rather than its size, and three of them
+wrong. Ten minutes reading the reference implementation settled it. The lesson is not
+subtle: when a validated implementation of the same physics is sitting in the repo as
+an oracle, read it before deriving.
 
 ---
 
