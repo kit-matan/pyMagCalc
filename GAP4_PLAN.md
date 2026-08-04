@@ -236,6 +236,27 @@ then nine (assuming none of it collapses). The cross terms `R1 J(q+k) R1*` and
 `R1* J(q−k) R1` are exactly the ones a commutation-based derivation drops and a naive
 9-term expansion over-counts.
 
+**THE INJECTION POINT IS EXACT** (checked 2026-08-04). `core._ewald_nambu(q_cart)`
+already does, for the non-spiral path, precisely what Sunny's
+`fourier_bilinear_interaction!` does for the Ewald half:
+
+    Jq = exchange_from_A(self._ewald_A(q_rlu), self._ewald_g())     # = gs[i]' Aq gs[j]
+    J0 = exchange_from_A(self._ewald_A(zeros(3)), self._ewald_g())
+
+and then builds the standard Nambu blocks from `Jq`/`J0`. So the whole change is a
+`_ewald_nambu_spiral(q_cart, k, axis)` that computes the SAME blocks from the
+rotating-frame combinations
+
+    Jrot = R2 Jq(q) R2 + R1* Jq(q+k) R1* + R1 Jq(q-k) R1
+                       + R1 Jq(q+k) R1* + R1* Jq(q-k) R1
+    J0rot= R2 J0(0) R2 + R1* J0(+k) R1* + R1 J0(-k) R1
+                       + R1 J0(+k) R1* + R1* J0(-k) R1
+
+(projectors acting on the 3x3 spin indices of each (i,j) block), and then hands the
+result to the three-channel worker the way `dip_pairs` is already handed to it in
+`calculate_sqw`. Estimated ~1 hour with the formula in hand; the existing refusal in
+`core.py` names the exact spot.
+
 **Implementation sketch for pyMagCalc.**
 
 1. Build the rotating-frame `J(q)` including the Ewald contribution — i.e. make the
