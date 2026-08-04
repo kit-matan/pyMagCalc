@@ -1,0 +1,51 @@
+# =====================================================================
+# S05 -- Sunny tutorial 05_MC_Ising.jl, ported.
+#
+#   magcalc run examples/sunny_tutorials/S05_Ising_MC/config.yaml
+#
+# The 2-D square-lattice ferromagnetic ISING model by Monte Carlo. Sunny builds it
+# from a continuous-spin System plus `polarize_spins!` and `propose_flip`: the flip
+# proposal S -> -S never leaves the +/-z axis, so a polarized start makes the
+# continuous sampler exactly Ising. pyMagCalc does the same via
+# `thermal_mc: {propose: flip, init: [0,0,1]}`.
+#
+# `swap_every: 0` disables replica exchange ON PURPOSE. Below Tc the Ising model has
+# two degenerate symmetry-broken states; a replica that visits high T and returns can
+# come back with the opposite sign, so <m> averages toward zero and the spontaneous
+# magnetization is destroyed (measured: 0.35 instead of Onsager's 0.9865 at T = 1.5).
+# Without swaps each temperature samples one broken-symmetry state, as Sunny's
+# single-temperature LocalSampler does.
+#
+# VALIDATED against Onsager's EXACT results (tests/test_sunny_tutorials.py):
+#   spontaneous magnetization m(T) = [1 - sinh^-4(2J/T)]^(1/8)  -- matched to 0.05%
+#   internal energy at Tc = -sqrt(2) J                          -- matched to ~3%
+#   Tc = 2 J / ln(1 + sqrt(2)) = 2.26919                        (finite-size rounded)
+# =====================================================================
+experiment:
+  name: S05_Ising_MC
+  description: 2D square-lattice Ising ferromagnet by Monte Carlo (Sunny tutorial 05)
+parameter_order: [J]
+parameters:
+  J: -1.0            # negative = ferromagnetic, matching Sunny's set_exchange!(-1.0, ...)
+crystal_structure:
+  lattice_vectors: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 10.0]]
+  atoms_uc:
+  - {label: A, pos: [0.0, 0.0, 0.0], spin_S: 1.0}
+interactions:
+  heisenberg:
+  - {pair: [A, A], rij_offset: [1, 0, 0], value: J}
+  - {pair: [A, A], rij_offset: [-1, 0, 0], value: J}
+  - {pair: [A, A], rij_offset: [0, 1, 0], value: J}
+  - {pair: [A, A], rij_offset: [0, -1, 0], value: J}
+magnetic_structure: {type: pattern, pattern_type: ferromagnetic, direction: [0, 0, 1]}
+tasks: {thermal_mc: true}
+thermal_mc:
+  temperatures: [1.5, 2.0, 2.26919, 2.6, 3.2]
+  supercell: [24, 24, 1]
+  propose: flip                 # Sunny `propose_flip` -- this is what makes it Ising
+  init: [0, 0, 1]               # Sunny `polarize_spins!`
+  swap_every: 0                 # see the header: swaps destroy the broken symmetry
+  n_sweeps: 8000
+  n_equil: 3000
+  seed: 1
+plotting: {save_plot: true, show_plot: false, thermal_mc_plot_filename: S05_Ising_MC.png}

@@ -194,15 +194,27 @@ class ThermalResult:
     accept_rate: float
 
 
-def _sweep(m, g, H, b, beta, S, rng):
-    """One Metropolis sweep (N single-spin updates, random point on the sphere)."""
+def _sweep(m, g, H, b, beta, S, rng, propose="uniform"):
+    """One Metropolis sweep (N single-spin updates).
+
+    `propose`:
+      "uniform" (default) -- a random point on the sphere, the general Heisenberg move.
+      "flip"              -- S -> -S, Sunny's `propose_flip`. Starting from a polarized
+                             state this keeps every spin on +/-n forever, i.e. it makes
+                             the sampler ISING. That is the only way to reproduce
+                             Sunny's 2-D Ising tutorial with a continuous-spin engine.
+    """
     N = m.shape[0]
     acc = 0
     order = rng.permutation(N)
+    flip = str(propose).lower() == "flip"
     for a in order:
         sl = slice(3 * a, 3 * a + 3)
-        v = rng.standard_normal(3)
-        v *= S / np.linalg.norm(v)
+        if flip:
+            v = -m[a]
+        else:
+            v = rng.standard_normal(3)
+            v *= S / np.linalg.norm(v)
         d = v - m[a]
         Haa = H[sl, sl]
         dE = float(g[sl] @ d + 0.5 * d @ (Haa @ d))
@@ -214,7 +226,8 @@ def _sweep(m, g, H, b, beta, S, rng):
 
 
 def parallel_tempering(H, b, N, S, temperatures, n_sweeps=4000, n_equil=1500,
-                       swap_every=1, seed=0, measure_every=1):
+                       swap_every=1, seed=0, measure_every=1,
+                       propose="uniform", init=None):
     """Replica-exchange Metropolis over the temperature ladder. Returns a
     ThermalResult with per-temperature thermodynamic averages."""
     temps = np.asarray(sorted(temperatures), float)
@@ -225,8 +238,14 @@ def parallel_tempering(H, b, N, S, temperatures, n_sweeps=4000, n_equil=1500,
     m = np.zeros((R, N, 3))
     g = np.zeros((R, 3 * N))
     for r in range(R):
-        v = rng.standard_normal((N, 3))
-        v *= S / np.linalg.norm(v, axis=1, keepdims=True)
+        if init is not None:
+            # A polarized start; with propose="flip" this is what makes the sampler
+            # Ising (Sunny's `polarize_spins!` + `propose_flip`).
+            v = np.tile(np.asarray(init, float).reshape(1, 3), (N, 1))
+            v *= S / np.linalg.norm(v, axis=1, keepdims=True)
+        else:
+            v = rng.standard_normal((N, 3))
+            v *= S / np.linalg.norm(v, axis=1, keepdims=True)
         m[r] = v
         g[r] = H @ v.ravel() + b
 
@@ -244,7 +263,7 @@ def parallel_tempering(H, b, N, S, temperatures, n_sweeps=4000, n_equil=1500,
 
     for sweep in range(n_sweeps):
         for r in range(R):
-            acc_tot += _sweep(m[r], g[r], H, b, betas[r], S, rng)
+            acc_tot += _sweep(m[r], g[r], H, b, betas[r], S, rng, propose)
             acc_cnt += 1
         # replica swaps on adjacent temperatures
         if swap_every and sweep % swap_every == 0:
@@ -281,11 +300,13 @@ def parallel_tempering(H, b, N, S, temperatures, n_sweeps=4000, n_equil=1500,
 
 def run_thermal_mc(model, params, temperatures, supercell=(4, 4, 1),
                    disorder=None, periodic=(True, True, True),
+                   propose="uniform", init=None, swap_every=1,
                    n_sweeps=4000, n_equil=1500, seed=0):
     """Convenience: build the supercell and run parallel tempering."""
     H, b, N, S, _pos = build_supercell(model, params, supercell,
                                        disorder=disorder, periodic=periodic)
-    return parallel_tempering(H, b, N, S, temperatures, n_sweeps=n_sweeps,
+    return parallel_tempering(H, b, N, S, temperatures, propose=propose, init=init,
+                              swap_every=swap_every, n_sweeps=n_sweeps,
                               n_equil=n_equil, seed=seed)
 
 @dataclass

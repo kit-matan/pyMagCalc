@@ -3,19 +3,19 @@
 Ports of the official [Sunny.jl](https://github.com/SunnySuite/Sunny.jl) tutorial
 series (`../../../Sunny.jl-main/examples/01..09`) to pyMagCalc config files.
 
-**Status, audited 2026-08-04.** Of the nine tutorials, **four are ported and pinned
-to Sunny or to an exact analytic result**, one is ported in part, and four are not
-ported. Two of those four are blocked on gaps that are deliberately still open
-(`GAP_STATUS.md` Gap 4 #16b and #26); two are portable now and simply have not been
-done. That is spelled out per row below rather than summarised optimistically.
+**Status, audited 2026-08-04.** Of the nine tutorials, **six are ported and pinned**
+to Sunny or to an exact analytic result, one is ported but only transitively
+justified (07), one is ported in part (09), and **two are blocked** on gaps that are
+deliberately open (`GAP_STATUS.md` Gap 4 #26 and #16b). Spelled out per row below
+rather than summarised optimistically.
 
 | # | Sunny tutorial | What it computes | pyMagCalc | Evidence |
 |---|---|---|---|---|
 | 01 | CoRh₂O₄ | LSWT dispersion + powder | ✅ **ported, pinned to Sunny** | all 8 bands at 6 q-points, `test_S01_dispersion_matches_sunny_band_by_band` |
-| 02 | CoRh₂O₄ finite *T* | Langevin dynamics, S(Q,ω) at *T* | ⬜ **not ported** (now possible) | needs a `sampled_correlations` config; the engine exists (Gap 3 #5, Gap 4 #17/#18) |
+| 02 | CoRh₂O₄ finite *T* | Langevin dynamics, static S(q) at *T* | ✅ **ported** | `static_correlations` at 16 K; AFM contrast sharpens on cooling. Thermalized by Metropolis rather than Langevin — both pinned to the same exact distributions |
 | 03 | FeI₂ | SU(3) multi-flavour LSWT | ✅ **ported, pinned to Sunny** | E/site, 8 bands **and** intensities < 1e-4, `test_sun.py` |
 | 04 | FeI₂ finite *T* | SU(N) classical dynamics at *T* | ⛔ **blocked** | needs CP^(N−1) equations of motion — Gap 4 **#26**, open |
-| 05 | 2D Ising | thermal Monte Carlo | ⬜ **not ported** (now possible) | `thermal_mc` exists (Gap 3 #6); needs an Ising-like proposal / strong easy axis |
+| 05 | 2D Ising | thermal Monte Carlo | ✅ **ported, pinned to Onsager** | `propose: flip` + polarized start ⇒ exactly Ising; m(T) matches Onsager to **0.05%**, E(Tc) = −√2 J to 3% |
 | 06 | CP² skyrmions | non-equilibrium SU(3) quench | ⛔ **blocked** | same as 04 — Gap 4 **#26**, open |
 | 07 | Pyrochlore dipole-dipole | LSWT + long-range dipole | ⚠️ **ported, not pinned** | the Ewald *engine* matches Sunny to 1.3e-8 (`test_ewald.py`), but **this config's own bands have never been compared** — see below |
 | 08 | Momentum conventions | LSWT 1D DM+Ising chain | ✅ **ported, exact analytic pin** | ω(q) = 2s[J ± D sin 2πq₃] including the q → −q sign flip |
@@ -40,6 +40,18 @@ were previously described as validated when nothing asserted it:
   same dipolar ground state. Until someone does that, treat S07 as a worked example,
   not as a validated result.
 
+## Two notes on the new ports
+
+- **S05** disables replica exchange (`swap_every: 0`) on purpose. Below Tc the Ising
+  model has two degenerate broken-symmetry states, and a replica that visits high T
+  and returns can come back with the opposite sign — ⟨m⟩ then averages toward zero
+  (measured 0.35 against Onsager's 0.9865 at T = 1.5). Sunny's single-temperature
+  `LocalSampler` has no such issue. A test records this so nobody "fixes" it.
+- **S02** thermalizes by Metropolis where Sunny uses Langevin. Both sample the same
+  Boltzmann distribution and each is pinned independently to exact results, so
+  equilibrium averages agree though trajectories do not. `classical_dynamics.langevin_step`
+  is available if you want Sunny's route.
+
 ## Why 04, 06 and the interesting half of 09 are not here
 
 They are not oversights and they are not hard to *fake*; they are blocked on engine
@@ -62,5 +74,5 @@ folder that looks like a port and is not one. They are listed as blocked instead
 magcalc run examples/sunny_tutorials/S01_CoRh2O4/config.yaml
 ```
 
-Tests: `tests/test_sunny_tutorials.py` (S01, S08, S09 + schema for all),
+Tests: `tests/test_sunny_tutorials.py` (S01, S02, S05, S08, S09 + schema for all),
 `tests/test_sun.py` (S03), `tests/test_ewald.py` (the engine S07 relies on).

@@ -1,0 +1,119 @@
+# =====================================================================
+# S02 -- Sunny tutorial 02_LLD_CoRh2O4.jl, ported.
+#
+#   magcalc run examples/sunny_tutorials/S02_CoRh2O4_finiteT/config.yaml
+#
+# The SAME CoRh2O4 Hamiltonian as S01 (J = 0.63 meV on the NN diamond bond), but at
+# FINITE TEMPERATURE: Sunny thermalizes a 10x10x10 supercell with Langevin dynamics
+# at T = 16 K and measures the instantaneous structure factor with
+# `SampledCorrelationsStatic` / `intensities_static`.
+#
+# pyMagCalc's equivalent is `tasks: {static_correlations: true}` (Gap 4 #19), which
+# is the same observable: the equal-time correlation <|S(q)|^2> averaged over
+# thermally sampled configurations, per site.
+#
+# THERMALIZATION DIFFERS, DELIBERATELY. Sunny uses its Langevin integrator; this task
+# uses Metropolis. Both sample the same Boltzmann distribution -- each is pinned
+# independently to the exact free-spin Langevin function and the exact classical
+# dimer <E>(T) (tests/test_thermal_mc.py, tests/test_integrators.py) -- so the
+# equilibrium averages agree even though the trajectories do not. pyMagCalc also has
+# a Langevin thermostat (`classical_dynamics.langevin_step`) if you want the same
+# route Sunny takes.
+#
+# T = 16 K = 16 * 0.0861733 = 1.3788 meV. pyMagCalc's classical modules take kT in
+# meV; getting this conversion wrong is the easiest way to get a plausible, wrong
+# temperature.
+#
+# NOT A REPLACEMENT FOR S01: this is diffuse scattering from a thermally disordered
+# state, not a magnon spectrum. At low T it sharpens toward the S01 Neel order.
+#
+# SUPERCELL SIZE. 4x4x4 = 512 spins (a dense 1536^2 energy matrix, 19 MB). Sunny uses
+# 10x10x10; here that would be 8000 spins and a 24000^2 matrix -- 4.6 GB -- because
+# this sampler stores the energy as a DENSE quadratic form rather than a bond list.
+# Raise it if you need finer q resolution and have the memory, but check the cost
+# first: it grows as the square of the site count, not linearly.
+# =====================================================================
+experiment:
+  name: S02_CoRh2O4_finiteT
+  description: CoRh2O4 instantaneous S(q) at T = 16 K (Sunny tutorial 02)
+parameter_order: [J]
+parameters:
+  J: 0.63
+crystal_structure:
+  lattice_parameters:
+    a: 8.5031
+    b: 8.5031
+    c: 8.5031
+    alpha: 90
+    beta: 90
+    gamma: 90
+  atoms_uc:
+  - label: Co0
+    pos: [0.125, 0.125, 0.125]
+    spin_S: 1.5
+    ion: Co2+
+  - label: Co1
+    pos: [0.125, 0.625, 0.625]
+    spin_S: 1.5
+    ion: Co2+
+  - label: Co2
+    pos: [0.625, 0.125, 0.625]
+    spin_S: 1.5
+    ion: Co2+
+  - label: Co3
+    pos: [0.625, 0.625, 0.125]
+    spin_S: 1.5
+    ion: Co2+
+  - label: Co4
+    pos: [0.875, 0.875, 0.875]
+    spin_S: 1.5
+    ion: Co2+
+  - label: Co5
+    pos: [0.875, 0.375, 0.375]
+    spin_S: 1.5
+    ion: Co2+
+  - label: Co6
+    pos: [0.375, 0.875, 0.375]
+    spin_S: 1.5
+    ion: Co2+
+  - label: Co7
+    pos: [0.375, 0.375, 0.875]
+    spin_S: 1.5
+    ion: Co2+
+interactions:
+  symmetry_rules:
+  - type: heisenberg
+    distance: 3.6818
+    value: J
+magnetic_structure:
+  type: pattern
+  pattern_type: generic
+  directions:
+  - &id001 [0, 0, 1]
+  - *id001
+  - *id001
+  - *id001
+  - &id002 [0, 0, -1]
+  - *id002
+  - *id002
+  - *id002
+tasks:
+  static_correlations: true
+static_correlations:
+  temperature: 1.3788
+  supercell: [4, 4, 4]
+  n_samples: 200
+  n_equil: 2000
+  sample_every: 10
+  cross_section: perp
+  seed: 0
+q_path:
+  Gamma: [0.0, 0.0, 0.0]
+  X: [0.5, 0.0, 0.0]
+  W: [0.5, 0.5, 0.0]
+  Gamma2: [0.0, 0.0, 0.0]
+  path: [Gamma, X, W, Gamma2]
+  points_per_segment: 160
+plotting:
+  save_plot: true
+  show_plot: false

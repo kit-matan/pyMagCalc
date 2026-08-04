@@ -1224,6 +1224,9 @@ def run_calculation(config_file: str):
                     n_sweeps=int(tm.get('n_sweeps', 4000)),
                     n_equil=int(tm.get('n_equil', 1500)),
                     seed=int(tm.get('seed', 0)),
+                    propose=tm.get('propose', 'uniform'),
+                    init=tm.get('init'),
+                    swap_every=int(tm.get('swap_every', 1)),
                     **_disorder_opts(tm))
                 logger.info(
                     f"Thermal MC ({res.n_spins} spins, accept {res.accept_rate:.2f}): "

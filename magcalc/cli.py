@@ -122,6 +122,15 @@ output:
 # in `tasks:` is most likely a typo, so we surface it as a warning during
 # `validate` even though the schema is otherwise permissive (extra='allow').
 _KNOWN_TASK_KEYS = {
+    # Beyond-LSWT tasks. These were missing, so `magcalc validate` warned that real,
+    # runner-handled tasks "will be ignored" -- advice that is exactly backwards.
+    "scga",
+    "thermal_mc",
+    "sampled_correlations",
+    "static_sqw",
+    "static_correlations",
+    "wang_landau",
+    "kpm_sqw",
     "minimization",
     "dispersion",
     "sqw_map",

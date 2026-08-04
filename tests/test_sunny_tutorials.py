@@ -28,6 +28,8 @@ HERE = os.path.dirname(__file__)
 ROOT = os.path.join(HERE, "..", "examples", "sunny_tutorials")
 CONFIGS = {
     "S01": "S01_CoRh2O4/config.yaml",
+    "S02": "S02_CoRh2O4_finiteT/config.yaml",
+    "S05": "S05_Ising_MC/config.yaml",
     "S07": "S07_dipole_dipole/config.yaml",
     "S08": "S08_momentum_conventions/config.yaml",
     "S09": "S09_triangular_AFM/config.yaml",
@@ -158,4 +160,103 @@ def test_S01_classical_energy_is_the_exact_neel_value():
     """-2 J s^2 = -2.835 meV/site for the diamond Neel state (z = 4, the 1/2 over
     ordered pairs). Sunny's minimizer lands on exactly this."""
     assert -2 * 0.63 * 1.5 ** 2 == pytest.approx(-2.835, abs=1e-12)
+
+# ---------------------------------------------------------------------------
+# S05 -- the 2-D Ising ferromagnet, against ONSAGER'S EXACT results.
+#
+# Sunny builds Ising out of continuous spins with `polarize_spins!` +
+# `propose_flip`: the move S -> -S never leaves the +/-z axis. pyMagCalc does the
+# same with `thermal_mc: {propose: flip, init: [0,0,1]}`.
+# ---------------------------------------------------------------------------
+TC_ISING = 2.0 / np.log(1.0 + np.sqrt(2.0))          # 2.269185...
+
+
+def _onsager_m(T):
+    """Spontaneous magnetization [1 - sinh^-4(2J/T)]^(1/8), J = 1."""
+    k = np.sinh(2.0 / T) ** -4
+    return (1.0 - k) ** 0.125 if k < 1.0 else 0.0
+
+
+def _ising_run(temps, L=24, **kw):
+    from magcalc.thermal_mc import build_supercell, parallel_tempering
+    cfg = _load("S05")
+    m = GenericSpinModel(cfg)
+    H, b, N, S, _ = build_supercell(m, [cfg["parameters"]["J"]], (L, L, 1))
+    opts = dict(n_sweeps=8000, n_equil=3000, seed=1, propose="flip",
+                init=[0, 0, 1], swap_every=0)
+    opts.update(kw)
+    return parallel_tempering(H, b, N, S, np.asarray(temps, float), **opts)
+
+
+@pytest.mark.slow
+def test_S05_magnetization_matches_onsager():
+    """m(T) = [1 - sinh^-4(2J/T)]^(1/8) below Tc, and ~0 above. Exact, closed form,
+    and nothing about it comes from this code."""
+    temps = [1.5, 2.0, 2.6, 3.2]
+    res = _ising_run(temps)
+    for i, T in enumerate(temps):
+        got = abs(res.mag_vector[i, 2])
+        assert got == pytest.approx(_onsager_m(T), abs=0.03), f"T={T}"
+
+
+@pytest.mark.slow
+def test_S05_energy_at_Tc_matches_onsager():
+    """Onsager's internal energy at criticality is exactly -sqrt(2) J per site.
+    A 24x24 lattice reproduces it to a few percent (finite size)."""
+    res = _ising_run([TC_ISING])
+    assert res.energy[0] == pytest.approx(-np.sqrt(2.0), rel=0.05)
+
+
+def test_S05_flip_proposal_keeps_the_system_ising():
+    """The load-bearing mechanism: with `propose: flip` from a polarized start every
+    spin must stay on the +/-z axis. If the proposal fell back to the uniform
+    sphere move this is a Heisenberg model with a different Tc, and the Onsager
+    comparison above would be meaningless."""
+    from magcalc.thermal_mc import _sweep, build_supercell
+    cfg = _load("S05")
+    m = GenericSpinModel(cfg)
+    H, b, N, S, _ = build_supercell(m, [cfg["parameters"]["J"]], (6, 6, 1))
+    conf = np.tile(np.array([0.0, 0.0, S]), (N, 1))
+    g = H @ conf.ravel() + b
+    rng = np.random.default_rng(0)
+    for _ in range(50):
+        _sweep(conf, g, H, b, 1.0 / 2.0, S, rng, propose="flip")
+        g = H @ conf.ravel() + b
+    assert np.abs(conf[:, 0]).max() == 0.0 and np.abs(conf[:, 1]).max() == 0.0
+    assert np.allclose(np.abs(conf[:, 2]), S)
+
+
+def test_S05_replica_swaps_would_destroy_the_broken_symmetry():
+    """Why the config sets `swap_every: 0`, recorded so nobody 'fixes' it.
+
+    Below Tc the Ising model has two degenerate states. A replica that visits high T
+    and returns can come back with the opposite sign, so <m> averages toward zero:
+    measured 0.35 with swaps against Onsager's 0.9865 at T = 1.5. Without swaps each
+    temperature stays in one broken-symmetry state, as Sunny's single-temperature
+    LocalSampler does.
+    """
+    res = _ising_run([1.5], swap_every=0, n_sweeps=3000, n_equil=1000)
+    assert abs(res.mag_vector[0, 2]) > 0.9
+
+
+# ---------------------------------------------------------------------------
+# S02 -- finite-T instantaneous S(q) on the S01 Hamiltonian.
+# ---------------------------------------------------------------------------
+def test_S02_static_correlations_peak_at_the_antiferromagnetic_wavevector():
+    """Physics, not plumbing: CoRh2O4 orders Neel, so the instantaneous S(q) at
+    finite T must carry more weight at the ordering wavevector than at a generic
+    zone-interior point, and the contrast must SHARPEN on cooling."""
+    from magcalc.thermal_mc import static_correlations
+    cfg = _load("S02")
+    m = GenericSpinModel(cfg)
+    L = _lattice_from_params(cfg["crystal_structure"]["lattice_parameters"])
+    B = 2 * np.pi * np.linalg.inv(L).T
+    q = np.array([[0.0, 0.0, 0.0], [0.3, 0.17, 0.11], [1.0, 1.0, 1.0]]) @ B
+    contrast = []
+    for kT in (4.0, 1.3788):                       # 46 K and the tutorial's 16 K
+        sq = static_correlations(m, [cfg["parameters"]["J"]], q, kT,
+                                 supercell=(4, 4, 4), n_samples=120, n_equil=800,
+                                 sample_every=5, seed=0).sq
+        contrast.append(sq[2] / sq[1])
+    assert contrast[1] > contrast[0], "correlations must sharpen on cooling"
 
