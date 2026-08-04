@@ -525,7 +525,11 @@ class GenericSpinModel:
                                  ref_pair=rule.get('ref_pair'),
                                  value=rule.get('value'),
                                  distance=rule.get('distance'),
-                                 offset=rule.get('offset')
+                                 offset=rule.get('offset'),
+                                 # `kitaev` needs the bond's Cartesian axis; without
+                                 # it the rule silently meant the default z.
+                                 axis=(rule.get('axis')
+                                       or rule.get('bond_direction'))
                              )
                      except Exception as e:
                          raise ValueError(
@@ -1475,11 +1479,22 @@ class GenericSpinModel:
                         # Kitaev rules in builder usually specify axis or bond_direction.
                         axis = (interaction.get('axis') or interaction.get('bond_direction') or 'z').lower()
                         k_val = resolved_val[0] if isinstance(resolved_val, list) else resolved_val
+                        # Both of these used to be silent: an unresolved value logged a
+                        # WARNING and `continue`d, and an unrecognised axis fell through
+                        # `.get(axis, 2)` to z. Either way the Hamiltonian came out
+                        # missing a term or carrying it on the wrong axis, with a
+                        # plausible spectrum and nothing to indicate it -- exactly the
+                        # class of failure the other terms already raise on.
                         if k_val is None:
-                            logger.warning(f"Kitaev interaction value resolved to None for {interaction}. Skipping.")
-                            continue
+                            raise ValueError(
+                                f"kitaev value resolved to None in {interaction}; "
+                                f"check that the parameter name exists in `parameters`")
+                        if axis not in ('x', 'y', 'z'):
+                            raise ValueError(
+                                f"kitaev axis {axis!r} in {interaction} is not one of "
+                                f"'x', 'y', 'z' (Cartesian spin components)")
                         k_mat = sp.zeros(3,3)
-                        ax_idx = {'x':0, 'y':1, 'z':2}.get(axis, 2)
+                        ax_idx = {'x':0, 'y':1, 'z':2}[axis]
                         k_mat[ax_idx, ax_idx] = k_val
                         if Kex[i][j] is None: Kex[i][j] = k_mat
                         else: Kex[i][j] += k_mat
