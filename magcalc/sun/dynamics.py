@@ -152,6 +152,17 @@ def sampled_correlations(model, q_cart, kT, dt=0.02, n_steps=512, n_traj=4,
     M^a(q, t) in time. `classical_to_quantum` applies the same correspondence factor
     as the dipole path (Gap 4 #17).
 
+    THE MODEL MUST BE BIG ENOUGH FOR THE q YOU ASK FOR. This is real-space dynamics:
+    a chemical cell of two sites cannot represent a spin wave at q = 0.3, and asking
+    for one returns that two-site system's own normal mode instead -- a plausible
+    number that is not the thing you wanted (it looks like a factor-of-2 error).
+    Build the model on a supercell first:
+
+        SUNModel.from_generic_model(m, supercell=[[16,0,0],[0,1,0],[0,0,1]])
+
+    and use q commensurate with it. LSWT needs none of this because it works in
+    q-space; this does.
+
     Trajectories START FROM `model.Z` -- the model's reference state, i.e. the ground
     state after `minimize_energy` -- and are then thermalized. Starting from RANDOM
     coherent states instead is wrong at low temperature: Metropolis cannot walk from

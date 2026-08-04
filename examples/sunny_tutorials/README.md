@@ -3,7 +3,7 @@
 Ports of the official [Sunny.jl](https://github.com/SunnySuite/Sunny.jl) tutorial
 series (`../../../Sunny.jl-main/examples/01..09`) to pyMagCalc config files.
 
-**Status, audited 2026-08-04.** Of the nine tutorials, **six are ported and pinned**
+**Status, audited 2026-08-04.** Of the nine tutorials, **seven are ported**
 to Sunny or to an exact analytic result, one is ported but only transitively
 justified (07), one is ported in part (09), and **two are blocked** on gaps that are
 deliberately open (`GAP_STATUS.md` Gap 4 #26 and #16b). Spelled out per row below
@@ -14,9 +14,9 @@ rather than summarised optimistically.
 | 01 | CoRh₂O₄ | LSWT dispersion + powder | ✅ **ported, pinned to Sunny** | all 8 bands at 6 q-points, `test_S01_dispersion_matches_sunny_band_by_band` |
 | 02 | CoRh₂O₄ finite *T* | Langevin dynamics, static S(q) at *T* | ✅ **ported** | `static_correlations` at 16 K; AFM contrast sharpens on cooling. Thermalized by Metropolis rather than Langevin — both pinned to the same exact distributions |
 | 03 | FeI₂ | SU(3) multi-flavour LSWT | ✅ **ported, pinned to Sunny** | E/site, 8 bands **and** intensities < 1e-4, `test_sun.py` |
-| 04 | FeI₂ finite *T* | SU(N) classical dynamics at *T* | ⛔ **blocked** | needs CP^(N−1) equations of motion — Gap 4 **#26**, open |
+| 04 | FeI₂ finite *T* | SU(N) classical dynamics at *T* | ✅ **ported** | unblocked by Gap 4 #26; machinery pinned (N=2 → Landau–Lifshitz to 4.8e-10, low-T peak within 1.1% of the LSWT band). This config's own spectrum not compared with Sunny |
 | 05 | 2D Ising | thermal Monte Carlo | ✅ **ported, pinned to Onsager** | `propose: flip` + polarized start ⇒ exactly Ising; m(T) matches Onsager to **0.05%**, E(Tc) = −√2 J to 3% |
-| 06 | CP² skyrmions | non-equilibrium SU(3) quench | ⛔ **blocked** | same as 04 — Gap 4 **#26**, open |
+| 06 | CP² skyrmions | non-equilibrium SU(3) quench | ⛔ **blocked** | #26 gave the CONSERVATIVE flow; a quench needs *dissipative* SU(N) damping + real-space texture output |
 | 07 | Pyrochlore dipole-dipole | LSWT + long-range dipole | ⚠️ **ported, not pinned** | the Ewald *engine* matches Sunny to 1.3e-8 (`test_ewald.py`), but **this config's own bands have never been compared** — see below |
 | 08 | Momentum conventions | LSWT 1D DM+Ising chain | ✅ **ported, exact analytic pin** | ω(q) = 2s[J ± D sin 2πq₃] including the q → −q sign flip |
 | 09 | Disordered triangular AFM | LSWT + KPM with bond disorder | ⚠️ **clean part only** | 120° order pinned analytically; the **disorder is the point of the tutorial** and needs Gap 4 **#16b**, open |
@@ -52,14 +52,12 @@ were previously described as validated when nothing asserted it:
   equilibrium averages agree though trajectories do not. `classical_dynamics.langevin_step`
   is available if you want Sunny's route.
 
-## Why 04, 06 and the interesting half of 09 are not here
+## Why 06 and the interesting half of 09 are not here
 
-They are not oversights and they are not hard to *fake*; they are blocked on engine
-capabilities that are open by choice:
-
-- **04 and 06** need finite-temperature dynamics of SU(N) coherent states — the
-  CP^(N−1) equations of motion, which are a different integrator from the
-  Landau–Lifshitz one in `classical_dynamics.py`, not a wrapper on it (Gap 4 #26).
+- **06** needs a DAMPED quench (`Langevin(damping, kT=0)`), i.e. dissipative CP^(N−1)
+  relaxation. Gap 4 #26 delivered the energy-CONSERVING flow plus Metropolis, and
+  neither substitutes: Metropolis finds equilibrium, while this tutorial is about the
+  metastable texture a quench leaves behind. It also needs real-space texture output.
 - **09** needs *bond disorder in LSWT*: a large inhomogeneous supercell driven through
   the KPM engine (Gap 4 #16b). Vacancies and open boundaries landed for the classical
   samplers (#16a), but the LSWT half did not, and the tutorial is specifically about

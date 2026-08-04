@@ -1,0 +1,160 @@
+# =====================================================================
+# S04 -- Sunny tutorial 04_GSD_FeI2.jl, ported.
+#
+#   magcalc run examples/sunny_tutorials/S04_FeI2_finiteT/config.yaml
+#
+# FeI2 at FINITE TEMPERATURE by generalized (SU(N)) spin dynamics -- the same
+# Hamiltonian as S03 / examples/materials/FeI2, but evolving CP^(N-1) coherent
+# states instead of diagonalizing about the ground state.
+#
+# This tutorial was blocked until Gap 4 #26 landed. The dipole Landau-Lifshitz
+# dynamics cannot represent FeI2 at all: its physics is the single-ion bound state,
+# a transition WITHIN the S=1 ion's three levels, which a single precessing dipole
+# has no way to express.
+#
+# THE SUPERCELL IS NOT OPTIONAL. This is real-space dynamics, so the cell must be
+# large enough to represent the q being probed -- LSWT needs no such thing because
+# it works in q-space. The magnetic cell here is FeI2's non-diagonal
+# [1 0 0; 0 1 -2; 0 1 2] extended x4 along a. Running the dynamics on the chemical
+# cell and comparing with an infinite-lattice band silently returns that small
+# system's own normal mode, which looks like a factor-of-2 error (that is exactly
+# how it was found -- see tests/test_sun_dynamics.py).
+#
+# CLASSICAL RENORMALIZATION IS REAL, NOT AN ERROR. Modes soften at finite kT:
+# measured on a test model, the peak sits 21% below the LSWT band at kT = 0.15 and
+# recovers to within 1.1% as kT -> 0. Compare with LSWT only in the low-T limit.
+# =====================================================================
+experiment:
+  name: S04_FeI2_finiteT
+  description: FeI2 generalized spin dynamics at finite T (Sunny tutorial 04)
+crystal_structure:
+  lattice_parameters:
+    space_group: 164
+    a: 4.05012
+    b: 4.05012
+    c: 6.75214
+    alpha: 90
+    beta: 90
+    gamma: 120
+  wyckoff_atoms:
+  - label: Fe
+    element: Fe
+    wyckoff: 1a
+    pos: [0, 0, 0]
+    spin_S: 1.0
+    charge: 2
+  atom_mode: symmetry
+  magnetic_elements: [Fe]
+  magnetic_supercell:
+    matrix:
+    - [4, 0, 0]
+    - [0, 1, -2]
+    - [0, 1, 2]
+parameters:
+  J1pm: -0.236
+  J1pmpm: -0.161
+  J1zpm: -0.261
+  J1zz: -0.236
+  J1xx: -0.397
+  J1yy: -0.075
+  J1yz: -0.261
+  J2pm: 0.026
+  J2zz: 0.113
+  J3pm: 0.166
+  J3zz: 0.211
+  Jp0pm: 0.037
+  Jp0zz: -0.036
+  Jp1pm: 0.013
+  Jp1zz: 0.051
+  Jp2apm: 0.068
+  Jp2azz: 0.073
+  D: 2.165
+interactions:
+  single_ion_anisotropy:
+  - value: -2.165
+    axis: [0, 0, 1]
+    atoms: [Fe]
+  symmetry_rules:
+  - name: J1
+    type: interaction_matrix
+    value:
+    - [-0.397, 0.0, 0.0]
+    - [0.0, -0.075, -0.261]
+    - [0.0, -0.261, -0.236]
+    ref_pair: [Fe, Fe]
+    distance: 4.05
+    offset: [1, 0, 0]
+  - name: J2
+    type: interaction_matrix
+    value:
+    - [0.026, 0.0, 0.0]
+    - [0.0, 0.026, 0.0]
+    - [0.0, 0.0, 0.113]
+    ref_pair: [Fe, Fe]
+    distance: 7.015
+    offset: [1, 2, 0]
+  - name: J3
+    type: interaction_matrix
+    value:
+    - [0.166, 0.0, 0.0]
+    - [0.0, 0.166, 0.0]
+    - [0.0, 0.0, 0.211]
+    ref_pair: [Fe, Fe]
+    distance: 8.1
+    offset: [2, 0, 0]
+  - name: J_prime_0
+    type: interaction_matrix
+    value:
+    - [0.037, 0.0, 0.0]
+    - [0.0, 0.037, 0.0]
+    - [0.0, 0.0, -0.036]
+    ref_pair: [Fe, Fe]
+    distance: 6.75
+    offset: [0, 0, 1]
+  - name: J_prime_1
+    type: interaction_matrix
+    value:
+    - [0.013, 0.0, 0.0]
+    - [0.0, 0.013, 0.0]
+    - [0.0, 0.0, 0.051]
+    ref_pair: [Fe, Fe]
+    distance: 7.87
+    offset: [1, 0, 1]
+  - name: J_prime_2a
+    type: interaction_matrix
+    value:
+    - [0.068, 0.0, 0.0]
+    - [0.0, 0.068, 0.0]
+    - [0.0, 0.0, 0.073]
+    ref_pair: [Fe, Fe]
+    distance: 9.74
+    offset: [1, 2, 1]
+minimization:
+  enabled: true
+  num_starts: 30
+  seed: 1
+q_path:
+  Gamma: [0.0, 0.0, 0.0]
+  M: [0.25, 0.0, 0.0]
+  path: [Gamma, M]
+  points_per_segment: 5
+tasks:
+  minimization: true
+  sun_sampled_correlations: true
+calculation:
+  mode: SUN
+  cache_mode: none
+sun_sampled_correlations:
+  temperature: 0.5
+  dt: 0.02
+  n_steps: 1024
+  n_traj: 3
+  therm_sweeps: 200
+  sigma: 0.08
+  cross_section: perp
+  classical_to_quantum: true
+  subtract_elastic: false
+  seed: 0
+plotting:
+  save_plot: true
+  show_plot: false

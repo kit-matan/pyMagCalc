@@ -13,6 +13,12 @@ so the generator is the SAME local Hamiltonian the CP^(N-1) ground-state search
 already builds; #26 was never about new physics input, only about using it to
 propagate rather than to minimize.
 
+NOTE ON METHOD: the dynamics runs in REAL SPACE, so it needs a supercell large
+enough to represent the q being probed. LSWT does not (it works in q-space). Running
+the dynamics on the chemical cell and comparing with an infinite-lattice band is
+meaningless, and it looks like a factor-of-2 bug -- see
+`test_low_T_peaks_fall_on_the_SUN_lswt_dispersion`.
+
 THE LOAD-BEARING TEST is the first one: at N = 2 this must reduce EXACTLY to
 Landau-Lifshitz. That is the dynamical analogue of the "S=1/2 SU(N) == dipole" gate
 that anchors `tests/test_sun.py`, and it fails loudly on any factor of 2, sign, or
@@ -147,29 +153,76 @@ def test_sampled_correlations_runs_and_is_positive():
     assert sqw.shape == (len(w), 2)
 
 
+def _supercell_model(cfg, ncells=8):
+    """The SAME model on an ncells x 1 x 1 supercell.
+
+    Dynamics NEEDS this and LSWT does not, which is exactly the trap below.
+    """
+    return SUNModel.from_generic_model(
+        GenericSpinModel(copy.deepcopy(cfg)), params=[],
+        supercell=[[ncells, 0, 0], [0, 1, 0], [0, 0, 1]])
+
+
 @pytest.mark.slow
 def test_low_T_peaks_fall_on_the_SUN_lswt_dispersion():
-    """KNOWN FAILURE, deliberately left visible: the finite-T S(q,w) from these
-    trajectories peaks at ROUGHLY HALF the SU(N) LSWT magnon energy.
+    """The physical check that ties the dynamics to the validated LSWT engine.
 
-    Measured on the S = 1 chain with an easy-axis anisotropy: LSWT bands
-    [2.0924, 2.0924, 4.0, 4.0] at q = (0.3, 0, 0), against a classical peak at
-    1.07 -- a ratio of 1.95, stable across kT = 0.05/0.15/0.3 and carrying real
-    spectral weight, so it is not sampling noise.
+    Two mistakes had to be cleared out of the way first, and both are worth keeping
+    written down because each produced a confident, wrong number:
 
-    A clean factor of ~2 is a bug until proven otherwise (GAP_STATUS's standing
-    rule), and this one is NOT explained. What is already established:
+    1. NO SUPERCELL. The first version ran the dynamics on the CHEMICAL cell -- two
+       sites -- and compared it with the infinite-lattice LSWT band at q = 0.3.
+       A two-site system cannot represent that wavevector at all, so the "spectrum"
+       was a two-site normal mode. That produced a peak at ~half the band and looked
+       exactly like a factor-of-2 bug. LSWT needs no supercell (it works in q-space);
+       real-space dynamics does.
+    2. TEMPERATURE. Classical dynamics renormalizes the mode DOWNWARD at finite kT.
+       At kT = 0.15 the peak sits 21% below the LSWT band -- a real effect, not an
+       error -- and only kT -> 0 recovers the harmonic value.
 
-      * the equations of motion and integrator are right -- at N = 2 they reproduce
-        Landau-Lifshitz to 4.8e-10 (the first test in this file), and that dipole
-        path is itself pinned to the LSWT dispersion in test_classical_dynamics.py;
-      * energy and every |Z_i| are conserved to 1e-8 / 1e-12.
-
-    So the defect is somewhere between the trajectory and the spectrum -- the
-    thermal sampling on CP^(N-1), the moment operator, or a genuine factor in the
-    N > 2 correspondence -- and it is not worth guessing. `sun.dynamics.sampled_correlations`
-    is therefore NOT validated and must not be used for quantitative work; the
-    deterministic dynamics underneath it is.
+    Measured hardening at q = (0.25, 0, 0), LSWT band 1.9391:
+        kT = 0.30 -> 0.077   kT = 0.15 -> 1.534
+        kT = 0.06 -> 1.841   kT = 0.02 -> 1.918   (0.989 of the band)
     """
-    pytest.xfail("SU(N) S(q,w) peaks at ~half the LSWT energy; unexplained. "
-                 "See GAP_STATUS Gap 4 #26.")
+    cfg = _cfg(S=1.0, sia=-0.4)
+    chem = _model(cfg)
+    chem.minimize_energy(n_restarts=8, seed=1)
+    B = 2 * np.pi * np.linalg.inv(np.array(LAT, float)).T
+    q = np.array([0.25, 0, 0]) @ B
+    band = float(np.sort(np.real(chem.dispersion(q)))[0])
+
+    sup = _supercell_model(cfg)
+    sup.minimize_energy(n_restarts=6, seed=1)
+    w, sqw = sd.sampled_correlations(sup, np.array([q]), kT=0.02, dt=0.02,
+                                     n_steps=4096, n_traj=3, therm_sweeps=500,
+                                     seed=2, sigma=0.03, classical_to_quantum=False,
+                                     subtract_elastic=True)
+    peak = w[int(np.argmax(sqw[:, 0]))]
+    assert peak == pytest.approx(band, rel=0.05), (
+        f"peak {peak:.4f} vs LSWT band {band:.4f}")
+
+
+@pytest.mark.slow
+def test_mode_hardens_toward_the_lswt_band_on_cooling():
+    """The temperature dependence itself, which is what distinguishes a genuine
+    classical renormalization from a wrong frequency: a constant offset would NOT
+    shrink as kT falls."""
+    cfg = _cfg(S=1.0, sia=-0.4)
+    chem = _model(cfg)
+    chem.minimize_energy(n_restarts=8, seed=1)
+    B = 2 * np.pi * np.linalg.inv(np.array(LAT, float)).T
+    q = np.array([0.25, 0, 0]) @ B
+    band = float(np.sort(np.real(chem.dispersion(q)))[0])
+
+    peaks = []
+    for kT, sig in ((0.15, 0.09), (0.06, 0.05), (0.02, 0.03)):
+        sup = _supercell_model(cfg)
+        sup.minimize_energy(n_restarts=6, seed=1)
+        w, sqw = sd.sampled_correlations(sup, np.array([q]), kT=kT, dt=0.02,
+                                         n_steps=4096, n_traj=3, therm_sweeps=500,
+                                         seed=2, sigma=sig,
+                                         classical_to_quantum=False,
+                                         subtract_elastic=True)
+        peaks.append(w[int(np.argmax(sqw[:, 0]))])
+    assert peaks[0] < peaks[1] < peaks[2], f"not monotone on cooling: {peaks}"
+    assert peaks[-1] / band > 0.95

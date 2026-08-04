@@ -317,7 +317,7 @@ realization.
 
 **Risk.** High, mostly in scope. Ship step 1 and stop if that answers the question.
 
-### #26 SU(N) classical dynamics — ⚠️ PARTIAL (2026-08-04)
+### #26 SU(N) classical dynamics — ✅ DONE (2026-08-04)
 
 **What.** Finite-T classical dynamics for entangled units. Requires evolving SU(N)
 coherent states under the CP^(N−1) equations of motion — a different integrator from
@@ -358,7 +358,7 @@ guessed at. **S04 and S06 remain blocked** on resolving it.
 | ⏸ 3 | 20 | NeXus binning | 4 d | low | Sunny `load_nxs`; count conservation |
 | ✅ 4 | 16a | Vacancies + open boundaries (classical) | 3 d | — | exact restriction identity; analytic bond counts |
 | 4 | 16b | Disorder in LSWT (via KPM) | 1 w | high | Sunny example 09 |
-| 4 | 26 | Entangled classical dynamics | 1–2 w | high | N=2 reduces to Landau–Lifshitz (exact) |
+| ✅ 4 | 26 | SU(N) classical dynamics | ~1 d | — | N=2 reduces to Landau–Lifshitz to 4.8e-10; low-T S(q,ω) within 1.1% of the LSWT band |
 
 Phase 1 landed 2026-08-03 (see GAP_STATUS.md for what each was pinned to).
 Phases 2–3 total roughly four more weeks and close 7 of the 9 remaining line

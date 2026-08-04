@@ -1,19 +1,47 @@
-# S06 — CP² skyrmion liquid — OUT OF SCOPE
+# S06 — CP² skyrmions — BLOCKED (needs a damped SU(N) quench)
 
-Sunny tutorial `06_CP2_Skyrmions.jl` is a **non-equilibrium** study: it quenches a
-triangular-lattice spin-1 system (with competing FM/AFM exchange, easy-plane
-single-ion anisotropy, and a field) from a high-temperature state using the
-**SU(N) generalization of Landau-Lifshitz dynamics with Langevin damping**, and
-watches a disordered liquid of CP² skyrmions form. It tracks topological charge
-density in real time.
+Port of Sunny tutorial `06_CP2_Skyrmions.jl`. **Not ported**, and the blocker is now
+narrower than this file used to claim.
 
-**pyMagCalc implements neither SU(N) real-space Langevin dynamics nor
-non-equilibrium quench simulation nor topological-charge diagnostics.** These are
-time-dependent, finite-*T*, real-space dynamics of SU(3) COHERENT STATES. The
-dipole-sector prerequisites (Gap Tier 2 #5/#6) are now done; the blocker is the
-CP^(N−1) equations of motion, Gap 4 **#26**, still open. (Formerly cited as Tier 2 #5/#6 in
-`GAP_STATUS.md`) — categorically outside a linear-spin-wave engine, which computes
-only the harmonic excitation spectrum about a static equilibrium.
+## What the tutorial does
 
-There is no LSWT analogue: the object of study (a dynamically-formed topological
-defect liquid) does not exist in the harmonic-spectrum framework.
+An SU(3) model on a triangular lattice — competing J₁/J₂ exchange with anisotropy
+Δ = 2.6, a field h = 15.5 and easy-plane `D = 19.0` — is **randomized and then
+quenched**:
+
+```julia
+integrator = Langevin(; damping=0.05, kT=0)
+randomize_spins!(sys)     # -> relax -> CP^2 skyrmion texture
+```
+
+and snapshots are taken at τ = 4, 16, 256 to show skyrmions forming.
+
+## Why it is still blocked
+
+Gap 4 **#26 closed the conservative CP^(N−1) dynamics** — `i dZ_i/dt = h_i Z_i`,
+which provably conserves energy (tested to 1e-8) — plus Metropolis sampling. Neither
+can do this tutorial:
+
+- a **damped quench at kT = 0** is *dissipative* relaxation, and #26 built the
+  energy-conserving flow;
+- **Metropolis is not a substitute.** It finds equilibrium; this tutorial is about the
+  metastable texture a quench leaves *behind*. A Metropolis ground state would not
+  contain skyrmions.
+
+Two pieces are therefore missing:
+
+1. **an SU(N) damping term** — the CP^(N−1) analogue of Landau–Lifshitz–Gilbert. Worth
+   doing carefully: the dipole version's damping sign was wrong on first writing
+   (Gap 4 #18) and produced a magnetization of the right magnitude and the wrong sign,
+   caught only against an exact reference. Its validation route is clear, though —
+   the zero-damping limit must reproduce the conservative flow already pinned in
+   `tests/test_sun_dynamics.py`;
+2. **real-space texture output** — the tutorial's product is snapshots, not a
+   spectrum, and pyMagCalc has no SU(N) texture plot.
+
+## Not this
+
+The neighbouring [`../S04_FeI2_finiteT/`](../S04_FeI2_finiteT/) uses the SU(N) dynamics
+that *does* exist, for equilibrium finite-T spectra. It is not a stand-in for a
+quench: substituting one for the other would give a folder that looks like a port and
+is not one.

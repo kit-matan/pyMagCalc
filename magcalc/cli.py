@@ -130,6 +130,7 @@ _KNOWN_TASK_KEYS = {
     "static_sqw",
     "static_correlations",
     "wang_landau",
+    "sun_sampled_correlations",
     "kpm_sqw",
     "minimization",
     "dispersion",

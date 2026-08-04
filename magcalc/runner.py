@@ -607,7 +607,8 @@ def run_calculation(config_file: str):
     _lswt_tasks = ('dispersion', 'sqw_map', 'corrections', 'powder_average',
                    'energy_cut', 'fit', 'static_sqw')
     _classical_only = ('scga', 'thermal_mc', 'sampled_correlations',
-                       'static_correlations', 'wang_landau')
+                       'static_correlations', 'wang_landau',
+                       'sun_sampled_correlations')
     if any(tasks.get(t) for t in _classical_only) and \
             not any(tasks.get(t) for t in _lswt_tasks):
         on_imaginary = 'off'
@@ -1261,6 +1262,45 @@ def run_calculation(config_file: str):
             except Exception as e:
                 logger.error(f"Thermal MC failed: {e}")
                 raise
+
+    if tasks.get('sun_sampled_correlations', False):
+        # Finite-T CP^(N-1) dynamics S(q,w) for SU(N) / entangled models (Gap 4 #26).
+        # Real-space dynamics, so `supercell` must be large enough to represent the q
+        # being asked for -- unlike LSWT, which works in q-space.
+        from magcalc.sun import dynamics as _sd
+        sd_cfg = final_config.get('sun_sampled_correlations', {}) or {}
+        kT = sd_cfg.get('temperature', sd_cfg.get('kT'))
+        if kT is None:
+            logger.error("sun_sampled_correlations needs `.temperature` (meV).")
+        elif not hasattr(calculator, 'model'):
+            logger.error("sun_sampled_correlations needs calculation.mode: SUN "
+                         "or entangled.")
+        else:
+            try:
+                B = compute_b_matrix(spin_model)
+                q_rlu = q_vectors if q_vectors is not None else \
+                    generate_q_path_from_config(final_config)
+                q_cart = np.asarray(q_rlu, float) @ B
+                w, sqw = _sd.sampled_correlations(
+                    calculator.model, q_cart, float(kT),
+                    dt=float(sd_cfg.get('dt', 0.02)),
+                    n_steps=int(sd_cfg.get('n_steps', 1024)),
+                    n_traj=int(sd_cfg.get('n_traj', 4)),
+                    therm_sweeps=int(sd_cfg.get('therm_sweeps', 300)),
+                    cross_section=sd_cfg.get('cross_section', cross_section),
+                    seed=int(sd_cfg.get('seed', 0)),
+                    sigma=float(sd_cfg.get('sigma', 0.1)),
+                    classical_to_quantum=bool(
+                        sd_cfg.get('classical_to_quantum', True)),
+                    subtract_elastic=bool(sd_cfg.get('subtract_elastic', False)))
+                logger.info(
+                    f"SU(N) SampledCorrelations (kT={kT} meV, {calculator.model.L} sites): "
+                    f"S(q,w) {sqw.shape}, E up to {w.max():.3g} meV.")
+                memory_cache['sun_sampled_correlations'] = {
+                    'q_vectors': np.asarray(q_rlu, float), 'energies': w,
+                    'intensities': sqw}
+            except Exception:
+                logger.exception("sun_sampled_correlations failed.")
 
     # 3g. SampledCorrelations -- classical-dynamics S(q,w) over the full q-path/energy
     # grid in one shot (finite-T lineshapes, above or below T_N).
