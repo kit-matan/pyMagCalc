@@ -14,6 +14,7 @@ Pinned to exact / analytic references:
   * the isolated-dimer neutron intensity vanishes at q=0 (the dimer selection rule -- the
     total-spin operator is silent) and follows the (1 - cos(q.d)) structure factor.
 """
+import copy
 import os
 
 import numpy as np
@@ -232,3 +233,98 @@ def test_units_must_partition_all_sites():
     pv = [cfg["parameters"][k] for k in cfg["parameter_order"]]
     with pytest.raises(ValueError, match="partition"):
         build_entangled_model(m, pv, units=[[0]])                # site 1 left out
+
+
+# ---------------------------------------------------------------------------
+# On-site anisotropy in entangled mode -- pinned against EXACT DIAGONALIZATION
+# ---------------------------------------------------------------------------
+#
+# `sia`, `sia_matrix` and `stevens` were SILENTLY DROPPED here until 2026-08-05:
+# `build_entangled_model` assembled each unit's on-site block from the bilinear pair
+# terms (`_pair_matrix`) plus the Zeeman, and never read the on-site anisotropies,
+# while `_reject_unsupported_terms` -- whose docstring claims the builder reads "the
+# on-site SIA/Stevens terms", true of plain SU(N) and never of this engine -- let them
+# through. A D = -5 meV anisotropy on an S=1 dimer moved the spectrum by exactly 0.000.
+#
+# THE ORACLE: an ISOLATED unit (J' = 0) is a small dense matrix, so its excitation
+# energies are just the eigenvalue differences of the 2-site Hamiltonian. No external
+# reference and no golden numbers -- the engine is checked against the definition.
+
+_MU_B_ED, _GAMMA_ED = 5.788e-2, 2.0
+
+
+def _ed_dimer_levels(S, J, D, H=0.0):
+    """Exact excitations of  J S1.S2 + D[(S1z)^2+(S2z)^2] + gamma mu_B H (S1z+S2z)."""
+    Sx, Sy, Sz = spin_matrices(S)
+    I = np.eye(Sx.shape[0])
+    S1 = [np.kron(A, I) for A in (Sx, Sy, Sz)]
+    S2 = [np.kron(I, A) for A in (Sx, Sy, Sz)]
+    Hm = J * sum(S1[a] @ S2[a] for a in range(3)) \
+        + D * (S1[2] @ S1[2] + S2[2] @ S2[2])
+    if H:
+        Hm = Hm + _GAMMA_ED * _MU_B_ED * H * (S1[2] + S2[2])
+    w = np.sort(np.linalg.eigvalsh(Hm).real)
+    return w[1:] - w[0]
+
+
+def _isolated_dimer_cfg(S, J, D, H=0.0):
+    lat = [[3.0, 0, 0], [0, 8.0, 0], [0, 0, 8.0]]
+    cfg = {"calculation": {"mode": "entangled", "cache_mode": "none",
+                           "on_imaginary": "off"},
+           "units": [["A", "B"]],
+           "crystal_structure": {"lattice_vectors": lat,
+               "atoms_uc": [{"label": "A", "pos": [0.0, 0, 0], "spin_S": S},
+                            {"label": "B", "pos": [0.4, 0, 0], "spin_S": S}]},
+           "interactions": {
+               "heisenberg": [
+                   {"pair": ["A", "B"], "rij_offset": [0, 0, 0], "value": J},
+                   {"pair": ["B", "A"], "rij_offset": [0, 0, 0], "value": J}],
+               "single_ion_anisotropy": [
+                   {"value": D, "axis": [0, 0, 1], "atoms": ["A", "B"]}]},
+           "parameters": {}, "parameter_order": [],
+           "magnetic_structure": {"type": "pattern", "pattern_type": "ferromagnetic",
+                                  "direction": [0, 0, 1]},
+           "tasks": {}}
+    if H:
+        cfg["parameters"] = {"H_mag": H, "H_dir": [0.0, 0.0, 1.0]}
+        cfg["parameter_order"] = ["H_mag", "H_dir"]
+    return cfg, lat
+
+
+def _entangled_gamma_levels(cfg, lat, params):
+    from magcalc.sun.entangled import EntangledCalculator
+    model = GenericSpinModel(cfg)
+    th, ph = model.generate_magnetic_structure()
+    model.set_magnetic_structure(th, ph)
+    calc = EntangledCalculator(model, cfg, params)
+    B = 2 * np.pi * np.linalg.inv(np.array(lat, float)).T
+    return np.sort(np.real(calc.calculate_dispersion([np.array([0.0, 0, 0]) @ B])
+                           .energies)[0])
+
+
+@pytest.mark.parametrize("S,J,D,H", [
+    (1.0, 4.0, -1.5, 0.0),      # easy axis
+    (1.0, 4.0, 2.0, 0.0),       # easy plane
+    (1.0, 4.0, -1.5, 3.0),      # anisotropy competing with a field
+    (1.5, 3.0, -0.8, 0.0),      # S=3/2 -> N=16, 15 excitations
+])
+def test_entangled_on_site_anisotropy_matches_exact_diagonalization(S, J, D, H):
+    cfg, lat = _isolated_dimer_cfg(S, J, D, H)
+    params = [H, 0.0, 0.0, 1.0] if H else []
+    got = _entangled_gamma_levels(cfg, lat, params)
+    want = _ed_dimer_levels(S, J, D, H)
+    assert len(got) == len(want)
+    assert got == pytest.approx(want, abs=1e-9)
+
+
+def test_sia_matrix_and_sia_agree_on_the_same_anisotropy():
+    """`sia` with D along z and `sia_matrix` carrying diag(0,0,D) are the same operator,
+    so the two code paths must land on the same spectrum -- an internal identity that
+    catches one path being wired up and the other not."""
+    cfg_a, lat = _isolated_dimer_cfg(1.0, 4.0, -1.5)
+    cfg_b = copy.deepcopy(cfg_a)
+    del cfg_b["interactions"]["single_ion_anisotropy"]
+    cfg_b["interactions"]["sia_matrix"] = [
+        {"matrix": [[0, 0, 0], [0, 0, 0], [0, 0, -1.5]], "atoms": ["A", "B"]}]
+    assert _entangled_gamma_levels(cfg_b, lat, []) == pytest.approx(
+        _entangled_gamma_levels(cfg_a, lat, []), abs=1e-9)
