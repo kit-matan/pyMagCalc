@@ -216,46 +216,64 @@ one-line answer from the group before it is worth 4 days.
 |---|---|---|---|---|
 | 16a | Vacancies + open boundaries, **classical** | ✅ | `disorder: {vacancy_concentration, seed}` or `{vacancies: […]}`, `periodic: [b,b,b]` on any of `thermal_mc` / `sampled_correlations` / `static_correlations` / `wang_landau` | exact identities: x→0 is bit-identical to clean; a vacancy is exactly the restriction of H to the survivors; analytic bond counts (32 periodic vs 24 open on 4×4); self-averaging across seeds |
 | 16b | Bond disorder in **LSWT** | ✅ | `sun.lswt.apply_bond_disorder(model, sigma, seed)` on a supercell, then `sun/kpm.py` | σ=0 bit-identical to clean; Hermiticity preserved to 9e-16 (both bond directions get ONE draw); band spread grows monotonically with σ; self-averaging across seeds. `tests/test_bond_disorder.py` |
-| 26 | SU(N) / entangled classical dynamics | ✅ (conservative; dissipative quench NOT done — blocks tutorial 06) | `magcalc/sun/dynamics.py` | i dZ_i/dt = h_i Z_i with h_i the same mean field the CP^(N−1) search builds. N=2 reproduces Landau–Lifshitz to **4.8e-10**; energy and \|Z_i\| conserved to 1e-8 / 1e-12; on a supercell the low-T S(q,ω) peak sits within **1.1%** of the SU(N) LSWT band and hardens monotonically toward it on cooling (0.79 → 0.95 → 0.99 as kT falls) |
+| 26 | SU(N) / entangled classical dynamics | ✅ | `magcalc/sun/dynamics.py` | Conservative flow: N=2 reproduces Landau–Lifshitz to **4.8e-10**, energy and \|Z_i\| conserved to 1e-8 / 1e-12, low-T S(q,ω) within **1.1%** of the SU(N) LSWT band and hardening monotonically on cooling. Dissipative quench (`damped_step`, `quench`): `dE/dt = −2λ·Var(h)` verified to **5e-6**, sign derived analytically. Plus Berg–Luescher `topological_charge` |
 
 **Why 16a stops here.** GAP4_PLAN says "ship step 1 and stop if that answers the
 question", and it plausibly does: dilution thermodynamics, open-boundary/finite-size
 effects and diluted S(q,ω) are all reachable now. 16b buys LSWT *spectra* of a
 disordered system, which is a different question and should wait until one is asked.
 
-### Phase 4 — still open
+### Still open (all phases), 2026-08-04
 
-Ordered by how much they cost. None is silently wrong — each either refuses or is
-simply absent.
+| # | Item | Phase | Why it is open |
+|---|---|---|---|
+| 24b | Ewald + rotating-frame single-k | 2 | each channel needs a projector-weighted combination of A(q_c), A(q_c±k) — a derivation, not plumbing. Refuses honestly meanwhile. ~1 week |
+| 20 | Experiment-data binning (NeXus) | 3 | **awaiting a decision, not work**: if the reduction pipeline already yields CSV that `fitting.load_fit_data` reads, this is work for nobody |
+| — | Classical S(q,ω) absolute normalization | 3 | opened by #17: the classical path's overall scale has never been reconciled with the LSWT/Sunny one. Shape is pinned, scale is not |
+| — | `magcalc validate` field-direction coverage | — | the two field bugs below were invisible because no test applied a field off z. Worth auditing what else the suite never exercises |
 
-| # | Item | Phase | Sunny | Notes |
-|---|---|---|---|---|
-| 21 | General pair couplings | 2 | `set_pair_coupling!` | SU(N) covers bilinear + biquadratic; the operator-pair machinery is already there, only the front end (tensor SVD) is missing |
-| 24a | Mixed-spin SU(N) | 2 | — | `sun/lswt.py` requires a uniform N; needs per-site block offsets |
-| 24b | Ewald + rotating-frame single-k | 2 | — | each q ± k channel needs its own A(q) |
-| 26 | Entangled classical dynamics | 4 | `EntangledSampledCorrelations` | needs CP^(N−1) equations of motion |
-| — | Classical S(q,ω) absolute normalization | 3 | — | opened by #17: the classical path's overall scale has never been reconciled with the LSWT/Sunny one. Shape is pinned, scale is not |
+Everything else on the original Gap 4 list is closed. Note two of the closures
+(#16b, #26) delivered *capability* that the corresponding Sunny tutorials still do
+not fully exercise — see the tutorial table below, which tracks that separately and
+deliberately does not inherit the engine's status.
 
 Convention difference, not a gap: Sunny's `ssf_perp` applies the g-tensor by
 default (4× at g = 2). pyMagCalc's S(Q,ω) is spin-only = `apply_g=false`.
 
 ---
 
-## Sunny tutorial ports — audited 2026-08-04
+## Sunny tutorial ports — 7 of 9, updated 2026-08-04
 
-`examples/sunny_tutorials/README.md` has the per-tutorial detail. Summary: of Sunny's
-nine examples, **four are ported and pinned** (01, 03, 08 and the clean part of 09),
-**one is ported but only transitively justified** (07 — the Ewald engine is pinned to
-Sunny, that config's own bands are not), and **four are not ported**. Two of those
-four (02, 05) are unblocked and simply not done; two (04, 06) plus the disordered half
-of 09 are blocked on Gap 4 #26 and #16b.
+`examples/sunny_tutorials/README.md` has the per-tutorial detail.
 
-The audit found the README was stale in BOTH directions: it called 02/04/05/06 "out of
-scope" (Tier 2 has since implemented classical dynamics and thermal MC, so 02 and 05
-are now portable), and it claimed S01's bands were "cross-checked against Sunny" when
-nothing asserted it — S01 has no `magnetic_structure`, so the test helper could not
-drive it and it was schema-checked only. It does match Sunny exactly, band for band,
-and now says so in a test.
+| ported & pinned | ported, not pinned | not ported |
+|---|---|---|
+| 01, 02, 03, 04, 05, 08 | 07 (Ewald *engine* pinned; this config's spectrum not compared) | 06, 09 |
+
+**06 and 09 are NOT blocked on engine capability any more** — both got what they
+needed (#26's dissipative quench and Berg-Luescher charge; #16b's bond disorder,
+each validated in isolation). Each is blocked on getting its REFERENCE STATE right,
+which is a different and more interesting problem:
+
+- **06** relaxes to a uniformly polarized state (Q = 0) rather than a skyrmion
+  lattice. With the field sign matched to Sunny's `g = -1`, <Sz> = +0.45 as it should
+  be, so the Hamiltonian is right; the open questions are system size (Sunny uses
+  L = 40, i.e. 1600 sites, against 64-256 here) and whether the second-neighbour
+  triangular bond shell matches Sunny's `Bond(1,1,[1,2,0])`. A wrong J2 shell would
+  suppress exactly the frustration that sets the skyrmion scale, and would look
+  precisely like this.
+- **09** needs the 120-degree order as an explicit REAL-SPACE supercell: the clean
+  config uses the rotating-frame `single_k` method, which the SU(N)/KPM path does not
+  consume. Substituting a ferromagnetic placeholder gives an unphysical spectrum, and
+  measurably so -- disorder NARROWED the KPM width instead of broadening it, which is
+  what expanding about a non-minimum buys.
+
+Neither was ported by substituting a clean or equilibrium calculation for the
+disordered or quenched one it is actually about. That would produce a folder that
+looks like a port and is not one.
+
+The 2026-08-03 audit also found the README stale in both directions and S01 claiming
+a Sunny cross-check that nothing asserted; both corrected.
 
 ---
 

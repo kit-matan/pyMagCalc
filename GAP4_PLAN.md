@@ -7,6 +7,20 @@ firm part and the numbers as indicative.
 
 **Keep this file updated when an item moves, and delete it when the table is empty.**
 
+> **Status 2026-08-04.** All four phases worked through. Closed: #17, #19, #23, #27
+> (Phase 1); #25, #21, #24a (Phase 2); #18, #22 (Phase 3); #16a, #16b, #26 (Phase 4).
+> Open: **#24b** (estimate revised 3 d → 1 w, derivation written up below), **#20**
+> (awaiting a demand decision, not work), and the classical S(q,ω) absolute
+> normalization opened by #17.
+>
+> Two SHIPPED BUGS were found along the way, both in field handling and both silent:
+> the Zeeman term was dropped entirely in `mode: SUN`, and `H_dir` was flattened to a
+> scalar so every field in every engine was forced along +z. Neither was visible to a
+> suite in which no model applies a field off the z axis. See GAP_STATUS's trap list.
+>
+> Tutorials 06 and 09 remain unported, but **no longer for want of engine
+> capability** — both are now reference-state problems. See GAP_STATUS.
+
 ---
 
 ## The rule every item obeys
@@ -286,7 +300,7 @@ so this drops to Phase 4. Ask before building.
 Both are multi-week. Neither is on the critical path for anything currently in
 `examples/`. Do not start either without a specific calculation that requires it.
 
-### #16 Site-level inhomogeneity — step 1 ✅ DONE (~3 days); step 2 still open
+### #16 Site-level inhomogeneity — ✅ BOTH STEPS DONE (2026-08-04)
 
 **What.** Vacancies, per-site fields/couplings, open boundaries (Sunny
 `to_inhomogeneous`, `set_vacancy_at!`, `set_field_at!`, `set_exchange_at!`,
@@ -317,7 +331,7 @@ realization.
 
 **Risk.** High, mostly in scope. Ship step 1 and stop if that answers the question.
 
-### #26 SU(N) classical dynamics — ✅ DONE (2026-08-04)
+### #26 SU(N) classical dynamics — ✅ DONE (2026-08-04, incl. dissipative quench)
 
 **What.** Finite-T classical dynamics for entangled units. Requires evolving SU(N)
 coherent states under the CP^(N−1) equations of motion — a different integrator from
@@ -357,7 +371,7 @@ guessed at. **S04 and S06 remain blocked** on resolving it.
 | ✅ 3 | 22 | Wang–Landau | 3 d | low | Beale's exact 2-D Ising g(E) |
 | ⏸ 3 | 20 | NeXus binning | 4 d | low | Sunny `load_nxs`; count conservation |
 | ✅ 4 | 16a | Vacancies + open boundaries (classical) | 3 d | — | exact restriction identity; analytic bond counts |
-| 4 | 16b | Disorder in LSWT (via KPM) | 1 w | high | Sunny example 09 |
+| ✅ 4 | 16b | Bond disorder in LSWT (via KPM) | ~2 h | — | σ=0 bit-identical; Hermiticity 9e-16; spread monotone in σ |
 | ✅ 4 | 26 | SU(N) classical dynamics | ~1 d | — | N=2 reduces to Landau–Lifshitz to 4.8e-10; low-T S(q,ω) within 1.1% of the LSWT band |
 
 Phase 1 landed 2026-08-03 (see GAP_STATUS.md for what each was pinned to).
