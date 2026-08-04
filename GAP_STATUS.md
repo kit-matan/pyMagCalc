@@ -231,7 +231,7 @@ disordered system, which is a different question and should wait until one is as
 |---|---|---|---|
 | 24b | Ewald + rotating-frame single-k | 2 | **ready to implement** — method taken from Sunny (five-term projector algebra; Ewald folds into the same `Jq` as the exchange). Sketch and two-stage oracle in GAP4_PLAN. **Blocks no example**: nothing in `examples/` combines `single_k` with `dipole_dipole: ewald` |
 | — | Classical S(q,ω) absolute normalization | 3 | opened by #17: the classical path's overall scale has never been reconciled with the LSWT/Sunny one. Shape is pinned, scale is not |
-| — | `magcalc validate` field-direction coverage | — | the two field bugs below were invisible because no test applied a field off z. Worth auditing what else the suite never exercises |
+| — | **Config-surface coverage** | — | AUDITED 2026-08-04: **11 of 69 documented config keys never appear in `tests/`** — see the section below. The recurring shape is that the FUNCTION is tested while the CONFIG PATH to it is not, which is precisely how a wiring bug survives |
 
 Everything else on the original Gap 4 list is closed. Note two of the closures
 (#16b, #26) delivered *capability* that the corresponding Sunny tutorials still do
@@ -275,6 +275,54 @@ looks like a port and is not one.
 
 The 2026-08-03 audit also found the README stale in both directions and S01 claiming
 a Sunny cross-check that nothing asserted; both corrected.
+
+---
+
+## Config-surface coverage audit (2026-08-04)
+
+Prompted by two shipped field bugs that a thorough suite never saw. The suite's
+*rigour* and its *coverage* had diverged: Gate 1/2/3 plus FeI2 bands and intensities
+against Sunny to 1e-4 is genuinely strict, and no model in it applied a field off the
+z axis, so both bugs lived there indefinitely.
+
+Mechanically checking every documented config key against `tests/`:
+
+**11 of 69 never appear in a test.**
+
+| key | in examples | note |
+|---|---|---|
+| `interactions.kitaev` | 0 | an entire interaction TYPE, in neither tests nor examples |
+| `tasks.powder_average` | 9 | 9 configs use it; the tests call `powder_sample_modes` directly |
+| `tasks.export_csv` | 4 | — |
+| `tasks.sun_sampled_correlations` | 2 | added today; its wiring bug was caught by hand, not by a test |
+| `crystal_structure.from_mcif` | 1 | `test_mcif.py` tests the READER, not the config key |
+| `plotting.two_theta`, `plotting.energy_grid_step` | 1 | resolution/kinematics knobs |
+| `calculation.imaginary_tolerance`, `.energy_tolerance` | 0 | the guards' thresholds |
+| `magnetic_structure.optimize_k` | 2 | spiral-k optimization |
+| `calculation.series_resum` | 0 | Dlog-Pade resummation選択 |
+
+**THE PATTERN, and it is the actionable finding.** Most of these are not untested
+physics — they are untested *config paths* to tested physics. `powder_average`,
+`from_mcif` and the powder/mCIF suites are the clearest cases: the function is pinned
+hard, and nothing checks that the YAML key reaches it. That is exactly how a wiring
+bug survives, and it is not hypothetical: `sun_sampled_correlations` shipped today
+referencing a variable named `calc` where the runner calls it `calculator`, which no
+unit test could see and one manual run caught immediately.
+
+**A second dimension this audit cannot see: COMBINATIONS.** Both field bugs were
+present-key/absent-combination failures — `H_mag` appears in tests, but never
+together with `mode: SUN`, and never with a direction off z. A key-level audit gives
+a lower bound on the gap, not the size of it. Worth extending to a cross-product over
+the axes that actually interact: engine mode x field x anisotropy x structure type.
+
+**Suggested order**, cheapest and highest-risk first: a smoke test that RUNS each
+example config through the runner (catches every wiring bug at once, needs no
+physics); then `kitaev`; then the guard tolerances; then the combination matrix.
+
+**Method note:** the first version of this audit reported 22 keys, because `\b`
+inside a character class is a backspace, not a word boundary. A confidently wrong
+number from a five-line script — the same failure mode as everything else on the trap
+list above, and the reason the figures here were re-derived before being written down.
 
 ---
 
