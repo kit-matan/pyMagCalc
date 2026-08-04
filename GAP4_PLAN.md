@@ -194,10 +194,18 @@ mixed-spin ferrimagnet against Sunny `:SUN`.
 **Risk.** Medium–high — this is the validated core. Do the decoupled-sublattice test
 *first*, confirm it passes on the current uniform-N code, and only then refactor.
 
-### #24b Ewald + rotating-frame single-k — ⚠️ MAY BE STRUCTURALLY INVALID
+### #24b Ewald + rotating-frame single-k — harder than 3 channels, but VALID
 
-**Status: not implemented, and the derivation suggests it should not be, by this
-route. Estimate withdrawn rather than revised again.**
+**Status: not implemented. Estimate withdrawn pending the derivation below being
+finished — but it IS a derivation to finish, not a dead end.**
+
+**Correction, same session.** An earlier version of this section argued the method
+might be structurally inapplicable to dipolar coupling. That claim was too strong and
+is retracted: Sunny CONSTRUCTS `SpinWaveTheorySpiral` on a system with
+`enable_dipole_dipole!` without objection (it fails later, in the ground-state guard,
+only because the k I passed was not an optimized spiral wavevector). So a correct
+treatment evidently exists; what follows explains why it is more work than the first
+guess, not why it is impossible.
 
 **The derivation.** The three-channel trick works because a rotation about the spiral
 axis n has the spectral decomposition
@@ -227,17 +235,21 @@ unreliable when DM is not parallel to the axis, the SIA axis is not parallel, or
 field is not parallel"). Long-range dipolar coupling violates it generically, not
 occasionally.
 
-**So the honest reframing.** #24b is probably not "implement the missing channels";
-it is "the rotating-frame method may be inapplicable to dipolar coupling in
-general". Before any implementation, someone should settle:
+**So the honest reframing: NINE terms, not three.** Without commutation the product
+`R(-theta_i) A(d) R(theta_j)` must be expanded in the R1/R2 basis on BOTH sides, not
+one, giving 3 x 3 = 9 projector-sandwiched terms per bond rather than 3:
 
-1. whether a correct rotating-frame treatment of an anisotropic long-range coupling
-   exists at all (Toth & Lake assume rotational invariance; check what Sunny's
-   `SpinWaveTheorySpiral` does when `enable_dipole_dipole!` is on — it may refuse
-   too, which would be a strong hint);
-2. if it does not, then the current hard error is the CORRECT behaviour and this item
-   closes as "refuses, correctly", with the reason documented — a better outcome
-   than an implementation that is quietly wrong for every non-uniaxial geometry.
+    A_rot(q) = sum_{a,b in {R2, R1, R1*}}  P_a  A(q + s_a + s_b)  P_b
+
+with the shift s determined by which projector sits on each side. The commuting case
+collapses this to the familiar three because the left and right projectors pair up.
+That is bookkeeping-heavy but entirely mechanical, and `core._ewald_A` already
+supplies A at any argument.
+
+Before implementing, read how Sunny actually assembles it (`Spiral/SpinWaveTheorySpiral.jl`
+together with its Ewald path) rather than re-deriving from scratch — the nine-term
+structure is exactly the sort of thing where an independent derivation and an
+independent implementation can both be self-consistent and disagree.
 
 **The oracle is unchanged and still the right gate**: at commensurate k the same
 physics is reachable via `magnetic_supercell`, which already supports Ewald, so any
