@@ -24,7 +24,7 @@ import numpy as np
 
 from ..numerical import sqw_domain_average
 from .lswt import SUNModel, _reject_unsupported_terms
-from .operators import spin_matrices
+from .operators import spin_matrices, stevens_matrices
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +45,90 @@ def _embedded_spin_ops(spins: Sequence[float]) -> List[List[np.ndarray]]:
             comp.append(O)
         ops.append(comp)                              # ops[k] = [S_k^x, S_k^y, S_k^z]
     return ops
+
+
+def _embed_single_site(op: np.ndarray, k: int, spins: Sequence[float]) -> np.ndarray:
+    """Embed a single-site operator acting on constituent `k` into the unit's product
+    space, i.e. I (x) ... (x) op (x) ... (x) I."""
+    dims = [int(round(2 * s + 1)) for s in spins]
+    blocks = [op if m == k else np.eye(dims[m]) for m in range(len(spins))]
+    O = blocks[0]
+    for B in blocks[1:]:
+        O = np.kron(O, B)
+    return O
+
+
+def _onsite_anisotropy(model, params, units, spins_all, unit_dim):
+    """On-site anisotropy (`sia`, `sia_matrix`, `stevens`) for each unit.
+
+    SILENTLY DROPPED until 2026-08-05. `from_entangled_units` built each unit's
+    on-site block from `_pair_matrix(Jex, DM, Kex, ...)` -- the bilinear pair terms --
+    plus the Zeeman, and never read the on-site anisotropies at all. Meanwhile
+    `_reject_unsupported_terms` let them through, because its docstring's claim that
+    the builder reads "the on-site SIA/Stevens terms" is true of plain SU(N)
+    (`lswt.from_generic_model`) and was never true here. Measured: a D = -5 meV
+    easy-axis anisotropy on an S=1 dimer changed the triplon spectrum by EXACTLY
+    0.000, with no warning.
+
+    Same construction as the SU(N) engine, embedded into the unit's product space.
+    Embedding is an algebra homomorphism on one site's factor, so same-site products
+    may be formed either before or after embedding.
+    """
+    pmap = model._resolve_param_map(params)
+    atoms_uc = model.config["crystal_structure"]["atoms_uc"]
+    lab2i = {a["label"]: k for k, a in enumerate(atoms_uc)}
+
+    A_aniso = [np.zeros((unit_dim, unit_dim), dtype=complex) for _ in units]
+    site_slot = {}                       # global site index -> (unit, position in unit)
+    for u, members in enumerate(units):
+        for p, (s, _o) in enumerate(members):
+            site_slot[s] = (u, p)
+
+    for inter in model.interactions_config:
+        t = inter.get("type")
+        if t not in ("sia", "sia_matrix", "anisotropy_matrix", "stevens"):
+            continue
+        labels = inter.get("atoms") or inter.get("atom_labels")
+        targets = [lab2i[l] for l in labels if l in lab2i] if labels else list(lab2i.values())
+
+        for site in targets:
+            if site not in site_slot:
+                continue
+            u, p = site_slot[site]
+            s_list = [spins_all[s] for (s, _o) in units[u]]
+            Sx, Sy, Sz = spin_matrices(s_list[p])
+            Svec = [Sx, Sy, Sz]
+
+            if t == "sia":
+                val = _num(model._resolve_scalar(inter.get("value"), pmap))
+                n = np.asarray(inter.get("axis", [0, 0, 1]), dtype=float)
+                n = n / np.linalg.norm(n)
+                nS = n[0] * Sx + n[1] * Sy + n[2] * Sz
+                op = val * (nS @ nS)
+            elif t in ("sia_matrix", "anisotropy_matrix"):
+                Amat = inter.get("matrix", inter.get("value"))
+                op = np.zeros_like(Sx)
+                for a in range(3):
+                    for b in range(3):
+                        c = _num(model._resolve_scalar(Amat[a][b], pmap))
+                        if c:
+                            op = op + c * (Svec[a] @ Svec[b])
+            else:                                     # stevens
+                terms = {}
+                if "B" in inter:
+                    for key, v in (inter["B"] or {}).items():
+                        k_, q_ = str(key).replace(" ", "").split(",")
+                        terms[(int(k_), int(q_))] = v
+                else:
+                    terms[(int(inter["k"]), int(inter.get("q", 0)))] = inter.get("value")
+                op = np.zeros_like(Sx)
+                for (k_, q_), v in terms.items():
+                    B = _num(model._resolve_scalar(v, pmap))
+                    op = op + B * stevens_matrices(s_list[p], k_, q_)
+
+            A_aniso[u] = A_aniso[u] + _embed_single_site(op, p, s_list)
+
+    return A_aniso
 
 
 def _num(x) -> float:
@@ -161,6 +245,13 @@ def build_entangled_model(model, params: Optional[Sequence[float]] = None,
             key = (ui, uj, tuple(int(x) for x in cell))
             C = bond_C.setdefault(key, np.zeros((3 * n_per_unit[ui], 3 * n_per_unit[uj])))
             C[oi:oi + 3, oj:oj + 3] += M
+
+    # On-site anisotropy (sia / sia_matrix / stevens), embedded per constituent. Folded
+    # into the unit's on-site block BEFORE the reference state is chosen, so an
+    # anisotropic dimer's singlet-triplet reference is the anisotropic one.
+    for u, A_an in enumerate(_onsite_anisotropy(model, params, units, spins_all,
+                                                unit_dim[0])):
+        A_intra[u] = A_intra[u] + A_an
 
     # Optional Zeeman field: gamma * mu_B * H . (sum_k S_k) added to each unit's on-site
     # term, so a magnetic field splits the unit's multiplet (e.g. the Stot^z = +/-1 dimer

@@ -1145,7 +1145,12 @@ async def expand_config(config: Dict[str, Any]):
                                                          ref_pair=rule.get("ref_pair"),
                                                          distance=rule.get("distance"),
                                                          value=rule.get("value"),
-                                                         offset=rule.get("offset"))
+                                                         offset=rule.get("offset"),
+                                                         # kitaev needs the bond's
+                                                         # Cartesian axis; dropping it
+                                                         # silently meant z.
+                                                         axis=(rule.get("axis")
+                                                               or rule.get("bond_direction")))
                 except KeyError as e:
                     print(f"Warning: Skipping invalid interaction rule referencing missing atom: {e}")
                 except Exception as e:
@@ -1387,7 +1392,10 @@ async def get_visualizer_data(config: Dict[str, Any]):
                         ref_pair=rule.get("ref_pair"),
                         value=rule.get("value"),
                         distance=rule.get("distance"),
-                        offset=rule.get("offset")
+                        offset=rule.get("offset"),
+                        # kitaev needs the bond's Cartesian axis; dropping it
+                        # silently meant z.
+                        axis=(rule.get("axis") or rule.get("bond_direction"))
                     )
                 except Exception as e:
                     print(f"Warning: Failed to add symmetry rule {rule}: {e}")

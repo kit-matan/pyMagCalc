@@ -55,11 +55,27 @@ interactions:
     - [-0.22, 0.01, 0.01]
     - [-0.01, -0.09, -0.29]
     - [-0.01, -0.29, -0.09]
+  # (c) kitaev: a SCALAR K plus the Cartesian spin `axis` the bond couples.
+  #     Equivalent to an interaction_matrix carrying K at that diagonal entry --
+  #     and propagated the same way, R K R^T, so one rule generates the whole
+  #     bond-dependent set: on a cubic lattice a z-axis reference bond gives
+  #     K^xx on the x bonds, K^yy on the y, K^zz on the z.
+  - {type: kitaev, ref_pair: [Ir0, Ir1], offset: [0, 0, 1], value: K, axis: z}
 ```
 
 Rules expand to **both bond directions** automatically (required by
 pyMagCalc's `H = (1/2) Σ_ordered`); never list reverse bonds by hand alongside
 rules.
+
+`kitaev` is also available as an explicit bond list under `interactions.kitaev`
+(`{pair, rij_offset, value: K, axis}`; `bond_direction` is an accepted alias for
+`axis`). Both routes raise on an unresolvable `value` and on an `axis` outside
+{x, y, z} -- until 2026-08 the first logged a warning and dropped the bond and
+the second silently meant `z`, and the `symmetry_rules` route had no propagation
+branch at all, so a documented rule expanded to **zero bonds** in silence. Any
+rule type without a propagation branch now raises rather than expanding to
+nothing. `tests/test_kitaev.py` pins every path to its exact `interaction_matrix`
+equivalent.
 
 To pick `ref_pair` bonds and see which matrix entries symmetry zeros or ties,
 run `magcalc symmetry <config> [--max-distance Å] [--json]` — it lists the space
@@ -318,18 +334,33 @@ a failure is a hard error, not a warning.
 ```yaml
 calculation:
   on_imaginary: error        # error (default) | warn | off  -- controls BOTH guards
-  imaginary_tolerance: 1.0e-4   # meV
-  energy_tolerance: 1.0e-6      # meV
+  imaginary_tolerance: 1.0e-4      # meV, ABSOLUTE  |  guard 1 fires only if
+  imaginary_rel_tolerance: 5.0e-3  # fraction of the bandwidth  |  BOTH are exceeded
+  energy_tolerance: 1.0e-6         # meV per cell (per SITE in SU(N) mode)
 ```
 
 1. **Imaginary-energy check** (`max_imaginary_energy`) -- a non-minimum with
    anomalous terms gives imaginary magnons. This is the SW20-in-field class.
+   The two thresholds are **ANDed**, so lowering `imaginary_tolerance` alone will
+   *not* make the guard fire. That is deliberate: an absolute meV cutoff cannot
+   separate a real instability from numerical noise across models whose energy
+   scales differ by orders of magnitude, and the noise is worst exactly where it
+   matters -- at the ω ≈ 0 Goldstone modes where the Bogoliubov problem is singular
+   (SW07's 120° kagome carries 1e-3 meV of noise on a 2.4 meV band). Either knob
+   alone therefore SILENCES the guard; both must be exceeded to trip it.
 2. **Energy audit** (`relax_from_current`) -- nudge the structure and relax; if the
    energy drops, it was not a minimum. This catches what guard 1 provably CANNOT:
    a stationary *maximum* (e.g. a `ferromagnetic` pattern supplied for an
    antiferromagnet) keeps the Bogoliubov problem diagonal, so `process_calc_disp`
    sorts the ±ω pairs, returns the upper half, and hands back a real, positive,
    entirely plausible spectrum. Neither guard alone is sufficient.
+   SU(N) mode runs its OWN energy audit (`sun/adapter.py`) off the same
+   `energy_tolerance` key but in meV **per site** -- it is the only thing that can
+   catch a dipole-derived state pasted under `mode: SUN` (§5c).
+
+`tests/test_guard_tolerances.py` pins all of this against the exact tilt identity
+ΔE(θ) = 2·J·S²·(1 − cos θ) for a Néel chain, and each knob is bracketed above and
+below a drop of known size.
 
 Set `on_imaginary: warn` **only** when the instability is understood and intended
 (SW03's commensurate approximation to an incommensurate spiral; SW23, where the
@@ -513,6 +544,16 @@ resulting triplon (Sunny's `EntangledSystem` analogue).
   gamma*mu_B*H.(sum_k S_k) to each unit, so a field splits the unit's multiplet -- e.g. a
   c-axis field Zeeman-splits the Stot^z = +/-1 dimer triplet while Stot^z = 0 is
   unchanged (`examples/entangled/Rb2Cu3SnF12/`, Matan et al., Nat. Phys. 6, 865 (2010)).
+* **On-site anisotropy** (`single_ion_anisotropy`, `sia_matrix`, `stevens`) is applied
+  per constituent, embedded into the unit's product space and folded into the on-site
+  block BEFORE the reference state is chosen -- so an anisotropic dimer's reference is
+  the anisotropic ground state. Pinned against exact diagonalization of the isolated
+  unit (`tests/test_entangled_units.py`), which is the definition, not a golden number.
+  These were **silently dropped until 2026-08-05**: the builder read the bilinear pair
+  terms plus the Zeeman and nothing else, so a D = -5 meV anisotropy on an S=1 dimer
+  changed the triplon by exactly 0.000. Note that at S=1/2 an (S.n)^2 anisotropy is a
+  CONSTANT (Sz^2 = I/4) and correctly has no effect -- which is part of why the drop
+  went unnoticed, since the shipped dimer examples are all S=1/2.
 * Harmonic bond-operator level: EXACT in the weak-interdimer limit (Cu5SbO6), only
   qualitative at strong coupling (J2 ~ J1). For strong coupling use the SERIES:
 

@@ -223,8 +223,9 @@ class MagCalcConfigBuilder:
         else:
             logger.warning(f"Unknown interaction type {type}")
 
-    def add_symmetry_interaction(self, type: str, ref_pair: Tuple[str, str], value: Any, 
-                                 distance: float = None, offset: List[int] = None):
+    def add_symmetry_interaction(self, type: str, ref_pair: Tuple[str, str], value: Any,
+                                 distance: float = None, offset: List[int] = None,
+                                 axis: str = None):
         """
         Add an interaction and propagate it by symmetry.
         Especially for DM (dm_manual) and Anisotropic Exchange.
@@ -378,6 +379,34 @@ class MagCalcConfigBuilder:
         # Reference Bond
         ref_frac_diff = (pos_j_uc + best_offset) - pos_i # vector from i to j
         
+        # A Kitaev term IS an interaction matrix: K on one Cartesian diagonal entry
+        # and nothing else. Propagating it means R K R^T, which is in general no
+        # longer of Kitaev form -- on a honeycomb the C3 about [111] permutes the
+        # axes, so the z-bond's diag(0,0,K) becomes the x- and y-bonds' diag(K,0,0)
+        # and diag(0,K,0), which is precisely the Kitaev model. So convert here and
+        # let the tested `interaction_matrix` transform do the work.
+        #
+        # Until 2026-08 there was no `kitaev` branch in the dispatch below at all:
+        # the rule ran the whole reference-bond search, looped over every symmetry
+        # op, and added ZERO bonds without a word -- while CLAUDE.md documented
+        # `ref_pair` as REQUIRED for exactly this type.
+        if str(type).lower() == "kitaev":
+            k_axis = str(axis or "z").lower()
+            if k_axis not in ("x", "y", "z"):
+                raise ValueError(
+                    f"kitaev symmetry rule for {ref_pair} has axis {k_axis!r}; "
+                    f"expected one of 'x', 'y', 'z' (Cartesian spin components)")
+            if isinstance(value, (list, tuple, np.ndarray)):
+                raise ValueError(
+                    f"kitaev symmetry rule for {ref_pair} expects a SCALAR `value` "
+                    f"(the coupling K) plus an `axis`; got {value!r}. For a full "
+                    f"tensor use `type: interaction_matrix`.")
+            a = {"x": 0, "y": 1, "z": 2}[k_axis]
+            mat = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
+            mat[a][a] = value
+            value = mat
+            type = "interaction_matrix"
+
         # 2. Apply Symmetry to find Orbit
         # We transform the bond vector and the bond center
         added_bonds_keys = set()
@@ -560,7 +589,21 @@ class MagCalcConfigBuilder:
                      
                      # Reverse bond: J_ji = J_ij^T
                      self._add_interaction_matrix_entry(atom_l['label'], atom_k['label'], -offset_final, val_p_list_T, final_dist, original_value=value)
-                     
+
+             else:
+                 # No branch matched, so this op contributes no bond -- and if NO op
+                 # ever matches, the rule expands to nothing and the term is simply
+                 # absent from H. That is how `type: kitaev` went missing for as long
+                 # as it existed. Fail loudly instead of returning a Hamiltonian that
+                 # is quietly short a term.
+                 raise ValueError(
+                     f"symmetry rule type '{type}' has no propagation branch, so the "
+                     f"rule for {ref_pair} would expand to zero bonds and the "
+                     f"interaction would be silently dropped. Supported: "
+                     f"heisenberg, dm, anisotropic_exchange, interaction_matrix, "
+                     f"kitaev.")
+
+
     def _add_dm_entry(self, lbl_i, lbl_j, offset, val, distance=None, original_value=None):
         # Ensure val is a list of strings or floats (not sympy objects)
         clean_val = [str(v) if not isinstance(v, (float, int)) else v for v in val]
