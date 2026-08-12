@@ -40,19 +40,29 @@ are the easiest to mistake for done.
 | 8 | Studio open→run limits | **OPEN** — 2 items |
 | A | `pytest.ini` collection scope | **DONE** 2026-08-12 |
 | B | Engine provenance — `magcalc where` | **DONE** 2026-08-12 |
-| C | Interpreter-startup shadow guard | **DONE** 2026-08-12 — auto-install still open |
-| D | Stale OneDrive trees deleted | **DONE** 2026-08-12 — 2 rescued-file follow-ups open |
-| E | `mu_B` → `constants.py` | **DONE** 2026-08-12 — dipolar prefactor still duplicated |
+| C | Interpreter-startup shadow guard | **DONE** 2026-08-12 — `magcalc guard`; nothing outstanding |
+| D | Stale OneDrive trees deleted | **DONE** 2026-08-12 — both rescued-file follow-ups closed |
+| E | `mu_B` → `constants.py` | **DONE** 2026-08-12 — dipolar prefactor folded in too |
 
-**The small open items are easy to lose**, so they are also collected here. Each
-lives inside an otherwise-`DONE` entry:
+**All four small items that used to hang off C/D/E are now CLOSED** (2026-08-12):
 
-- **C** — nothing installs the shadow guard automatically; a fresh venv starts
-  unprotected.
-- **D** — the rescued CCSF fit demo is pinned by no test of its own; and
-  `archive/legacy/aCVO_2024_snapshot/` sits in an unversioned directory.
-- **E** — `ewald.MU0_MUB2_MEV_A3` and `generic_model.DIPOLE_PREFACTOR_MEV_A3`
-  are still two spellings of one Sunny constant.
+- **C** — `magcalc guard [--install|--uninstall]`. The source moved into the
+  package (`magcalc/_shadow_guard.py`), which fixed a hole bigger than the one
+  logged: `tools/` is not shipped by a non-editable `pip install`, so a wheel user
+  could not install the guard *at all*. Still per-interpreter by design — a fresh
+  venv starts unprotected and `magcalc where` says so. A build hook that writes to
+  site-packages remains deliberately out of scope.
+- **D** — `tests/test_ccsf_fit_roundtrip.py` pins the rescued fit demo; and the
+  rescued aCVO model is tracked at
+  `examples/materials/aCVO/legacy_spin_model_sf_2024.py`.
+- **E** — both dipolar prefactors now live in `constants.py`. **Their values were
+  NOT reconciled**, and that is the point: `MU0_MUB2_MEV_A3/(4π) = 0.053681511`
+  but `DIPOLE_PREFACTOR_MEV_A3 = 0.05368216` — 1.2e-5 RELATIVE apart, truncated
+  independently. Deriving either from the other is an accuracy change, not a
+  refactor: `test_truncated_sum_converges_to_ewald` asserts to 1e-4 absolute on a
+  ~4 meV band, where that shift is ~5e-5 — the same order as the tolerance. A
+  comment in `generic_model.py` claimed the division was exact; it is now
+  corrected. Reconciling them deserves its own commit and its own oracle run.
 
 ---
 

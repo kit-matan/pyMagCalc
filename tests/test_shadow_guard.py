@@ -19,7 +19,8 @@ from pathlib import Path
 
 import pytest
 
-GUARD = Path(__file__).resolve().parents[1] / "tools" / "magcalc_shadow_guard.py"
+# Ships inside the package so a non-editable install can still install it.
+GUARD = Path(__file__).resolve().parents[1] / "magcalc" / "_shadow_guard.py"
 LIVE_ROOT = Path(__file__).resolve().parents[1]
 
 

@@ -40,6 +40,31 @@ def where():
 
 
 @app.command()
+def guard(
+    install: Annotated[bool, typer.Option("--install", help="Install the guard")] = False,
+    uninstall: Annotated[bool, typer.Option("--uninstall", help="Remove it")] = False,
+):
+    """
+    Install / remove the interpreter-startup shadow guard (default: report status).
+
+    The guard warns whenever more than one `magcalc` is importable, from OUTSIDE
+    every copy -- so it still reports when a stale checkout wins outright, which
+    `magcalc where` structurally cannot (that copy has no provenance.py). It is
+    per-interpreter: a fresh virtualenv starts unprotected.
+    """
+    from magcalc import _shadow_guard_install as gi
+
+    if install and uninstall:
+        typer.secho("Pick one of --install / --uninstall.", fg=typer.colors.RED)
+        raise typer.Exit(code=2)
+    if install:
+        raise typer.Exit(code=gi.install())
+    if uninstall:
+        raise typer.Exit(code=gi.uninstall())
+    raise typer.Exit(code=gi.status())
+
+
+@app.command()
 def mcif(
     filename: Annotated[str, typer.Argument(help="Path to the .mcif file")],
     out: Annotated[str, typer.Option(help="Write a runnable config fragment here")] = None,

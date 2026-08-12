@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 # mu0 * muB^2 in meV * Angstrom^3 (no 4pi). Sunny:
 #   Units(:meV, :angstrom).vacuum_permeability = 0.6745817653
-MU0_MUB2_MEV_A3 = 0.6745817653
+from .constants import MU0_MUB2_MEV_A3  # noqa: F401  (re-exported; see constants.py)
 
 
 def dipole_ewald_at_q(

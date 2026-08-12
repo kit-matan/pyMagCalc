@@ -40,11 +40,36 @@ MU_B = 5.788e-2
 # Sunny cross-check).
 GAMMA_ELECTRON = 2.0
 
-# NOT here (yet): the dipolar prefactor, which is duplicated in the same way --
-# `ewald.MU0_MUB2_MEV_A3 = 0.6745817653` and
-# `generic_model.DIPOLE_PREFACTOR_MEV_A3 = 0.05368216` are the same Sunny constant
-# with and without the 4*pi. Both are module-level and cross-referenced in comments,
-# so they are far less liable to drift than the mu_B literals were; folding them in
-# here is a separate, easy cleanup.
+# --------------------------------------------------------------------------
+# Dipolar prefactor: mu0 * mu_B^2, meV * A^3.
+#
+# THEY DO NOT AGREE, AND THE VALUES ARE PRESERVED RATHER THAN RECONCILED.
+# These two are nominally the same Sunny constant with and without the 4*pi,
+# but they were truncated independently:
+#
+#     MU0_MUB2_MEV_A3 / (4*pi) = 0.053681511234
+#     DIPOLE_PREFACTOR_MEV_A3  = 0.05368216
+#     -> 6.5e-7 absolute, 1.2e-5 RELATIVE apart
+#
+# So deriving either from the other is NOT a no-op refactor; it is an accuracy
+# change to whichever path gets the new number. That matters concretely:
+# `test_truncated_sum_converges_to_ewald` asserts the truncated real-space sum
+# reaches the Ewald answer to 1e-4 absolute on a ~4 meV band, and a 1.2e-5
+# relative shift is ~5e-5 there -- the same order as the tolerance.
+#
+# This is the `MU_B` lesson again (see above): a truncation that every pinned
+# number was measured against is load-bearing, and "tidying" it silently moves
+# results. Reconciling these two -- picking the CODATA value, deriving one from
+# the other, and RE-MEASURING the pinned dipolar numbers -- is a deliberate
+# change that deserves its own commit and its own oracle run. Until then they
+# live here, side by side, where the discrepancy is visible instead of being
+# two unrelated-looking literals in two modules.
+MU0_MUB2_MEV_A3 = 0.6745817653      # used by ewald.py (exact lattice sum)
+DIPOLE_PREFACTOR_MEV_A3 = 0.05368216  # used by generic_model.py (truncated sum)
 
-__all__ = ["MU_B", "GAMMA_ELECTRON"]
+__all__ = [
+    "MU_B",
+    "GAMMA_ELECTRON",
+    "MU0_MUB2_MEV_A3",
+    "DIPOLE_PREFACTOR_MEV_A3",
+]

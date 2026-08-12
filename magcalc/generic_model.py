@@ -14,8 +14,11 @@ from .stevens import rcs_lambda, stevens_polynomial
 
 # mu0 * muB^2 / (4*pi), in meV * Angstrom^3. Cross-checked against Sunny 0.8.1,
 # whose Units(:meV, :angstrom).vacuum_permeability = 0.6745817653 is mu0*muB^2
-# (no 4pi): 0.6745817653 / (4*pi) = 0.05368216.
-DIPOLE_PREFACTOR_MEV_A3 = 0.05368216
+# (no 4pi). NOTE: that division is NOT exact here -- 0.6745817653/(4*pi) is
+# 0.053681511, while this constant is 0.05368216, a 1.2e-5 RELATIVE difference.
+# The two were truncated independently. Do not "fix" one from the other without
+# re-measuring the pinned dipolar numbers; see constants.py.
+from .constants import DIPOLE_PREFACTOR_MEV_A3  # noqa: F401  (see constants.py)
 
 logger = logging.getLogger(__name__)
 
