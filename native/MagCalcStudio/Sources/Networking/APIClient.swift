@@ -134,12 +134,27 @@ struct APIClient: Sendable {
     }
 
     /// Long-running: returns when the calculation subprocess finishes.
+    ///
+    /// The run endpoint is "config as source": it takes the config under
+    /// `config` (NOT the `data` envelope the structure endpoints use), writes it
+    /// verbatim and hands the file to the same `magcalc.runner.run_calculation`
+    /// the CLI uses. This client was still sending `data`, so the server answered
+    /// 400 "Payload must contain 'config' or 'path'" for every run.
+    ///
+    /// `config_dir` is the directory of the file the user opened, so relative
+    /// references in it (`from_mcif`, `fitting.data_file`, `cif_file`) resolve
+    /// exactly as they do for `magcalc run <that file>`.
     func runCalculation(_ config: MagCalcConfig,
-                        taskOverrides: [String: JSONValue]? = nil) async throws -> CalculationResults {
-        try await postJSON("run-calculation",
-                           body: .object(["data": config.backendInput(taskOverrides: taskOverrides)]),
-                           as: CalculationResults.self,
-                           timeout: 3600)
+                        taskOverrides: [String: JSONValue]? = nil,
+                        configDir: String? = nil) async throws -> CalculationResults {
+        var body: [String: JSONValue] = [
+            "config": config.backendInput(taskOverrides: taskOverrides),
+        ]
+        if let configDir, !configDir.isEmpty { body["config_dir"] = .string(configDir) }
+        return try await postJSON("run-calculation",
+                                  body: .object(body),
+                                  as: CalculationResults.self,
+                                  timeout: 3600)
     }
 
     func stopCalculation() async throws {
@@ -150,9 +165,16 @@ struct APIClient: Sendable {
     }
 
     /// Fetch a server file (plot image, mag_structure.json) with cache busting.
+    ///
+    /// Result paths come back with the web app's `/api` prefix, which exists only
+    /// for the browser's Vite dev proxy (it rewrites `/api/x` -> `/x` on :8000).
+    /// This client talks to the server directly, so the prefix has to come off or
+    /// every plot 404s.
     func fileURL(_ serverPath: String) -> URL {
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
-        components.path = serverPath
+        components.path = serverPath.hasPrefix("/api/")
+            ? String(serverPath.dropFirst("/api".count))
+            : serverPath
         components.queryItems = [URLQueryItem(name: "t", value: String(Int(Date().timeIntervalSince1970 * 1000)))]
         return components.url!
     }
@@ -163,8 +185,11 @@ struct APIClient: Sendable {
         return data
     }
 
+    /// Run outputs are served from the LAST RUN's directory via /run-artifact,
+    /// not from the project-root /files mount -- a run started from an opened
+    /// file's own directory writes its plots there.
     func fetchMagStructure() async throws -> MagStructureResult {
-        let data = try await fetchFile("/files/mag_structure.json")
+        let data = try await fetchFile("/run-artifact/mag_structure.json")
         return try JSONDecoder().decode(MagStructureResult.self, from: data)
     }
 }

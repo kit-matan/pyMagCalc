@@ -479,7 +479,14 @@ def run_calculation(config_file: str):
                     logger.info(
                         f"minimization.early_stopping defaulted to {default_es} "
                         f"(2 x {n_sites} sites); pin it explicitly to override.")
-                if num_starts > 1 and num_starts < early_stopping:
+                # `early_stopping` counts random RESTARTS that agree, so it means
+                # nothing for the Monte-Carlo methods, where `num_starts` is a
+                # handful of independent annealing runs by design (CLAUDE.md
+                # recommends 4). Warning there is a false alarm that fires on every
+                # correctly-configured annealed run.
+                _is_multistart = method not in ("anneal", "monte_carlo", "steep",
+                                                "optmagsteep")
+                if _is_multistart and 1 < num_starts < early_stopping:
                     logger.warning(
                         f"minimization: num_starts ({num_starts}) < early_stopping "
                         f"({early_stopping}), so early stopping can never trigger and the "
@@ -488,7 +495,28 @@ def run_calculation(config_file: str):
                 # Extract extra kwargs for the minimizer
                 excluded_keys = {'num_starts', 'n_workers', 'early_stopping', 'method', 'initial_configuration', 'enabled'}
                 min_kwargs = {k: v for k, v in min_config_section.items() if k not in excluded_keys}
-                
+
+                # Everything left is forwarded to the minimizer, and for the
+                # gradient methods that means scipy.optimize.minimize -- which
+                # takes `tol`, and `maxiter` only inside `options`. Configs
+                # naturally write the readable names, and both shipped FeI2 and
+                # CoRh2O4 examples used `max_iterations`: scipy raised TypeError,
+                # the runner logged a warning, and the run carried on WITHOUT ever
+                # minimizing. Translate them so they mean what they say.
+                if 'tolerance' in min_kwargs:
+                    # `tolerance: 1e-6` is a STRING to PyYAML -- its float pattern
+                    # requires a decimal point, so the common exponent shorthand
+                    # resolves as text and scipy rejects it. Both example configs
+                    # that set a tolerance are written that way.
+                    min_kwargs['tol'] = float(min_kwargs.pop('tolerance'))
+                # The real-space samplers take their own iteration counts, so only
+                # the scipy path needs `max_iterations` moved into `options`.
+                if method not in ("anneal", "monte_carlo", "steep", "optmagsteep") \
+                        and 'max_iterations' in min_kwargs:
+                    opts = dict(min_kwargs.get('options') or {})
+                    opts.setdefault('maxiter', int(min_kwargs.pop('max_iterations')))
+                    min_kwargs['options'] = opts
+
                 min_res = calc_min.minimize_energy(
                     method=method, 
                     x0=x0, 
@@ -516,7 +544,26 @@ def run_calculation(config_file: str):
                             title=f"Minimized Structure ({os.path.basename(config_file)})"
                         )
             except Exception as e:
-                logger.warning(f"Optimization attempt using MagCalc failed: {e}")
+                # `tasks: {minimization: true}` means "find the ground state".
+                # Downgrading a failure here to a WARNING left the run expanding
+                # LSWT about whatever structure happened to be loaded -- and with
+                # `on_imaginary: warn/off` that comes back as a plausible-looking
+                # spectrum with no error at all. (It surfaced as a bad `minimization`
+                # key from the Studio -- "minimize() got an unexpected keyword
+                # argument 'n_sweeps'" -- reported downstream as the magnetic
+                # structure not being a minimum, which pointed at the wrong thing.)
+                raise RuntimeError(
+                    f"Energy minimization failed: {e}\n"
+                    f"`tasks: {{minimization: true}}` was requested, so the run cannot "
+                    f"continue: LSWT about a structure that was never minimized is "
+                    f"meaningless.\n"
+                    f"  * Check the `minimization` block -- its extra keys are passed "
+                    f"straight to the minimizer, and they are method-specific "
+                    f"(`n_sweeps`/`T_start`/`T_end` belong to `method: anneal`, not to "
+                    f"the gradient methods).\n"
+                    f"  * To run about a structure you supply yourself instead, set "
+                    f"`tasks: {{minimization: false}}` and give `magnetic_structure`."
+                ) from e
 
     # Apply a manual magnetic structure when minimization is NOT run. This lets a
     # structure obtained from a previous energy minimization (e.g. imported into

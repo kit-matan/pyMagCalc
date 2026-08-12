@@ -45,6 +45,11 @@ struct Notification: Identifiable, Equatable {
 final class AppModel: ObservableObject {
     // MARK: Config + persistence
 
+    /// Directory of the config file the user opened, sent with each run so the
+    /// backend executes it there (see APIClient.runCalculation). nil for a config
+    /// built in the app, which has no file and no relative references.
+    @Published var openedConfigDirectory: String? = nil
+
     @Published var config: MagCalcConfig {
         didSet { scheduleSave() }
     }
@@ -300,13 +305,15 @@ final class AppModel: ObservableObject {
         logStream.clear()
         selectedTab = .run
         let snapshot = config
+        let dir = openedConfigDirectory
 
         Task { [weak self] in
             do {
-                let results = try await api.runCalculation(snapshot, taskOverrides: taskOverrides)
+                let results = try await api.runCalculation(snapshot, taskOverrides: taskOverrides,
+                                                           configDir: dir)
                 guard let self else { return }
                 self.calcResults = results
-                if results.plots.contains("/files/mag_structure.json") {
+                if results.plots.contains(where: { $0.hasSuffix("mag_structure.json") }) {
                     self.magStructure = try? await api.fetchMagStructure()
                 }
                 self.notify("Calculation completed")
@@ -479,6 +486,11 @@ final class AppModel: ObservableObject {
         do {
             let text = try String(contentsOf: url, encoding: .utf8)
             config = try YAMLConfig.importConfig(from: text)
+            // Remember where the file lives: the run is executed in that
+            // directory, so relative references inside it (`from_mcif`,
+            // `fitting.data_file`, `cif_file`) resolve as they do for
+            // `magcalc run <that file>` rather than against the project root.
+            openedConfigDirectory = url.deletingLastPathComponent().path
             neighborShells = []
             visualizerData = nil
             selectedBond = nil

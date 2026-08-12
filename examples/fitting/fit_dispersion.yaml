@@ -2,41 +2,57 @@
 #
 #   magcalc fit examples/fitting/fit_dispersion.yaml
 #
-# A 2D J1-J2 square lattice (one magnetic site). The synthetic data in
-# disp_data.txt was generated at J1=1.0, J2=0.3 with added noise; the fit below
-# starts from deliberately wrong values and should recover them.
+# A 2-D rectangular-lattice Heisenberg ANTIferromagnet, one magnetic site per
+# chemical cell: J1 along a, J2 along b (positive = AFM here, as in SpinW). The
+# classical ground state is Neel, k = (1/2, 1/2, 0), declared below.
+#
+# The synthetic data in disp_data.txt is generated at J1=1.0, J2=0.3 from the
+# ANALYTIC Neel dispersion (make_synthetic_data.py), not from pyMagCalc, so the
+# fit below -- which starts from deliberately wrong values -- tests the engine
+# against an independent result rather than against itself.
+#
+# Two bugs this config carried until 2026-08-12, both worth knowing about:
+#   * each bond was listed in ONE direction only. The engine sums H = (1/2) sum
+#     over ORDERED pairs, so a bond listed once contributes half its J. Every
+#     energy came out a factor 2 low.
+#   * there was no `magnetic_structure`, so the spectrum was expanded about the
+#     all-parallel state -- for an AFM a stationary MAXIMUM, which still returns
+#     real, positive, plausible energies. The data had been generated from that
+#     same broken model, so the fit "recovered" the true values and looked fine.
+# The ground-state guard now refuses the second one outright.
 
 crystal_structure:
-  lattice_parameters:
-    a: 4.0
-    b: 4.0
-    c: 8.0
-    alpha: 90
-    beta: 90
-    gamma: 90
+  lattice_parameters: {a: 4.0, b: 4.0, c: 8.0, alpha: 90.0, beta: 90.0, gamma: 90.0}
   atoms_uc:
-    - label: "Fe1"
-      pos: [0.0, 0.0, 0.0]
-      spin_S: 1.0
+  - {label: Fe1, pos: [0.0, 0.0, 0.0], spin_S: 1.0}
+  # k = 1/2 and the order is COLLINEAR, so the real-space 2x2x1 cell is the right
+  # description (CLAUDE.md 3); the rotating-frame single_k form gives the same
+  # bands here but warns that it may double count a collinear state.
+  magnetic_supercell: auto
 
+# Explicit list (a rectangular lattice's a and b bonds are the same length, so a
+# distance rule could not tell J1 from J2). BOTH directions of every bond, as the
+# ordered-pair sum requires.
 interactions:
-  - type: heisenberg
-    pair: ["Fe1", "Fe1"]
-    value: "J1"
-    rij_offset: [1, 0, 0]
-  - type: heisenberg
-    pair: ["Fe1", "Fe1"]
-    value: "J2"
-    rij_offset: [0, 1, 0]
+- {type: heisenberg, pair: [Fe1, Fe1], rij_offset: [1, 0, 0], value: J1}
+- {type: heisenberg, pair: [Fe1, Fe1], rij_offset: [-1, 0, 0], value: J1}
+- {type: heisenberg, pair: [Fe1, Fe1], rij_offset: [0, 1, 0], value: J2}
+- {type: heisenberg, pair: [Fe1, Fe1], rij_offset: [0, -1, 0], value: J2}
 
-parameters:
-  J1: 0.6        # wrong on purpose (true value 1.0)
-  J2: 0.6        # wrong on purpose (true value 0.3)
-  S: 1.0
+# Neel order. With `magnetic_supercell: auto` above, the engine turns this into
+# the real-space commensurate pattern on the 2x2x1 cell: the pi rotation that the
+# phase 2*pi*k.r produces on each neighbour is what flips the moment +z -> -z.
+# Bands fold onto the chemical-cell q_path; `match: nearest` picks the branch.
+magnetic_structure:
+  type: single_k
+  k: [0.5, 0.5, 0.0]
+  axis: [1, 0, 0]
+  local_directions: [[0, 0, 1]]
 
-tasks:
-  fit: true
-  plot_fit: true
+parameters: {J1: 0.6, J2: 0.6}     # both wrong on purpose (true: 1.0 and 0.3)
+parameter_order: [J1, J2]
+
+tasks: {fit: true, plot_fit: true}
 
 fitting:
   type: dispersion           # dispersion | sqw | powder
@@ -50,13 +66,8 @@ fitting:
   # fast: true               # compile-once fast dispersion path (default true);
                              # set false only to cross-check the legacy path.
 
-calculation:
-  cache_mode: auto
+calculation: {cache_mode: auto}
 
-output:
-  fit_report_filename: fit_report.txt
-  fit_params_filename: fit_params.yaml
+output: {fit_report_filename: fit_report.txt, fit_params_filename: fit_params.yaml}
 
-plotting:
-  fit_plot_filename: fit_comparison.png
-  show_plot: false
+plotting: {fit_plot_filename: fit_comparison.png, show_plot: false}

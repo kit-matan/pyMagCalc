@@ -389,6 +389,15 @@ async def trigger_calculation(payload: Dict[str, Any]):
       - {"path": "<file.yaml>"}    -- run an existing on-disk file IN PLACE
                                       (its own directory as cwd), for when the
                                       user has opened a real file to edit.
+
+    Optional with "config": {"config_dir": "<dir>"} -- the directory of the file
+    the client has open. The run config is written and executed THERE instead of
+    the project root, so relative references inside it resolve exactly as they do
+    for `magcalc run <that file>`: `from_mcif`, `fitting.data_file`, `cif_file`,
+    `python_model_file`. Without it, a config whose structure comes from a
+    sibling mCIF ran fine from the CLI and died on FileNotFoundError in the app.
+    Clients that cannot know the directory (the browser's file picker only hands
+    over a name) simply omit it and keep the previous project-root behaviour.
     """
     try:
         gui_dir = os.path.dirname(os.path.abspath(__file__))
@@ -411,7 +420,15 @@ async def trigger_calculation(payload: Dict[str, Any]):
                                     detail="Payload must contain 'config' or 'path'.")
             cfg = _pin_gui_outputs(dict(cfg))
             run_dir = project_root
-            run_config_path = os.path.join(project_root, ".config_gui_run.yaml")
+            cfg_dir = payload.get("config_dir")
+            if cfg_dir:
+                cfg_dir = os.path.abspath(os.path.expanduser(cfg_dir))
+                if not os.path.isdir(cfg_dir):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"config_dir is not a directory: {cfg_dir}")
+                run_dir = cfg_dir
+            run_config_path = os.path.join(run_dir, ".config_gui_run.yaml")
             with open(run_config_path, 'w') as f:
                 compact_yaml_dump(cfg, f)
 

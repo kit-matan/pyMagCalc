@@ -151,6 +151,63 @@ guard refuses). Never silently wrong.
   whitelist). Still config/CLI-only: the new interaction *types* (biquadratic/
   Stevens/3×3 SIA/dipole-dipole/g-tensor/multi-k) and the energy-cut/resolution
   editors (the blocks pass through if present; there is just no UI editor).
+- **Open a config, press Run == `magcalc run <that file>`** (2026-08-12). The server
+  half was pinned; the EDITOR half — what you hold after you OPEN a file — was not,
+  and it rebuilt the config from a whitelist of blocks it recognised. Seven ways a
+  config that ran from the CLI ran differently, or not at all, in the apps:
+  `atom_mode: explicit` (which the apps add and the CLI omits) emptied an `atoms_uc`
+  cell AND switched off distance-rule expansion, so `symmetry_rules` produced zero
+  bonds; a `magnetic_structure` without an explicit `enabled: true` was DELETED
+  (the runner defaults that key to True, the editor to False — ZnCVO's bands moved
+  3.54/3.59/11.00 → 0.62/10.94/11.10/21.42 meV and the run still exited 0);
+  `tasks: {fit/energy_cut/static_correlations/…}` and `from_mcif`/`units`/
+  `experiment` were dropped; `output`/`fitting` were replaced by UI placeholders;
+  the anneal-only `minimization.n_sweeps` was injected into gradient-method configs
+  (`minimize() got an unexpected keyword argument`); parameters were rounded to 5
+  decimals, degrading every fitted value on open. The rule now is **the file is the
+  base**: the whole document is kept and only genuinely-edited keys are written over
+  it (`gui/src/lib/configIO.js`, mirrored in `MagCalcConfig.backendInput`). Pinned by
+  `tests/test_gui_roundtrip.py` (all 59 shipped configs through the app's open→run
+  transform, plus four run end-to-end against their own CLI run, band for band) and
+  `tests/test_atom_mode_explicit.py`. The native app's Run additionally posted the
+  pre-`config-as-source` `{"data": …}` envelope, which the server had rejected with
+  400 since a67f7cf, and fetched plots through the browser's `/api` dev-proxy prefix.
+  Relative references (`from_mcif`, `fitting.data_file`, `cif_file`) now resolve
+  because the run happens in the opened file's own directory — clients send
+  `config_dir` (the native app does; the browser's file picker only exposes a name,
+  so web-app runs of such configs still fail loudly rather than silently).
+  The rule extends to `parameters`: the editor always carries `H_mag`/`H_dir`, so
+  an opened file that declares no field used to gain `H_mag: 0, H_dir: [0, 0, 1]`
+  — a zero-magnitude Zeeman term the CLI never adds. It is numerically nothing and
+  still moved CoRh2O4's bands by 6e-14 and S07's by 3e-15; with it dropped, every
+  measured config agrees with its CLI run to **exactly 0.0**. (Both were first
+  written off as JSON int/float round-off — `2.0` does come back as `2` through any
+  browser client — but bisecting one config key at a time named the real cause.
+  CLI-vs-CLI is bit-identical on both, so the discrepancy was never run-to-run
+  noise.)
+- **`examples/fitting/fit_dispersion.yaml` was fitting a doubly-wrong model**
+  (2026-08-12). TUTORIAL.md's `magcalc fit` example listed each exchange bond in
+  ONE direction only — the engine sums `H = ½ Σ` over *ordered* pairs, so every J
+  was half its stated value (measured: ω(h=½) = 2.000 against the analytic 4.000)
+  — and declared no `magnetic_structure`, so with J1, J2 > 0 (AFM) it expanded
+  about the all-parallel state, a stationary **maximum**. Its own check ("recovers
+  J1 = 1.0, J2 = 0.3") passed at 1.0002/0.2967 because `disp_data.txt` had been
+  generated *by the engine from that same broken model* — self-consistent garbage,
+  the exact anti-pattern the closing section of this file is about. Now: both bond
+  directions, Néel via `magnetic_supercell: auto`, and the data regenerated from
+  the ANALYTIC branch `ω = 2S√((J1+J2)² − (J1cos2πh + J2cos2πk)²)` by a committed
+  generator, so the fit tests the engine against something external. Recovers
+  J1 = 0.9988 ± 0.011, J2 = 0.3035 ± 0.005, reduced χ² = 0.52.
+  `tests/test_fit_example.py` pins the engine to that analytic branch AND asserts
+  the shipped data is analytic, so the circularity cannot return.
+- **`show_plot: true` wedged unattended runs** (2026-08-12). `plt.show()` on an
+  interactive backend blocks until a human closes the window; seven shipped
+  configs set the flag, so `magcalc run` on any of them from a script or cron hung
+  at ~0% CPU with no output, no error and nothing for CI to time out on (it cost
+  ~30 min of a config sweep to spot, since the process looks alive). All ten
+  `plt.show()` sites now go through `plotting.show_plot_if_possible()`, which
+  no-ops on a non-interactive backend; the smoke test additionally pins
+  `matplotlib.use("Agg")` rather than relying on the environment's accident.
 
 ---
 

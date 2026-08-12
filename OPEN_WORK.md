@@ -1,7 +1,14 @@
 # Open work — pick-up notes
 
-Last updated **2026-08-05**, master at `59aa035`, full gate green
-(`pytest -m ""` from the workspace root: **600 passed, 3 skipped**).
+Last updated **2026-08-12**, master at `4010121` **plus uncommitted working-tree
+changes** (Studio open→run parity, the `examples/fitting` correction, and the
+smoke-test coverage/backend changes below).
+
+Full gate green on the current tree: **621 passed, 3 skipped**
+(`pytest -m ""` from the workspace root, 43 min). That is +21 on the 2026-08-05
+baseline of 600 — 12 from the Studio open→run work (`test_atom_mode_explicit`,
+`test_gui_roundtrip`, two added to `test_gui_passthrough`), 4 from
+`test_fit_example`, and 5 configs the smoke test had never discovered.
 
 This file is the "what to do next" companion to `GAP_STATUS.md`, which is the
 authoritative record of *what is done and how it was validated*. Read
@@ -127,39 +134,140 @@ exact LSWT dispersion (`tests/test_classical_to_quantum.py`,
 
 The 2026-08-04/05 audit closed its four items (config smoke test, `kitaev`,
 guard tolerances, combination matrix — see `GAP_STATUS.md` §"Config-surface
-coverage audit"). Two follow-ups were recorded rather than done:
+coverage audit"). Where the two recorded follow-ups stand:
 
-- **Enumerate config keys from the CODE, not the docs.** The audit swept
-  *documented* keys against `tests/`, so `calculation.imaginary_rel_tolerance` —
-  in neither the docs nor the tests — was invisible to the very process meant to
-  find gaps. Sweeping `calc_config.get(...)` call sites has been done for the
-  `calculation:` block (clean, apart from internal `cache_file_base`); the other
-  blocks (`tasks`, `plotting`, `minimization`, `scga`, `thermal_mc`, …) have
-  not.
-- **Escalate a whitelist of WARNINGs in the config smoke test.** It currently
-  fails on ERROR log records only. Item 6 below is exactly the kind of thing
-  that would catch.
+- **Enumerate config keys from the CODE, not the docs.** STILL OPEN. The audit
+  swept *documented* keys against `tests/`, so
+  `calculation.imaginary_rel_tolerance` — in neither the docs nor the tests —
+  was invisible to the very process meant to find gaps. Sweeping
+  `calc_config.get(...)` call sites has been done for the `calculation:` block
+  (clean, apart from internal `cache_file_base`); the other blocks (`tasks`,
+  `plotting`, `minimization`, `scga`, `thermal_mc`, …) have not.
+- **Escalate a whitelist of WARNINGs in the config smoke test.** STILL OPEN (it
+  fails on ERROR log records only), but item 6's case no longer argues for it:
+  that failure is now a hard error, so the smoke test catches it as an ERROR.
+  What changed in its favour is the *prerequisite*: escalating warnings is only
+  viable once benign ones stop firing routinely, and two that fired on
+  correctly-written configs are gone (2026-08-12) — `num_starts <
+  early_stopping` no longer warns for the Monte-Carlo methods, where
+  `early_stopping` is meaningless and a handful of runs is the recommendation;
+  and `plt.show()` on a non-interactive backend no longer warns, because
+  `plotting.show_plot_if_possible()` does not call it.
+
+**Discovery, not just execution (2026-08-12).** The smoke test's glob is
+`examples/*/*/config*.yaml`, and `examples/fitting/fit_dispersion.yaml` is one
+directory shallow AND not named `config*` — invisible on both counts. It went on
+shipping as TUTORIAL.md's `magcalc fit` example with every bond listed in one
+direction only (halving each J) and no `magnetic_structure` at all (expanding
+about a stationary maximum), while its own "recovers the true values" check
+passed, because the shipped data had been generated from that same broken model.
+An `EXTRA` list now covers it, and the blanket `future_exmaples` exclusion is
+gone — that exclusion is why its FeI2 config sat 2.5 meV/site above the ground
+state (item 7).
+
+**Mind the two numbers.** `examples/future_exmaples/` is gitignored
+(`.gitignore:35`), so its four configs exist only in a working tree that has them:
+coverage is **55 configs here, 51 on a fresh clone** — every runnable config under
+`examples/` except the four in `SKIP`. Dropping the exclusion is therefore a
+no-op for CI and only helps whoever has the staging directory locally. If those
+configs are worth protecting from rot, they have to be tracked first (`git add
+-f`, or un-ignore the directory); until then "staging is covered" is true only on
+one machine. Re-check either number with
+
+    python -c "import sys; sys.path.insert(0,'tests'); import test_config_smoke as t; print(len(t._configs()))"
+
+after adding examples. The remaining shape problem is that discovery is still a
+glob plus a hand-list: a config named neither `config*.yaml` nor listed in
+`EXTRA` is still invisible.
 
 ---
 
-## 6. Loose end — `minimization.tolerance` is silently ineffective
+## 6. ~~Loose end — `minimization.tolerance` is silently ineffective~~ (DONE 2026-08-12)
 
-`examples/materials/FeI2/config_fei2.yaml:112` sets `minimization.tolerance:
-1e-5`. `runner.py:490` sweeps unrecognized keys of the `minimization:` block
-into `min_kwargs`, forwards them through `MagCalc.minimize_energy(**kwargs)`
-(`core.py:2655`) and on into `scipy.optimize.minimize`, which takes `tol`, not
-`tolerance`. The run logs
+Resolved both ways at once, because the swallow was the worse half of it.
 
-    WARNING  Optimization attempt using MagCalc failed:
-             minimize() got an unexpected keyword argument 'tolerance'
+- **A failed minimization is now a hard error** (`runner.py`, was
+  `logger.warning("Optimization attempt using MagCalc failed: …")`). Carrying on
+  meant expanding LSWT about a structure that was never minimized — and with
+  `on_imaginary: warn/off` that returns a plausible spectrum and exit code 0,
+  which is the house's #1 hazard class. The message names the likely cause
+  (method-specific `minimization` keys) rather than blaming the magnetic
+  structure downstream.
+- **`tolerance` → `tol` and `max_iterations` → `options: {maxiter: …}`** for the
+  gradient methods, with `float()` coercion: `tolerance: 1e-6` is a *string* to
+  PyYAML (its float pattern needs a decimal point), which is how both configs
+  that set one are written.
 
-and carries on — so the minimization silently does not happen with the requested
-tolerance.
+Both `examples/materials/FeI2/config_fei2.yaml` and
+`examples/future_exmaples/CoRh2O4/config_corh2o4.yaml` had been running with
+**no minimization at all**; they now actually minimize and still pass the
+ground-state guards. The strict error also surfaced the Studio bug that motivated
+the sweep — the apps injected the anneal-only `n_sweeps` into `method: TNC`
+configs (see `GAP_STATUS.md`, "Open a config, press Run").
 
-Decide between mapping `tolerance` → `tol` and rejecting unknown `minimization:`
-keys outright. The second is more in keeping with the engine's hard-error
-policy, but check the other shipped configs for the same key first. Whichever
-way, the smoke test should be made to catch it (item 5).
+---
+
+## 7. FeI2 dipole — the "needs investigation" note now has an answer
+
+`examples/materials/FeI2/config_fei2.yaml` opens with
+
+    # on_imaginary: warn -- the supplied structure is not the exact classical minimum
+    # of this Hamiltonian. Flagged by the ground-state guard; needs investigation.
+
+**The answer (2026-08-12):** FeI2 orders as a COLLINEAR 2-up-2-down stripe at
+k = (0, −1/4, 1/4), and no rotating-frame `single_k`/`propagation_vector` form can
+represent it — that form rotates each successive cell by a fixed angle, giving
+up / in-plane / down / in-plane at k = 1/4. On the real-space `magnetic_supercell:
+[1, 4, 4]` (16 sites), annealing reaches **E = −46.372796 meV per cell =
+−2.898300 meV/site**, reproducibly (3–4 of 4 runs hit it at seeds 0, 1, 2, 7).
+That is the value the guard was reporting as unreachable, and the config's
+declared structure sits ~2.5 meV/site above it. Note this is the DIPOLE minimum;
+the SU(N) ground state is −2.91893118 meV/site, and with an anisotropy present
+the two genuinely differ (CLAUDE.md §5c) — they are not meant to agree.
+
+`examples/future_exmaples/FeI2/config_fei2.yaml` has been fixed this way and now
+runs with the guards at their default `error` — but that directory is **gitignored**
+(`.gitignore:35`), so the fix lives in the working tree only and is not in any
+commit. Either track it (`git add -f`) or accept that it will be lost on a clean
+checkout; the physics above is recorded here precisely so it survives either way.
+
+**Why `examples/materials/FeI2/config_fei2.yaml` was NOT changed with it:**
+`tests/test_sun.py` uses that file as its Hamiltonian source and builds its own
+SU(N) supercell from it (`SUNModel.from_generic_model(m, supercell=MSUPER, ...)`),
+reading `m.config["crystal_structure"]["lattice_vectors"]` to form the chemical
+reciprocal basis. Adding `magnetic_supercell` there would silently hand those
+Sunny-validated comparisons (E/site to 1e-6, bands and intensities to 1e-4) a
+16-site cell and the wrong basis. Doing it properly means separating the
+Hamiltonian from the structure in that config — split the interactions into a
+fragment both configs include, or point `test_sun.py` at a structure-free copy —
+and then re-running `pytest tests/test_sun.py -m ""` to confirm the Sunny numbers
+are untouched. Until that is done, leave the `on_imaginary: warn` in place.
+
+---
+
+## 8. Studio — the two limits left after the 2026-08-12 open→run fix
+
+`gui/src/lib/configIO.js` (web) and `MagCalcConfig.backendInput` (native) are now
+two implementations of one rule — *the file is the base, write only real edits
+over it* — kept honest by `tests/test_gui_roundtrip.py`, which drives the web one
+over all 59 shipped configs and runs four of them against their own CLI run band
+for band. Two things that rule does not reach:
+
+1. **Relative paths from the web app.** A run happens in the opened file's
+   directory only when the client sends `config_dir`. The native app can (it has
+   a real `URL`); the browser's File System Access API exposes only
+   `handle.name`, so a web-app run of a config with `from_mcif:` /
+   `fitting.data_file:` / `cif_file:` fails with FileNotFoundError. It fails
+   *loudly*, which is the acceptable end of the trade, but the fix is real: route
+   the web app's Open through the server's `/load-config` (which returns an
+   abspath and is currently dead code) behind a "recent files" picker, then send
+   `config_dir` like the native app does.
+2. **No second implementation is tested.** The Swift side has no equivalent of
+   `roundtrip.test.mjs`; it compiles (`xcodebuild … MagCalcStudio-macOS`) and was
+   fixed by inspection against the JS. The cheap oracle is the JS emitter itself:
+   a small XCTest that loads the same example configs and diffs
+   `backendInput()` against `node gui/tests/emit_run_config.mjs`. Until that
+   exists, treat any change to one side as owing a matching change to the other.
 
 ---
 

@@ -383,6 +383,21 @@ enum YAMLConfig {
                 }
                 return nil
             }
+            // Task flags with no checkbox in this app (fit, plot_fit, energy_cut,
+            // wang_landau, static_correlations, sun_sampled_correlations, ...) are
+            // kept verbatim and re-emitted, so opening a config does not switch off
+            // the very task it exists to run.
+            var extras: [String: JSONValue] = [:]
+            let modelled: Set<String> = [
+                "minimization", "run_minimization",
+                "dispersion", "run_dispersion", "calculate_dispersion",
+                "sqw_map", "run_sqw_map", "calculate_sqw_map",
+                "powder_average", "run_powder_average",
+                "export_csv", "plot_dispersion", "plot_sqw_map", "plot_structure",
+                "corrections", "scga", "thermal_mc", "sampled_correlations", "kpm_sqw",
+            ]
+            for (k, v) in t where !modelled.contains(k) { extras[k] = v }
+            config.extraTasks = extras
             config.tasks.minimization = flag("minimization", "run_minimization") ?? config.tasks.minimization
             config.tasks.dispersion = flag("dispersion", "run_dispersion", "calculate_dispersion") ?? config.tasks.dispersion
             config.tasks.sqwMap = flag("sqw_map", "run_sqw_map", "calculate_sqw_map") ?? config.tasks.sqwMap
@@ -470,6 +485,10 @@ enum YAMLConfig {
             config.calculation.unitsText = String(data: data, encoding: .utf8) ?? ""
         }
         if let ms = root["magnetic_structure"]?.objectValue {
+            // The runner reads a missing `enabled` as TRUE. Defaulting it to the
+            // app's `false` turned a structure the CLI honours into one the app
+            // dropped, and the run then used a different magnetic order.
+            config.magneticStructure.enabled = true
             if case .bool(let b)? = ms["enabled"] { config.magneticStructure.enabled = b }
             if let v = ms["type"]?.stringValue { config.magneticStructure.type = v }
             if let v = ms["pattern_type"]?.stringValue { config.magneticStructure.patternType = v }
@@ -503,15 +522,14 @@ enum YAMLConfig {
             if let v = fit["match"]?.stringValue { config.fitting.match = v }
         }
 
-        // Keep the raw structure/interactions/magnetic_structure so the backend
-        // receives them exactly as written (lattice_vectors, interaction_matrix,
-        // single_ion_anisotropy, spiral/generic orders) rather than the flattened
-        // designer view. See MagCalcConfig.payloadValue / structurePayload.
-        var rawObj: [String: JSONValue] = [:]
-        if let cs = root["crystal_structure"] { rawObj["crystal_structure"] = cs }
-        if let it = root["interactions"] { rawObj["interactions"] = it }
-        if let ms = root["magnetic_structure"] { rawObj["magnetic_structure"] = ms }
-        config.rawImport = rawObj.isEmpty ? nil : .object(rawObj)
+        // Keep the WHOLE document. backendInput() writes the modelled blocks over
+        // it, so the file is the base and nothing it carried can go missing --
+        // structure and interactions exactly as written (lattice_vectors,
+        // interaction_matrix, single_ion_anisotropy, spiral/generic orders), and
+        // equally the blocks this app has no UI for (from_mcif/mcif, units,
+        // energy_cut, corrections, static_correlations, experiment). Keeping only
+        // three keys here is what silently rebuilt everything else from defaults.
+        config.rawImport = root.isEmpty ? nil : .object(root)
 
         return config
     }

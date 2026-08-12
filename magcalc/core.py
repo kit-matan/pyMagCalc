@@ -91,6 +91,7 @@ except ImportError:
             f"Failed to import local modules config_loader. Original error: {e}"
         ) from e
 import matplotlib.pyplot as plt  # Added for plotting
+from .plotting import show_plot_if_possible
 
 # --- Basic Logging Setup ---
 # Library should not configure basicConfig. Use NullHandler to silence by default.
@@ -2960,7 +2961,7 @@ def plot_dispersion_from_data(
         plt.savefig(save_filename)
         logger.info(f"Dispersion plot saved to {save_filename}")
     if show_plot:
-        plt.show()
+        show_plot_if_possible()
     plt.close()
 
 
@@ -3022,7 +3023,7 @@ def plot_sqw_from_data(
         plt.savefig(save_filename)
         logger.info(f"S(q,w) map saved to {save_filename}")
     if show_plot:
-        plt.show()
+        show_plot_if_possible()
     plt.close()
 
 
@@ -3148,5 +3149,5 @@ def plot_magnetic_structure(
             logger.error(f"Failed to save magnetic structure JSON: {e}")
         
     if show_plot:
-        plt.show()
+        show_plot_if_possible()
     plt.close()

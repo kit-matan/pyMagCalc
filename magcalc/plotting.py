@@ -8,6 +8,27 @@ from typing import Optional, List, Tuple, Union
 logger = logging.getLogger(__name__)
 
 
+def show_plot_if_possible():
+    """`plt.show()`, but only when the backend can actually show something.
+
+    `plotting: {show_plot: true}` is right for interactive use and a trap
+    otherwise: on a headless/Agg backend matplotlib merely warns
+    ("FigureCanvasAgg is non-interactive, and thus cannot be shown"), and on an
+    INTERACTIVE backend with nobody at the keyboard it blocks until the window is
+    closed -- an unattended run wedges at ~0% CPU with no output and no timeout.
+    Seven shipped configs set the flag, so both halves of that are reachable.
+
+    Callers keep their `if show_plot:` guard; this only decides whether showing
+    is meaningful right now.
+    """
+    import matplotlib
+    if matplotlib.get_backend().lower().startswith("agg"):
+        logger.debug("show_plot requested but the backend is non-interactive; "
+                     "the figure was saved rather than shown.")
+        return
+    plt.show()
+
+
 def broaden_spectrum(
     centers: np.ndarray,
     weights: np.ndarray,
@@ -225,7 +246,7 @@ def plot_dispersion(
              logger.info(f"Dispersion plot saved to {save_filename}")
         
         if show_plot:
-            plt.show()
+            show_plot_if_possible()
         plt.close()
 
     except Exception as e:
@@ -381,7 +402,7 @@ def plot_sqw_map(
              logger.info(f"S(Q,w) plot saved to {save_filename}")
 
         if show_plot:
-            plt.show()
+            show_plot_if_possible()
         plt.close()
 
     except Exception as e:
@@ -428,7 +449,7 @@ def plot_energy_cuts(
             fig.savefig(save_filename, dpi=150, bbox_inches="tight", pad_inches=0.1)
             logger.info(f"Energy-cut plot saved to {save_filename}")
         if show_plot:
-            plt.show()
+            show_plot_if_possible()
         plt.close(fig)
     except Exception as e:
         logger.error(f"Failed to plot energy cuts: {e}")
@@ -503,7 +524,7 @@ def plot_fit_comparison(
             fig.savefig(save_filename, dpi=150, bbox_inches="tight", pad_inches=0.1)
             logger.info(f"Fit comparison plot saved to {save_filename}")
         if show_plot:
-            plt.show()
+            show_plot_if_possible()
         plt.close(fig)
 
     except Exception as e:
@@ -531,7 +552,7 @@ def plot_scga(intensities, save_filename=None, temperature=None, labels=None,
             fig.savefig(save_filename, dpi=150, bbox_inches="tight", pad_inches=0.1)
             logger.info(f"SCGA plot saved to {save_filename}")
         if show_plot:
-            plt.show()
+            show_plot_if_possible()
         plt.close(fig)
     except Exception as e:
         logger.error(f"Failed to plot SCGA S(q): {e}")
@@ -560,7 +581,7 @@ def plot_thermal_mc(temperatures, energy, heat_capacity, magnetization,
             fig.savefig(save_filename, dpi=150, bbox_inches="tight", pad_inches=0.1)
             logger.info(f"Thermal-MC plot saved to {save_filename}")
         if show_plot:
-            plt.show()
+            show_plot_if_possible()
         plt.close(fig)
     except Exception as e:
         logger.error(f"Failed to plot thermal MC: {e}")
@@ -595,7 +616,7 @@ def plot_sqw_grid(energies, intensities, save_filename=None, title="S(q,w)",
             fig.savefig(save_filename, dpi=150, bbox_inches="tight", pad_inches=0.1)
             logger.info(f"S(q,w) map saved to {save_filename}")
         if show_plot:
-            plt.show()
+            show_plot_if_possible()
         plt.close(fig)
     except Exception as e:
         logger.error(f"Failed to plot S(q,w) map: {e}")

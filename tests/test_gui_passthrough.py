@@ -150,3 +150,68 @@ def test_absent_blocks_are_not_invented(server):
     for key in ("scga", "thermal_mc", "sampled_correlations", "kpm",
                 "corrections", "energy_cut", "units"):
         assert key not in final, f"block {key!r} appeared from nowhere"
+
+
+def test_run_uses_the_opened_files_directory(server, tmp_path, monkeypatch):
+    """`config_dir` makes the run happen where the user's file lives.
+
+    The server writes the editor's config to `.config_gui_run.yaml` and runs it.
+    Writing that to the PROJECT ROOT breaks every relative reference a real config
+    carries -- `from_mcif`, `fitting.data_file`, `cif_file`, `python_model_file` --
+    so a config that runs as `magcalc run <file>` died on FileNotFoundError in the
+    apps. A client that knows where the file lives (the native app does; the
+    browser's picker only hands over a name) sends `config_dir`, and the run
+    config is written and executed there instead.
+    """
+    from fastapi.testclient import TestClient
+
+    workdir = tmp_path / "my project"
+    workdir.mkdir()
+
+    # Stand in for the child process: record where it was launched, do nothing.
+    launched = {}
+
+    class _FakeProc:
+        returncode = 0
+
+        class _Out:
+            @staticmethod
+            async def read(_n):
+                return b""
+
+        stdout = _Out()
+
+        async def wait(self):
+            return 0
+
+    async def _fake_exec(*args, **kwargs):
+        launched["cwd"] = kwargs.get("cwd")
+        launched["config"] = args[-1]
+        return _FakeProc()
+
+    monkeypatch.setattr(server.asyncio, "create_subprocess_exec", _fake_exec)
+
+    with TestClient(server.app) as client:
+        resp = client.post("/run-calculation",
+                           json={"config": _client_payload(),
+                                 "config_dir": str(workdir)})
+    assert resp.status_code == 200, resp.text
+
+    assert launched["cwd"] == str(workdir), (
+        f"run happened in {launched['cwd']}, not the opened file's directory")
+    assert launched["config"] == str(workdir / ".config_gui_run.yaml")
+    # ... and it is a real, runnable config file sitting next to the user's own.
+    written = yaml.safe_load((workdir / ".config_gui_run.yaml").read_text())
+    assert written["crystal_structure"] == _client_payload()["crystal_structure"]
+
+
+def test_bad_config_dir_is_rejected_not_ignored(server, tmp_path):
+    """Silently falling back to the project root would resurrect the bug above."""
+    from fastapi.testclient import TestClient
+
+    with TestClient(server.app) as client:
+        resp = client.post("/run-calculation",
+                           json={"config": _client_payload(),
+                                 "config_dir": str(tmp_path / "does-not-exist")})
+    assert resp.status_code == 400
+    assert "config_dir" in resp.json()["detail"]

@@ -23,7 +23,17 @@ import glob
 import logging
 import os
 
+import matplotlib
 import pytest
+
+# Force a headless backend BEFORE anything imports pyplot. Seven shipped configs
+# set `plotting: {show_plot: true}`, and `plt.show()` on an interactive backend
+# blocks until a human closes the window -- which in an unattended run is
+# forever. It happens not to bite under pytest today, but that is an accident of
+# the environment, not a guarantee: running one of these configs directly on
+# macOS wedges at ~0% CPU with no output and no timeout. A hang is worse than a
+# failure, so pin it here instead of relying on the accident.
+matplotlib.use("Agg", force=True)
 
 HERE = os.path.dirname(__file__)
 ROOT = os.path.abspath(os.path.join(HERE, ".."))
@@ -39,16 +49,34 @@ SKIP = {
 }
 
 
+# Runnable configs the two-level `examples/*/*/config*.yaml` glob cannot see,
+# listed by hand. `examples/fitting/fit_dispersion.yaml` is one directory shallow
+# AND is not named `config*.yaml`, so it was invisible on both counts -- which is
+# how it went on shipping (as TUTORIAL.md's `magcalc fit` example) with each bond
+# listed in one direction only and no magnetic_structure at all. Anything added
+# here needs a reason it cannot just be named `config*.yaml` in its own directory.
+EXTRA = [
+    # named in TUTORIAL.md and README.md by this path; renaming would break both
+    os.path.join("examples", "fitting", "fit_dispersion.yaml"),
+]
+
+
 def _configs():
     out = []
+    for rel in EXTRA:
+        path = os.path.join(ROOT, rel)
+        if os.path.exists(path):
+            out.append(pytest.param(path, id=os.path.basename(rel)))
     for path in sorted(glob.glob(os.path.join(ROOT, "examples", "*", "*",
                                               "config*.yaml"))):
         name = os.path.basename(os.path.dirname(path))
         if any(k in path for k in SKIP):
             continue
-        # `future_exmaples` is a staging area, not shipped material
-        if "future_exmaples" in path:
-            continue
+        # `future_exmaples` used to be skipped here as "a staging area, not
+        # shipped material". That is exactly how its FeI2 config came to assert a
+        # spiral 2.5 meV/site above the ground state -- nothing ran it. All four
+        # configs in there run clean now, so they are covered like everything
+        # else; staging is a reason to expect churn, not a reason to skip.
         out.append(pytest.param(path, id=f"{name}/{os.path.basename(path)}"))
     return out
 

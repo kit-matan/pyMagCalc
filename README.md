@@ -339,7 +339,7 @@ Dimer/trimer valence-bond-solid models (`calculation.mode: entangled`):
 30 SpinW tutorials (`examples/spinw_tutorials/`, SW01–SW38) and 9 Sunny.jl tutorials (`examples/sunny_tutorials/`, S01–S09), each a runnable `config.yaml`. These cover FM/AFM chains, frustrated and kagome lattices, constant-energy cuts, real materials (La₂CuO₄, LiNiPO₄, YVO₃, CoRh₂O₄, FeI₂), spiral/incommensurate structures, Kitaev honeycomb, SU(N), finite-T Monte-Carlo, and dipole-dipole models. See each directory's `README.md` for the full status table and physics conventions.
 
 ### Fitting (`examples/fitting/`)
-Example fitting configurations and synthetic data for dispersion / S(Q,ω) / powder fits.
+A worked **dispersion** fit: `fit_dispersion.yaml` (a rectangular-lattice Néel antiferromagnet) against synthetic data generated from the analytic dispersion by `make_synthetic_data.py`, so the fit is checked against something the engine did not produce. The `sqw` and `powder` fit types are supported by `magcalc fit` and covered by `tests/test_fitting.py`, but have no worked example here yet.
 
 ## Testing
 

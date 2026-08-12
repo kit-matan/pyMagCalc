@@ -460,9 +460,21 @@ class GenericSpinModel:
         atom_mode = crystal_struct.get('atom_mode', 'symmetry')
         
         if atom_mode == 'explicit':
-             # Just pass them through
-             builder.atoms_uc = wyckoff_atoms
-             builder.config['crystal_structure']['atoms_uc'] = wyckoff_atoms
+             # Explicit atoms may be listed under EITHER key: `atoms_uc` (what
+             # hand-written and CLI configs use) or `wyckoff_atoms` (what the
+             # designer writes -- its editor keeps one atom list for both modes).
+             # Reading only `wyckoff_atoms` emptied the cell for the first shape,
+             # and the app emits exactly that: `atoms_uc` + `atom_mode: explicit`.
+             # Every such config ran fine from the CLI (which omits `atom_mode`,
+             # taking the branch below) and died in the apps on
+             # "shapes (0,) and (3,3) not aligned" -- adding that one key to a
+             # working config reproduces it. See tests/test_atom_mode_explicit.py.
+             explicit_atoms = wyckoff_atoms or crystal_struct.get('atoms_uc', [])
+             builder.atoms_uc = explicit_atoms
+             builder.config['crystal_structure']['atoms_uc'] = explicit_atoms
+             builder._atom_label_to_idx = {
+                 atom['label']: i for i, atom in enumerate(explicit_atoms)
+             }
         elif not wyckoff_atoms and 'atoms_uc' in crystal_struct:
              builder.atoms_uc = crystal_struct['atoms_uc']
              # Ensure builder knows species/labels for interaction matching
@@ -536,12 +548,21 @@ class GenericSpinModel:
                              f"Failed to expand symmetry rule {rule}: {e}"
                          ) from e
              
-             if atom_mode == 'symmetry':
-                 # Standard distance-based propagation for rules without ref_pair
-                 builder._expand_heisenberg_rules()
-                 builder._expand_anisotropic_exchange_rules()
-                 builder._expand_dm_rules()
-                 builder._expand_interaction_matrix_rules()
+             # Distance-based propagation for rules without ref_pair. This used to
+             # run only for `atom_mode == 'symmetry'`, which conflates two
+             # independent things: `atom_mode` says how the ATOMS were given (one
+             # Wyckoff representative vs the full explicit list), not whether a
+             # bond RULE may be propagated by distance. A distance rule on an
+             # explicit cell is ordinary usage -- SW26's spiral chain is exactly
+             # `atoms_uc` + `{type: heisenberg, distance: 3.0, value: J1}` -- and
+             # with `atom_mode: explicit` set (as the Studio writes) both rules
+             # expanded to ZERO bonds, so the Hamiltonian silently lost J1 and J2
+             # and the run died on imaginary magnons. Each expander is a no-op
+             # when there is no distance rule of its type to expand.
+             builder._expand_heisenberg_rules()
+             builder._expand_anisotropic_exchange_rules()
+             builder._expand_dm_rules()
+             builder._expand_interaction_matrix_rules()
         
         # 4. Integrate back to self.config
         # Update atoms_uc

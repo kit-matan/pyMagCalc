@@ -539,13 +539,22 @@ struct MagCalcConfig: Codable, Hashable {
     var atomMode = "symmetry"          // "symmetry" | "explicit"
     var interactionMode = "symmetry"   // "symmetry" | "explicit"
 
-    /// Raw crystal_structure / interactions / magnetic_structure captured when an
-    /// example config is imported. Sent to the backend verbatim so features the
-    /// designer cannot model -- lattice_vectors, interaction_matrix, single-ion
-    /// anisotropy, DM, spiral/generic magnetic orders -- run exactly as
-    /// `python -m magcalc run` does. Not part of CodingKeys, so it is neither
-    /// encoded nor decoded (custom init(from:) leaves it nil).
+    /// The WHOLE config document captured when a file is imported. `backendInput`
+    /// starts from it and overwrites only the blocks this app models, so features
+    /// the designer cannot represent -- lattice_vectors, interaction_matrix,
+    /// single-ion anisotropy, DM, spiral/generic orders -- and blocks it has no UI
+    /// for at all -- `from_mcif`, `units`, `energy_cut`, `static_correlations`,
+    /// `experiment` -- run exactly as `magcalc run <file>` does. It used to hold
+    /// only three keys, so everything else was silently rebuilt from the app's
+    /// defaults. Not part of CodingKeys, so it is neither encoded nor decoded
+    /// (custom init(from:) leaves it nil).
     var rawImport: JSONValue? = nil
+
+    /// `tasks` flags the imported file carried that this app has no checkbox for
+    /// (fit, plot_fit, energy_cut, wang_landau, static_correlations, ...). Merged
+    /// back into the emitted `tasks` block so opening a config cannot switch off
+    /// the task it exists to run.
+    var extraTasks: [String: JSONValue] = [:]
 
     enum CodingKeys: String, CodingKey {
         case lattice, parameters, tasks, plotting, minimization, calculation, fitting, output
@@ -633,6 +642,41 @@ struct MagCalcConfig: Codable, Hashable {
 // MARK: - Backend payload construction
 
 extension MagCalcConfig {
+    /// Top-level blocks this app models and re-emits itself. Everything else the
+    /// imported file carried is passed through untouched. Mirrors
+    /// EDITOR_OWNED_BLOCKS in gui/src/lib/configIO.js.
+    static let editorOwnedBlocks: Set<String> = [
+        "crystal_structure", "interactions", "magnetic_structure",
+        "parameters", "parameter_order", "tasks", "q_path", "plotting",
+        "minimization", "calculation", "output", "powder_average", "fitting",
+        "scga", "thermal_mc", "sampled_correlations", "kpm",
+    ]
+
+    /// The file's block, updated with the edits the user actually made.
+    ///
+    /// The app models each settings block as a struct, so encoding one emits ALL
+    /// its fields — including defaults the opened file never mentioned. That is
+    /// not cosmetic: `minimization` carries method-specific keys, and adding the
+    /// anneal-only `n_sweeps` to a `method: TNC` config makes the minimizer throw
+    /// ("unexpected keyword argument"), after which the run dies at the
+    /// ground-state guard blaming the magnetic structure. So a key is written
+    /// only when the file declared it, or when the editor's value has moved off
+    /// the blank default (i.e. the user touched it).
+    ///
+    /// Mirrors `mergeEdits` in gui/src/lib/configIO.js — keep the two in step.
+    static func mergeEdits(_ editor: JSONValue, over fileBlock: JSONValue?,
+                           defaults: JSONValue) -> JSONValue {
+        guard let file = fileBlock?.objectValue else { return editor }
+        var out = file
+        let e = editor.objectValue ?? [:]
+        let d = defaults.objectValue ?? [:]
+        for (k, v) in e {
+            if file[k] == nil, d[k] == v { continue }   // untouched UI default
+            out[k] = v
+        }
+        return .object(out)
+    }
+
     /// Builds the `data` payload sent to /run-calculation and /expand-config,
     /// mirroring runCalculation() in the web app's App.jsx.
     func backendInput(taskOverrides: [String: JSONValue]? = nil) -> JSONValue {
@@ -660,7 +704,9 @@ extension MagCalcConfig {
         if let overrides = taskOverrides {
             tasksValue = .object(overrides)
         } else {
-            tasksValue = (try? JSONValue(encoding: tasks)) ?? .object([:])
+            var t = ((try? JSONValue(encoding: tasks)) ?? .object([:])).objectValue ?? [:]
+            for (k, v) in extraTasks { t[k] = v }
+            tasksValue = .object(t)
         }
 
         let interactionsValue: JSONValue = interactionMode == "explicit"
@@ -671,16 +717,20 @@ extension MagCalcConfig {
         // lattice_vectors, interaction_matrix, SIA and spiral/generic orders
         // reach the backend intact (the designer model cannot represent them).
         let rawObj = rawImport?.objectValue
-        let crystalValue: JSONValue = rawObj?["crystal_structure"] ?? .object([
+        // A `from_mcif` config has no crystal_structure of its own: the runner
+        // fills it from the mCIF. Inventing the designer's default 5 A cube there
+        // silently replaced an experimentally determined magnetic cell.
+        let mcifDriven = rawObj?["crystal_structure"] == nil && rawObj?["from_mcif"] != nil
+        let crystalValue: JSONValue? = rawObj?["crystal_structure"] ?? (mcifDriven ? nil : .object([
             "lattice_parameters": (try? JSONValue(encoding: lattice)) ?? .object([:]),
             "wyckoff_atoms": .array(wyckoffAtoms.map { $0.payloadValue }),
             "atom_mode": .string(atomMode),
             "dimensionality": .number(3),
             "magnetic_elements": .array(magneticElements.map { .string($0) }),
-        ])
+        ]))
         let interactionsFinal: JSONValue = rawObj?["interactions"] ?? interactionsValue
-        let magStructFinal: JSONValue = rawObj?["magnetic_structure"]
-            ?? ((try? JSONValue(encoding: magneticStructure)) ?? .object([:]))
+        let magStructFinal: JSONValue? = rawObj?["magnetic_structure"]
+            ?? (mcifDriven ? nil : ((try? JSONValue(encoding: magneticStructure)) ?? .object([:])))
 
         // calculation: strip UI-only fields; only send series_order when the
         // entangled series is actually requested (mirrors the web app).
@@ -690,49 +740,87 @@ extension MagCalcConfig {
             calcDict.removeValue(forKey: "series_order")
         }
 
-        var input: [String: JSONValue] = [
-            "crystal_structure": crystalValue,
-            "interactions": interactionsFinal,
-            "magnetic_structure": magStructFinal,
-            "parameters": .object(parameters),
-            "tasks": tasksValue,
-            "q_path": .object(qPoints),
-            "plotting": plottingDict,
-            "minimization": minimizationDict,
-            "powder_average": (try? JSONValue(encoding: powderAverage)) ?? .object([:]),
-            "calculation": .object(calcDict),
-            "output": (try? JSONValue(encoding: output)) ?? .object([:]),
-        ]
-        input["fitting"] = (try? JSONValue(encoding: fitting)) ?? .object([:])
-
-        // Beyond-LSWT blocks: emitted only for enabled tasks, so the config the
-        // backend receives matches the CLI form (TUTORIAL 4h).
-        if tasks.scga {
-            input["scga"] = (try? JSONValue(encoding: scga)) ?? .object([:])
+        // Start from the imported file: any block this app does not model
+        // (from_mcif/mcif, units, energy_cut, corrections, static_correlations,
+        // experiment, ...) is carried through verbatim rather than dropped.
+        var input: [String: JSONValue] = [:]
+        for (k, v) in rawObj ?? [:] where !Self.editorOwnedBlocks.contains(k) {
+            input[k] = v
         }
+        // Settings blocks: when a file was opened it is the base and only real
+        // edits go over it (see mergeEdits); a config built in the app has no
+        // file, so its own defaults are the source and are emitted in full.
+        let blank = MagCalcConfig.blankDefault
+        func settings(_ key: String, _ built: JSONValue, _ defaults: JSONValue) -> JSONValue {
+            rawObj == nil ? built : Self.mergeEdits(built, over: rawObj?[key], defaults: defaults)
+        }
+
+        input["interactions"] = interactionsFinal
+        // `parameters` takes the same rule: the app always carries H_mag/H_dir,
+        // so an opened file with no field used to gain a zero-magnitude Zeeman
+        // term the CLI never adds (worth 6e-14 on CoRh2O4's bands).
+        input["parameters"] = settings("parameters", .object(parameters),
+                                       .object(blank.parameters))
+        input["tasks"] = tasksValue
+        input["q_path"] = .object(qPoints)
+        input["plotting"] = settings("plotting", plottingDict,
+                                     (try? JSONValue(encoding: blank.plotting)) ?? .object([:]))
+        input["minimization"] = settings("minimization", minimizationDict,
+                                         (try? JSONValue(encoding: blank.minimization)) ?? .object([:]))
+        input["powder_average"] = settings("powder_average",
+                                           (try? JSONValue(encoding: powderAverage)) ?? .object([:]),
+                                           (try? JSONValue(encoding: blank.powderAverage)) ?? .object([:]))
+        input["calculation"] = settings("calculation", .object(calcDict),
+                                        (try? JSONValue(encoding: blank.calculation)) ?? .object([:]))
+        input["output"] = settings("output", (try? JSONValue(encoding: output)) ?? .object([:]),
+                                   (try? JSONValue(encoding: blank.output)) ?? .object([:]))
+        if let crystalValue { input["crystal_structure"] = crystalValue }
+        if let magStructFinal { input["magnetic_structure"] = magStructFinal }
+        if let po = rawObj?["parameter_order"] { input["parameter_order"] = po }
+        // The blocks the app models are written OVER the file's, key by key, so
+        // settings it has no widget for (fitting's data_file/vary/bounds, scga's
+        // cross_section, thermal_mc's disorder/periodic, ...) are not replaced by
+        // the app's placeholders.
+        func overFile(_ key: String, _ built: JSONValue) -> JSONValue {
+            guard var base = rawObj?[key]?.objectValue, let new = built.objectValue else { return built }
+            for (k, v) in new { base[k] = v }
+            return .object(base)
+        }
+        // `fitting` is a full struct encode too, so it takes the same rule --
+        // `overFile` would have written the app's empty `data_file`/`vary` over
+        // the real ones and fitted the wrong thing.
+        input["fitting"] = settings("fitting", (try? JSONValue(encoding: fitting)) ?? .object([:]),
+                                    (try? JSONValue(encoding: blank.fitting)) ?? .object([:]))
+
+        // Beyond-LSWT blocks: an enabled task emits the app's values merged over
+        // the file's; a disabled task keeps whatever the file had, so saving does
+        // not delete a block the user simply did not switch on this session.
+        if tasks.scga {
+            input["scga"] = overFile("scga", (try? JSONValue(encoding: scga)) ?? .object([:]))
+        } else if let v = rawObj?["scga"] { input["scga"] = v }
         if tasks.thermalMC {
-            input["thermal_mc"] = .object([
+            input["thermal_mc"] = overFile("thermal_mc", .object([
                 "temperatures": .array(Self.parseNumberList(thermalMC.temperatures,
                                                             fallback: [0.5, 1, 2, 4]).map { .number($0) }),
                 "supercell": .array(Self.parseNumberList(thermalMC.supercell,
                                                          fallback: [4, 4, 1]).map { .number($0) }),
                 "n_sweeps": .number(Double(thermalMC.nSweeps)),
                 "n_equil": .number(Double(thermalMC.nEquil)),
-            ])
-        }
+            ]))
+        } else if let v = rawObj?["thermal_mc"] { input["thermal_mc"] = v }
         if tasks.sampledCorrelations {
-            input["sampled_correlations"] = .object([
+            input["sampled_correlations"] = overFile("sampled_correlations", .object([
                 "temperature": .number(sampledCorrelations.temperature),
                 "supercell": .array(Self.parseNumberList(sampledCorrelations.supercell,
                                                          fallback: [8, 1, 1]).map { .number($0) }),
                 "dt": .number(sampledCorrelations.dt),
                 "n_steps": .number(Double(sampledCorrelations.nSteps)),
                 "n_traj": .number(Double(sampledCorrelations.nTraj)),
-            ])
-        }
+            ]))
+        } else if let v = rawObj?["sampled_correlations"] { input["sampled_correlations"] = v }
         if tasks.kpmSqw {
-            input["kpm"] = (try? JSONValue(encoding: kpm)) ?? .object([:])
-        }
+            input["kpm"] = overFile("kpm", (try? JSONValue(encoding: kpm)) ?? .object([:]))
+        } else if let v = rawObj?["kpm"] { input["kpm"] = v }
         if calculation.mode == "entangled", !calculation.unitsText.isEmpty,
            let data = calculation.unitsText.data(using: .utf8),
            let units = try? JSONDecoder().decode(JSONValue.self, from: data),

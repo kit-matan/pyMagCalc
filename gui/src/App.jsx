@@ -8,6 +8,15 @@ import LogConsole from './components/LogConsole'
 import AppHeader from './components/AppHeader'
 import Sidebar from './components/Sidebar'
 import { calculateExchangeMatrixSymbolic } from './lib/exchangeMatrix'
+// The config file <-> editor bridge. Pure functions, tested outside the browser
+// against every shipped example config (gui/tests/roundtrip.test.mjs) so that
+// "opened in the app" and "run from the CLI" cannot drift apart.
+import { DEFAULT_CONFIG } from './lib/defaultConfig'
+import {
+  importConfigDoc,
+  buildRunConfig,
+  buildStructPayload as buildStructPayloadPure,
+} from './lib/configIO'
 import './App.css'
 
 function App() {
@@ -377,61 +386,11 @@ function App() {
     return DEMO_CONFIG;
   })
 
-  // Build the crystal_structure / interactions / magnetic_structure portion of
-  // any backend payload. When an example config was loaded via "Load YAML", its
-  // structure and interactions are passed through verbatim (so lattice_vectors,
-  // interaction_matrix, single_ion_anisotropy, DM, spiral/generic magnetic
-  // structures all reach the backend exactly as `python -m magcalc run` sees
-  // them). Otherwise the designer state is serialised as before.
-  const buildStructPayload = () => {
-    const raw = rawImportRef.current
-    if (raw && raw.crystal_structure) {
-      const cs = raw.crystal_structure
-      const atoms = cs.atoms_uc || cs.wyckoff_atoms || []
-      return {
-        crystal_structure: {
-          ...(cs.lattice_vectors
-            ? { lattice_vectors: cs.lattice_vectors }
-            : { lattice_parameters: cs.lattice_parameters || config.lattice }),
-          atoms_uc: atoms,
-          wyckoff_atoms: atoms,
-          // A raw config that lists `atoms_uc` is already the full cell (explicit);
-          // only `wyckoff_atoms` needs symmetry expansion. Keying off lattice_vectors
-          // alone mislabelled lattice_parameters+atoms_uc configs (no space group) as
-          // "symmetry", which then tried to re-expand them and dropped per-atom data
-          // like the dipole g-tensor.
-          atom_mode: cs.atom_mode
-            || (cs.atoms_uc ? 'explicit' : (cs.wyckoff_atoms ? 'symmetry'
-                : (cs.lattice_vectors ? 'explicit' : 'symmetry'))),
-          magnetic_elements: cs.magnetic_elements || config.magnetic_elements || ['Cu'],
-          // A magnetic supercell (SpinW nExt / Sunny resize_supercell; also the
-          // non-diagonal SU(N) matrix) is physics the runner needs -- pass it through
-          // so supercell/SU(N) configs run the same as `magcalc run`.
-          ...(cs.magnetic_supercell ? { magnetic_supercell: cs.magnetic_supercell } : {}),
-          dimensionality: 3,
-        },
-        interactions: raw.interactions,
-        magnetic_structure: raw.magnetic_structure ?? config.magnetic_structure,
-        parameter_order: raw.parameter_order,
-      }
-    }
-    return {
-      crystal_structure: {
-        ...(config.lattice.lattice_vectors
-          ? { lattice_vectors: config.lattice.lattice_vectors }
-          : { lattice_parameters: config.lattice }),
-        wyckoff_atoms: config.wyckoff_atoms,
-        atom_mode: atomMode,
-        magnetic_elements: config.magnetic_elements || ['Cu'],
-        dimensionality: 3,
-      },
-      interactions: interactionMode === 'explicit'
-        ? { list: config.explicit_interactions || [] }
-        : { symmetry_rules: config.symmetry_interactions, single_ion_anisotropy: config.single_ion_anisotropy || [] },
-      magnetic_structure: config.magnetic_structure,
-      parameter_order: undefined,
-    }
-  }
+  // The crystal_structure / interactions / magnetic_structure portion of any
+  // backend payload. Delegates to the shared pure implementation so the
+  // visualiser preview and the run config are built by the same code.
+  const buildStructPayload = () =>
+    buildStructPayloadPure({ config, atomMode, interactionMode, raw: rawImportRef.current })
 
   // Persistence Effect
   React.useEffect(() => {
@@ -572,117 +531,6 @@ function App() {
     }
   }
 
-  const DEFAULT_CONFIG = {
-    lattice: { a: 5.0, b: 5.0, c: 5.0, alpha: 90, beta: 90, gamma: 90, space_group: 1 },
-    wyckoff_atoms: [],
-    magnetic_elements: ["Cu"],
-    symmetry_interactions: [],
-    explicit_interactions: [],
-    parameters: { H_mag: 0.0, H_dir: [0, 0, 1] },
-    tasks: {
-      minimization: true,
-      dispersion: true,
-      plot_dispersion: true,
-      sqw_map: false,
-      plot_sqw_map: false,
-      powder_average: false,
-      export_csv: false,
-      plot_structure: false,
-      corrections: false,
-      scga: false,
-      thermal_mc: false,
-      sampled_correlations: false,
-      kpm_sqw: false
-    },
-    q_path: {
-      points: { Gamma: [0, 0, 0] },
-      path: ['Gamma'],
-      points_per_segment: 100
-    },
-    plotting: {
-      energy_min: 0,
-      energy_max: 20,
-      broadening: 0.2,
-      energy_resolution: 0.05,
-      momentum_max: 4.0,
-      auto_scale_disp: true,
-      save_plot: true,
-      disp_plot_filename: 'disp_plot.png',
-      sqw_plot_filename: 'sqw_plot.png',
-      show_plot: true,
-      plot_structure: false
-    },
-    output: {
-      disp_data_filename: 'disp_data.npz',
-      sqw_data_filename: 'sqw_data.npz',
-      disp_csv_filename: 'disp_data.csv',
-      sqw_csv_filename: 'sqw_data.csv',
-      save_data: true
-    },
-    magnetic_structure: {
-      enabled: false,
-      type: 'pattern',
-      pattern_type: 'antiferromagnetic',
-      directions: []
-    },
-    minimization: {
-      // Monte-Carlo annealing (SpinW `anneal` / Sunny LocalSampler) is the default:
-      // it crosses barriers, so it does not get trapped the way multistart gradient
-      // descent does. On SW20-in-field the gradient path reached the true minimum in
-      // only 3 of 200 starts; anneal finds it in a single run.
-      method: "anneal",
-      num_starts: 4,
-      n_sweeps: 2000,
-      n_workers: 8,
-      early_stopping: 10
-    },
-    powder_average: {
-      q_min: 0.1,
-      q_max: 4.0,
-      q_count: 50,
-      num_samples: 50
-    },
-    calculation: {
-      // 'auto' reuses the cached symbolic matrix (gen_HM) across runs; it is
-      // deterministic per model topology, so regenerating it every run ('none')
-      // needlessly costs seconds of cold-start time. Measured ~79x faster on a
-      // 9-spin model. Cache auto-invalidates when the model structure changes.
-      cache_mode: 'auto',
-      backend: 'numpy',
-      // LSWT is an expansion about a classical energy MINIMUM. If the magnetic
-      // structure is not one, the spectrum is meaningless -- so the run FAILS by
-      // default rather than drawing a plausible-looking plot. 'warn' is for
-      // structures that are knowingly metastable (e.g. a commensurate approximation
-      // to an incommensurate spiral).
-      on_imaginary: 'error',
-      mode: 'dipole',
-      temperature: null,
-      cross_section: 'perp',
-      // entangled mode extras (used only when mode === 'entangled')
-      series_order: 0,
-      units_text: ''
-    },
-    // Beyond-LSWT task settings (sent only when the matching task is enabled).
-    scga: { temperature: 1.0, mesh_density: 12 },
-    thermal_mc: { temperatures: '0.5, 1.0, 2.0, 4.0', supercell: '4, 4, 1',
-                  n_sweeps: 4000, n_equil: 1500 },
-    sampled_correlations: { temperature: 0.5, supercell: '8, 1, 1', dt: 0.02,
-                            n_steps: 2048, n_traj: 8 },
-    kpm: { e_min: 0.0, e_max: 10.0, e_step: 0.05, fwhm: 0.1 },
-    fitting: {
-      type: 'dispersion',
-      data_file: '',
-      data_label: '',
-      method: 'leastsq',
-      vary: [],
-      bounds: {},
-      match: 'nearest',
-      scale: { value: 1.0, vary: true },
-      background: { value: 0.0, vary: true },
-      energy_broadening: { value: 0.3, vary: false }
-    }
-  }
-
   const resetToDefaults = () => {
     if (window.confirm("Are you sure you want to load the default example (aCVO)?\nCurrent changes will be lost.")) {
       rawImportRef.current = null;
@@ -700,9 +548,6 @@ function App() {
   // path-backed open (which shows its own toast).
   const applyImportedDoc = (doc, { quiet = false } = {}) => {
     try {
-        // RESET: Start with default clean config
-        const newConfig = JSON.parse(JSON.stringify(DEFAULT_CONFIG))
-
         // RESET derived states
         setNeighborDistances([])
         setBonds([])
@@ -712,175 +557,13 @@ function App() {
         setCalcError(null)
         setLogs([])
 
-        // 1. Crystal Structure & Atoms (Process first to build label map)
-        let labelMap = {}
-        if (doc.crystal_structure) {
-          if (doc.crystal_structure.lattice_parameters) {
-            newConfig.lattice = { ...newConfig.lattice, ...doc.crystal_structure.lattice_parameters }
-          }
-          if (doc.crystal_structure.lattice_vectors) {
-            const lv = doc.crystal_structure.lattice_vectors
-            newConfig.lattice.lattice_vectors = lv
-            // Derive a/b/c/angles from the vectors so the Lattice Constants
-            // panel shows the real cell instead of the UI defaults (the 3D
-            // view uses the vectors directly).
-            if (!doc.crystal_structure.lattice_parameters &&
-                Array.isArray(lv) && lv.length === 3) {
-              const nrm = v => Math.hypot(v[0], v[1], v[2])
-              const dot = (u, v) => u[0]*v[0] + u[1]*v[1] + u[2]*v[2]
-              const ang = (u, v) => {
-                const d = nrm(u) * nrm(v)
-                return d ? Math.acos(Math.max(-1, Math.min(1, dot(u, v)/d))) * 180/Math.PI : 90
-              }
-              const r5 = x => Number(x.toFixed(5))
-              newConfig.lattice = {
-                ...newConfig.lattice,
-                a: r5(nrm(lv[0])), b: r5(nrm(lv[1])), c: r5(nrm(lv[2])),
-                alpha: r5(ang(lv[1], lv[2])), beta: r5(ang(lv[0], lv[2])), gamma: r5(ang(lv[0], lv[1])),
-                lattice_vectors: lv,
-              }
-            }
-          }
-
-
-          let atomsSource = null
-          if (doc.crystal_structure.wyckoff_atoms) {
-            atomsSource = doc.crystal_structure.wyckoff_atoms
-            setAtomMode('symmetry')
-            atomsSource.forEach((a, i) => labelMap[a.label || 'Atom'] = i)
-          } else if (doc.crystal_structure.atoms_uc) {
-            atomsSource = doc.crystal_structure.atoms_uc
-            setAtomMode('explicit')
-            atomsSource.forEach((a, i) => labelMap[a.label || 'Atom'] = i)
-          }
-
-          if (atomsSource) {
-            newConfig.wyckoff_atoms = atomsSource.map(a => ({
-              label: a.label || 'Atom',
-              pos: a.pos || [0, 0, 0],
-              spin_S: a.spin_S !== undefined ? a.spin_S : 0.5,
-              // Preserve per-site form-factor ion (e.g. Cu2+), element, and
-              // g-tensor so the editor shows them and re-emits them on save --
-              // previously only label/pos/spin_S survived a load, blanking the
-              // ion field. Only set keys that are actually present.
-              ...(a.ion !== undefined ? { ion: a.ion } : {}),
-              ...(a.element !== undefined ? { element: a.element } : {}),
-              ...(a.g !== undefined ? { g: a.g } : {})
-            }))
-          }
-          if (doc.crystal_structure.magnetic_elements) {
-            newConfig.magnetic_elements = doc.crystal_structure.magnetic_elements
-          } else if (atomsSource) {
-            const uniqueLabels = [...new Set(atomsSource.map(a => (a.label || a.species || '').replace(/[0-9]+$/, '')))].filter(x => x)
-            if (uniqueLabels.length > 0) newConfig.magnetic_elements = uniqueLabels
-          }
-        }
-
-        // 2. Interactions (Normalize pair -> atom_i/j)
-        if (Array.isArray(doc.interactions)) {
-          newConfig.explicit_interactions = doc.interactions.map(inter => {
-            if (inter.pair && inter.atom_i === undefined) {
-              const idxI = labelMap[inter.pair[0]]
-              const idxJ = labelMap[inter.pair[1]]
-              if (idxI !== undefined && idxJ !== undefined) {
-                return { ...inter, atom_i: idxI, atom_j: idxJ }
-              }
-            }
-            return inter
-          })
-          setInteractionMode('explicit')
-        } else if (doc.interactions && doc.interactions.list) {
-          newConfig.explicit_interactions = doc.interactions.list.map(inter => {
-            if (inter.pair && inter.atom_i === undefined) {
-              const idxI = labelMap[inter.pair[0]]
-              const idxJ = labelMap[inter.pair[1]]
-              if (idxI !== undefined && idxJ !== undefined) {
-                return { ...inter, atom_i: idxI, atom_j: idxJ }
-              }
-            }
-            return inter
-          })
-          setInteractionMode('explicit')
-        } else if (doc.interactions && doc.interactions.symmetry_rules) {
-          newConfig.symmetry_interactions = doc.interactions.symmetry_rules
-          setInteractionMode('symmetry')
-        }
-
-        // 3. Other sections
-        if (doc.parameters) {
-          console.log("Importing parameters:", doc.parameters)
-          // alert(JSON.stringify(doc.parameters)) 
-          newConfig.parameters = { ...newConfig.parameters, ...doc.parameters }
-        }
-        if (doc.tasks) {
-          const t = doc.tasks;
-          newConfig.tasks = {
-            ...newConfig.tasks,
-            minimization: t.minimization ?? t.run_minimization ?? newConfig.tasks.minimization,
-            dispersion: t.dispersion ?? t.run_dispersion ?? newConfig.tasks.dispersion,
-            sqw_map: t.sqw_map ?? t.run_sqw_map ?? newConfig.tasks.sqw_map,
-            powder_average: t.powder_average ?? t.run_powder_average ?? newConfig.tasks.powder_average,
-            export_csv: t.export_csv ?? newConfig.tasks.export_csv,
-            plot_dispersion: t.plot_dispersion ?? newConfig.tasks.plot_dispersion,
-            plot_sqw_map: t.plot_sqw_map ?? newConfig.tasks.plot_sqw_map,
-            plot_structure: t.plot_structure ?? newConfig.tasks.plot_structure,
-            corrections: t.corrections ?? newConfig.tasks.corrections,
-            scga: t.scga ?? newConfig.tasks.scga,
-            thermal_mc: t.thermal_mc ?? newConfig.tasks.thermal_mc,
-            sampled_correlations: t.sampled_correlations ?? newConfig.tasks.sampled_correlations,
-            kpm_sqw: t.kpm_sqw ?? newConfig.tasks.kpm_sqw
-          };
-        }
-        if (doc.plotting) newConfig.plotting = { ...newConfig.plotting, ...doc.plotting }
-        if (doc.minimization) {
-          newConfig.minimization = { ...newConfig.minimization, ...doc.minimization }
-        }
-        if (doc.powder_average) {
-          newConfig.powder_average = { ...newConfig.powder_average, ...doc.powder_average }
-        } else if (newConfig.tasks.powder_average && !newConfig.powder_average) {
-          // Ensure it exists if the task is enabled
-          newConfig.powder_average = { q_min: 0.1, q_max: 4.0, q_count: 50, num_samples: 50 }
-        }
-        if (doc.calculation) newConfig.calculation = { ...newConfig.calculation, ...doc.calculation }
-        // Top-level `units:` (entangled mode) -> the UI field, so the run payload
-        // re-emits it. Without this, imported dimer configs (e.g. Cu5SbO6) failed
-        // with "entangled mode needs a `units:` list" from the web app.
-        if (doc.units) {
-          newConfig.calculation = { ...newConfig.calculation, units_text: JSON.stringify(doc.units) }
-        }
-        const joinList = (v) => Array.isArray(v) ? v.join(', ') : v
-        if (doc.scga) newConfig.scga = { ...newConfig.scga, ...doc.scga }
-        if (doc.thermal_mc) newConfig.thermal_mc = {
-          ...newConfig.thermal_mc, ...doc.thermal_mc,
-          temperatures: joinList(doc.thermal_mc.temperatures) ?? newConfig.thermal_mc.temperatures,
-          supercell: joinList(doc.thermal_mc.supercell) ?? newConfig.thermal_mc.supercell
-        }
-        if (doc.sampled_correlations) newConfig.sampled_correlations = {
-          ...newConfig.sampled_correlations, ...doc.sampled_correlations,
-          supercell: joinList(doc.sampled_correlations.supercell) ?? newConfig.sampled_correlations.supercell
-        }
-        if (doc.kpm) newConfig.kpm = { ...newConfig.kpm, ...doc.kpm }
-        if (doc.magnetic_structure) newConfig.magnetic_structure = { ...newConfig.magnetic_structure, ...doc.magnetic_structure }
-        if (doc.q_path) {
-          const { path, points_per_segment, ...points } = doc.q_path
-          newConfig.q_path = {
-            points: points || {},
-            path: path || [],
-            points_per_segment: points_per_segment || 100
-          }
-        }
-        // Keep the raw structure/interactions/magnetic_structure so they are
-        // sent to the backend verbatim (the designer model cannot represent
-        // lattice_vectors, interaction_matrix, SIA, spiral orders, etc.).
-        rawImportRef.current = doc.crystal_structure ? {
-          crystal_structure: doc.crystal_structure,
-          interactions: doc.interactions,
-          magnetic_structure: doc.magnetic_structure,
-          parameter_order: doc.parameter_order,
-          // blocks with no UI editor yet: forwarded verbatim to the runner
-          corrections: doc.corrections,
-          energy_cut: doc.energy_cut,
-        } : null
+        // The file, not a hand-picked subset of it, becomes the editor state:
+        // `raw` keeps the whole document so blocks with no UI survive to the run.
+        const { config: newConfig, atomMode: am, interactionMode: im, raw } =
+          importConfigDoc(doc, DEFAULT_CONFIG)
+        setAtomMode(am)
+        setInteractionMode(im)
+        rawImportRef.current = raw
         setConfig(newConfig)
         if (!quiet) alert('Configuration imported successfully! Previous state cleared.')
         return true
@@ -997,106 +680,9 @@ function App() {
   // GUI run, an exported file, and a CLI run are all the same config. The
   // backend writes this verbatim and hands it to magcalc.runner -- there is no
   // separate "run payload" that can drift from what Export writes.
-  const buildConfigDict = () => {
-    // Parameters: drop the misleading global S, order interaction params then
-    // field params (H_dir before H_mag), round for a clean file.
-    const rawParams = JSON.parse(JSON.stringify(config.parameters));
-    delete rawParams.S;
-    const fieldKeys = ['H_mag', 'H_dir'];
-    const interactionKeys = Object.keys(rawParams).filter(k => !fieldKeys.includes(k)).sort();
-    const sortedParamKeys = [...interactionKeys, ...fieldKeys].filter(k => rawParams[k] !== undefined);
-    const cleanParams = {};
-    sortedParamKeys.forEach(key => {
-      let val = rawParams[key];
-      if (typeof val === 'number') val = Number(val.toFixed(5));
-      else if (Array.isArray(val)) val = val.map(v => typeof v === 'number' ? Number(v.toFixed(5)) : v);
-      cleanParams[key] = val;
-    });
+  const buildConfigDict = () =>
+    buildRunConfig({ config, atomMode, interactionMode, raw: rawImportRef.current })
 
-    const sp = buildStructPayload();
-
-    // Crystal structure: emit ONLY the atom key that matches the mode, so the
-    // runner does its own (CLI-identical) symmetry expansion. (This is the
-    // canonicalisation the backend's removed _faithful_run_config used to do --
-    // now the editor produces the canonical file directly.)
-    let crystal_structure;
-    if (rawImportRef.current) {
-      crystal_structure = { ...sp.crystal_structure };
-      if (crystal_structure.atom_mode === 'explicit') delete crystal_structure.wyckoff_atoms;
-      else delete crystal_structure.atoms_uc;
-    } else {
-      const cleanLattice = { ...config.lattice };
-      ['a', 'b', 'c', 'alpha', 'beta', 'gamma'].forEach(k => {
-        if (typeof cleanLattice[k] === 'number') cleanLattice[k] = Number(cleanLattice[k].toFixed(5));
-      });
-      const cleanAtoms = config.wyckoff_atoms.map(a => ({
-        ...a,
-        pos: a.pos.map(v => Number(v.toFixed(5))),
-        spin_S: typeof a.spin_S === 'number' ? Number(a.spin_S.toFixed(5)) : a.spin_S
-      }));
-      crystal_structure = {
-        ...(config.lattice.lattice_vectors
-          ? { lattice_vectors: config.lattice.lattice_vectors }
-          : { lattice_parameters: cleanLattice }),
-        [atomMode === 'explicit' ? 'atoms_uc' : 'wyckoff_atoms']: cleanAtoms,
-        atom_mode: atomMode,
-        magnetic_elements: config.magnetic_elements || ["Cu"],
-        dimensionality: 3
-      };
-    }
-
-    // Interactions: unwrap the designer "explicit" wrapper {list:[...]} to a
-    // bare list (config_loader's expected form); leave symmetry_rules/dict forms
-    // untouched so the runner expands them.
-    let interactions = sp.interactions;
-    if (interactions && !Array.isArray(interactions) && interactions.list) {
-      interactions = interactions.list;
-    }
-
-    const cfg = {
-      parameter_order: sp.parameter_order || sortedParamKeys,
-      parameters: cleanParams,
-      crystal_structure,
-      interactions,
-      magnetic_structure: sp.magnetic_structure,
-      tasks: {
-        ...config.tasks,
-        calculate_dispersion: config.tasks.dispersion,
-        calculate_sqw_map: config.tasks.sqw_map
-      },
-      q_path: {
-        ...config.q_path.points,
-        path: config.q_path.path,
-        points_per_segment: config.q_path.points_per_segment
-      },
-      plotting: {
-        ...config.plotting,
-        energy_limits_disp: [config.plotting.energy_min, config.plotting.energy_max],
-        broadening_width: config.plotting.broadening
-      },
-      minimization: {
-        enabled: config.tasks.minimization,
-        ...config.minimization
-      },
-      calculation: buildCalcPayload(),
-      output: config.output,
-      powder_average: config.powder_average,
-      fitting: config.fitting,
-      ...buildBeyondLswtBlocks()
-    };
-
-    if (!config.magnetic_structure.enabled) delete cfg.magnetic_structure;
-
-    // Blocks with no editor yet: forwarded verbatim from the imported file.
-    if (rawImportRef.current?.corrections) cfg.corrections = rawImportRef.current.corrections;
-    if (rawImportRef.current?.energy_cut) cfg.energy_cut = rawImportRef.current.energy_cut;
-
-    return cfg;
-  };
-
-  // Collapse js-yaml's block sequences of scalars into inline [x, y, z] flow
-  // style -- the browser-side twin of magcalc/yaml_io.py, so every file the app
-  // writes (Export, Save) has the same compact shape.
   const collapseVectors = (str) => {
     const lines = str.split('\n');
     const newLines = [];
@@ -1319,62 +905,6 @@ function App() {
 
   // ---- Beyond-LSWT payload helpers ------------------------------------- //
   // Parse '0.5, 1, 2' or '4,4,1' style strings into number lists.
-  const parseNumList = (v, fallback) => {
-    if (Array.isArray(v)) return v.map(Number)
-    if (typeof v !== 'string') return fallback
-    const out = v.split(/[\s,]+/).filter(Boolean).map(Number).filter(x => !isNaN(x))
-    return out.length ? out : fallback
-  }
-
-  // The config blocks for the beyond-LSWT tasks (SCGA, thermal MC, classical
-  // dynamics, KPM) plus entangled-mode extras. Only enabled tasks emit a block, so
-  // the YAML stays clean. Consumed by the runner's task blocks (see TUTORIAL 4h).
-  const buildBeyondLswtBlocks = () => {
-    const out = {}
-    if (config.tasks.scga) out.scga = {
-      temperature: Number(config.scga.temperature) || 1.0,
-      mesh_density: Number(config.scga.mesh_density) || 12
-    }
-    if (config.tasks.thermal_mc) out.thermal_mc = {
-      temperatures: parseNumList(config.thermal_mc.temperatures, [0.5, 1, 2, 4]),
-      supercell: parseNumList(config.thermal_mc.supercell, [4, 4, 1]),
-      n_sweeps: Number(config.thermal_mc.n_sweeps) || 4000,
-      n_equil: Number(config.thermal_mc.n_equil) || 1500
-    }
-    if (config.tasks.sampled_correlations) out.sampled_correlations = {
-      temperature: Number(config.sampled_correlations.temperature) || 0.5,
-      supercell: parseNumList(config.sampled_correlations.supercell, [8, 1, 1]),
-      dt: Number(config.sampled_correlations.dt) || 0.02,
-      n_steps: Number(config.sampled_correlations.n_steps) || 2048,
-      n_traj: Number(config.sampled_correlations.n_traj) || 8
-    }
-    if (config.tasks.kpm_sqw) out.kpm = {
-      e_min: Number(config.kpm.e_min) || 0,
-      e_max: Number(config.kpm.e_max) || 10,
-      e_step: Number(config.kpm.e_step) || 0.05,
-      fwhm: Number(config.kpm.fwhm) || 0.1
-    }
-    if (config.calculation.mode === 'entangled' && config.calculation.units_text) {
-      try {
-        const u = JSON.parse(config.calculation.units_text)
-        if (Array.isArray(u) && u.length) out.units = u
-      } catch { /* leave units for the runner to derive/complain about */ }
-    }
-    return out
-  }
-
-  // calculation block for the payload: strip UI-only fields; only send
-  // series_order when the entangled series is actually requested.
-  const buildCalcPayload = () => {
-    const calc = { ...config.calculation }
-    delete calc.units_text
-    if (!(calc.mode === 'entangled' && Number(calc.series_order) > 0)) {
-      delete calc.series_order
-      delete calc.series_resum
-    }
-    return calc
-  }
-
   const updateField = (section, field, value) => {
     setConfig(prev => ({
       ...prev,
