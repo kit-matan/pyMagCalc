@@ -285,9 +285,103 @@ for band. Two things that rule does not reach:
   not inherit `-m "not slow"`). It takes ~30 min unloaded and can take 2.5 h on
   a busy machine. Don't pipe it through `tail` — that hides all progress until
   it exits.
-- **Run from `pyMagCalc/`.** A stale OneDrive copy of this tree exists; if
-  `magcalc` behaves inexplicably, check
-  `python -c "import magcalc; print(magcalc.__file__)"`.
+- **`pyMagCalc/pytest.ini` now scopes collection too** (fixed 2026-08-12). Only
+  the *root* config had `testpaths`/`norecursedirs`, so bare `pytest` run from
+  inside `pyMagCalc/` — the documented iteration command — walked the whole
+  project and **died during collection** on three stale scratch scripts in
+  `archive/cleanup_20251224/` (missing CIFs, an outdated `MagCalcConfigBuilder`
+  signature). It exited having run *nothing*, which is easy to misread as a fast
+  clean run. It now collects 518 tests; the fast suite is 517 passed, 2 skipped,
+  ~10.5 min.
+- **Which engine is running is now self-reporting** (done 2026-08-12). This entry
+  used to be a manual tip — "a stale OneDrive copy of this tree exists; if
+  `magcalc` behaves inexplicably, check `python -c "import magcalc;
+  print(magcalc.__file__)"`" — which only helps once you already suspect it. Three
+  things changed:
+  - `magcalc/provenance.py` + **`magcalc where`**, which prints the running
+    package, its git HEAD, and *any other importable copy*. The last part is what
+    the manual check cannot do.
+  - **Every `magcalc run` logs the engine path as its first line**, so the record
+    of a confusing run carries its own explanation.
+  - `tests/test_install_provenance.py` pins it in the FAST suite, and pins the
+    mechanism itself, so a future packaging change that fixes it will say so.
+
+  The mechanism, since the obvious mental model is wrong: `pip install -e .`
+  *appends* its finder to `sys.meta_path`, i.e. **after** `PathFinder`, so
+  anything on `sys.path` beats the editable install. `sys.path[0]` is the cwd for
+  `python -c`/`-m`, pytest's rootdir for `pytest`, and the script's own directory
+  for `scripts/` helpers — all three verified to shadow. (The `magcalc` console
+  script gets `bin/` instead, so it is immune to cwd shadowing but not to
+  `PYTHONPATH`.) The first version of the detector scanned `sys.path` only and got
+  the worst case backwards: when a stale copy wins, the live tree is reachable
+  *only* through the meta-path finder and is absent from `sys.path`, so the scan
+  saw one copy and reported all clear. It now unions the imported package, the
+  `sys.path` entries, and the editable installs' declared roots.
+
+  **That left one hole, now closed** (see the next entry): none of the above runs
+  when a stale copy wins *outright*, because that copy has no `provenance.py`.
+
+- **Interpreter-startup shadow guard** (added 2026-08-12) —
+  `tools/magcalc_shadow_guard.py` + `tools/install_shadow_guard.py`. This is the
+  half the in-package detector structurally cannot cover, and it also removes the
+  "second checkout silently re-arms the hazard" caveat: the guard lives in
+  site-packages, *outside every `magcalc` copy*, so it reports no matter which one
+  wins, including a brand-new checkout.
+
+  ```bash
+  python tools/install_shadow_guard.py            # install (per interpreter)
+  python tools/install_shadow_guard.py --status   # / --uninstall
+  ```
+
+  `magcalc where` now states whether it is active, so the protection level is
+  never a guess. `MAGCALC_SHADOW_GUARD=off` silences it for the legitimate case
+  (a git worktree, a deliberate version comparison). Cost: **254 µs** per
+  interpreter startup, plus one string compare per import.
+
+  **THE TIMING TRAP, and the reason the guard is not a simple startup check.**
+  The obvious implementation — survey `sys.path` when the `.pth` runs — is blind
+  to the main hazard. At `.pth` execution time `sys.path[0]` is **not yet the
+  working directory**: for `python -c` the `''` entry is prepended *after* site
+  initialisation. The first version did exactly that, passed a PYTHONPATH test,
+  and reported all clear when run from inside a stale checkout. The check is
+  therefore **deferred** to the moment `magcalc` is imported, via an observer
+  parked at the front of `sys.meta_path` whose `find_spec` surveys and then
+  always returns `None`. `tests/test_shadow_guard.py` pins this with a throwaway
+  venv carrying two real `.pth` files — the guard, and an eager probe that
+  records what a startup check *would* have concluded (`EAGER=False`).
+
+  Second non-obvious detail: stderr alone is not enough. Under `pytest` the
+  import happens inside the capture, so the banner is buffered and shown only if
+  something else fails — and "ran the suite inside a stale checkout" is exactly a
+  case where everything passes. The guard therefore also raises a real
+  `MagcalcShadowWarning`, which lands in pytest's warnings summary on a green run.
+
+  Not yet done: nothing installs the guard automatically, so a **fresh venv starts
+  unprotected**. `magcalc where` says so, which is the cheap mitigation; wiring it
+  into `pip install -e .` is the obvious next step and was left out deliberately
+  (a build hook that writes to site-packages is its own hazard).
+
+- **Both stale trees are DELETED** (2026-08-12, ~2.6 GB). They were
+  `~/Library/CloudStorage/OneDrive-MahidolUniversity/research/magcalc_archived/`
+  (HEAD `e1b3f3b`, 2026-07-06) and `~/OneDriveMU_20250225_MacBook/research/magcalc/`
+  (HEAD `2a29d23`, 2024-03-13, a Feb-2025 machine backup). Both HEADs were verified
+  **ancestors of live `master`**, and the archived copy's ~200 "modified" files were
+  a OneDrive mode-only artifact (index `100644` vs on-disk `rwx`), not content.
+
+  Tracked-content redundancy was not sufficient to justify deleting, and checking
+  only that would have destroyed work: **6 UNTRACKED files existed nowhere else**,
+  and were rescued first.
+  - `examples/materials/CCSF/` gained a complete **fit round-trip demo** —
+    `make_fit_data.py` synthesizes dispersion data from the frozen 120° ground state
+    at J1 = 13.3, J2 = −0.24, and `magcalc fit config_ccsf_fit.yaml` recovers
+    13.286 ± 0.009 / −0.237 ± 0.004 (`CCSF_fit_report.txt`). It lands next to the
+    `config_ccsf.yaml` it reads, so it is runnable as-is. This is a genuine
+    end-to-end check of the fitting path — an exact-identity oracle in the sense
+    GAP_STATUS.md means — and is currently pinned by nothing.
+  - `archive/legacy/aCVO_2024_snapshot/spin_model_sf.py` — the legacy hand-written
+    α-Cu₂V₂O₇ model, reference only.
+
+  The other ~8900 untracked files were a `gui/node_modules.onedrive-bak/` copy.
 - **`mu_B` now lives in `magcalc/constants.py`** (done 2026-08-12). It used to be
   a `5.788e-2` literal in six modules (`generic_model` ×2, `spiral_opt`,
   `thermal_mc`, `sun/lswt`, `sun/entangled`, `sun/dimer_series`), four of them

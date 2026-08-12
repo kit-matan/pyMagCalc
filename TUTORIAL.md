@@ -94,6 +94,56 @@ magcalc run config.yaml
 
 Results (plots and data) are saved to the folders specified in the `output` and `plotting` sections (default: `plots/` and `data/`).
 
+The first line of the run log names the engine that produced it:
+
+```
+21:04:55 - magcalc engine: /Users/you/magcalc/pyMagCalc/magcalc (git fe91e646792c)
+```
+
+### Which `magcalc` am I running?
+
+```bash
+magcalc where
+```
+
+Prints the package directory actually imported, its git HEAD, and — the part a manual
+`python -c "import magcalc; print(magcalc.__file__)"` cannot give you — a warning listing
+any *other* importable copy, exiting non-zero if there is one.
+
+Worth knowing, because the editable install does not automatically win: `pip install -e .`
+appends its finder to `sys.meta_path`, *after* the normal path search, so any `magcalc/`
+directory on `sys.path` shadows it. `sys.path[0]` is the working directory for
+`python -c` / `python -m magcalc`, pytest's rootdir under `pytest`, and a script's own
+directory for anything in `scripts/`. So working inside a second checkout — an old copy, a
+cloud-synced backup — silently runs that copy's engine. The symptoms look like bugs in the
+code you are editing: a fix "not applied", a documented key "unsupported", a pinned number
+that moved. Run `magcalc where` first.
+
+### Automatic protection
+
+`magcalc where` and the run-log line both live *inside* the package, so neither can report
+the worst case: an old copy winning outright, with no such code in it. For that, install
+the interpreter-startup guard once per interpreter:
+
+```bash
+python tools/install_shadow_guard.py            # --status / --uninstall
+```
+
+It adds a `.pth` to site-packages — outside every copy of `magcalc` — which warns whenever
+more than one is importable, whichever wins:
+
+```
+!!! magcalc shadow warning: 2 importable copies of `magcalc` !!!
+    WINS -> /somewhere/old-checkout/magcalc
+    also -> /Users/you/magcalc/pyMagCalc/magcalc
+```
+
+It costs ~0.25 ms per interpreter startup, is silent when only one copy exists, and also
+raises a `MagcalcShadowWarning` so it shows up in pytest's warnings summary rather than
+being swallowed by output capture. Set `MAGCALC_SHADOW_GUARD=off` when a second checkout
+is deliberate (a git worktree, comparing versions). A fresh virtualenv starts unprotected
+— `magcalc where` tells you which state you are in.
+
 ---
 
 ## 3. Configuration Reference
