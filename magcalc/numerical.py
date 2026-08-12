@@ -726,6 +726,8 @@ def process_calc_Sqw_single_k(
         int,  # k_case
         str,  # cross_section
         Optional[List[float]],  # spin_magnitudes (per site; mixed spin)
+        # h_dip per channel: [(h_dip(+q_c), h_dip(-q_c)) for q_c in (q-k, q, q+k)]
+        Optional[List[Tuple[npt.NDArray[np.complex128], npt.NDArray[np.complex128]]]],
     ],
 ) -> Tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
     """
@@ -750,6 +752,7 @@ def process_calc_Sqw_single_k(
         k_case,
         cross_section,
         spin_magnitudes,
+        h_dip_channels,
     ) = args
 
     if _worker_HMat_func is None:   # set per process by _init_worker
@@ -785,6 +788,14 @@ def process_calc_Sqw_single_k(
                 _worker_HMat_func(*(list(-q_c) + numerical_args_base)),
                 dtype=np.complex128,
             )
+            # Long-range dipolar (Ewald): the symbolic H cannot carry an infinite
+            # lattice sum, and unlike the bond part it does NOT come along for free
+            # by evaluating at the shifted momentum -- A(q) is not rotationally
+            # invariant about the spiral axis. The parent hands each channel its own
+            # rotating-frame block (core._ewald_J_rot).
+            if h_dip_channels is not None:
+                Hmat_plus_q = Hmat_plus_q + h_dip_channels[c][0]
+                Hmat_minus_q = Hmat_minus_q + h_dip_channels[c][1]
             K_matrix, Kd_matrix, eigenvalues = KKdMatrix(
                 spin_magnitude_num, Hmat_plus_q, Hmat_minus_q, Ud_numeric, q_c, nspins,
                 spin_magnitudes=spin_magnitudes

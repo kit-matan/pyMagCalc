@@ -1817,6 +1817,72 @@ class MagCalc:
             out.append(float(g))
         return np.asarray(out, dtype=float)
 
+    def _ewald_J_lab(self, q_cart):
+        """Lab-frame dipolar exchange J(q)_ij = g_i A(q)_ij g_j, shape (n, n, 3, 3)."""
+        from .ewald import exchange_from_A
+
+        lat = np.asarray(self.sm.config["crystal_structure"]["lattice_vectors"], float)
+        q_rlu = np.asarray(q_cart, dtype=float) @ np.linalg.inv(
+            2.0 * np.pi * np.linalg.inv(lat).T)
+        return exchange_from_A(self._ewald_A(q_rlu), self._ewald_g())
+
+    def _spiral_projectors(self):
+        """`(R1, R2)` of Toth & Lake / Sunny, for the spiral rotation axis.
+
+        R2 = n nᵀ projects onto the axis; R1 = (I − i[n]× − R2)/2 onto the
+        circular component. Same objects `numerical.spiral_channel_tensors`
+        builds for the intensity side -- kept separate because this side acts on
+        the 3x3 spin indices of J, not on a correlation tensor.
+        """
+        n = np.asarray(self.spiral_axis, dtype=float)
+        n = n / np.linalg.norm(n)
+        nx = np.array([[0.0, -n[2], n[1]],
+                       [n[2], 0.0, -n[0]],
+                       [-n[1], n[0], 0.0]])
+        R2 = np.outer(n, n).astype(np.complex128)
+        R1 = 0.5 * (np.eye(3) - 1j * nx - R2).astype(np.complex128)
+        return R1, R2
+
+    def _ewald_J_rot(self, q_cart):
+        """Rotating-frame dipolar exchange at momentum `q_cart`.
+
+        THE REASON THIS EXISTS. For the bond part, pyMagCalc gets the spiral for
+        free: the engine REQUIRES the Hamiltonian to be rotationally invariant
+        about the spiral axis (`enforce_rotational_symmetry`), and under that
+        assumption the rotating-frame combination collapses to J(q), so
+        evaluating the symbolic H at the shifted momenta q, q±k is exact. The
+        dipolar A(q) does NOT satisfy that assumption -- it is fixed by lattice
+        geometry (its r̂r̂ structure) and is not uniaxial about an arbitrary
+        axis -- so it needs the real projector combination.
+
+        Pinned to Sunny `SpinWaveTheorySpiral.jl:129-138`. MIND THE BRANCH: it is
+        THREE terms in the generic incommensurate case and FIVE when 2k is a
+        reciprocal-lattice vector, not the other way round. `GAP4_PLAN.md` had
+        this inverted until 2026-08-12; putting the two cross terms into the
+        generic branch gives a wrong H that still diagonalizes and still looks
+        like a spectrum.
+        """
+        R1, R2 = self._spiral_projectors()
+        R1c = np.conj(R1)
+        k = np.asarray(self.k_cart, dtype=float)
+        q = np.asarray(q_cart, dtype=float)
+
+        Jq = self._ewald_J_lab(q)
+        Jp = self._ewald_J_lab(q + k)
+        Jm = self._ewald_J_lab(q - k)
+
+        def sandwich(L, J, R):
+            return np.einsum("ab,ijbc,cd->ijad", L, J, R)
+
+        out = (sandwich(R2, Jq, R2)
+               + sandwich(R1c, Jp, R1c)
+               + sandwich(R1, Jm, R1))
+        if int(self.k_case) == 2:
+            # 2k is a reciprocal-lattice vector: the satellites coincide and the
+            # two cross terms survive.
+            out = out + sandwich(R1, Jp, R1c) + sandwich(R1c, Jm, R1)
+        return out
+
     def _ewald_nambu(self, q_cart):
         """Dipolar contribution to H(q), in the host's g*H2 convention.
 
@@ -1824,18 +1890,19 @@ class MagCalc:
         through the symbolic Hamiltonian -- it is added to H(q) numerically here. The
         block construction is the standard Nambu one (verified to reproduce
         pyMagCalc's own H(q) from a bond list, element for element).
+
+        With a single-k (rotating-frame) structure both J(q) and the q=0 on-site
+        J0 come from `_ewald_J_rot` instead of the plain lattice sum.
         """
-        from .ewald import exchange_from_A
+        spiral = self.k_cart is not None and self.k_case in (2, 3)
+        if spiral:
+            Jq = self._ewald_J_rot(q_cart)
+            J0 = self._ewald_J_rot(np.zeros(3))
+        else:
+            Jq = self._ewald_J_lab(q_cart)
+            J0 = self._ewald_J_lab(np.zeros(3))
 
         n = int(self.nspins)
-        lat = np.asarray(self.sm.config["crystal_structure"]["lattice_vectors"], float)
-        # q_cart -> rlu
-        q_rlu = np.asarray(q_cart, dtype=float) @ np.linalg.inv(
-            2.0 * np.pi * np.linalg.inv(lat).T)
-
-        Jq = exchange_from_A(self._ewald_A(q_rlu), self._ewald_g())
-        J0 = exchange_from_A(self._ewald_A(np.zeros(3)), self._ewald_g())
-
         rots = [np.array(R, dtype=float) for R in self.sm.mpr(list(self.params_sym))]
         mags = self.sm.spin_magnitudes()
         S = [float(m) for m in mags] if mags and len(mags) == n             else [float(self.spin_magnitude)] * n
@@ -2288,12 +2355,41 @@ class MagCalc:
         dip_m = self._ewald_h_stack(-q_arr)
         dip_pairs = None if dip_p is None else [
             (dip_p[i], dip_m[i]) for i in range(len(q_vectors_list))]
-        if dip_pairs is not None and use_single_k:
+
+        # Single-k + Ewald: each of the three channels q-k, q, q+k needs its own
+        # dipolar block, and each of those is itself the rotating-frame projector
+        # combination at that momentum (`_ewald_J_rot`). The worker evaluates H at
+        # +q_c and -q_c, so hand it both.
+        #
+        # STILL REFUSED BY DEFAULT, and deliberately so. The machinery below is
+        # written and matches Sunny's corrected formula, but it has NOT been
+        # validated against an independent oracle: the intended check (commensurate
+        # k vs the explicit magnetic_supercell) does not yet agree even with the
+        # dipolar term switched OFF, so the harness itself is wrong and can prove
+        # nothing about this path. Shipping it would replace an honest refusal with
+        # a plausible-looking spectrum -- this repo's documented #1 hazard. Opt in
+        # with `dipole_dipole: {allow_single_k: true}` ONLY to work on the oracle.
+        # See OPEN_WORK.md item 1.
+        if dip_p is not None and use_single_k and not (
+                (self._ewald_spec() or {}).get("allow_single_k", False)):
             raise NotImplementedError(
-                "Ewald dipole-dipole is not yet supported together with a single-k "
-                "(rotating-frame) structure: the three q +/- k channels each need "
-                "their own A(q). Use a magnetic_supercell instead, or "
-                "dipole_dipole.method: truncated.")
+                "Ewald dipole-dipole with a single-k (rotating-frame) structure is "
+                "implemented but UNVALIDATED, so it is refused rather than trusted: "
+                "the commensurate-vs-supercell oracle does not yet reproduce even "
+                "the no-Ewald control. Use a magnetic_supercell instead, or "
+                "dipole_dipole.method: truncated. To work on the oracle itself, set "
+                "dipole_dipole.allow_single_k: true (EXPERIMENTAL, may be wrong).")
+
+        dip_channels = None
+        if dip_p is not None and use_single_k:
+            kc = np.asarray(self.k_cart, dtype=float)
+            dip_channels = [
+                [
+                    (self._ewald_nambu(q + s), self._ewald_nambu(-(q + s)))
+                    for s in (-kc, np.zeros(3), +kc)
+                ]
+                for q in q_arr
+            ]
 
         if use_single_k:
             logger.info(
@@ -2314,8 +2410,9 @@ class MagCalc:
                     self.k_case,
                     cross_section,
                     spin_mags,
+                    None if dip_channels is None else dip_channels[iq],
                 )
-                for q in q_vectors_list
+                for iq, q in enumerate(q_vectors_list)
             ]
         else:
             worker_func = process_calc_Sqw

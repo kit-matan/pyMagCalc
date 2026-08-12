@@ -30,7 +30,7 @@ are the easiest to mistake for done.
 
 | # | Item | Status |
 |---|---|---|
-| 1 | Gap #24b — Ewald + rotating-frame single-k | **OPEN** — writeup corrected 2026-08-12 (it was inverted); bigger than 1 h |
+| 1 | Gap #24b — Ewald + rotating-frame single-k | **OPEN** — machinery written + refused-by-default; blocked on building the ORACLE |
 | 2 | Sunny S06 — skyrmion lattice | **OPEN** — blocked on the reference state |
 | 3 | Sunny S09 — disorder + KPM | **OPEN** — blocked on structure geometry |
 | 4 | Classical S(q,ω) absolute normalization | **OPEN** — shape pinned, scale not |
@@ -94,7 +94,41 @@ multiprocessing boundary, so it must pickle), and the classical energy the
 ground-state guard minimises. The formula is an hour; the wiring is not.
 
 The rest of the writeup in `GAP4_PLAN.md` §"#24b … METHOD FOUND IN SUNNY" is
-sound — read it, do not re-derive. Three earlier attempts at
+sound — read it, do not re-derive.
+
+**PROGRESS 2026-08-12 — the machinery is written; the ORACLE IS NOT, and that is
+the whole remaining item.** `core._ewald_J_lab`, `_spiral_projectors`,
+`_ewald_J_rot` (three/five-term, branching on `k_case`) and a spiral-aware
+`_ewald_nambu` exist, and `numerical.process_calc_Sqw_single_k` now takes a
+per-channel `h_dip`. The non-spiral Ewald path is unaffected — all 9
+`tests/test_ewald.py` pass, including the Sunny-pinned `test_ewald_matches_sunny`.
+
+**It is still refused by default**, behind `dipole_dipole: {allow_single_k: true}`,
+because it is unvalidated. Do not remove that refusal until the oracle passes.
+
+**Where the oracle broke, so the next attempt does not repeat it.** The plan was
+"commensurate k must equal the explicit `magnetic_supercell` calculation". Two
+traps found:
+
+1. **k = 1/2 is the wrong commensurate case.** It is `k_case 2`, and the engine
+   itself warns that a helical description of a *collinear* structure may double
+   count. Use a non-collinear commensurate k — k = 1/3 (120°, `k_case 3`) also has
+   the advantage of exercising the common three-term branch.
+2. **The comparison does not hold even with Ewald switched OFF.** Running k = 1/3
+   single-k (`satellites=True`, 3 modes) against `magnetic_supercell: [3,1,1]`
+   (3 modes) on a plain Heisenberg chain gave `[0, 0.707, 1.041]` vs
+   `[0.382, 1.791, 3.827]` — a 2.8 meV disagreement with **no dipolar term at
+   all**. So the harness, not the dipolar code, is wrong: the band-set
+   correspondence between the rotating-frame and supercell descriptions is not the
+   naive "sorted energies are equal" at the same chemical q, and/or the 120°
+   structure used is not the ground state of that chain (an AFM chain wants
+   k = 1/2, not 1/3).
+
+   **Establish the no-Ewald control FIRST** — pick a model whose spiral genuinely
+   is the ground state (or minimize it), and work out the correct q-correspondence
+   and normalization between the two descriptions. Only when the control agrees
+   does the Ewald comparison mean anything. Doing it the other way round is how a
+   wrong Hamiltonian gets blessed by a broken oracle. Three earlier attempts at
 re-deriving it produced three wrong characterizations in a row (three terms,
 then "structurally invalid", then nine terms); reading
 `../Sunny.jl-main/src/Spiral/SpinWaveTheorySpiral.jl` settled it.

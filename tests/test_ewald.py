@@ -136,6 +136,9 @@ def test_ewald_rejects_unknown_method():
 
 
 def test_ewald_with_single_k_is_rejected_not_silently_wrong():
+    """The rotating-frame machinery now EXISTS (core._ewald_J_rot) but is not
+    validated, so the refusal stays until the oracle does. A plausible spectrum
+    from an unchecked Hamiltonian is worse than an error -- see OPEN_WORK.md #1."""
     """The three q +/- k channels each need their own A(q); rather than quietly use the
     wrong one, refuse."""
     cfg = {
@@ -155,7 +158,7 @@ def test_ewald_with_single_k_is_rejected_not_silently_wrong():
     calc = mc.MagCalc(spin_model_module=m, spin_magnitude=1.0, cache_mode="none",
                       cache_file_base="ew_sk", hamiltonian_params=[])
     B = 2 * np.pi * np.linalg.inv(np.array(LAT, float)).T
-    with pytest.raises(NotImplementedError, match="single-k"):
+    with pytest.raises(NotImplementedError, match="UNVALIDATED"):
         calc.calculate_sqw([np.array([0.2, 0, 0]) @ B], satellites=True)
 
 
