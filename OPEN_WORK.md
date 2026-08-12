@@ -273,12 +273,13 @@ for band. Two things that rule does not reach:
 
 ## Also worth knowing
 
-- **Branches.** `master` is the default (there is no `main`). Several feature
-  branches remain on the remote after merging: `feat/gap4-phase1..4`,
-  `feat/gap4-26-sun-dynamics`, `fix/sunny-parity-audit`,
-  `docs/cu5sbo6-powder-comparison`, `docs/rb2cu3snf12-order8`,
-  `test/coverage-audit-items-2-4`. Consolidating/pruning them is unfinished
-  housekeeping.
+- **Branches.** `master` is the default (there is no `main`), and as of
+  2026-08-12 it is the *only* branch, local and remote. The merged feature
+  branches (`feat/gap4-phase1..4`, `feat/gap4-26-sun-dynamics`,
+  `fix/sunny-parity-audit`, `docs/cu5sbo6-powder-comparison`,
+  `docs/rb2cu3snf12-order8`, `test/coverage-audit-items-2-4`) were pruned after
+  checking each tip was an ancestor of `origin/master` with nothing unpushed —
+  no history was lost, every commit is reachable from `master`.
 - **The merge gate is `pytest -m ""`**, and from the *workspace root* plain
   `pytest` is already the full suite (the root `pytest.ini` deliberately does
   not inherit `-m "not slow"`). It takes ~30 min unloaded and can take 2.5 h on
