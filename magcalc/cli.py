@@ -20,6 +20,26 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', date
 logger = logging.getLogger("magcalc")
 
 @app.command()
+def where():
+    """
+    Report which copy of the engine this `magcalc` runs, and flag any duplicates.
+
+    Replaces the manual `python -c "import magcalc; print(magcalc.__file__)"`, and
+    goes further: it also lists any OTHER importable `magcalc` on sys.path, which
+    the manual check cannot show. Run it first whenever behaviour is inexplicable.
+    """
+    from magcalc.provenance import describe, importable_roots
+
+    typer.echo(describe(verbose=True))
+    if importable_roots()[1:]:
+        typer.secho(
+            "Shadowing risk: remove or rename the extra copies above.",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(code=1)
+
+
+@app.command()
 def mcif(
     filename: Annotated[str, typer.Argument(help="Path to the .mcif file")],
     out: Annotated[str, typer.Option(help="Write a runnable config fragment here")] = None,

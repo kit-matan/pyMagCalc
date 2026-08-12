@@ -201,6 +201,13 @@ def run_calculation(config_file: str):
     with open(config_file, 'r') as f:
         config = yaml.safe_load(f)
     
+    # Name the engine copy in the run's own log. A stale cloud-synced checkout on
+    # sys.path shadows the editable install silently (see magcalc/provenance.py),
+    # and the symptom -- a fix "not applied", a key "unsupported" -- looks exactly
+    # like a bug in the code you are editing.
+    from magcalc.provenance import describe as _describe_engine
+    logger.info(_describe_engine())
+
     logger.info(f"Loaded configuration from {config_file}")
     config_dir = os.path.dirname(os.path.abspath(config_file))
 
