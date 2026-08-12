@@ -1,14 +1,21 @@
 # Open work — pick-up notes
 
-Last updated **2026-08-12**, master at `4010121` **plus uncommitted working-tree
-changes** (Studio open→run parity, the `examples/fitting` correction, and the
-smoke-test coverage/backend changes below).
+Last updated **2026-08-12**, on branch `chore/open-work-housekeeping` at `89652a2`
+(pushed). Working tree clean.
 
-Full gate green on the current tree: **621 passed, 3 skipped**
-(`pytest -m ""` from the workspace root, 43 min). That is +21 on the 2026-08-05
-baseline of 600 — 12 from the Studio open→run work (`test_atom_mode_explicit`,
-`test_gui_roundtrip`, two added to `test_gui_passthrough`), 4 from
-`test_fit_example`, and 5 configs the smoke test had never discovered.
+**Gate status — read this before merging.** The full gate has **not** been re-run
+since the engine-provenance / shadow-guard / `pytest.ini` work landed. What is
+known:
+
+- **Fast suite green:** 524 passed, 2 skipped, 105 deselected (~8 min).
+- **Last full-gate figure, 621 passed / 3 skipped** (`pytest -m ""` from the
+  workspace root, 43 min), **predates** those commits. It is +21 on the
+  2026-08-05 baseline of 600 — 12 from the Studio open→run work
+  (`test_atom_mode_explicit`, `test_gui_roundtrip`, two added to
+  `test_gui_passthrough`), 4 from `test_fit_example`, and 5 configs the smoke
+  test had never discovered.
+- **Run `pytest -m ""` before merging to `master`.** The fast suite is not the
+  gate.
 
 This file is the "what to do next" companion to `GAP_STATUS.md`, which is the
 authoritative record of *what is done and how it was validated*. Read
@@ -24,10 +31,44 @@ number that has not been re-converged.
 
 ---
 
+## Status at a glance
+
+Every section below opens with a `**Status:**` line; this is the index. `PARTIAL`
+means the hard question is answered but an action is still outstanding — those
+are the easiest to mistake for done.
+
+| # | Item | Status |
+|---|---|---|
+| 1 | Gap #24b — Ewald + rotating-frame single-k | **OPEN** — ready to implement, ~1 h, highest value/effort |
+| 2 | Sunny S06 — skyrmion lattice | **OPEN** — blocked on the reference state |
+| 3 | Sunny S09 — disorder + KPM | **OPEN** — blocked on structure geometry |
+| 4 | Classical S(q,ω) absolute normalization | **OPEN** — shape pinned, scale not |
+| 5 | Coverage follow-ups | **PARTIAL** — audit's 4 items done; 2 follow-ups + discovery shape open |
+| 6 | `minimization.tolerance` silently ineffective | **DONE** 2026-08-12 |
+| 7 | FeI2 dipole ground state | **PARTIAL** — physics answered; `examples/materials/FeI2` fix open |
+| 8 | Studio open→run limits | **OPEN** — 2 items |
+| A | `pytest.ini` collection scope | **DONE** 2026-08-12 |
+| B | Engine provenance — `magcalc where` | **DONE** 2026-08-12 |
+| C | Interpreter-startup shadow guard | **DONE** 2026-08-12 — auto-install still open |
+| D | Stale OneDrive trees deleted | **DONE** 2026-08-12 — 2 rescued-file follow-ups open |
+| E | `mu_B` → `constants.py` | **DONE** 2026-08-12 — dipolar prefactor still duplicated |
+
+**The small open items are easy to lose**, so they are also collected here. Each
+lives inside an otherwise-`DONE` entry:
+
+- **C** — nothing installs the shadow guard automatically; a fresh venv starts
+  unprotected.
+- **D** — the rescued CCSF fit demo is pinned by no test of its own; and
+  `archive/legacy/aCVO_2024_snapshot/` sits in an unversioned directory.
+- **E** — `ewald.MU0_MUB2_MEV_A3` and `generic_model.DIPOLE_PREFACTOR_MEV_A3`
+  are still two spellings of one Sunny constant.
+
+---
+
 ## 1. Gap #24b — Ewald + rotating-frame single-k
 
-**Ready to implement. ~1 hour with the formula in hand.** This is the highest
-value-per-effort item open.
+**Status: OPEN.** Ready to implement, ~1 hour with the formula in hand. The
+highest value-per-effort item open.
 
 The method is written up in full in `GAP4_PLAN.md` §"#24b … METHOD FOUND IN
 SUNNY" — read that section, do not re-derive. Three earlier attempts at
@@ -73,7 +114,7 @@ broken user path.
 
 ## 2. Sunny tutorial S06 — skyrmion lattice
 
-**Blocked on the reference state, not on engine capability.** Everything it
+**Status: OPEN — blocked on the reference state, not on engine capability.** Everything it
 needs exists and was validated in isolation (#26's dissipative quench and the
 Berg–Lüscher topological charge).
 
@@ -100,7 +141,7 @@ That produces a folder that looks like a port and is not one.
 
 ## 3. Sunny tutorial S09 — disorder + KPM on the triangular lattice
 
-**Blocked on structure geometry.** Needs the 120° order as an explicit
+**Status: OPEN — blocked on structure geometry.** Needs the 120° order as an explicit
 REAL-SPACE √3×√3 supercell: the clean config uses the rotating-frame `single_k`
 method, which the SU(N)/KPM path does not consume.
 
@@ -116,7 +157,7 @@ at 120°, and confirm E/site = −0.375 *before* looking at any spectrum.
 
 ## 4. Classical S(q,ω) absolute normalization
 
-Opened by #17. The classical-dynamics path's overall scale has never been
+**Status: OPEN.** Opened by #17. The classical-dynamics path's overall scale has never been
 reconciled with the LSWT/Sunny one — **shape is pinned, scale is not**.
 
 Treat a clean constant factor as a bug until proven otherwise. `GAP_STATUS.md`
@@ -131,6 +172,9 @@ exact LSWT dispersion (`tests/test_classical_to_quantum.py`,
 ---
 
 ## 5. Coverage follow-ups
+
+**Status: PARTIAL.** The audit's own four items are done; two follow-ups and the
+discovery-shape problem remain open.
 
 The 2026-08-04/05 audit closed its four items (config smoke test, `kitaev`,
 guard tolerances, combination matrix — see `GAP_STATUS.md` §"Config-surface
@@ -182,7 +226,9 @@ glob plus a hand-list: a config named neither `config*.yaml` nor listed in
 
 ---
 
-## 6. ~~Loose end — `minimization.tolerance` is silently ineffective~~ (DONE 2026-08-12)
+## 6. ~~Loose end — `minimization.tolerance` is silently ineffective~~
+
+**Status: DONE 2026-08-12.** Nothing outstanding.
 
 Resolved both ways at once, because the swallow was the worse half of it.
 
@@ -208,6 +254,12 @@ configs (see `GAP_STATUS.md`, "Open a config, press Run").
 ---
 
 ## 7. FeI2 dipole — the "needs investigation" note now has an answer
+
+**Status: PARTIAL.** The physics question is ANSWERED (below). Two actions remain
+open: `examples/materials/FeI2/config_fei2.yaml` still carries `on_imaginary:
+warn` and cannot be fixed without first separating its Hamiltonian from its
+structure; and the corrected `examples/future_exmaples/FeI2` config is gitignored,
+so it exists in no commit.
 
 `examples/materials/FeI2/config_fei2.yaml` opens with
 
@@ -247,6 +299,8 @@ are untouched. Until that is done, leave the `on_imaginary: warn` in place.
 
 ## 8. Studio — the two limits left after the 2026-08-12 open→run fix
 
+**Status: OPEN — two items.**
+
 `gui/src/lib/configIO.js` (web) and `MagCalcConfig.backendInput` (native) are now
 two implementations of one rule — *the file is the base, write only real edits
 over it* — kept honest by `tests/test_gui_roundtrip.py`, which drives the web one
@@ -273,27 +327,38 @@ for band. Two things that rule does not reach:
 
 ## Also worth knowing
 
-- **Branches.** `master` is the default (there is no `main`), and as of
-  2026-08-12 it is the *only* branch, local and remote. The merged feature
-  branches (`feat/gap4-phase1..4`, `feat/gap4-26-sun-dynamics`,
+### Standing facts (no action)
+
+- **Branches.** `master` is the default (there is no `main`). On 2026-08-12 the
+  merged feature branches (`feat/gap4-phase1..4`, `feat/gap4-26-sun-dynamics`,
   `fix/sunny-parity-audit`, `docs/cu5sbo6-powder-comparison`,
   `docs/rb2cu3snf12-order8`, `test/coverage-audit-items-2-4`) were pruned after
   checking each tip was an ancestor of `origin/master` with nothing unpushed —
-  no history was lost, every commit is reachable from `master`.
+  no history was lost, every commit is reachable from `master`. **That briefly
+  left `master` as the only branch; it no longer is.** The work in items A–E
+  below lives on `chore/open-work-housekeeping` (local and on `origin`), which
+  is ahead of `origin/master` and **not yet merged**.
 - **The merge gate is `pytest -m ""`**, and from the *workspace root* plain
   `pytest` is already the full suite (the root `pytest.ini` deliberately does
   not inherit `-m "not slow"`). It takes ~30 min unloaded and can take 2.5 h on
   a busy machine. Don't pipe it through `tail` — that hides all progress until
   it exits.
-- **`pyMagCalc/pytest.ini` now scopes collection too** (fixed 2026-08-12). Only
+
+### A. `pytest.ini` collection scope — **DONE 2026-08-12**
+
+- **`pyMagCalc/pytest.ini` now scopes collection too.** Only
   the *root* config had `testpaths`/`norecursedirs`, so bare `pytest` run from
   inside `pyMagCalc/` — the documented iteration command — walked the whole
   project and **died during collection** on three stale scratch scripts in
   `archive/cleanup_20251224/` (missing CIFs, an outdated `MagCalcConfigBuilder`
   signature). It exited having run *nothing*, which is easy to misread as a fast
-  clean run. It now collects 518 tests; the fast suite is 517 passed, 2 skipped,
-  ~10.5 min.
-- **Which engine is running is now self-reporting** (done 2026-08-12). This entry
+  clean run. It collected 518 tests at the time of the fix; after items B and C
+  added their tests the fast suite is **524 passed, 2 skipped, 105 deselected**
+  (~8 min).
+
+### B. Engine provenance — `magcalc where` — **DONE 2026-08-12**
+
+- **Which engine is running is now self-reporting.** This entry
   used to be a manual tip — "a stale OneDrive copy of this tree exists; if
   `magcalc` behaves inexplicably, check `python -c "import magcalc;
   print(magcalc.__file__)"`" — which only helps once you already suspect it. Three
@@ -321,8 +386,9 @@ for band. Two things that rule does not reach:
   **That left one hole, now closed** (see the next entry): none of the above runs
   when a stale copy wins *outright*, because that copy has no `provenance.py`.
 
-- **Interpreter-startup shadow guard** (added 2026-08-12) —
-  `tools/magcalc_shadow_guard.py` + `tools/install_shadow_guard.py`. This is the
+### C. Interpreter-startup shadow guard — **DONE 2026-08-12** (one small item open)
+
+- **The guard** — `tools/magcalc_shadow_guard.py` + `tools/install_shadow_guard.py`. This is the
   half the in-package detector structurally cannot cover, and it also removes the
   "second checkout silently re-arms the hazard" caveat: the guard lives in
   site-packages, *outside every `magcalc` copy*, so it reports no matter which one
@@ -356,12 +422,14 @@ for band. Two things that rule does not reach:
   case where everything passes. The guard therefore also raises a real
   `MagcalcShadowWarning`, which lands in pytest's warnings summary on a green run.
 
-  Not yet done: nothing installs the guard automatically, so a **fresh venv starts
-  unprotected**. `magcalc where` says so, which is the cheap mitigation; wiring it
-  into `pip install -e .` is the obvious next step and was left out deliberately
-  (a build hook that writes to site-packages is its own hazard).
+  **STILL OPEN.** Nothing installs the guard automatically, so a **fresh venv
+  starts unprotected**. `magcalc where` says so, which is the cheap mitigation;
+  wiring it into `pip install -e .` is the obvious next step and was left out
+  deliberately (a build hook that writes to site-packages is its own hazard).
 
-- **Both stale trees are DELETED** (2026-08-12, ~2.6 GB). They were
+### D. Stale OneDrive trees — **DONE 2026-08-12** (two follow-ups open)
+
+- **Both stale trees are DELETED** (~2.6 GB). They were
   `~/Library/CloudStorage/OneDrive-MahidolUniversity/research/magcalc_archived/`
   (HEAD `e1b3f3b`, 2026-07-06) and `~/OneDriveMU_20250225_MacBook/research/magcalc/`
   (HEAD `2a29d23`, 2024-03-13, a Feb-2025 machine backup). Both HEADs were verified
@@ -377,12 +445,23 @@ for band. Two things that rule does not reach:
     13.286 ± 0.009 / −0.237 ± 0.004 (`CCSF_fit_report.txt`). It lands next to the
     `config_ccsf.yaml` it reads, so it is runnable as-is. This is a genuine
     end-to-end check of the fitting path — an exact-identity oracle in the sense
-    GAP_STATUS.md means — and is currently pinned by nothing.
+    GAP_STATUS.md means. **STILL OPEN:** it is pinned by no test of its own. It is
+    only exercised by `test_config_smoke.py`, which asserts the run produces no
+    ERROR records — not that the fit RECOVERS J1 = 13.3, J2 = −0.24. A ~10-line
+    test asserting the recovered values would make it the oracle it deserves to be.
+    (The two fit outputs are gitignored, since the smoke test rewrites them in the
+    merge gate; the expected values live in the config's header comment.)
   - `archive/legacy/aCVO_2024_snapshot/spin_model_sf.py` — the legacy hand-written
-    α-Cu₂V₂O₇ model, reference only.
+    α-Cu₂V₂O₇ model, reference only. **STILL OPEN:** the workspace root is not a
+    git repository and `pyMagCalc/archive/` is gitignored, so this file — which
+    existed nowhere else — is again in an unversioned directory. It needs a
+    deliberate home if it is worth keeping.
 
   The other ~8900 untracked files were a `gui/node_modules.onedrive-bak/` copy.
-- **`mu_B` now lives in `magcalc/constants.py`** (done 2026-08-12). It used to be
+
+### E. `mu_B` consolidation — **DONE 2026-08-12** (one small item open)
+
+- **`mu_B` now lives in `magcalc/constants.py`.** It used to be
   a `5.788e-2` literal in six modules (`generic_model` ×2, `spiral_opt`,
   `thermal_mc`, `sun/lswt`, `sun/entangled`, `sun/dimer_series`), four of them
   function-locals, plus a seventh copy emitted into generated models by
@@ -396,7 +475,7 @@ for band. Two things that rule does not reach:
   package for a re-typed literal. That second half is the one that matters — a
   stray `mu_B = 5.788e-2` back inside a function would restore the original
   hazard while the identity check still passed.
-- **Still duplicated: the dipolar prefactor.** `ewald.MU0_MUB2_MEV_A3 =
+- **STILL OPEN — the dipolar prefactor is still duplicated.** `ewald.MU0_MUB2_MEV_A3 =
   0.6745817653` and `generic_model.DIPOLE_PREFACTOR_MEV_A3 = 0.05368216` are the
   same Sunny constant with and without the 4π. Both are module-level and
   cross-referenced in comments, so they are far less drift-prone than the `mu_B`
