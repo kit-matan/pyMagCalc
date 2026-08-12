@@ -30,12 +30,10 @@ from dataclasses import dataclass
 import numpy as np
 
 from .annealing import energy as _cell_energy
+from .constants import GAMMA_ELECTRON as GAMMA, MU_B
 from .sun.entangled import _pair_matrix
 
 logger = logging.getLogger(__name__)
-
-MU_B = 5.788e-2      # meV / T
-GAMMA = 2.0          # electron g (matches the LSWT/entangled Zeeman convention)
 
 
 def build_supercell(model, params, supercell=(4, 4, 1), disorder=None,

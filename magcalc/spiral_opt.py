@@ -30,6 +30,7 @@ import numpy as np
 from numpy import linalg as la
 from scipy.optimize import minimize
 
+from .constants import GAMMA_ELECTRON as GAMMA, MU_B
 from .generic_model import (
     GenericSpinModel,
     interactions_to_numpy,
@@ -38,9 +39,6 @@ from .generic_model import (
 )
 
 logger = logging.getLogger(__name__)
-
-MU_B = 5.788e-2  # meV/T, matching generic_model conventions
-GAMMA = 2.0      # electron g-factor convention of _classical_energy_func
 
 
 @dataclass

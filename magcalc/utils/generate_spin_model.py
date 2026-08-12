@@ -90,6 +90,9 @@ import numpy as np
 from numpy import linalg as la
 from itertools import product
 
+# Zeeman calibration, shared with every pyMagCalc engine -- do not re-type these.
+from magcalc.constants import MU_B as mu_B, GAMMA_ELECTRON as gamma
+
 '''
 
 def generate_unit_cell(uc_vectors):
@@ -239,9 +242,6 @@ def generate_hamiltonian(num_shells, with_sia=False, with_dm=False):
     lines.append('    """')
     lines.append('    Jex, DM = spin_interactions(pr)')
     lines.append('    HM = 0')
-    lines.append('    ')
-    lines.append('    gamma = 2.0')
-    lines.append('    mu_B = 5.788e-2 # meV/T')
     lines.append('    ')
     
     # Unpack extra params for H and SIA

@@ -37,6 +37,7 @@ from itertools import product as _product
 
 import numpy as np
 
+from ..constants import GAMMA_ELECTRON as _GAMMA, MU_B as _MU_B
 from .operators import (coherent_from_direction, local_basis, spin_matrices,
                         stevens_matrices)
 
@@ -528,7 +529,6 @@ class SUNModel:
         # competes with an easy-plane anisotropy: with the field missing the texture
         # decayed to the trivial |m=0> state.
         from ..spiral_opt import _resolve_field as _sun_resolve_field
-        _MU_B, _GAMMA = 5.788e-2, 2.0
         try:
             H_vec = _sun_resolve_field(model, params)
         except Exception:

@@ -43,6 +43,7 @@ from collections import defaultdict
 import numpy as np
 import scipy.sparse as sp
 
+from ..constants import GAMMA_ELECTRON as GAMMA, MU_B
 from .entangled import _embedded_spin_ops, _pair_matrix
 
 logger = logging.getLogger(__name__)
@@ -525,7 +526,6 @@ class DimerSeriesModel:
 
         # Zeeman on each unit (gamma = 2 convention, matching the engines)
         if field is not None and np.linalg.norm(field) > 0:
-            MU_B, GAMMA = 5.788e-2, 2.0
             for k, u in enumerate(units):
                 Svec = [sum(emb[k][pp][a] for pp in range(len(u))) for a in range(3)]
                 A[k] += GAMMA * MU_B * sum(field[a] * Svec[a] for a in range(3))

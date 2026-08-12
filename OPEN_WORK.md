@@ -288,8 +288,22 @@ for band. Two things that rule does not reach:
 - **Run from `pyMagCalc/`.** A stale OneDrive copy of this tree exists; if
   `magcalc` behaves inexplicably, check
   `python -c "import magcalc; print(magcalc.__file__)"`.
-- **`mu_B = 5.788e-2 meV/T` is a magic number duplicated in six modules**
-  (`generic_model` ×2, `spiral_opt`, `thermal_mc`, `sun/lswt`, `sun/entangled`,
-  `sun/dimer_series`). `tests/test_combination_matrix.py` pins them equal by
-  reading the literals out of the sources. Consolidating them into one constant
-  would be a real improvement; just keep that test working.
+- **`mu_B` now lives in `magcalc/constants.py`** (done 2026-08-12). It used to be
+  a `5.788e-2` literal in six modules (`generic_model` ×2, `spiral_opt`,
+  `thermal_mc`, `sun/lswt`, `sun/entangled`, `sun/dimer_series`), four of them
+  function-locals, plus a seventh copy emitted into generated models by
+  `utils/generate_spin_model.py`. All seven now import `MU_B` /
+  `GAMMA_ELECTRON`; the value is unchanged (`5.788e-2`, the deliberate
+  four-figure CODATA truncation every pinned Zeeman number was measured
+  against — moving it to full precision shifts every in-field energy by 6.6e-5
+  relative and is not a free accuracy fix).
+  `test_every_engine_uses_the_same_bohr_magneton` was rewritten to match: it
+  asserts each engine binds the *same object* (`is`, not `==`) and greps the
+  package for a re-typed literal. That second half is the one that matters — a
+  stray `mu_B = 5.788e-2` back inside a function would restore the original
+  hazard while the identity check still passed.
+- **Still duplicated: the dipolar prefactor.** `ewald.MU0_MUB2_MEV_A3 =
+  0.6745817653` and `generic_model.DIPOLE_PREFACTOR_MEV_A3 = 0.05368216` are the
+  same Sunny constant with and without the 4π. Both are module-level and
+  cross-referenced in comments, so they are far less drift-prone than the `mu_B`
+  locals were, but folding them into `constants.py` is the obvious next step.

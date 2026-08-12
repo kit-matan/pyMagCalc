@@ -9,6 +9,7 @@ import sympy as sp
 from scipy.optimize import minimize
 from tqdm import tqdm
 
+from .constants import GAMMA_ELECTRON, MU_B
 from .stevens import rcs_lambda, stevens_polynomial
 
 # mu0 * muB^2 / (4*pi), in meV * Angstrom^3. Cross-checked against Sunny 0.8.1,
@@ -1843,8 +1844,7 @@ class GenericSpinModel:
         
         
         HM = 0
-        mu_B = 5.788e-2
-        
+
         # 1. Exchange Terms (Heisenberg + DM + Anisotropic)
         HM += self._compute_heisenberg_dm_terms(Sxyz, Jex, DM, Kex)
         
@@ -1857,18 +1857,11 @@ class GenericSpinModel:
         # 3. Zeeman: H_zeeman = gamma * mu_B * B . S with gamma = 2 (electron g),
         # so H_mag / Hx,Hy,Hz in TESLA reproduce the g = 2 Zeeman -- the SpinW /
         # Sunny convention, and what SW29 documents (splitting 2*mu_B*H_mag).
-        #
-        # HISTORY (do not halve this again): gamma was once set to 1.0 to
-        # compensate a "reported doubling" -- which was the legacy S^0 parameter
-        # filter double-counting the H_mag*H_dir bilinear term. When the
-        # boson-degree truncation removed that double count, every in-field
-        # result was silently HALVED for months (SW29's verified 0.10622/1.72668
-        # became 0.511/1.322; caught 2026-07 by bisect + Sunny cross-check).
-        # gamma = 2 with the single, correctly-counted term is the calibrated
-        # convention; it also matches every other engine in this repo
-        # (spiral_opt, thermal_mc, entangled, dimer_series, all GAMMA = 2).
-        gamma = 2.0
-        HM += self._compute_zeeman_terms(Sxyz, p_rest, param_map, gamma, mu_B)
+        # Both constants come from magcalc.constants, which every other engine in
+        # this repo (spiral_opt, thermal_mc, sun/lswt, entangled, dimer_series)
+        # also imports -- see the "do not halve this again" history recorded there.
+        HM += self._compute_zeeman_terms(Sxyz, p_rest, param_map,
+                                         GAMMA_ELECTRON, MU_B)
 
         # 4. Substitution and Filtering
         HM = self._apply_substitution_and_filter(HM, pr)
@@ -2882,11 +2875,9 @@ class GenericSpinModel:
         if H_vec is not None:
 
             # E += gamma * mu * sum(S . H)
-            gamma = 2.0
-            mu_B = 5.788e-2
             # Sum S . H for all i in UC
             # Using vectorized dot. Scale by S_val
-            E += gamma * mu_B * np.sum(S_vecs_uc @ H_vec) * S_val
+            E += GAMMA_ELECTRON * MU_B * np.sum(S_vecs_uc @ H_vec) * S_val
 
         # Interactions
         for i in range(N):

@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 
+from ..constants import GAMMA_ELECTRON as GAMMA, MU_B
 from ..numerical import sqw_domain_average
 from .lswt import SUNModel, _reject_unsupported_terms
 from .operators import spin_matrices, stevens_matrices
@@ -257,7 +258,6 @@ def build_entangled_model(model, params: Optional[Sequence[float]] = None,
     # term, so a magnetic field splits the unit's multiplet (e.g. the Stot^z = +/-1 dimer
     # triplet Zeeman-splits while Stot^z = 0 is unchanged). Convention matches the dipole
     # engine (gamma = 2, i.e. electron g = 2).
-    MU_B, GAMMA = 5.788e-2, 2.0
     try:
         from .. import spiral_opt as _so
         H_vec = _so._resolve_field(model, params)

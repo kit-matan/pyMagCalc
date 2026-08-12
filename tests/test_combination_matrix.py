@@ -407,41 +407,70 @@ def test_entangled_field_splits_the_exact_triplon():
     assert _dimer_bands(_dimer(H), "triH", qs) == pytest.approx(pred, abs=1e-8)
 
 
+# The modules that carry a Zeeman term, and the names they bind mu_B / gamma to.
+# Every one of these must be the object from magcalc.constants, not a copy.
+_ZEEMAN_MODULES = {
+    "magcalc.generic_model": ("MU_B", "GAMMA_ELECTRON"),
+    "magcalc.spiral_opt": ("MU_B", "GAMMA"),
+    "magcalc.thermal_mc": ("MU_B", "GAMMA"),
+    "magcalc.sun.lswt": ("_MU_B", "_GAMMA"),
+    "magcalc.sun.entangled": ("MU_B", "GAMMA"),
+    "magcalc.sun.dimer_series": ("MU_B", "GAMMA"),
+}
+
+
 def test_every_engine_uses_the_same_bohr_magneton():
-    """mu_B is a MAGIC NUMBER duplicated across six modules (generic_model x2,
-    spiral_opt, thermal_mc, sun/lswt, sun/entangled, sun/dimer_series). Nothing ties
-    them together, so a "fix" in one place would desync the engines silently -- the
-    field would then differ between dipole and SU(N) by a few parts in 10^4, which is
-    far too small to notice in a spectrum and far too large to be rounding.
+    """mu_B USED TO BE a magic number duplicated across six modules (generic_model x2,
+    spiral_opt, thermal_mc, sun/lswt, sun/entangled, sun/dimer_series), four of them
+    as a function-local. Nothing tied them together, so a "fix" in one place would
+    have desynced the engines silently -- the field would then differ between dipole
+    and SU(N) by a few parts in 10^4, which is far too small to notice in a spectrum
+    and far too large to be rounding.
+
+    They now all import `magcalc.constants`. This test pins BOTH halves of that:
+    (a) every engine really does bind the shared object, and (b) nobody has
+    reintroduced a literal of their own. (b) is the one that matters -- a stray
+    `mu_B = 5.788e-2` back inside a function would restore the original hazard while
+    (a) still passed, since the module-level import would sit there unused.
 
     Also pins the value against CODATA. The engine's 5.788e-2 meV/T is the CODATA
     value truncated to four figures (5.7883818e-2), i.e. 6.6e-5 relative -- fine, but
     it should be a deliberate 6.6e-5, not a drifting one.
     """
+    import importlib
     import pathlib
     import re
 
-    from magcalc import spiral_opt, thermal_mc
+    from magcalc import constants, spiral_opt
 
-    # Module-level constants can be imported...
-    values = {"spiral_opt": spiral_opt.MU_B, "thermal_mc": thermal_mc.MU_B}
-    # ...but generic_model, sun/lswt, sun/entangled and sun/dimer_series define mu_B
-    # as a LOCAL inside the function that uses it, so there is nothing to import and
-    # the only honest check is to read them out of the source. (Importing a name that
-    # is not module-level would just raise; asserting `hasattr(...) or True` would
-    # pass unconditionally, which is the trap this suite keeps re-learning.)
+    # (a) one object, shared. `is` rather than `==`, so a re-typed literal that
+    # happens to be equal today still fails.
+    for mod_name, (mu_name, gamma_name) in _ZEEMAN_MODULES.items():
+        mod = importlib.import_module(mod_name)
+        assert getattr(mod, mu_name) is constants.MU_B, f"{mod_name}.{mu_name}"
+        assert getattr(mod, gamma_name) is constants.GAMMA_ELECTRON, \
+            f"{mod_name}.{gamma_name}"
+
+    # (b) no module has re-typed the number. Search the whole package, not just the
+    # six above -- a NEW engine with its own literal is exactly the regression this
+    # is here to catch.
     root = pathlib.Path(spiral_opt.__file__).parent
-    pat = re.compile(r"(?:_?MU_B|mu_B)\s*(?:,\s*_?GAMMA\s*)?=\s*([0-9.e-]+)")
-    for rel in ("generic_model.py", "sun/lswt.py", "sun/entangled.py",
-                "sun/dimer_series.py"):
-        found = {float(m) for m in pat.findall((root / rel).read_text())}
-        assert found, f"no mu_B literal found in {rel} -- did it move?"
-        values[rel] = found.pop() if len(found) == 1 else found
-
-    assert len(set(values.values())) == 1, f"engines disagree on mu_B: {values}"
+    literal = re.compile(r"(?<![\w.])5\.788\d*e-0?2")
+    offenders = []
+    for path in sorted(root.rglob("*.py")):
+        if path.name == "constants.py":
+            continue            # the one place it is allowed to appear
+        for n, line in enumerate(path.read_text().splitlines(), 1):
+            code = line.split("#", 1)[0]        # comments may quote the value
+            if literal.search(code):
+                offenders.append(f"{path.relative_to(root)}:{n}: {line.strip()}")
+    assert not offenders, (
+        "mu_B literal re-introduced; import it from magcalc.constants instead:\n  "
+        + "\n  ".join(offenders)
+    )
 
     codata_mu_b = 5.7883817982e-2        # meV/T
-    for name, v in values.items():
-        assert v == pytest.approx(codata_mu_b, rel=2e-4), name
+    assert constants.MU_B == pytest.approx(codata_mu_b, rel=2e-4)
     # the constant this file asserts the physics against must be that same one
-    assert MU_B == pytest.approx(values["spiral_opt"], rel=1e-12)
+    assert MU_B == pytest.approx(constants.MU_B, rel=1e-12)
+    assert GAMMA == pytest.approx(constants.GAMMA_ELECTRON, rel=1e-12)
