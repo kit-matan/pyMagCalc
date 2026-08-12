@@ -1,12 +1,14 @@
 # Open work — pick-up notes
 
-Last updated **2026-08-12**, `master` at `21ecba2` (pushed).
+Last updated **2026-08-13**, `master` at `00083a6` (pushed).
 
-**Full gate GREEN on this tree: 635 passed, 3 skipped** (`pytest -m ""` from the
-workspace root, 40:48). That is +14 on the 2026-08-12 figure of 621 — 5 from
-`test_install_provenance`, 8 from `test_shadow_guard`, and 1 config the smoke test
-newly discovers (the rescued CCSF fit demo). `chore/open-work-housekeeping` was
-fast-forward merged into `master` after that run and is now level with it.
+**Full gate GREEN on this tree: 637 passed, 3 skipped** (`pytest -m ""` from the
+workspace root, 40:18). Trail: 621 (2026-08-12 baseline) → 635 after the
+provenance + shadow-guard work (+5 `test_install_provenance`, +8
+`test_shadow_guard`, +1 newly-discovered CCSF config) → 637 with the two
+`test_ccsf_fit_roundtrip` tests. Both `chore/open-work-housekeeping` and
+`feat/open-work-followups` were fast-forward merged into `master` after a green
+gate; both are level with it and can be pruned.
 
 This file is the "what to do next" companion to `GAP_STATUS.md`, which is the
 authoritative record of *what is done and how it was validated*. Read
@@ -402,9 +404,10 @@ for band. Two things that rule does not reach:
   `docs/rb2cu3snf12-order8`, `test/coverage-audit-items-2-4`) were pruned after
   checking each tip was an ancestor of `origin/master` with nothing unpushed —
   no history was lost, every commit is reachable from `master`. Items A–E below
-  were developed on `chore/open-work-housekeeping` and **fast-forward merged into
-  `master` on 2026-08-12** after a green full gate; that branch is now level with
-  `master` and can be pruned.
+  were developed on `chore/open-work-housekeeping`, and the item-1 machinery plus
+  the C/D/E follow-ups on `feat/open-work-followups`. Both were **fast-forward
+  merged into `master`** after a green full gate (2026-08-12 and 2026-08-13); both
+  are level with `master` and can be pruned.
 - **The merge gate is `pytest -m ""`**, and from the *workspace root* plain
   `pytest` is already the full suite (the root `pytest.ini` deliberately does
   not inherit `-m "not slow"`). It takes ~30 min unloaded and can take 2.5 h on
