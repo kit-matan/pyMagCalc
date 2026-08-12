@@ -1,21 +1,12 @@
 # Open work — pick-up notes
 
-Last updated **2026-08-12**, on branch `chore/open-work-housekeeping` at `89652a2`
-(pushed). Working tree clean.
+Last updated **2026-08-12**, `master` at `21ecba2` (pushed).
 
-**Gate status — read this before merging.** The full gate has **not** been re-run
-since the engine-provenance / shadow-guard / `pytest.ini` work landed. What is
-known:
-
-- **Fast suite green:** 524 passed, 2 skipped, 105 deselected (~8 min).
-- **Last full-gate figure, 621 passed / 3 skipped** (`pytest -m ""` from the
-  workspace root, 43 min), **predates** those commits. It is +21 on the
-  2026-08-05 baseline of 600 — 12 from the Studio open→run work
-  (`test_atom_mode_explicit`, `test_gui_roundtrip`, two added to
-  `test_gui_passthrough`), 4 from `test_fit_example`, and 5 configs the smoke
-  test had never discovered.
-- **Run `pytest -m ""` before merging to `master`.** The fast suite is not the
-  gate.
+**Full gate GREEN on this tree: 635 passed, 3 skipped** (`pytest -m ""` from the
+workspace root, 40:48). That is +14 on the 2026-08-12 figure of 621 — 5 from
+`test_install_provenance`, 8 from `test_shadow_guard`, and 1 config the smoke test
+newly discovers (the rescued CCSF fit demo). `chore/open-work-housekeeping` was
+fast-forward merged into `master` after that run and is now level with it.
 
 This file is the "what to do next" companion to `GAP_STATUS.md`, which is the
 authoritative record of *what is done and how it was validated*. Read
@@ -39,7 +30,7 @@ are the easiest to mistake for done.
 
 | # | Item | Status |
 |---|---|---|
-| 1 | Gap #24b — Ewald + rotating-frame single-k | **OPEN** — ready to implement, ~1 h, highest value/effort |
+| 1 | Gap #24b — Ewald + rotating-frame single-k | **OPEN** — writeup corrected 2026-08-12 (it was inverted); bigger than 1 h |
 | 2 | Sunny S06 — skyrmion lattice | **OPEN** — blocked on the reference state |
 | 3 | Sunny S09 — disorder + KPM | **OPEN** — blocked on structure geometry |
 | 4 | Classical S(q,ω) absolute normalization | **OPEN** — shape pinned, scale not |
@@ -67,11 +58,43 @@ lives inside an otherwise-`DONE` entry:
 
 ## 1. Gap #24b — Ewald + rotating-frame single-k
 
-**Status: OPEN.** Ready to implement, ~1 hour with the formula in hand. The
-highest value-per-effort item open.
+**Status: OPEN.** Still the highest value-per-effort item, but the "~1 hour"
+estimate was wrong and the written-up formula was wrong. Both corrected 2026-08-12,
+BEFORE any code was written — read the two findings below first.
 
-The method is written up in full in `GAP4_PLAN.md` §"#24b … METHOD FOUND IN
-SUNNY" — read that section, do not re-derive. Three earlier attempts at
+**FINDING 1 — the projector algebra in `GAP4_PLAN.md` was INVERTED.** It said
+"FIVE terms … dropping to three when the satellites coincide". The reference says
+the opposite (`SpinWaveTheorySpiral.jl:129–138`): the five-term form, with the two
+cross terms, is the **`k_case 2`** special case (2k integer, satellites coincide),
+and the **generic incommensurate `k_case 3`** — the common case — is the plain
+three-term `R2·J(q)·R2 + R1*·J(q+k)·R1* + R1·J(q−k)·R1`. Implementing from the old
+text would have put the cross terms into the common branch: a wrong Hamiltonian
+that still diagonalizes and still yields a plausible spectrum. `GAP4_PLAN.md` is
+now fixed. Note this is the **fourth** wrong characterization of this item, and the
+first one to survive *inside the document that exists to prevent them*.
+
+**FINDING 2 — the item is bigger than "add a term", because pyMagCalc's single-k
+scheme is structurally different from Sunny's.** Sunny builds ONE rotating-frame
+`J` per branch from the lab-frame `J(q)`, `J(q±k)` via the projectors. pyMagCalc
+instead evaluates its *symbolic* `H` at three shifted momenta `q−k, q, q+k`
+(`numerical.process_calc_Sqw_single_k`) and applies `spiral_channel_tensors` to the
+**correlation tensors**, not to `H`. That shortcut is only valid because the engine
+*requires* the Hamiltonian to be rotationally invariant about the spiral axis —
+`generic_model.py:1630`, `enforce_rotational_symmetry`, mirroring Sunny's
+`check_rotational_symmetry`. Under that assumption the projector combination
+collapses to `J(q)` and evaluating at shifted momenta is exact.
+
+**The dipolar tensor does not satisfy that assumption.** `A(q)` is fixed by lattice
+geometry (its `r̂r̂` structure) and is not uniaxial about an arbitrary spiral axis.
+So Ewald cannot ride the existing shortcut: it needs the real projector combination
+applied per channel, `_ewald_nambu_spiral(q_c, k, axis, k_case)` for each of
+`q_c ∈ {q−k, q, q+k}`, built from `J(q_c)`, `J(q_c±k)` and the `q=0` on-site `J0`
+combination — and wired through the dispersion path, the S(Q,ω) worker (across the
+multiprocessing boundary, so it must pickle), and the classical energy the
+ground-state guard minimises. The formula is an hour; the wiring is not.
+
+The rest of the writeup in `GAP4_PLAN.md` §"#24b … METHOD FOUND IN SUNNY" is
+sound — read it, do not re-derive. Three earlier attempts at
 re-deriving it produced three wrong characterizations in a row (three terms,
 then "structurally invalid", then nine terms); reading
 `../Sunny.jl-main/src/Spiral/SpinWaveTheorySpiral.jl` settled it.
@@ -334,10 +357,10 @@ for band. Two things that rule does not reach:
   `fix/sunny-parity-audit`, `docs/cu5sbo6-powder-comparison`,
   `docs/rb2cu3snf12-order8`, `test/coverage-audit-items-2-4`) were pruned after
   checking each tip was an ancestor of `origin/master` with nothing unpushed —
-  no history was lost, every commit is reachable from `master`. **That briefly
-  left `master` as the only branch; it no longer is.** The work in items A–E
-  below lives on `chore/open-work-housekeeping` (local and on `origin`), which
-  is ahead of `origin/master` and **not yet merged**.
+  no history was lost, every commit is reachable from `master`. Items A–E below
+  were developed on `chore/open-work-housekeeping` and **fast-forward merged into
+  `master` on 2026-08-12** after a green full gate; that branch is now level with
+  `master` and can be pruned.
 - **The merge gate is `pytest -m ""`**, and from the *workspace root* plain
   `pytest` is already the full suite (the root `pytest.ini` deliberately does
   not inherit `-m "not slow"`). It takes ~30 min unloaded and can take 2.5 h on

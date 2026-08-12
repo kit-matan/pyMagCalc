@@ -222,14 +222,29 @@ there is no separate "Ewald channel machinery" to build. pyMagCalc already has b
 halves: `core._ewald_A(q_rlu)` is the analogue of `precompute_dipole_ewald_at_wavevector`,
 and `_ewald_g()` supplies the g-tensors.
 
-**The projector algebra is FIVE terms, not three and not nine** (line 133, with the
-`k_case` branch at 136 dropping to three when the satellites coincide). With
-`R2 = axis axisᵀ` and `R1 = (I − i[axis]× − R2)/2`:
+**CORRECTED 2026-08-12 — the three/five split was written down BACKWARDS here.**
+Re-read `SpinWaveTheorySpiral.jl` lines 129–138. With `R2 = axis axisᵀ` and
+`R1 = (I − i[axis]× − R2)/2`, the branch is on `k_case`, and it is:
 
 ```julia
+# k_case 2  (2k integer -- the satellites COINCIDE):  FIVE terms
 J = R2*J(q)*R2 + conj(R1)*J(q+k)*conj(R1) + R1*J(q−k)*R1
                 + R1*J(q+k)*conj(R1) + conj(R1)*J(q−k)*R1
+
+# k_case 3  (generic incommensurate -- the COMMON case):  THREE terms
+J = R2*J(q)*R2 + conj(R1)*J(q+k)*conj(R1) + R1*J(q−k)*R1
+
+# k_case 1  (k integer): no projection at all, J = J(q)
 ```
+
+The earlier text here said "FIVE terms … dropping to three when the satellites
+coincide", which is the exact inverse: the five-term form with the two cross terms
+is the `k_case 2` special case, and the generic incommensurate case is the plain
+three-term one. Implementing from the old description would have put the cross
+terms into the common branch — a wrong Hamiltonian that still diagonalizes and
+still produces a plausible spectrum. `k_case` is defined identically on both sides
+(`SpiralEnergy.jl:12` / `generic_model.py:236`): 1 = k integer, 2 = 2k integer,
+3 = otherwise.
 
 My guesses were wrong in both directions — first three terms (assuming commutation),
 then nine (assuming none of it collapses). The cross terms `R1 J(q+k) R1*` and
@@ -247,10 +262,10 @@ and then builds the standard Nambu blocks from `Jq`/`J0`. So the whole change is
 `_ewald_nambu_spiral(q_cart, k, axis)` that computes the SAME blocks from the
 rotating-frame combinations
 
+    # generic incommensurate (k_case 3) -- THREE terms:
     Jrot = R2 Jq(q) R2 + R1* Jq(q+k) R1* + R1 Jq(q-k) R1
-                       + R1 Jq(q+k) R1* + R1* Jq(q-k) R1
     J0rot= R2 J0(0) R2 + R1* J0(+k) R1* + R1 J0(-k) R1
-                       + R1 J0(+k) R1* + R1* J0(-k) R1
+    # k_case 2 additionally carries + R1 Jq(q+k) R1* + R1* Jq(q-k) R1 (and same for J0)
 
 (projectors acting on the 3x3 spin indices of each (i,j) block), and then hands the
 result to the three-channel worker the way `dip_pairs` is already handed to it in
