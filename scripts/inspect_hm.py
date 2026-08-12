@@ -36,4 +36,12 @@ def inspect_hm(filename):
         print(f"Error: {e}")
 
 if __name__ == "__main__":
-    inspect_hm("/Users/kmatan/Library/CloudStorage/OneDrive-MahidolUniversity/research/magcalc/pyMagCalc_cache/symbolic_matrices/KFe3J_decl_final_cache_HM.pck")
+    # Used to hard-code a cache path inside a OneDrive copy of this tree that no
+    # longer exists (and whose stale `magcalc/` could shadow this one -- see
+    # magcalc/provenance.py). Take the .pck to inspect as an argument instead.
+    if len(sys.argv) != 2:
+        print("usage: python scripts/inspect_hm.py <path/to/..._HM.pck>\n"
+              "  (caches live in pyMagCalc_cache/symbolic_matrices/ next to "
+              "wherever you ran magcalc)")
+        raise SystemExit(2)
+    inspect_hm(sys.argv[1])

@@ -26,6 +26,13 @@ examples/.DS_Store
 CCSF/data_fit/
 CCSF/plots/
 
+# Outputs of the CCSF fit demo, not sources. `magcalc fit config_ccsf_fit.yaml`
+# rewrites both -- and test_config_smoke.py runs that config in the merge gate --
+# so tracking them would dirty the tree on every full test run. The expected
+# result is recorded in the config's own header comment instead.
+examples/materials/CCSF/CCSF_fit_report.txt
+examples/materials/CCSF/CCSF_fit_params.yaml
+
 examples/plots/
 **/.pytest_cache/
 **/.ipynb_checkpoints/
