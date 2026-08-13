@@ -1,0 +1,74 @@
+# =====================================================================
+# S09 - Triangular-lattice Heisenberg AFM, 120-degree order as an EXPLICIT
+#       real-space supercell (SU(N) engine).
+#
+#   magcalc run examples/sunny_tutorials/S09_triangular_AFM/config_supercell.yaml
+#
+# Same Hamiltonian as `config.yaml` (one s=1/2 site per cell, NN AFM J = 1), but
+# the 120-degree state is carried by a REAL-SPACE sqrt3 x sqrt3 magnetic cell
+# instead of the rotating-frame `single_k` method. That is what the disorder +
+# KPM part of the tutorial needs: disorder is a per-bond property of a large
+# real-space cell, and the SU(N)/KPM path does not consume a `single_k`
+# structure at all. See `disorder_kpm.py` and this folder's README.
+#
+# WHY THIS MATRIX. `magnetic_supercell.matrix` holds the new lattice vectors as
+# COLUMNS in units of the chemical ones (Sunny's `reshape_supercell`), so the
+# columns here are A1 = a1 - a2 and A2 = a1 + 2 a2. Both must satisfy
+# k . A in Z for k = [1/3, 1/3, 0]:  k.A1 = 0, k.A2 = 1.  |det| = 3, i.e. the
+# 3-sublattice sqrt3 x sqrt3 cell.
+# The transposed choice (columns a1 + a2 and -a1 + 2 a2) also has |det| = 3 and
+# is WRONG: k.(a1+a2) = 2/3, so the 120-degree state does not fit in it, and the
+# CP^(N-1) search lands on a frustrated collinear state at E/site = +0.0833.
+#
+# EXACT ORACLE. The classical 120-degree state has
+#   E/site = (1/2) * 6 * J * S^2 * cos(120 deg) = -0.375 meV   (J = 1, S = 1/2),
+# which the run reports as "SU(N) ground state: E/site = -0.37500000".
+# Check that BEFORE looking at any spectrum -- a supercell that cannot host the
+# 120-degree order still returns a perfectly plausible-looking dispersion.
+#
+# The 3 bands at a chemical q are the folded set {w(q-k), w(q), w(q+k)} of the
+# analytic result w(q) = 3 J S sqrt[(1-g_q)(1+2g_q)] -- the same three channels
+# the rotating-frame method calls satellites. Pinned in
+# tests/test_s09_disorder_kpm.py.
+# =====================================================================
+
+parameter_order: [J]
+parameters:
+  J: 1.0
+
+crystal_structure:
+  lattice_parameters: {a: 3.0, b: 3.0, c: 10.0, alpha: 90.0, beta: 90.0, gamma: 120.0}
+  atoms_uc:
+  - {label: A, pos: [0.0, 0.0, 0.0], spin_S: 0.5, ion: Cu2+}
+  magnetic_supercell: {matrix: [[1, 1, 0], [-1, 2, 0], [0, 0, 1]]}
+
+interactions:
+  symmetry_rules:
+  - {type: heisenberg, distance: 3.0, value: J}   # NN triangular bond (|a1|)
+
+# No `magnetic_structure`: the SU(N) ground state must be found in SU(N), and on
+# this cell the CP^(N-1) search finds the 120-degree state from a random start.
+tasks: {minimization: true, dispersion: true, kpm_sqw: true}
+
+minimization: {num_starts: 12, seed: 0}
+
+kpm: {e_min: 0.0, e_max: 2.5, e_step: 0.05, fwhm: 0.2, tol: 0.05}
+
+q_path:
+  Gamma: [0.0, 0.0, 0.0]
+  K:     [0.3333333333333333, 0.3333333333333333, 0.0]
+  M:     [0.5, 0.0, 0.0]
+  Gamma2: [0.0, 0.0, 0.0]
+  path: [Gamma, K, M, Gamma2]
+  points_per_segment: 24
+
+plotting:
+  save_plot: true
+  show_plot: false
+  plot_structure: false
+  disp_plot_filename: S09_supercell_disp.png
+  kpm_plot_filename: S09_supercell_kpm.png
+  disp_title: "Triangular AFM: 120-degree order on the sqrt3 x sqrt3 cell"
+
+calculation: {mode: SUN, cache_mode: none}
+output: {save_data: false}

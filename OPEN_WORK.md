@@ -12,10 +12,16 @@ with item 2's (**+22**: 14 `test_sun_quench`, 5 S06 in `test_sunny_tutorials`,
 `feat/open-work-followups` were fast-forward merged into `master` after a green
 gate; both are level with it and can be pruned.
 
-**UNCOMMITTED.** Items 1, 2 and 9 are all in the working tree only — `master` is
-still at `f819694`. Item 1's Ewald work (`core.py`, `tests/test_ewald_spiral.py`)
-and item 2's (`sun/dynamics.py`, `sun/lswt.py`, `annealing.py`, the S06 folder,
-`tests/test_sun_quench.py`) are independent changes and want separate commits.
+Items 1, 2, 9 and 3 are committed on `feat/s06-cp2-skyrmions`, **5 commits ahead of
+`master`** (which is at `f819694`), unmerged and unpushed. Item 3 is two of them:
+`5812975` the KPM fix (`magcalc/sun/kpm.py`, `tests/test_kpm.py`) and `ff9fbfe` the
+S09 port — the fix stands on its own and is worth reading separately, since it
+changes every KPM spectrum of a non-collinear model and every `cross_section:
+chiral` KPM result.
+
+**The full gate has NOT been re-run since item 3.** What has: the fast suite (568
+passed, 2 skipped, 11:54) and `-m ""` on the four touched suites (35 passed, 6:16).
+Run `pytest -m ""` from the workspace root before merging.
 
 This file is the "what to do next" companion to `GAP_STATUS.md`, which is the
 authoritative record of *what is done and how it was validated*. Read
@@ -41,13 +47,14 @@ are the easiest to mistake for done.
 |---|---|---|
 | 1 | Gap #24b — Ewald + rotating-frame single-k | **DONE** 2026-08-13 — oracle built, bug found, refusal lifted |
 | 2 | Sunny S06 — skyrmion lattice | **DONE** 2026-08-13 — ported at L = 40; the size WAS the blocker |
-| 3 | Sunny S09 — disorder + KPM | **OPEN** — blocked on structure geometry |
+| 3 | Sunny S09 — disorder + KPM | **DONE** 2026-08-13 — ported; found a KPM bug and a stability limit |
 | 4 | Classical S(q,ω) absolute normalization | **OPEN** — shape pinned, scale not |
 | 5 | Coverage follow-ups | **PARTIAL** — audit's 4 items done; 2 follow-ups + discovery shape open |
 | 6 | `minimization.tolerance` silently ineffective | **DONE** 2026-08-12 |
 | 7 | FeI2 dipole ground state | **PARTIAL** — physics answered; `examples/materials/FeI2` fix open |
 | 8 | Studio open→run limits | **OPEN** — 2 items |
 | 9 | `anneal`'s polish could return a MAXIMUM | **DONE** 2026-08-13 — fixed + swept; a RELATED defect is open |
+| 10 | KPM has no ground-state guard | **OPEN** — opened by item 3 |
 | A | `pytest.ini` collection scope | **DONE** 2026-08-12 |
 | B | Engine provenance — `magcalc where` | **DONE** 2026-08-12 |
 | C | Interpreter-startup shadow guard | **DONE** 2026-08-12 — `magcalc guard`; nothing outstanding |
@@ -199,17 +206,59 @@ metastable and a minimizer destroys them.)
 
 ## 3. Sunny tutorial S09 — disorder + KPM on the triangular lattice
 
-**Status: OPEN — blocked on structure geometry.** Needs the 120° order as an explicit
-REAL-SPACE √3×√3 supercell: the clean config uses the rotating-frame `single_k`
-method, which the SU(N)/KPM path does not consume.
+**Status: DONE 2026-08-13.** `examples/sunny_tutorials/S09_triangular_AFM/` now has
+`config_supercell.yaml` (the 120° order as an explicit √3×√3 SU(N) cell) and
+`disorder_kpm.py` (the tutorial's disorder + KPM protocol), pinned by
+`tests/test_s09_disorder_kpm.py` (9 tests). Two things came out of it that were not
+what the item was about — one of them a bug in shipped code, the other a physics
+result that changes how the KPM feature should be used.
 
-The current placeholder gives E/site = −0.3333 against the exact −0.375, i.e.
-the basis is wrong, and the consequence is measurable and diagnostic: adding
-disorder **narrowed** the KPM width instead of broadening it, which is what
-expanding about a non-minimum buys you.
+**The structure-geometry half went exactly as this item predicted.** The √3×√3 cell
+is `magnetic_supercell: {matrix: [[1,1,0],[-1,2,0],[0,0,1]]}` — columns a₁−a₂ and
+a₁+2a₂, both with k·A ∈ ℤ — and gives E/site = **−0.375 exactly**, with the bands
+reproducing the analytic ω(q) = 3JS√[(1−γ)(1+2γ)] folded into {q−k, q, q+k} to 1e-13.
+Worth keeping: the TRANSPOSED matrix has the same |det| = 3, cannot host the order
+(k·(a₁+a₂) = 2/3), and returns a frustrated collinear state at +0.0833 — with a
+perfectly plausible dispersion. Commensurability is the criterion; the energy is how
+you see it. (Pinned, so it cannot come back.)
 
-Fix is to build the √3×√3 cell explicitly with the three sublattice directions
-at 120°, and confirm E/site = −0.375 *before* looking at any spectrum.
+**The recorded diagnosis was wrong, and that is the transferable part.** This item
+said the narrowing was "what expanding about a non-minimum buys you". The placeholder
+reference state WAS wrong — but it was a ferromagnet at E/site = +0.75, not the
+−0.3333 recorded here, and **fixing it did not fix the narrowing**. The narrowing was
+a bug in `magcalc/sun/kpm.py`:
+
+- the Chebyshev recursion ran on `D̂` where the structure factor needs `conj(D̂)`.
+  The two are identical whenever `D̂` is real — every collinear, inversion-symmetric
+  model, which is everything `tests/test_kpm.py` covered — so it survived until a
+  **non-collinear supercell**: on the clean 81-site 120° cell it put ~5 % of the
+  intensity onto bands that carry none, at LOW energy. A clean spectrum that arrives
+  pre-broadened makes real disorder look like narrowing;
+- found next to it: the moments are assembled from the annihilation block of the
+  Nambu basis while `structure_factor` uses the creation block, and the two carry
+  complex-conjugate weight matrices. The symmetric channels cannot see it;
+  **`cross_section: chiral` came back sign-reversed** on a plain ferromagnet
+  (relative error exactly 2.0, the signature of a flip).
+
+Both are fixed, and `tests/test_kpm.py` now covers the two shapes the old suite
+structurally could not — a non-collinear supercell and an antisymmetric channel.
+Both new tests were confirmed to FAIL on the pre-fix code.
+
+**A ground-state result that limits the feature, not just this port.** At Sunny's own
+disorder strength σ = 1/3 the relaxed 120° state is **not a classical minimum**:
+min eig H₂ reaches −1e-2 and |Im ω| reaches 0.16 meV on a 1.591 meV band. The
+relaxation is not at fault — Metropolis annealing from three temperatures and a
+damped CP^(N−1) quench return the same state to 8 decimals, and relaxing in cells of
+2×, 3×, 4× the disorder period does not lower the energy. Disorder is destabilizing
+the 120° order itself. It is stable for σ ≲ 0.1, which is what the port ships
+(broadening +12.9 % at L = 12, +13.5 % at Sunny's L = 30, seed spread 0.4–1.2 %).
+
+**The general point: KPM is the one path here with NO ground-state guard**, because
+it never diagonalizes — no Cholesky, so no positive-definiteness failure, so nothing
+for `on_imaginary` to catch. It returns a smooth, plausible S(q,ω) about a saddle.
+`disorder_kpm.py` checks H₂ ⪰ 0 itself and refuses by default. **Wiring that check
+into the runner's `kpm_sqw` task is the obvious follow-up and was NOT done** — see
+item 10.
 
 ---
 
@@ -455,6 +504,41 @@ classical `sampled_correlations`. It is a *different* builder from the annealer'
 separate defect and was NOT fixed here. It deserves its own item, its own oracle
 (the exact single-spin-in-a-field-plus-anisotropy partition function is closed form)
 and its own commit.
+
+---
+
+## 10. KPM has no ground-state guard, and cannot grow one for free
+
+**Status: OPEN.** Opened by item 3.
+
+Every other spectrum path here refuses to expand about a non-minimum: the Cholesky in
+`_bogoliubov` fails on a non-positive-definite `H2`, and `on_imaginary` turns that
+into a hard error. **KPM never diagonalizes** -- that is the entire point of it -- so
+it has no such failure mode and returns a smooth, plausible S(q,w) about a saddle or
+a maximum. Item 3 met this for real: at Sunny's own disorder strength the relaxed
+120-degree state has min eig H2 = -1e-2 and |Im w| = 0.16 meV on a 1.591 meV band,
+and the KPM map looks fine.
+
+`examples/sunny_tutorials/S09_triangular_AFM/disorder_kpm.py` does the check itself
+(`eigvalsh(H2) >= 0` over the q-path, refuse by default). The runner's `kpm_sqw` task
+does NOT.
+
+**Why it is not a two-line fix.** The runner's guard runs once, on the calculator's
+own reference state, before any task -- and for `kpm_sqw` that is the right place
+only when the model came from the config. The interesting KPM models are exactly the
+ones built or perturbed in a script (`apply_bond_disorder` is Python-only), which the
+runner never sees. So the useful shape is probably a cheap, reusable
+`SUNModel.is_stable_at(q)` / `assert_stable(qs)` that both the runner and a script
+call, rather than a runner-side check alone.
+
+**Cost matters here.** A full `eigvalsh` per q is O(D^3) and would undo KPM's whole
+advantage on the large cells it exists for. Sampling a handful of q is what the
+existing `stability_report`/`max_imaginary_energy` already do, and is probably right
+-- but note the instability is q-SPECIFIC: on the 9x9 S09 cell, scanning only 4
+generic q found it on 1 disorder realization in 3, while a 40-point path found it on
+2 of 3. A guard that samples too thinly is the "check a wrong answer passes" shape
+again. The honest cheap version may be a Lanczos/power estimate of the smallest
+eigenvalue of H2 rather than a full solve.
 
 ---
 

@@ -8,6 +8,9 @@ golden number:
     including the q -> -q asymmetry that is the tutorial's whole point.
   * S09 -- the 120-degree triangular AFM has the EXACT analytic maximum
       w_max = 3 J S sqrt(9/8) = 1.5910 meV  (J=1, S=1/2), gapless at K.
+    Its real-space supercell twin (`config_supercell.yaml`) and the
+    disorder + KPM half of that tutorial live in
+    tests/test_s09_disorder_kpm.py.
 
 The other three ported configs are pinned in their own suites and are only
 schema-checked here:
@@ -34,6 +37,7 @@ CONFIGS = {
     "S07": "S07_dipole_dipole/config.yaml",
     "S08": "S08_momentum_conventions/config.yaml",
     "S09": "S09_triangular_AFM/config.yaml",
+    "S09b": "S09_triangular_AFM/config_supercell.yaml",
 }
 
 

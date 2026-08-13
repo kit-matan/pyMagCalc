@@ -3,11 +3,10 @@
 Ports of the official [Sunny.jl](https://github.com/SunnySuite/Sunny.jl) tutorial
 series (`../../../Sunny.jl-main/examples/01..09`) to pyMagCalc config files.
 
-**Status, audited 2026-08-04; row 06 updated 2026-08-13.** Of the nine tutorials,
-**eight are ported** to Sunny or to an exact analytic result, one of those only
-transitively justified (07), one is ported in part (09), and **one is blocked** on a
-gap that is deliberately open (`GAP_STATUS.md` Gap 4 #16b). Spelled out per row
-below rather than summarised optimistically.
+**Status, audited 2026-08-04; rows 06 and 09 updated 2026-08-13.** All nine
+tutorials are now ported to Sunny or to an exact analytic result, **one of them only
+transitively justified (07)**. Nothing is blocked. Spelled out per row below rather
+than summarised optimistically.
 
 | # | Sunny tutorial | What it computes | pyMagCalc | Evidence |
 |---|---|---|---|---|
@@ -19,7 +18,7 @@ below rather than summarised optimistically.
 | 06 | CP² skyrmions | non-equilibrium SU(3) quench | ✅ **ported, pinned to Sunny** | Hamiltonian to **5.4e-13** on an arbitrary coherent-state configuration; quench runs at Sunny's own L = 40 (214 s, was ~55 h) and leaves an exactly quantized, non-zero SU(3) charge. `quench.py`, `test_sun_quench.py` |
 | 07 | Pyrochlore dipole-dipole | LSWT + long-range dipole | ⚠️ **ported, not pinned** | the Ewald *engine* matches Sunny to 1.3e-8 (`test_ewald.py`), but **this config's own bands have never been compared** — see below |
 | 08 | Momentum conventions | LSWT 1D DM+Ising chain | ✅ **ported, exact analytic pin** | ω(q) = 2s[J ± D sin 2πq₃] including the q → −q sign flip |
-| 09 | Disordered triangular AFM | LSWT + KPM with bond disorder | ⚠️ **clean part only** | 120° order pinned analytically; the **disorder is the point of the tutorial** and needs Gap 4 **#16b**, open |
+| 09 | Disordered triangular AFM | LSWT + KPM with bond disorder | ✅ **ported, exact analytic pins** | 120° order as a real-space √3×√3 cell at E/site = **−0.375 exactly**, bands = the analytic ω(q) to 1e-13, big-cell S(q,ω) = minimal-cell to 1e-9; disorder broadens +12.9 % (L = 12) / +13.5 % (Sunny's L = 30). `disorder_kpm.py`, `test_s09_disorder_kpm.py` |
 
 ## What "pinned" means here, and where it was not true
 
@@ -52,19 +51,29 @@ were previously described as validated when nothing asserted it:
   equilibrium averages agree though trajectories do not. `classical_dynamics.langevin_step`
   is available if you want Sunny's route.
 
-## Why 06 and the interesting half of 09 are not here
+## What unblocked 06 and 09 (2026-08-13)
 
-- **06** needs a DAMPED quench (`Langevin(damping, kT=0)`), i.e. dissipative CP^(N−1)
-  relaxation. Gap 4 #26 delivered the energy-CONSERVING flow plus Metropolis, and
-  neither substitutes: Metropolis finds equilibrium, while this tutorial is about the
-  metastable texture a quench leaves behind. It also needs real-space texture output.
-- **09** needs *bond disorder in LSWT*: a large inhomogeneous supercell driven through
-  the KPM engine (Gap 4 #16b). Vacancies and open boundaries landed for the classical
-  samplers (#16a), but the LSWT half did not, and the tutorial is specifically about
-  disorder-broadened spin waves.
+Both were listed as blocked here for months, and **neither was blocked on the thing
+this file said it was**. Porting either by quietly substituting a clean or
+equilibrium calculation would have produced a folder that looks like a port and is
+not one, so they stayed listed as blocked instead — which was right, but the recorded
+reasons were wrong:
 
-Porting any of these by quietly substituting a clean calculation would produce a
-folder that looks like a port and is not one. They are listed as blocked instead.
+- **06** was said to need a damped quench. That machinery already existed; the blocker
+  was PERFORMANCE. A skyrmion is several lattice constants across, so 64–256 sites
+  relax to the uniform state — a size failure that reads as a physics failure. At
+  Sunny's L = 40 the CP^(N−1) derivative cost ~16 s/step (≈55 h); vectorized, it is
+  8.4 ms/step and the whole run takes 214 s.
+- **09** was said to need bond disorder in LSWT (Gap 4 #16b). That had already landed
+  too. The real blockers were the reference state — the 120° order had to be an
+  explicit real-space supercell, since the SU(N)/KPM path does not consume the
+  rotating-frame `single_k` form — and, underneath it, **a bug in `sun/kpm.py`** that
+  made a clean non-collinear spectrum arrive pre-broadened, so adding disorder
+  appeared to NARROW it. See that folder's README.
+
+Both are in the table above now. The lesson worth carrying: a blocked row's stated
+reason ages badly, because the capability it names usually lands without anyone
+revisiting the row.
 
 ## Running them
 
@@ -73,4 +82,5 @@ magcalc run examples/sunny_tutorials/S01_CoRh2O4/config.yaml
 ```
 
 Tests: `tests/test_sunny_tutorials.py` (S01, S02, S05, S08, S09 + schema for all),
+`tests/test_s09_disorder_kpm.py` (S09's supercell + disorder half),
 `tests/test_sun.py` (S03), `tests/test_ewald.py` (the engine S07 relies on).

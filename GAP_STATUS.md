@@ -101,7 +101,7 @@ guard refuses). Never silently wrong.
 | 7 | **Ewald dipole-dipole** | ✅ | `dipole_dipole: {method: ewald}`; Sunny to 1.3e-8; truncated→Ewald convergence (needs no Julia). `tests/test_ewald.py` |
 | 8 | **LSWT 1/S corrections** | ✅ | `tasks.corrections`; Sunny + textbook square AFM: dE=−0.157947, dS→0.1966. `magcalc/corrections.py`, `tests/test_corrections.py` |
 | 9 | **SCGA (paramagnetic diffuse scattering)** | ✅ | `tasks: {scga: true}` + `scga: {temperature, mesh_density, cross_section}`. Self-consistent Gaussian approximation: classical spins, hard length constraint softened to a global Lagrange multiplier λ, static S(q) = kT·pref†(λ+J(q))⁻¹pref with λ from the spin sum rule. SAME `fourier_exchange_matrix` J(q) as the LT guard; single-λ (one symmetry class — Bravais + kagome/pyrochlore-type, refuses inequivalent sublattices). Above T_N, so the LSWT ground-state guard is auto-skipped for a pure-SCGA run. Validated: exact classical-chain closed form (λ=√(4J²+(3kT/S²)²), S(q)=3kT/(λ+2Jcosq)) to 1e-9; **Sunny 0.8.1 SCGA** on square-lattice AND kagome AFM — λ and S(q) to 6 digits (matches `ssf_perp`, apply_g, (2/3)Tr at q→0); sum rule + high-T flat limit. `magcalc/scga.py`, `tests/test_scga.py` |
-| 10 | **KPM (Chebyshev spectral S(q,ω))** | ✅ | `tasks: {kpm_sqw: true}` + `kpm: {e_min,e_max,e_step,fwhm,moments/tol}` (SU(N)/entangled modes). Para-unitary Chebyshev expansion of the one-magnon spectral function of the dynamical matrix D̂=gH₂ (=`SUNModel.hamiltonian`), following Lane et al. (arXiv:2312.08349) — Sunny's `SpinWaveTheoryKPM` method. Iterated matvecs only, no eigensolve: O(D·M) per q for large disordered/near-incommensurate cells. Validated against the engine's OWN exact diagonalization (`structure_factor`): as M grows KPM S(q,ω) → the exact Gaussian-broadened spectrum (rel L1 < 1e-3, integrated intensity to 1e-3); spectral bound γ verified to enclose the spectrum. `magcalc/sun/kpm.py`, `tests/test_kpm.py` |
+| 10 | **KPM (Chebyshev spectral S(q,ω))** | ✅ | `tasks: {kpm_sqw: true}` + `kpm: {e_min,e_max,e_step,fwhm,moments/tol}` (SU(N)/entangled modes). Para-unitary Chebyshev expansion of the one-magnon spectral function of the dynamical matrix D̂=gH₂ (=`SUNModel.hamiltonian`), following Lane et al. (arXiv:2312.08349) — Sunny's `SpinWaveTheoryKPM` method. Iterated matvecs only, no eigensolve: O(D·M) per q for large disordered/near-incommensurate cells. Validated against the engine's OWN exact diagonalization (`structure_factor`): as M grows KPM S(q,ω) → the exact Gaussian-broadened spectrum (rel L1 < 1e-3, integrated intensity to 1e-3); spectral bound γ verified to enclose the spectrum. **TWO BUGS FIXED 2026-08-13**, both invisible to the collinear square-lattice AFM that was the whole suite: (a) the Chebyshev recursion ran on D̂ where the structure factor needs conj(D̂) — identical whenever D̂ is real, but on a clean NON-COLLINEAR 81-site supercell it put ~5 % of the intensity on bands carrying none, at low energy, so a clean spectrum arrived pre-broadened; (b) the moments come from the annihilation block of the Nambu basis while `structure_factor` uses the creation block, whose weight matrices are complex conjugates — no effect on the symmetric channels, but `cross_section: chiral` came back SIGN-REVERSED on a plain ferromagnet. Now pinned on a non-collinear supercell and in the chiral channel. **KPM never diagonalizes, so it has no ground-state guard** and will return a plausible spectrum about a non-minimum; check H₂(q) ⪰ 0 yourself. `magcalc/sun/kpm.py`, `tests/test_kpm.py`, `tests/test_s09_disorder_kpm.py` |
 | 11 | **Entangled units** | ✅ | `calculation.mode: entangled` + `units:` -- a cluster (dimer/trimer/...) becomes ONE effective SU(N) site (N = product Hilbert dim). Intra-unit coupling diagonalized exactly (reference = the unit ground state, e.g. a dimer SINGLET -- zero dipole, invisible to dipole/single-site SU(N) LSWT); excitations are the triplons. Generalized the SU(N) engine (per-site operators, generalized bond couplings, q-dependent staggered moment). Validated: isolated dimer flat triplon at omega=J; coupled-dimer chain omega=sqrt(J^2-JJ'cos) (bond-operator) to 7e-16; dimer structure factor (1-cos(q.d)) with the I(q=0)=0 selection rule. Optional Zeeman field (gamma*mu_B*H.sum_k S_k per unit) splits the multiplet. REAL MATERIALS: `examples/entangled/Cu5SbO6/` reproduces the J1-J2-J4 dimer expansion of Piyakulworawat et al., PRR 8, 013247 (2026) -- triplon band ~11-21 meV, dispersion = the bond-operator resummation of the paper's Eq. (A11), structure-factor selection rule Eq. (A14). `examples/entangled/Rb2Cu3SnF12/` -- the pinwheel-VBS single-dimer building block (Matan et al., Nat. Phys. 6, 865 (2010)): DM splits the Stot^z=0 from the +/-1 triplet, a c-axis field Zeeman-splits +/-1 (Fig. 4); the full deformed-kagome dispersion needs the 6-dimer geometry + high-order series expansion (strong coupling), beyond harmonic bond-operator. `magcalc/sun/entangled.py`, `examples/entangled/dimer_chain/`, `tests/test_entangled_units.py` |
 | 12 | **mCIF / magnetic space groups** | ✅ | `from_mcif:` + CLI `magcalc mcif`; Sunny on TbSb: identical sites + directions. `magcalc/mcif.py`, `tests/test_mcif.py` |
 
@@ -289,10 +289,14 @@ disordered system, which is a different question and should wait until one is as
 | — | Classical S(q,ω) absolute normalization | 3 | opened by #17: the classical path's overall scale has never been reconciled with the LSWT/Sunny one. Shape is pinned, scale is not |
 | — | **Config-surface coverage** | — | AUDITED 2026-08-04: **11 of 69 documented config keys never appear in `tests/`** — see the section below. The recurring shape is that the FUNCTION is tested while the CONFIG PATH to it is not, which is precisely how a wiring bug survives |
 
-Everything else on the original Gap 4 list is closed. Note two of the closures
-(#16b, #26) delivered *capability* that the corresponding Sunny tutorials still do
-not fully exercise — see the tutorial table below, which tracks that separately and
-deliberately does not inherit the engine's status.
+Everything else on the original Gap 4 list is closed. Two of the closures (#16b,
+#26) delivered *capability* that the corresponding Sunny tutorials did not exercise
+for months; **both are now exercised** (S06 2026-08-13, S09 2026-08-13), and each
+port found something the capability's own tests had missed — a 3-orders-of-magnitude
+performance wall in the CP^(N−1) derivative for #26, and two bugs in `sun/kpm.py` for
+#16b. The tutorial table below still tracks port status separately and deliberately
+does not inherit the engine's status: that separation is what made both gaps
+visible.
 
 Convention difference, not a gap: Sunny's `ssf_perp` applies the g-tensor by
 default (4× at g = 2). pyMagCalc's S(Q,ω) is spin-only = `apply_g=false`.
@@ -337,11 +341,18 @@ validated" below):
   `sun_topological_charge` (the CP^(N-1) Berry phase Sunny actually plots) is pinned
   to it by the exact N = 2 identity.
 
-- **09** needs the 120-degree order as an explicit REAL-SPACE supercell: the clean
-  config uses the rotating-frame `single_k` method, which the SU(N)/KPM path does not
-  consume. Substituting a ferromagnetic placeholder gives an unphysical spectrum, and
-  measurably so -- disorder NARROWED the KPM width instead of broadening it, which is
-  what expanding about a non-minimum buys.
+- **09 is DONE (2026-08-13)** — `config_supercell.yaml` (the 120-degree order as an
+  explicit sqrt3 x sqrt3 SU(N) cell, E/site = -0.375 exactly) plus `disorder_kpm.py`.
+  **The diagnosis recorded here was wrong, and that is the part worth keeping.** It
+  read "disorder NARROWED the KPM width instead of broadening it, which is what
+  expanding about a non-minimum buys", blaming the ferromagnetic placeholder. The
+  placeholder *was* wrong (E/site = +0.75 where the ground state is -0.375) — and
+  replacing it with the exact 120-degree state did NOT fix the narrowing. The
+  narrowing was a **bug in `sun/kpm.py`** (see the KPM row of the table above): the
+  clean spectrum arrived pre-broadened, so real disorder looked like narrowing. A
+  wrong reference state is the house's most common explanation for a wrong spectrum
+  and it was the wrong one here; the second suspect only surfaced because the fixed
+  reference state left the symptom in place.
 
 Neither was ported by substituting a clean or equilibrium calculation for the
 disordered or quenched one it is actually about. That would produce a folder that

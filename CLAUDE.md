@@ -673,7 +673,17 @@ kpm: {e_min: 0, e_max: 10, e_step: 0.05, fwhm: 0.1, tol: 0.02}    # or moments: 
 * **KPM** (`magcalc/sun/kpm.py`) -- para-unitary Chebyshev expansion of the LSWT
   spectral function (Lane et al. / Sunny's `SpinWaveTheoryKPM`); O(D*M) matvecs, no
   eigensolve, for large SU(N)/entangled cells. Validated: converges to the engine's
-  own exact `structure_factor` as the moment count grows.
+  own exact `structure_factor` as the moment count grows, on a NON-COLLINEAR
+  supercell and in the antisymmetric (`chiral`) channel as well as the symmetric
+  ones -- two bugs lived in exactly the gap between those (2026-08-13, see
+  `tests/test_kpm.py`), and both were invisible to a collinear test.
+  **KPM NEVER DIAGONALIZES, so it is the one path here that cannot notice it is
+  expanding about a non-minimum**: no Cholesky, hence no positive-definiteness
+  failure, hence no ground-state guard. It returns a smooth, plausible S(q,w) about
+  a saddle or a maximum. Check the reference state yourself (H2(q) >= 0, or
+  `max_imaginary`) before trusting a KPM spectrum -- see
+  `examples/sunny_tutorials/S09_triangular_AFM/disorder_kpm.py`, which refuses on
+  that check by default.
 
 ## 6. Intensity / experiment layer
 
