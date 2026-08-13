@@ -303,14 +303,20 @@ class SUNModel:
                 f"supercell matrix {M.tolist()} has |det| = {ncell} but "
                 f"{len(cells)} cells were enumerated.")
 
+        # Slot lookup by cell index. This used to be a linear scan over `cells`,
+        # which made replication O(ncell^2 * bonds): 36 s for the 1600-cell
+        # supercell Sunny tutorial 06 needs, on a model whose whole quench then
+        # takes 4 minutes. The dict is the same lookup, in O(1).
+        slot_of = {tuple(int(x) for x in c): k for k, c in enumerate(cells)}
+
         def fold(n):
             """Fold a chemical cell index back into the supercell; return its slot."""
             base = np.floor(Minv @ np.asarray(n, float) + 1e-9)
             n_in = np.asarray(n, int) - (M @ base).astype(int)
-            for k, c in enumerate(cells):
-                if np.array_equal(c, n_in):
-                    return k
-            raise ValueError(f"cell {n} did not fold into the supercell")
+            k = slot_of.get(tuple(int(x) for x in n_in))
+            if k is None:
+                raise ValueError(f"cell {n} did not fold into the supercell")
+            return k
 
         inv_lat = np.linalg.inv(lat_chem)
         new_bonds = []

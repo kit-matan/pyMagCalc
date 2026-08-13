@@ -30,6 +30,7 @@ CONFIGS = {
     "S01": "S01_CoRh2O4/config.yaml",
     "S02": "S02_CoRh2O4_finiteT/config.yaml",
     "S05": "S05_Ising_MC/config.yaml",
+    "S06": "S06_CP2_skyrmions/config.yaml",
     "S07": "S07_dipole_dipole/config.yaml",
     "S08": "S08_momentum_conventions/config.yaml",
     "S09": "S09_triangular_AFM/config.yaml",
@@ -260,3 +261,146 @@ def test_S02_static_correlations_peak_at_the_antiferromagnetic_wavevector():
         contrast.append(sq[2] / sq[1])
     assert contrast[1] > contrast[0], "correlations must sharpen on cooling"
 
+
+
+# ---------------------------------------------------------------------------
+# S06 -- CP^2 skyrmions. The tutorial's product is a non-equilibrium TEXTURE, so
+# `config.yaml` carries the Hamiltonian and `quench.py` runs the protocol. What is
+# pinned here is therefore the Hamiltonian (against Sunny) and the topology (an
+# exact quantization), not a band structure.
+#
+# The port was blocked twice on the wrong question. First on capability (the
+# dissipative CP^(N-1) flow), then on "why no skyrmions at L = 8" treated as
+# physics -- when the real answer was that the required size, Sunny's own L = 40,
+# cost ~16 s/step and could not be reached at all. Both are now closed.
+# ---------------------------------------------------------------------------
+S06_SUNNY_ENERGY = 197.266199984961   # L = 4, the configuration built by _s06_zof
+
+
+def _s06_model(L):
+    from magcalc.sun.lswt import SUNModel
+    cfg = _load("S06")
+    m = GenericSpinModel(cfg)
+    th, ph = m.generate_magnetic_structure()
+    m.set_magnetic_structure(th, ph)
+    pv = []
+    for k in cfg.get("parameter_order", []):
+        v = cfg["parameters"][k]
+        pv.extend(v) if isinstance(v, (list, tuple)) else pv.append(v)
+    return SUNModel.from_generic_model(
+        m, params=pv, supercell=[[L, 0, 0], [0, L, 0], [0, 0, 1]])
+
+
+def _s06_zof(u, v, L):
+    """A configuration defined in CLOSED FORM, so Julia and Python can build the
+    same one without sharing an RNG."""
+    n = u * L + v
+    z = np.array([np.sin(1.0 + n) + 0.3j * np.cos(2.0 + n),
+                  np.cos(0.7 * n + 1.0) - 0.5j * np.sin(1.3 * n),
+                  np.sin(2.1 * n + 0.4) + 0.2j * np.cos(0.9 * n)])
+    return z / np.linalg.norm(z)
+
+
+def test_S06_energy_matches_sunny_on_an_arbitrary_configuration():
+    """The whole Hamiltonian against Sunny 0.8.1, in one number.
+
+    Evaluating the energy of an ARBITRARY coherent-state configuration (not a
+    ground state, not an eigenstate) exercises every term at once and cannot be
+    satisfied by accident: both exchange shells with their Delta anisotropy, the
+    easy-plane single-ion term, and the Zeeman -- including the sign convention,
+    where Sunny's g = -1 becomes H_dir = [0, 0, -1] here. A ground-state energy
+    would be a far weaker check, since the state would relax to fit whatever
+    Hamiltonian it was given.
+
+    Sunny side (Sunny.jl-main, 0.8.1):
+        sys = System(cryst, [1 => Moment(s=1, g=-1)], :SUN; dims=(4, 4, 1))
+        set_exchange!(sys, J1*[1 0 0;0 1 0;0 0 2.6], Bond(1, 1, [1, 0, 0]))
+        set_exchange!(sys, J2*[1 0 0;0 1 0;0 0 2.6], Bond(1, 1, [1, 2, 0]))
+        set_field!(sys, [0, 0, 15.5]); set_onsite_coupling!(sys, S -> 19*S[3]^2, 1)
+        set_coherent!(sys, zof(i-1, j-1), (i, j, 1, 1)) for all cells
+        energy(sys)   ->  197.266199984961
+    Measured agreement: 5.4e-13.
+    """
+    from magcalc.sun import dynamics as sd
+    L = 4
+    mdl = _s06_model(L)
+    Z = [_s06_zof(u, v, L) for u in range(L) for v in range(L)]
+    assert sd.energy(mdl, Z) == pytest.approx(S06_SUNNY_ENERGY, abs=1e-9)
+
+
+def test_S06_basis_convention_matches_sunny():
+    """Sunny's first :SUN basis vector is |m = +1>, and so is pyMagCalc's.
+
+    Checked because the energy comparison above would be meaningless if the two
+    codes ordered the N levels differently -- the closed-form configuration is
+    written in components, so a reversed basis would compare two different states.
+    Sunny: set_coherent!(sys, [1,0,0], site) -> dipole (0, 0, +1).
+    """
+    from magcalc.sun import dynamics as sd
+    mdl = _s06_model(1)
+    d = sd.dipole_field(mdl, [np.array([1, 0, 0], dtype=complex)])
+    assert d[0] == pytest.approx([0.0, 0.0, 1.0], abs=1e-12)
+
+
+def test_S06_second_neighbour_shell_is_the_sqrt3_bond():
+    """J2 sits on Sunny's Bond(1,1,[1,2,0]): |a1 + 2 a2| = sqrt(3), coordination 6.
+
+    This was the leading suspect for the missing skyrmions -- a wrong J2 shell
+    suppresses exactly the frustration that sets the skyrmion length scale, and
+    would look precisely like the observed symptom. It is not the culprit: the
+    shells match Sunny's `print_symmetry_table` (1.0 x6, 1.7321 x6, 2.0 x6), and
+    the exchange matrices carry Delta = 2.6 on zz only.
+    """
+    mdl = _s06_model(2)
+    shells = {}
+    for (i, j, dr, J) in mdl.bonds:
+        key = round(float(np.linalg.norm(dr)), 6)
+        shells.setdefault(key, []).append(J)
+    assert sorted(shells) == [1.0, 1.732051], sorted(shells)
+    for d, J1_expect in ((1.0, -1.0), (1.732051, 2.0 / (1 + np.sqrt(5)))):
+        Js = shells[d]
+        assert len(Js) == 6 * mdl.L, f"d = {d}: {len(Js)} bonds"
+        for J in Js:
+            assert np.allclose(J, np.diag([J1_expect, J1_expect, 2.6 * J1_expect]),
+                               atol=1e-12)
+
+
+def test_S06_field_and_anisotropy_enter_with_the_right_signs():
+    """The on-site term must be 19 (S^z)^2 - 15.5 S^z, i.e. diag(3.5, 0, 34.5).
+
+    Both signs matter and both are easy to get backwards: an easy-PLANE D (opposite
+    to FeI2's), and a field that must FAVOUR m = +1 to match Sunny's g = -1. The
+    field half is the one that was silently dropped entirely until 2026-08-04
+    (tests/test_sun_zeeman.py) -- with no field the texture decays to |m=0>.
+    """
+    mdl = _s06_model(1)
+    A = sum(Amat for (_, Amat) in mdl.onsite)
+    assert np.allclose(A, np.diag([3.5, 0.0, 34.5]), atol=1e-9), A
+
+
+@pytest.mark.slow
+def test_S06_quench_produces_a_quantized_nonzero_skyrmion_number():
+    """The tutorial's actual claim: a quench leaves a TOPOLOGICAL texture behind.
+
+    Two assertions, neither a golden number. (1) The SU(3) charge is an INTEGER --
+    quantization is exact for a discrete closed texture, so a non-integer would mean
+    the texture is not smooth on the torus, i.e. the cell is too small to hold it.
+    (2) It is NON-ZERO, which is the difference between a skyrmion liquid and the
+    uniformly polarized state the same model relaxes to when the cell is too small.
+    Run at L = 12 to stay inside the fast-ish suite; the shipped figure uses Sunny's
+    L = 40.
+    """
+    from magcalc.sun import dynamics as sd
+    L = 12
+    mdl = _s06_model(L)
+    rng = np.random.default_rng(0)
+    Z0 = [(lambda v: v / np.linalg.norm(v))(rng.standard_normal(3)
+                                            + 1j * rng.standard_normal(3))
+          for _ in range(mdl.L)]
+    a1 = np.array([1.0, 0.0, 0.0])
+    a2 = np.array([-0.5, np.sqrt(3) / 2, 0.0])
+    tris = sd.triangulate_lattice(mdl.pos, a1, a2, L, L)
+    Zf, _ = sd.quench(mdl, Z0, dt=0.01, n_steps=1600, damping=0.05)
+    q = sd.sun_topological_charge(Zf, tris)
+    assert abs(q - round(q)) < 1e-6, f"charge not quantized: {q}"
+    assert round(q) != 0, "quench relaxed to a topologically trivial state"

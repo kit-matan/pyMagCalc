@@ -3,11 +3,11 @@
 Ports of the official [Sunny.jl](https://github.com/SunnySuite/Sunny.jl) tutorial
 series (`../../../Sunny.jl-main/examples/01..09`) to pyMagCalc config files.
 
-**Status, audited 2026-08-04.** Of the nine tutorials, **seven are ported**
-to Sunny or to an exact analytic result, one is ported but only transitively
-justified (07), one is ported in part (09), and **two are blocked** on gaps that are
-deliberately open (`GAP_STATUS.md` Gap 4 #26 and #16b). Spelled out per row below
-rather than summarised optimistically.
+**Status, audited 2026-08-04; row 06 updated 2026-08-13.** Of the nine tutorials,
+**eight are ported** to Sunny or to an exact analytic result, one of those only
+transitively justified (07), one is ported in part (09), and **one is blocked** on a
+gap that is deliberately open (`GAP_STATUS.md` Gap 4 #16b). Spelled out per row
+below rather than summarised optimistically.
 
 | # | Sunny tutorial | What it computes | pyMagCalc | Evidence |
 |---|---|---|---|---|
@@ -16,7 +16,7 @@ rather than summarised optimistically.
 | 03 | FeI₂ | SU(3) multi-flavour LSWT | ✅ **ported, pinned to Sunny** | E/site, 8 bands **and** intensities < 1e-4, `test_sun.py` |
 | 04 | FeI₂ finite *T* | SU(N) classical dynamics at *T* | ✅ **ported** | unblocked by Gap 4 #26; machinery pinned (N=2 → Landau–Lifshitz to 4.8e-10, low-T peak within 1.1% of the LSWT band). This config's own spectrum not compared with Sunny |
 | 05 | 2D Ising | thermal Monte Carlo | ✅ **ported, pinned to Onsager** | `propose: flip` + polarized start ⇒ exactly Ising; m(T) matches Onsager to **0.05%**, E(Tc) = −√2 J to 3% |
-| 06 | CP² skyrmions | non-equilibrium SU(3) quench | ⛔ **blocked** | #26 gave the CONSERVATIVE flow; a quench needs *dissipative* SU(N) damping + real-space texture output |
+| 06 | CP² skyrmions | non-equilibrium SU(3) quench | ✅ **ported, pinned to Sunny** | Hamiltonian to **5.4e-13** on an arbitrary coherent-state configuration; quench runs at Sunny's own L = 40 (214 s, was ~55 h) and leaves an exactly quantized, non-zero SU(3) charge. `quench.py`, `test_sun_quench.py` |
 | 07 | Pyrochlore dipole-dipole | LSWT + long-range dipole | ⚠️ **ported, not pinned** | the Ewald *engine* matches Sunny to 1.3e-8 (`test_ewald.py`), but **this config's own bands have never been compared** — see below |
 | 08 | Momentum conventions | LSWT 1D DM+Ising chain | ✅ **ported, exact analytic pin** | ω(q) = 2s[J ± D sin 2πq₃] including the q → −q sign flip |
 | 09 | Disordered triangular AFM | LSWT + KPM with bond disorder | ⚠️ **clean part only** | 120° order pinned analytically; the **disorder is the point of the tutorial** and needs Gap 4 **#16b**, open |

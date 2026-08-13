@@ -2,13 +2,20 @@
 
 Last updated **2026-08-13**, `master` at `00083a6` (pushed).
 
-**Full gate GREEN on this tree: 637 passed, 3 skipped** (`pytest -m ""` from the
-workspace root, 40:18). Trail: 621 (2026-08-12 baseline) → 635 after the
+**Full gate GREEN on this tree: 672 passed, 3 skipped** (`pytest -m ""` from the
+workspace root, 39:06). Trail: 621 (2026-08-12 baseline) → 635 after the
 provenance + shadow-guard work (+5 `test_install_provenance`, +8
 `test_shadow_guard`, +1 newly-discovered CCSF config) → 637 with the two
-`test_ccsf_fit_roundtrip` tests. Both `chore/open-work-housekeeping` and
+`test_ccsf_fit_roundtrip` tests → 650 with item 1's `test_ewald_spiral` → **672**
+with item 2's (**+22**: 14 `test_sun_quench`, 5 S06 in `test_sunny_tutorials`,
+3 `test_annealing` for item 9). Both `chore/open-work-housekeeping` and
 `feat/open-work-followups` were fast-forward merged into `master` after a green
 gate; both are level with it and can be pruned.
+
+**UNCOMMITTED.** Items 1, 2 and 9 are all in the working tree only — `master` is
+still at `f819694`. Item 1's Ewald work (`core.py`, `tests/test_ewald_spiral.py`)
+and item 2's (`sun/dynamics.py`, `sun/lswt.py`, `annealing.py`, the S06 folder,
+`tests/test_sun_quench.py`) are independent changes and want separate commits.
 
 This file is the "what to do next" companion to `GAP_STATUS.md`, which is the
 authoritative record of *what is done and how it was validated*. Read
@@ -32,14 +39,15 @@ are the easiest to mistake for done.
 
 | # | Item | Status |
 |---|---|---|
-| 1 | Gap #24b — Ewald + rotating-frame single-k | **OPEN** — machinery written + refused-by-default; blocked on building the ORACLE |
-| 2 | Sunny S06 — skyrmion lattice | **OPEN** — blocked on the reference state |
+| 1 | Gap #24b — Ewald + rotating-frame single-k | **DONE** 2026-08-13 — oracle built, bug found, refusal lifted |
+| 2 | Sunny S06 — skyrmion lattice | **DONE** 2026-08-13 — ported at L = 40; the size WAS the blocker |
 | 3 | Sunny S09 — disorder + KPM | **OPEN** — blocked on structure geometry |
 | 4 | Classical S(q,ω) absolute normalization | **OPEN** — shape pinned, scale not |
 | 5 | Coverage follow-ups | **PARTIAL** — audit's 4 items done; 2 follow-ups + discovery shape open |
 | 6 | `minimization.tolerance` silently ineffective | **DONE** 2026-08-12 |
 | 7 | FeI2 dipole ground state | **PARTIAL** — physics answered; `examples/materials/FeI2` fix open |
 | 8 | Studio open→run limits | **OPEN** — 2 items |
+| 9 | `anneal`'s polish could return a MAXIMUM | **DONE** 2026-08-13 — fixed + swept; a RELATED defect is open |
 | A | `pytest.ini` collection scope | **DONE** 2026-08-12 |
 | B | Engine provenance — `magcalc where` | **DONE** 2026-08-12 |
 | C | Interpreter-startup shadow guard | **DONE** 2026-08-12 — `magcalc guard`; nothing outstanding |
@@ -70,141 +78,122 @@ are the easiest to mistake for done.
 
 ## 1. Gap #24b — Ewald + rotating-frame single-k
 
-**Status: OPEN.** Still the highest value-per-effort item, but the "~1 hour"
-estimate was wrong and the written-up formula was wrong. Both corrected 2026-08-12,
-BEFORE any code was written — read the two findings below first.
+**Status: DONE 2026-08-13.** `dipole_dipole: {method: ewald}` now works with a
+`single_k` structure; the refusal in `core.py` is gone. Validated in
+`tests/test_ewald_spiral.py` (12 tests, all fast). Nothing outstanding — the
+notes below are kept because the *way* it failed is the reusable part.
 
-**FINDING 1 — the projector algebra in `GAP4_PLAN.md` was INVERTED.** It said
-"FIVE terms … dropping to three when the satellites coincide". The reference says
-the opposite (`SpinWaveTheorySpiral.jl:129–138`): the five-term form, with the two
-cross terms, is the **`k_case 2`** special case (2k integer, satellites coincide),
-and the **generic incommensurate `k_case 3`** — the common case — is the plain
-three-term `R2·J(q)·R2 + R1*·J(q+k)·R1* + R1·J(q−k)·R1`. Implementing from the old
-text would have put the cross terms into the common branch: a wrong Hamiltonian
-that still diagonalizes and still yields a plausible spectrum. `GAP4_PLAN.md` is
-now fixed. Note this is the **fourth** wrong characterization of this item, and the
-first one to survive *inside the document that exists to prevent them*.
+**Building the oracle found a real bug in the machinery**, which is what the
+refusal existed for. The three-term combination written in `3a986ac` was a
+faithful transcription of Sunny `SpinWaveTheorySpiral.jl:129-138` — and wrong,
+because **the two codes phase `A(q)` differently and the projector algebra is not
+invariant under that regauging**: `ewald.dipole_ewald_at_q` multiplies by
+`exp(i q·dr)` over the FULL bond vector (matching pyMagCalc's symbolic `H`),
+Sunny phases over lattice translations only. Decomposing `U(-θ_i) A U(θ_j)` into
+`P_a A P_b` with `P ∈ {R2, R1, R1*}` of charge `0, +1, -1` and summing over cells,
+the coefficient of `P_a A P_b` is `exp(i (q_b - q_a) k·r_i) · A(q + q_b k)`, so:
 
-**FINDING 2 — the item is bigger than "add a term", because pyMagCalc's single-k
-scheme is structurally different from Sunny's.** Sunny builds ONE rotating-frame
-`J` per branch from the lab-frame `J(q)`, `J(q±k)` via the projectors. pyMagCalc
-instead evaluates its *symbolic* `H` at three shifted momenta `q−k, q, q+k`
-(`numerical.process_calc_Sqw_single_k`) and applies `spiral_channel_tensors` to the
-**correlation tensors**, not to `H`. That shortcut is only valid because the engine
-*requires* the Hamiltonian to be rotationally invariant about the spiral axis —
-`generic_model.py:1630`, `enforce_rotational_symmetry`, mirroring Sunny's
-`check_rotational_symmetry`. Under that assumption the projector combination
-collapses to `J(q)` and evaluating at shifted momenta is exact.
+- **R1 pairs with q+k and R1\* with q−k** — the mirror of Sunny's assignment;
+- the `k_case 2` cross terms carry a **per-ROW** phase `exp(±2i k·r_i)`. It is not
+  symmetric in (i, j); symmetrizing it fails.
 
-**The dipolar tensor does not satisfy that assumption.** `A(q)` is fixed by lattice
-geometry (its `r̂r̂` structure) and is not uniaxial about an arbitrary spiral axis.
-So Ewald cannot ride the existing shortcut: it needs the real projector combination
-applied per channel, `_ewald_nambu_spiral(q_c, k, axis, k_case)` for each of
-`q_c ∈ {q−k, q, q+k}`, built from `J(q_c)`, `J(q_c±k)` and the `q=0` on-site `J0`
-combination — and wired through the dispersion path, the S(Q,ω) worker (across the
-multiprocessing boundary, so it must pickle), and the classical energy the
-ground-state guard minimises. The formula is an hour; the wiring is not.
+**Why the bug was invisible, which is the transferable lesson.** The two
+assignments are *identical* whenever `A(q)` is uniaxial about the spiral axis
+(then `R1 A R1* = 0`) and for any one-site cell (`r_i = 0`). Every model in this
+repo is one or the other. Separating them needs a cell with two sites at an
+intra-cell offset AND the Sunny `S0` spin-direction convention — the
+`local_directions` convention gives zero relative spiral phase in the rotating
+frame and hides it just as well. The first oracle model built reproduced the
+supercell answer to 1e-15 **with the bug in**.
 
-The rest of the writeup in `GAP4_PLAN.md` §"#24b … METHOD FOUND IN SUNNY" is
-sound — read it, do not re-derive.
+**The oracle, in the order it had to be built.**
 
-**PROGRESS 2026-08-12 — the machinery is written; the ORACLE IS NOT, and that is
-the whole remaining item.** `core._ewald_J_lab`, `_spiral_projectors`,
-`_ewald_J_rot` (three/five-term, branching on `k_case`) and a spiral-aware
-`_ewald_nambu` exist, and `numerical.process_calc_Sqw_single_k` now takes a
-per-channel `h_dip`. The non-spiral Ewald path is unaffected — all 9
-`tests/test_ewald.py` pass, including the Sunny-pinned `test_ewald_matches_sunny`.
+1. *No-Ewald control.* At commensurate k the rotating frame and the explicit
+   `magnetic_supercell` are two cell choices for one lattice and one spin
+   configuration, so the sorted band sets agree at the same **Cartesian** q. This
+   holds to 1e-15 — including for a state that is NOT the ground state, since it is
+   an algebraic identity, not a physical one.
+2. *Ewald, in the regime where the identity is entitled to hold*: `k_case 2`
+   always, and `k_case 3` only when `A(q)` is uniaxial about the axis. The test
+   models put k and q along a 4-fold axis to arrange that, with the two sites at
+   z = 0 and 0.3 so inversion is broken and the R1/R1\* order is observable.
+3. *`k_case 2` with a NON-uniaxial `A`* — the only way to test the cross terms at
+   all, since a uniaxial `A` makes them exactly zero, and 2k ∈ RLV is what keeps
+   the supercell identity exact there.
+4. *Sunny 0.8.1 at incommensurate k*, where no supercell exists: 1.3e-8.
 
-**It is still refused by default**, behind `dipole_dipole: {allow_single_k: true}`,
-because it is unvalidated. Do not remove that refusal until the oracle passes.
+**The earlier "the harness is broken" note was itself wrong.** The no-Ewald
+control is exact; the 9e-4 residual seen on a chain at k = 1/3 was physics — the
+±2k umklapp that the `k_case 3` form legitimately drops when `A(q)` is not
+uniaxial about the axis. That approximation is real and not small (~10–20 % of the
+dipolar shift), is the same one Sunny makes, and Sunny's `check_rotational_symmetry`
+cannot see it because the dipolar term lives outside `interactions_union`.
+`core._check_ewald_spiral_validity` now measures the dropped weight directly and
+warns, following `magnetic_structure.enforce_rotational_symmetry`. Two traps in
+that earlier attempt, worth keeping: the 120° state it used was not the ground
+state of the plain AFM chain it was imposed on (k = 1/2 is), and the supercell path
+keeps q in CHEMICAL RLU, so converting q through the supercell's own B-matrix
+shifts it by the supercell dimension.
 
-**Where the oracle broke, so the next attempt does not repeat it.** The plan was
-"commensurate k must equal the explicit `magnetic_supercell` calculation". Two
-traps found:
+**Also worth knowing:** a U(1)-breaking dipolar term generally destabilizes the
+spiral itself — Sunny raises `PosDefException` on most non-uniaxial spiral +
+`enable_dipole_dipole!` models. So the warning above is usually telling you
+something about the physics, not only about the method.
 
-1. **k = 1/2 is the wrong commensurate case.** It is `k_case 2`, and the engine
-   itself warns that a helical description of a *collinear* structure may double
-   count. Use a non-collinear commensurate k — k = 1/3 (120°, `k_case 3`) also has
-   the advantage of exercising the common three-term branch.
-2. **The comparison does not hold even with Ewald switched OFF.** Running k = 1/3
-   single-k (`satellites=True`, 3 modes) against `magnetic_supercell: [3,1,1]`
-   (3 modes) on a plain Heisenberg chain gave `[0, 0.707, 1.041]` vs
-   `[0.382, 1.791, 3.827]` — a 2.8 meV disagreement with **no dipolar term at
-   all**. So the harness, not the dipolar code, is wrong: the band-set
-   correspondence between the rotating-frame and supercell descriptions is not the
-   naive "sorted energies are equal" at the same chemical q, and/or the 120°
-   structure used is not the ground state of that chain (an AFM chain wants
-   k = 1/2, not 1/3).
-
-   **Establish the no-Ewald control FIRST** — pick a model whose spiral genuinely
-   is the ground state (or minimize it), and work out the correct q-correspondence
-   and normalization between the two descriptions. Only when the control agrees
-   does the Ewald comparison mean anything. Doing it the other way round is how a
-   wrong Hamiltonian gets blessed by a broken oracle. Three earlier attempts at
-re-deriving it produced three wrong characterizations in a row (three terms,
-then "structurally invalid", then nine terms); reading
-`../Sunny.jl-main/src/Spiral/SpinWaveTheorySpiral.jl` settled it.
-
-Two facts that make the item small:
-
-- **Ewald is not special-cased.** Sunny's `fourier_bilinear_interaction!` builds
-  `Jq` from the exchange bonds and then adds the dipolar `Aq` into the *same*
-  matrix (mind the g-tensors). Everything downstream operates on `Jq` without
-  knowing part of it came from an infinite lattice sum, so there is no separate
-  "Ewald channel machinery" to build.
-- **The projector algebra is FIVE terms**, with `R2 = axis·axisᵀ` and
-  `R1 = (I − i[axis]× − R2)/2`:
-
-      J = R2·J(q)·R2 + R1*·J(q+k)·R1* + R1·J(q−k)·R1
-                     + R1·J(q+k)·R1* + R1*·J(q−k)·R1
-
-  The two cross terms are exactly what a commutation-based derivation drops and
-  a naive 9-term expansion over-counts. Keep Sunny's `k_case` branch: it drops
-  to three terms when 2k is a reciprocal-lattice vector.
-
-**Injection point (verified 2026-08-04).** `core._ewald_nambu(q_cart)` already
-does for the non-spiral path exactly what `fourier_bilinear_interaction!` does
-for the Ewald half. The change is a `_ewald_nambu_spiral(q_cart, k, axis)`
-building the same Nambu blocks from the rotating-frame combinations above (both
-for `Jq` and for the `q=0` on-site `J0`), handed to the existing three-channel
-worker the way `dip_pairs` already is in `calculate_sqw`. Then delete the
-refusal in `core.py` — it names the exact spot.
-
-**Oracle, two-stage:** for a *commensurate* k the rotating-frame answer must
-equal the explicit `magnetic_supercell` calculation exactly; that path already
-supports Ewald, so it is a self-contained exact check needing no external
-reference. Then cross-check an incommensurate k against Sunny.
-
-**Note:** this blocks no shipped example — nothing in `examples/` combines
-`single_k` with `dipole_dipole: {method: ewald}`. It is capability parity, not a
-broken user path.
+**Still true:** this blocks no shipped example — nothing in `examples/` combines
+`single_k` with `dipole_dipole: {method: ewald}`. It was capability parity.
 
 ---
 
 ## 2. Sunny tutorial S06 — skyrmion lattice
 
-**Status: OPEN — blocked on the reference state, not on engine capability.** Everything it
-needs exists and was validated in isolation (#26's dissipative quench and the
-Berg–Lüscher topological charge).
+**Status: DONE 2026-08-13.** Ported at Sunny's own L = 40, as a real quench —
+`examples/sunny_tutorials/S06_CP2_skyrmions/{config.yaml, quench.py}`, with that
+folder's README carrying the numbers. Nothing outstanding.
 
-Symptom: the quench relaxes to a uniformly polarized state (Q = 0) instead of a
-skyrmion lattice. With the field sign matched to Sunny's `g = −1`, ⟨Sz⟩ = +0.45
-as expected, so the Hamiltonian is right.
+**Of the two questions listed here, the answer was #2, and #1 was innocent.** Worth
+keeping, because the cheap-and-likely one was the wrong lead:
 
-Two open questions, in the order worth testing:
+1. **The J2 bond shell was correct all along.** `Bond(1,1,[1,2,0])` is |a₁+2a₂| = √3
+   with coordination 6, and `magcalc symmetry` finds exactly Sunny's shells
+   (1.0 ×6, √3 ×6, 2.0 ×6). Now pinned (`test_S06_second_neighbour_shell_is_the_
+   sqrt3_bond`), so it cannot come back as a suspect.
+2. **System size was the blocker, via performance, by three orders of magnitude.**
+   A skyrmion is several lattice constants across, so 64–256 sites cannot hold a
+   liquid of them and relaxes to the uniform state — which reads as a physics
+   failure and is a size failure. L = 40 cost ~16 s/step (≈55 h for the tutorial's
+   25 600 steps) because `SUNModel.local_field(i, ·)` scans the whole bond list per
+   site, i.e. O(sites²). `sun/dynamics.py` now sums the bond list once and forms
+   only h_i|Z_i⟩, never the matrices h_i: **8.4 ms/step at 1600 sites, the full run
+   in 214 s.** (`_replicate`'s cell lookup was then the bottleneck at 36 s; it is a
+   dict now, 3.4 s.)
 
-1. **The second-neighbour triangular bond shell.** Does it match Sunny's
-   `Bond(1,1,[1,2,0])`? A wrong J2 shell suppresses exactly the frustration that
-   sets the skyrmion scale — and would look *precisely* like this symptom. Check
-   with `magcalc symmetry <config> --max-distance …` against Sunny's
-   `print_symmetry_table`. Cheap, and the most likely culprit.
-2. **System size.** Sunny uses L = 40 (1600 sites); this port has run 64–256.
+**The result.** The quench leaves an exactly quantized, non-zero SU(3) charge
+(+12 → −4 → −6 at τ = 4, 16, 256) on a quadrupolar background, reproducing the
+tutorial's figure. The Hamiltonian is pinned to **Sunny 0.8.1 at 5.4e-13**, via the
+energy of an *arbitrary* coherent-state configuration rather than a ground state —
+the latter would be far weaker, since the state relaxes to fit whatever Hamiltonian
+it is handed.
 
-If size turns out to matter, the derivative is the bottleneck: it currently
-scales as sites² and needs vectorizing before 1600 sites is interactive.
+**Three things this port turned up, none of which were the thing being looked for:**
+
+- **The whole dissipative-quench API had NO test** — `damped_deriv`, `damped_step`,
+  `quench`, `topological_charge`, `triangulate_lattice`. The "validated by
+  dE/dt = −2λ·Var(h) to 5e-6" note in the old S06 README was a one-off measurement
+  at a terminal, never pinned. `tests/test_sun_quench.py` is now that oracle (14
+  tests, all exact identities), written *before* the derivative was rewritten.
+- **`topological_charge` was undefined on exactly this model and did not say so.**
+  It normalizes every spin, so the quadrupolar |m=0⟩ background (⟨S⟩ ≈ 0, most of
+  the area here) contributed arbitrary directions and still returned a
+  quantized-looking number. It now refuses, and `sun_topological_charge` — the CP^(N−1)
+  Berry phase, which is what Sunny's tutorial actually plots — is the right tool. It
+  is pinned to the dipole one by the exact N = 2 identity.
+- **`method: anneal` could return a local MAXIMUM with full consensus** — see item 9.
 
 **Do not "port" it by substituting an equilibrium calculation for the quench.**
-That produces a folder that looks like a port and is not one.
+That produces a folder that looks like a port and is not one. (The uniform SU(3)
+ground state here is the non-magnetic |m=0⟩ state at E/site = 0; the skyrmions are
+metastable and a minimizer destroys them.)
 
 ---
 
@@ -391,6 +380,81 @@ for band. Two things that rule does not reach:
    a small XCTest that loads the same example configs and diffs
    `backendInput()` against `node gui/tests/emit_run_config.mjs`. Until that
    exists, treat any change to one side as owing a matching change to the other.
+
+---
+
+## 9. `anneal`'s polish could hand back a local MAXIMUM, unanimously
+
+**Status: DONE 2026-08-13** (fixed in `magcalc/annealing.py`, pinned in
+`tests/test_annealing.py`; shipped configs swept, none affected). **A SEPARATE and
+still-open defect was found next to it** — `thermal_mc.build_supercell` carries no
+single-ion anisotropy at all; see the bottom of this item.
+
+Found while writing the S06 config, not by looking for it. `method: anneal` is the
+DOCUMENTED DEFAULT ground-state search (CLAUDE.md: "Prefer Monte-Carlo annealing…
+more reliable and cheaper"), and it ended with a `steepest_descent` polish whose
+result was taken **unconditionally**:
+
+```python
+if polish_steep:
+    m_best, e_best = steepest_descent(m_best, H, b, c, S, n)
+return m_best, e_best
+```
+
+`steepest_descent` aligns each spin with the field from everything EXCEPT itself, so
+it ignores the on-site block `H_ii`. Its own docstring said so ("not exactly
+optimal; the caller's L-BFGS polish cleans that up") — but the caller applies no
+L-BFGS polish, it applies *this*, and then trusts it.
+
+On S06 (easy-plane D = 19, one site per cell, so all 12 bonds fold into `H_ii`):
+
+| | E | m_z |
+|---|---|---|
+| Metropolis, no polish | **−4.644706** (the exact minimum) | 0.4515 |
+| after the polish | **+0.520665** (a local MAXIMUM) | 1.0000 |
+
+on **every seed**, at 500 and 5000 sweeps — so `minimize_energy` reported
+"4 of 4 runs hit the minimum", which is precisely the acceptance criterion the docs
+prescribe ("Accept a ground state only when the energy is reproducible across
+several `seed`s"). Reproducibility certified the wrong answer. The pole is a fixed
+point of the field-alignment iteration (there the only field is the Zeeman one), and
+it is a stationary point of the constrained problem, so a projected gradient will not
+leave it either.
+
+Both halves are fixed: the polish is kept only if it lowers the energy, and
+`steepest_descent` returns the best state it saw, which is the monotonicity its
+docstring always claimed.
+
+**Why nothing caught it.** `test_steepest_descent_is_monotone` exists — and runs on
+an AFM chain, whose `H_ii` is zero, so it passed for as long as the property was
+false. The house rule names this exact shape: a check a wrong answer passes is not a
+check. The new tests use S06's landscape, whose minimum is available in CLOSED FORM
+(`c* = h/(C−A)`, `E* = A/2 − h²/(2(C−A))`), so they are pinned to algebra rather
+than to a recorded number.
+
+**How far did this reach? Swept, and the answer is: no shipped config.** Of the 8
+configs using `anneal`/`steep`, exactly two also carry an on-site term
+(`single_ion_anisotropy` / `sia_matrix` / `stevens` / `anisotropy_matrix`), which is
+the trigger: S06 itself, and `examples/future_exmaples/FeI2/config_fei2.yaml`. FeI2
+was re-run after the fix and returns **−46.372796 meV/cell, unchanged** — the value
+item 7 records — so its ground state was never affected and that item's physics
+stands. Nothing else could have been.
+
+Worth keeping in mind for calls made OUTSIDE the runner, though: the ground-state
+guards are what would have caught this downstream (a maximum is exactly what guard 2
+exists for), so a direct `minimize_energy` call, or a config running
+`on_imaginary: warn|off`, had no second line of defence.
+
+**Related, not yet chased:** `thermal_mc.build_supercell` builds `H` purely from
+`spin_interactions` (bonds), so it carries **no single-ion anisotropy at all** —
+measured directly on S06, where `H_zz` came back as the bare exchange sum and D = 19
+was simply absent, while its docstring calls `H` "the exchange/anisotropy Hessian".
+That builder feeds `thermal_mc`, `wang_landau`, `static_correlations` and the
+classical `sampled_correlations`. It is a *different* builder from the annealer's
+(`MagCalc._extract_classical_quadratic`, which is correct — verified), so this is a
+separate defect and was NOT fixed here. It deserves its own item, its own oracle
+(the exact single-spin-in-a-field-plus-anisotropy partition function is closed form)
+and its own commit.
 
 ---
 

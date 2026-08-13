@@ -1,0 +1,111 @@
+# =====================================================================
+# S06 -- Sunny tutorial 06_CP2_Skyrmions.jl, ported.
+#
+#   python examples/sunny_tutorials/S06_CP2_skyrmions/quench.py      # the tutorial
+#   magcalc run examples/sunny_tutorials/S06_CP2_skyrmions/config.yaml   # model check
+#
+# THIS FILE IS THE HAMILTONIAN; `quench.py` IS THE TUTORIAL. The product of
+# tutorial 06 is a non-equilibrium TEXTURE -- a CP^2 skyrmion liquid left behind
+# by a damped quench from a random state -- not a spectrum, so there is no
+# `tasks:` entry that expresses it. See README.md.
+#
+# Running this config on its own does the one thing that IS a config-level
+# statement, and it is worth knowing: the SU(3) ground state of the uniform
+# (one-site) cell is the QUADRUPOLAR |m=0> level, at E/site = 0 exactly, with zero
+# dipole moment. The field-polarized state sits +0.520665 above it. That
+# non-magnetic state is the tutorial's "white background" -- the quantum
+# paramagnet the skyrmions are embedded in.
+#
+# S = 1 with an easy-PLANE anisotropy is therefore the canonical case for
+# `mode: SUN`, and this model shows why in the sharpest possible way: the DIPOLE
+# ground state of the same Hamiltonian is a canted in-plane state at -4.644706,
+# because classical dipoles cannot represent |m=0> at all and pay <Sz^2> = 1/2 for
+# any in-plane direction. The two theories disagree QUALITATIVELY here, not by a
+# few per cent (see pyMagCalc/CLAUDE.md section 5c). Sunny's tutorial uses :SUN
+# for exactly this reason.
+#
+# TWO SIGN CONVENTIONS ARE FOLDED INTO THE NUMBERS BELOW, both checked by
+# tests/test_sunny_tutorials.py rather than trusted:
+#
+#  * FIELD. Sunny selects g = -1 so its Zeeman reads -h S^z (tutorial line 27).
+#    pyMagCalc's is +GAMMA_ELECTRON * MU_B * B . S with GAMMA_ELECTRON = 2, so the
+#    same term is H_dir = [0, 0, -1] and
+#        H_mag = h / (2 * MU_B) = 15.5 / (2 * 0.05788) = 133.8977194194886 T.
+#    The field is what makes the skyrmions exist -- it competes with the easy-plane
+#    D -- and it was SILENTLY DROPPED by `mode: SUN` until 2026-08-04 (found while
+#    porting this tutorial; tests/test_sun_zeeman.py).
+#  * ANISOTROPY. `sia` carries the literal coefficient of (n.S)^2, so D = +19.0
+#    is Sunny's `set_onsite_coupling!(sys, S -> D*S[3]^2, 1)` unchanged -- easy
+#    PLANE, the opposite sign to FeI2's easy axis.
+#
+# `a = 1` and energies in units of |J1|, exactly as the tutorial. Times are then
+# in hbar/|J1| and the tutorial's snapshots are at tau = 4, 16, 256.
+# =====================================================================
+
+parameter_order: [J1, J2, Delta, D, H_mag, H_dir]
+parameters:
+  J1: -1.0                     # nearest neighbour, FERROmagnetic
+  J2: 0.6180339887498948       # = 2/(1 + sqrt 5); sets the skyrmion length scale
+  Delta: 2.6                   # exchange anisotropy along z
+  D: 19.0                      # easy-PLANE single-ion anisotropy
+  H_mag: 133.8977194194886     # T; = 15.5 / (2 * MU_B), see above
+  H_dir: [0.0, 0.0, -1.0]      # gives -h S^z, Sunny's g = -1 convention
+
+crystal_structure:
+  lattice_parameters: {a: 1.0, b: 1.0, c: 10.0, alpha: 90.0, beta: 90.0, gamma: 120.0}
+  atoms_uc:
+  - {label: A, pos: [0.0, 0.0, 0.0], spin_S: 1.0}
+
+interactions:
+  # Both shells are `interaction_matrix` (not `heisenberg`): the exchange is
+  # anisotropic, J * diag(1, 1, Delta). `offset:` pins the reference bond to
+  # Sunny's own Bond(1,1,[1,0,0]) / Bond(1,1,[1,2,0]) rather than letting the
+  # search pick an image -- and [1,2,0] IS the second shell, at |a1 + 2 a2| =
+  # sqrt(3) with coordination 6 (Sunny print_symmetry_table agrees; pinned).
+  symmetry_rules:
+  - name: J1
+    type: interaction_matrix
+    ref_pair: [A, A]
+    distance: 1.0
+    offset: [1, 0, 0]
+    value:
+    - [-1.0, 0.0, 0.0]
+    - [0.0, -1.0, 0.0]
+    - [0.0, 0.0, -2.6]          # J1 * Delta
+  - name: J2
+    type: interaction_matrix
+    ref_pair: [A, A]
+    distance: 1.7320508075688772
+    offset: [1, 2, 0]
+    value:
+    - [0.6180339887498948, 0.0, 0.0]
+    - [0.0, 0.6180339887498948, 0.0]
+    - [0.0, 0.0, 1.6068883707497265]   # J2 * Delta
+  single_ion_anisotropy:
+  - {value: 19.0, axis: [0.0, 0.0, 1.0], atoms: [A]}
+
+magnetic_structure:
+  # A seed only. The SU(3) search relaxes it, and `quench.py` overwrites it with a
+  # random configuration -- which is the tutorial's actual initial condition.
+  enabled: true
+  type: pattern
+  pattern_type: ferromagnetic
+  direction: [0.0, 0.0, 1.0]
+
+tasks: {minimization: true}
+
+calculation:
+  mode: SUN
+  cache_mode: none
+  # No dispersion is requested and the SU(3) minimum is a non-magnetic state, so
+  # there is no ordered structure to expand about and the LSWT guards have nothing
+  # to guard.
+  on_imaginary: 'off'
+
+# anneal, not the multistart gradient path (CLAUDE.md: "Prefer Monte-Carlo
+# annealing"). It also keeps the run quiet -- `num_starts < early_stopping` warns
+# on the gradient methods, and a warning nobody can act on is one nobody reads.
+minimization: {enabled: true, method: anneal, num_starts: 4, n_sweeps: 500, seed: 0}
+
+plotting: {save_plot: false, show_plot: false, plot_structure: false}
+output: {save_data: false}
