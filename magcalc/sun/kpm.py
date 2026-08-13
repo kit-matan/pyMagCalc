@@ -109,7 +109,20 @@ def kpm_sqw(model, q_cart, energies, fwhm, n_moments=None, tol=0.02,
     g = np.concatenate([np.ones(D), -np.ones(D)])
     if gamma is None:
         gamma = spectral_bound(HMat)
-    A = HMat / gamma
+    # THE RECURSION RUNS ON conj(D-hat), NOT D-hat, and the reason is exact rather
+    # than cosmetic. Writing T for the para-unitary Bogoliubov matrix and M = v T,
+    #
+    #   v* T_m(D-hat) g v        = sum_nu R_a conj(R_b) g_nu T_m(w_nu),  R = conj(v) T
+    #   v* conj(T_m(D-hat)) g v  = sum_nu conj(M_a) M_b  g_nu T_m(w_nu)
+    #
+    # and it is the SECOND that is the structure factor -- `structure_factor` forms
+    # exactly conj(M_a) M_b. The two coincide whenever D-hat is real (any collinear,
+    # inversion-symmetric model, which is every model this file was tested on), so
+    # the error was invisible until a NON-COLLINEAR magnetic supercell: on the clean
+    # 120-degree triangular AFM at 81 sites the shipped form put ~5 % of the weight on
+    # bands that carry none, which reads as disorder-like broadening of a CLEAN
+    # spectrum. Pinned in tests/test_kpm.py against exact diagonalization.
+    A = HMat.conj() / gamma
 
     energies = np.asarray(energies, float)
     sigma = fwhm / (2.0 * np.sqrt(2.0 * np.log(2.0)))
@@ -144,7 +157,15 @@ def kpm_sqw(model, q_cart, energies, fwhm, n_moments=None, tol=0.02,
             return (np.exp(-0.5 * ((E - w) / sigma) ** 2) / (sigma * np.sqrt(2 * np.pi))
                     * cutoff(E))
         c = _cheb_coefs(f, n_moments, gamma)
-        corr = np.tensordot(c, moments, axes=(0, 0)) / getattr(model, "n_cells", 1)
+        # .T because the moments above are assembled from the ANNIHILATION block of
+        # the Nambu basis while `structure_factor` uses the CREATION block, and the
+        # two carry complex-conjugate (i.e. transposed) weight matrices:
+        # M_{D+nu} = conj(M_nu). For the symmetric channels (perp, trace, xx, ...)
+        # that makes no difference at all, which is why it went unnoticed; for the
+        # ANTISYMMETRIC ones it is the whole answer -- without it `cross_section:
+        # chiral` came back with the SIGN REVERSED on so ordinary a model as a
+        # ferromagnet.
+        corr = np.tensordot(c, moments, axes=(0, 0)).T / getattr(model, "n_cells", 1)
         inten, clamp = contract_cross_section(corr[:, :, None], q_cart, cross_section)
         val = float(np.real(inten[0]))
         out[iw] = max(val, 0.0) if clamp else val
