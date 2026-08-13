@@ -65,13 +65,22 @@ def steepest_descent(
         E(m_i) = 1/2 m_i^T H_ii m_i + m_i . h_i + const,
         h_i = (H m)_i + b_i - H_ii m_i          (field from everything except itself)
     so the downhill choice on the sphere |m_i| = S is m_i = -S * h_i / |h_i|. With an
-    on-site anisotropy (H_ii != 0) that is a good step but not exactly optimal; the
-    caller's L-BFGS polish cleans that up.
+    on-site anisotropy (H_ii != 0) that is a good step but not exactly optimal.
 
-    Monotone by construction -- it cannot escape a local minimum. Use it to polish.
+    IT IS NOT MONOTONE WHEN H_ii != 0, and this used to say it was ("monotone by
+    construction"). The step ignores the on-site block, so with a large H_ii it can
+    move UPHILL -- and not by a little. On the S06 skyrmion model (easy-plane
+    D = 19, one site per cell, so all 12 bonds fold onto H_ii) it walks from the
+    exact minimum at m_z = 0.4514, E = -4.6447, up to the pole m_z = 1, E = +0.5207,
+    which is a local MAXIMUM: the field-alignment step sees only the Zeeman field
+    there. It is a fixed point of this iteration, so it then stays.
+    The best state seen is therefore tracked and returned, which restores the
+    contract the docstring always claimed -- callers polish with this and trust the
+    result to be no worse than what they handed in.
     """
     m = m.copy()
     e_prev = energy(m, H, b, c)
+    m_best, e_best = m.copy(), e_prev
     for _ in range(max_iter):
         g = H @ m + b
         for i in range(n):
@@ -86,10 +95,12 @@ def steepest_descent(
             m[sl] = new
             g += H[:, sl] @ delta          # keep the gradient in sync
         e = energy(m, H, b, c)
+        if e < e_best:
+            m_best, e_best = m.copy(), e
         if abs(e_prev - e) < tol:
             break
         e_prev = e
-    return m, energy(m, H, b, c)
+    return m_best, e_best
 
 
 def anneal(
@@ -182,7 +193,16 @@ def anneal(
     e_best = energy(m_best, H, b, c)
 
     if polish_steep:
-        m_best, e_best = steepest_descent(m_best, H, b, c, S, n)
+        # KEEP THE POLISH ONLY IF IT HELPS. It used to be taken unconditionally,
+        # which threw away a correct answer: `steepest_descent` is not a descent
+        # method when the on-site block H_ii is significant (see its docstring), and
+        # on the S06 skyrmion model it moved the energy UP by 5.17 from the exact
+        # minimum Metropolis had already found -- reproducibly, on every seed, so
+        # the "N of N runs hit the minimum" consensus that is supposed to certify a
+        # ground state agreed unanimously on a local MAXIMUM.
+        m_pol, e_pol = steepest_descent(m_best, H, b, c, S, n)
+        if e_pol < e_best:
+            m_best, e_best = m_pol, e_pol
 
     return m_best, e_best
 

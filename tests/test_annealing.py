@@ -189,3 +189,79 @@ def test_anneal_requires_the_quadratic_form():
     calc._extract_classical_quadratic = lambda *a, **k: None
     with pytest.raises(ValueError, match="quadratic form"):
         calc.minimize_energy(method="anneal")
+
+
+# ---------------------------------------------------------------------------
+# The polish could make the answer WORSE, and did (found 2026-08-13, porting
+# Sunny tutorial 06).
+#
+# `anneal` ends with a `steepest_descent` polish and used to take its result
+# unconditionally. That step aligns each spin with the field from everything
+# EXCEPT itself, so it ignores the on-site block H_ii -- fine when H_ii ~ 0, which
+# is every model in the tests above, and wrong when it is not. The failure is not
+# subtle once triggered: Metropolis found the exact minimum on every seed, and the
+# polish then walked from it to a local MAXIMUM, 5.17 higher. The reported
+# "N of N runs hit the minimum" consensus, which the docs tell you to use as the
+# acceptance criterion for a ground state, agreed unanimously on it.
+#
+# The landscape below is S06's, reduced to its 3x3 essentials so the minimum is
+# available in closed form rather than as a recorded number:
+#
+#     E(c) = A/2 + (C - A) c^2 / 2 - h c,   c = cos(theta)
+#     c* = h / (C - A),   E* = A/2 - h^2 / (2 (C - A))
+#
+# with C - A large and positive because of the easy-plane D = 19.
+# ---------------------------------------------------------------------------
+S06_A, S06_C, S06_H = -2.291796, 32.04133, 15.5
+
+
+def _s06_landscape():
+    H = np.diag([S06_A, S06_A, S06_C])
+    b = np.array([0.0, 0.0, -S06_H])
+    c_star = S06_H / (S06_C - S06_A)
+    e_star = S06_A / 2 - S06_H ** 2 / (2 * (S06_C - S06_A))
+    return H, b, 0.0, c_star, e_star
+
+
+def test_the_polish_is_never_allowed_to_make_the_answer_worse():
+    """anneal() must return the best state it found, polished or not."""
+    H, b, c, c_star, e_star = _s06_landscape()
+    assert e_star == pytest.approx(-4.644706, abs=1e-6)      # the closed form
+    for seed in range(4):
+        m_raw, e_raw = anneal(H, b, c, 1.0, 1, n_sweeps=2000, seed=seed,
+                              polish_steep=False)
+        m_pol, e_pol = anneal(H, b, c, 1.0, 1, n_sweeps=2000, seed=seed,
+                              polish_steep=True)
+        assert e_raw == pytest.approx(e_star, abs=1e-4), f"seed {seed}: {e_raw}"
+        assert e_pol <= e_raw + 1e-9, (
+            f"seed {seed}: the polish raised the energy by {e_pol - e_raw:+.6f}")
+        assert abs(abs(m_pol[2]) - c_star) < 1e-3
+
+
+def test_steepest_descent_is_monotone_WITH_an_on_site_term():
+    """The existing monotonicity test cannot see this, and that is the point.
+
+    `test_steepest_descent_is_monotone` runs on the AFM chain, whose H_ii is zero,
+    so it passed throughout the period when the property was false. Monotonicity
+    only has teeth where the on-site block is large -- so start this one AT the
+    exact minimum, the state a non-monotone step is most likely to leave.
+    """
+    H, b, c, c_star, e_star = _s06_landscape()
+    m0 = np.array([np.sqrt(1 - c_star ** 2), 0.0, c_star])
+    e0 = energy(m0, H, b, c)
+    assert e0 == pytest.approx(e_star, abs=1e-9)
+    _, e1 = steepest_descent(m0.copy(), H, b, c, 1.0, 1)
+    assert e1 <= e0 + 1e-12, f"steepest_descent rose by {e1 - e0:+.6f}"
+
+
+def test_anneal_finds_the_S06_canted_minimum_end_to_end():
+    """Through `minimize_energy`, i.e. what a config actually gets.
+
+    Pinned to the closed form above, and specifically NOT to the polarized state
+    (E = +0.520665) that the broken polish returned -- a local maximum, which the
+    energy audit would then have had to catch downstream.
+    """
+    H, b, c, c_star, e_star = _s06_landscape()
+    m, e = anneal(H, b, c, 1.0, 1, n_sweeps=500, seed=0)
+    assert e == pytest.approx(e_star, abs=1e-4)
+    assert e < 0.0 < 0.520665
