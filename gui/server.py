@@ -15,6 +15,7 @@ import uuid
 from itertools import product
 from starlette.websockets import WebSocket, WebSocketDisconnect
 import glob
+import json
 import re
 
 import sys
@@ -400,8 +401,10 @@ async def trigger_calculation(payload: Dict[str, Any]):
     over a name) simply omit it and keep the previous project-root behaviour.
     """
     try:
-        gui_dir = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.dirname(gui_dir)
+        # The module-level `project_root` (same value; it was recomputed here).
+        # Reading the global lets a test point the default run directory
+        # somewhere harmless instead of writing into the real checkout.
+        default_run_dir = project_root
 
         # --- Determine what file to run and where ---------------------------
         run_path = payload.get("path")
@@ -419,7 +422,7 @@ async def trigger_calculation(payload: Dict[str, Any]):
                 raise HTTPException(status_code=400,
                                     detail="Payload must contain 'config' or 'path'.")
             cfg = _pin_gui_outputs(dict(cfg))
-            run_dir = project_root
+            run_dir = default_run_dir
             cfg_dir = payload.get("config_dir")
             if cfg_dir:
                 cfg_dir = os.path.abspath(os.path.expanduser(cfg_dir))
@@ -597,6 +600,85 @@ async def run_artifact(name: str):
     return FileResponse(path)
 
 
+# --- Server-side file picking ------------------------------------------------
+#
+# The browser cannot tell the app WHERE a picked file lives: the File System
+# Access API hands over `handle.name` and nothing else, and `<input type=file>`
+# is no better. That is not cosmetic -- a run of a config carrying `from_mcif:`,
+# `fitting.data_file:` or `cif_file:` resolves those relative to the config's own
+# directory, so without it the web app could only run in the project root and
+# such a config died on FileNotFoundError while `magcalc run <file>` worked.
+#
+# The server runs on the same machine as the browser, so it can supply what the
+# browser cannot: it opens the file (`/load-config`, which returns an ABSPATH),
+# remembers it (`/recent-configs`), and lets the user walk the filesystem to find
+# it the first time (`/browse-configs`). The client then sends `config_dir` on
+# /run-calculation exactly as the native app does.
+RECENT_FILE = os.path.join(os.path.expanduser("~"), ".magcalc", "recent_configs.json")
+RECENT_LIMIT = 20
+
+
+def _load_recent() -> List[str]:
+    try:
+        with open(RECENT_FILE, "r") as f:
+            entries = json.load(f)
+        return [p for p in entries if isinstance(p, str)][:RECENT_LIMIT]
+    except (OSError, ValueError):
+        return []
+
+
+def _remember_recent(abspath: str) -> None:
+    """Most-recent-first, deduplicated. Failure to persist is never fatal: the
+    picker is a convenience, and a read-only home directory must not stop a run."""
+    entries = [p for p in _load_recent() if p != abspath]
+    entries.insert(0, abspath)
+    try:
+        os.makedirs(os.path.dirname(RECENT_FILE), exist_ok=True)
+        with open(RECENT_FILE, "w") as f:
+            json.dump(entries[:RECENT_LIMIT], f, indent=1)
+    except OSError as e:
+        logging.getLogger().warning("Could not record recent config (%s)", e)
+
+
+@app.get("/recent-configs")
+async def recent_configs():
+    """Config files opened before, newest first, for the app's Open dialog."""
+    out = []
+    for p in _load_recent():
+        out.append({"path": p, "name": os.path.basename(p),
+                    "dir": os.path.dirname(p), "exists": os.path.isfile(p)})
+    return {"files": out, "project_root": project_root}
+
+
+@app.post("/browse-configs")
+async def browse_configs(payload: Dict[str, Any]):
+    """List sub-directories and YAML files of `dir` (default: the project root).
+
+    This is how a first-time file is found, since the recent list starts empty.
+    No path restriction: the server is a local tool bound to localhost, and
+    /load-config already opens any absolute path the user names.
+    """
+    raw = payload.get("dir") or project_root
+    directory = os.path.abspath(os.path.expanduser(raw))
+    if not os.path.isdir(directory):
+        raise HTTPException(status_code=404, detail=f"Not a directory: {directory}")
+    dirs, files = [], []
+    try:
+        for name in sorted(os.listdir(directory), key=str.lower):
+            if name.startswith("."):
+                continue
+            full = os.path.join(directory, name)
+            if os.path.isdir(full):
+                dirs.append({"name": name, "path": full})
+            elif name.endswith((".yaml", ".yml")):
+                files.append({"name": name, "path": full})
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=f"Could not read {directory}: {e}")
+    parent = os.path.dirname(directory)
+    return {"dir": directory, "parent": parent if parent != directory else None,
+            "dirs": dirs, "files": files}
+
+
 @app.post("/load-config")
 async def load_config(payload: Dict[str, Any]):
     """
@@ -605,11 +687,13 @@ async def load_config(payload: Dict[str, Any]):
     The app is an editor of the on-disk config file: this opens the exact file
     `magcalc run` would read. The returned `config` is the parsed YAML (what the
     editor populates its state from); `text` is the verbatim file for a raw view.
+    `path` is absolute, and is what the client sends back as `config_dir` on
+    /run-calculation so relative references inside the config resolve.
     """
     path = payload.get("path")
     if not path:
         raise HTTPException(status_code=400, detail="Payload must contain 'path'.")
-    abspath = os.path.abspath(path)
+    abspath = os.path.abspath(os.path.expanduser(path))
     if not os.path.isfile(abspath):
         raise HTTPException(status_code=404, detail=f"Config file not found: {abspath}")
     try:
@@ -618,7 +702,9 @@ async def load_config(payload: Dict[str, Any]):
         config = yaml.safe_load(text) or {}
     except yaml.YAMLError as e:
         raise HTTPException(status_code=400, detail=f"Invalid YAML in {abspath}: {e}")
-    return {"path": abspath, "config": config, "text": text}
+    _remember_recent(abspath)
+    return {"path": abspath, "dir": os.path.dirname(abspath),
+            "config": config, "text": text}
 
 
 @app.post("/save-config")

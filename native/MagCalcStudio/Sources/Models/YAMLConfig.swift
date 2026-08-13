@@ -288,6 +288,7 @@ enum YAMLConfig {
                 config.atomMode = "explicit"
             }
             if let atomsSource {
+                let modelled: Set<String> = ["label", "pos", "spin_S", "ion", "element"]
                 config.wyckoffAtoms = atomsSource.enumerated().map { idx, a in
                     let o = a.objectValue ?? [:]
                     let label = o["label"]?.stringValue ?? "Atom"
@@ -297,7 +298,10 @@ enum YAMLConfig {
                         pos: o["pos"]?.arrayValue?.compactMap { $0.doubleValue } ?? [0, 0, 0],
                         spinS: o["spin_S"]?.doubleValue ?? 0.5,
                         ion: o["ion"]?.stringValue,
-                        element: o["element"]?.stringValue
+                        element: o["element"]?.stringValue,
+                        // `g`, `charge`, `wyckoff`, `species`, ... -- kept so the
+                        // run payload can re-emit the atom without losing physics.
+                        extras: o.filter { !modelled.contains($0.key) }
                     )
                 }
             }
@@ -347,15 +351,18 @@ enum YAMLConfig {
                 config.explicitInteractions = explicitFrom(list)
                 config.interactionMode = "explicit"
             } else if let rules = inter["symmetry_rules"]?.arrayValue {
+                let modelled: Set<String> = ["type", "ref_pair", "distance", "value",
+                                             "offset", "bond_direction"]
                 config.symmetryInteractions = rules.map { rule in
                     let o = rule.objectValue ?? [:]
                     var si = SymmetryInteraction()
                     si.type = InteractionType(rawValue: o["type"]?.stringValue ?? "heisenberg") ?? .heisenberg
                     si.refPair = o["ref_pair"]?.arrayValue?.compactMap { $0.stringValue }
-                    si.distance = o["distance"]?.doubleValue ?? 0
+                    si.distance = o["distance"]?.doubleValue
                     si.value = o["value"] ?? .string("J1")
                     si.offset = o["offset"]?.arrayValue?.compactMap { $0.doubleValue.map { Int($0) } }
                     si.bondDirection = o["bond_direction"]?.stringValue
+                    si.extras = o.filter { !modelled.contains($0.key) }
                     return si
                 }
                 config.interactionMode = "symmetry"
@@ -456,6 +463,7 @@ enum YAMLConfig {
             if case .bool(let b)? = p["save_plot"] { config.plotting.savePlot = b }
             if case .bool(let b)? = p["show_plot"] { config.plotting.showPlot = b }
             if case .bool(let b)? = p["plot_structure"] { config.plotting.plotStructure = b }
+            if case .bool(let b)? = p["auto_scale_disp"] { config.plotting.autoScaleDisp = b }
             if let f = p["disp_plot_filename"]?.stringValue { config.plotting.dispPlotFilename = f }
             if let f = p["sqw_plot_filename"]?.stringValue { config.plotting.sqwPlotFilename = f }
         }
@@ -464,6 +472,9 @@ enum YAMLConfig {
             if let v = m["n_workers"]?.doubleValue { config.minimization.nWorkers = Int(v) }
             if let v = m["early_stopping"]?.doubleValue { config.minimization.earlyStopping = Int(v) }
             if let v = m["method"]?.stringValue { config.minimization.method = v }
+            // `n_sweeps` had no import branch, so the app's 2000 was written back
+            // over whatever the file asked for.
+            if let v = m["n_sweeps"]?.doubleValue { config.minimization.nSweeps = Int(v) }
         }
         if let pa = root["powder_average"]?.objectValue {
             if let v = pa["q_min"]?.doubleValue { config.powderAverage.qMin = v }
@@ -520,6 +531,31 @@ enum YAMLConfig {
             if let v = fit["type"]?.stringValue { config.fitting.type = v }
             if let v = fit["method"]?.stringValue { config.fitting.method = v }
             if let v = fit["match"]?.stringValue { config.fitting.match = v }
+            // Everything below had NO import branch, and every one of them is
+            // re-emitted from the struct -- so opening a fitting config and
+            // pressing Fit wrote the app's blank `data_file`, empty `vary` and
+            // empty `bounds` over the real ones and fitted the wrong thing (or
+            // nothing). Same class of bug the web app fixed in importConfigDoc.
+            if let v = fit["data_file"]?.stringValue { config.fitting.dataFile = v }
+            if let v = fit["data_label"]?.stringValue { config.fitting.dataLabel = v }
+            if let v = fit["vary"]?.arrayValue { config.fitting.vary = v.compactMap { $0.stringValue } }
+            if let b = fit["bounds"]?.objectValue {
+                var bounds: [String: [Double?]] = [:]
+                for (k, v) in b {
+                    bounds[k] = (v.arrayValue ?? []).map { $0.doubleValue }
+                }
+                config.fitting.bounds = bounds
+            }
+            func fitScalar(_ key: String, _ current: FitScalar) -> FitScalar {
+                guard let o = fit[key]?.objectValue else { return current }
+                return FitScalar(value: o["value"]?.doubleValue ?? current.value,
+                                 vary: { if case .bool(let b)? = o["vary"] { return b }
+                                         return current.vary }())
+            }
+            config.fitting.scale = fitScalar("scale", config.fitting.scale)
+            config.fitting.background = fitScalar("background", config.fitting.background)
+            config.fitting.energyBroadening = fitScalar("energy_broadening",
+                                                        config.fitting.energyBroadening)
         }
 
         // Keep the WHOLE document. backendInput() writes the modelled blocks over

@@ -49,9 +49,16 @@ struct WyckoffAtom: Codable, Hashable, Identifiable {
     var spinS: Double = 0.5
     var ion: String?
     var element: String?
+    /// Every OTHER per-site key the file carried — `g` (the per-site g-tensor),
+    /// `charge`, `wyckoff`, `species`, and whatever the engine gains next. An atom
+    /// is physics input, not a fixed five-field record: 32 sites across the shipped
+    /// examples declare a `g`, and re-emitting the app's five known fields alone
+    /// would silently drop it and change the Zeeman term. The web app keeps them by
+    /// spreading the parsed atom (`{...clone(a)}`); this is the Swift equivalent.
+    var extras: [String: JSONValue] = [:]
 
     enum CodingKeys: String, CodingKey {
-        case label, pos, ion, element
+        case label, pos, ion, element, extras
         case spinS = "spin_S"
     }
 }
@@ -94,14 +101,21 @@ struct SymmetryInteraction: Codable, Hashable, Identifiable {
     var type: InteractionType = .heisenberg
     /// nil ⇒ distance-only rule ("Auto-detected" in the web UI).
     var refPair: [String]?
-    var distance: Double = 3.0
+    /// nil ⇒ the file gave no `distance`, which is legal for a `ref_pair` rule
+    /// with an explicit `offset`. Defaulting it to 0 and emitting it added a
+    /// `distance: 0.0` the CLI never sees.
+    var distance: Double? = 3.0
     var value: JSONValue = .string("J1")
     var offset: [Int]?
     /// Kitaev only: bond direction x/y/z.
     var bondDirection: String?
+    /// Any other key the rule carried (`name`, and whatever the engine gains).
+    /// A rule is engine input, not a fixed six-field record; the web app edits
+    /// the parsed object in place and so keeps these for free.
+    var extras: [String: JSONValue] = [:]
 
     enum CodingKeys: String, CodingKey {
-        case type, distance, value, offset
+        case type, distance, value, offset, extras
         case refPair = "ref_pair"
         case bondDirection = "bond_direction"
     }
@@ -664,9 +678,17 @@ extension MagCalcConfig {
     /// the blank default (i.e. the user touched it).
     ///
     /// Mirrors `mergeEdits` in gui/src/lib/configIO.js — keep the two in step.
+    /// A block the file did NOT declare is `[:]`, not "emit the whole editor
+    /// struct". That distinction is the whole point: encoding the struct writes
+    /// every field, so opening a config with no `minimization:` block used to add
+    /// the app's `method: anneal, n_sweeps: 2000, num_starts: 4, …` to the run, and
+    /// one with no `fitting:` block gained a placeholder fit. The web app's
+    /// mergeEdits starts from `clone(fileBlock) || {}` and skips untouched
+    /// defaults; treating a missing block as "no merge" is what made the two
+    /// implementations disagree on 54 of the 58 shipped configs.
     static func mergeEdits(_ editor: JSONValue, over fileBlock: JSONValue?,
                            defaults: JSONValue) -> JSONValue {
-        guard let file = fileBlock?.objectValue else { return editor }
+        let file = fileBlock?.objectValue ?? [:]
         var out = file
         let e = editor.objectValue ?? [:]
         let d = defaults.objectValue ?? [:]
@@ -706,6 +728,11 @@ extension MagCalcConfig {
         } else {
             var t = ((try? JSONValue(encoding: tasks)) ?? .object([:])).objectValue ?? [:]
             for (k, v) in extraTasks { t[k] = v }
+            // The runner reads `calculate_dispersion`/`calculate_sqw_map` as
+            // "recompute" flags (both default TRUE when absent), and the web app
+            // emits them explicitly. Same rule, same keys.
+            t["calculate_dispersion"] = .bool(tasks.dispersion)
+            t["calculate_sqw_map"] = .bool(tasks.sqwMap)
             tasksValue = .object(t)
         }
 
@@ -713,24 +740,96 @@ extension MagCalcConfig {
             ? .object(["list": .array(explicitInteractions.map { $0.payloadValue })])
             : .object(["symmetry_rules": .array(symmetryInteractions.map { $0.payloadValue })])
 
-        // Prefer the verbatim structure/interactions from an imported example so
-        // lattice_vectors, interaction_matrix, SIA and spiral/generic orders
-        // reach the backend intact (the designer model cannot represent them).
         let rawObj = rawImport?.objectValue
         // A `from_mcif` config has no crystal_structure of its own: the runner
         // fills it from the mCIF. Inventing the designer's default 5 A cube there
         // silently replaced an experimentally determined magnetic cell.
         let mcifDriven = rawObj?["crystal_structure"] == nil && rawObj?["from_mcif"] != nil
-        let crystalValue: JSONValue? = rawObj?["crystal_structure"] ?? (mcifDriven ? nil : .object([
-            "lattice_parameters": (try? JSONValue(encoding: lattice)) ?? .object([:]),
-            "wyckoff_atoms": .array(wyckoffAtoms.map { $0.payloadValue }),
-            "atom_mode": .string(atomMode),
-            "dimensionality": .number(3),
-            "magnetic_elements": .array(magneticElements.map { .string($0) }),
-        ]))
-        let interactionsFinal: JSONValue = rawObj?["interactions"] ?? interactionsValue
-        let magStructFinal: JSONValue? = rawObj?["magnetic_structure"]
-            ?? (mcifDriven ? nil : ((try? JSONValue(encoding: magneticStructure)) ?? .object([:])))
+
+        // Crystal structure: the file's block is the base, but the ATOMS come from
+        // the editor -- WyckoffAtom now carries every per-site key the file had
+        // (see `extras`), so emitting the editor's list is loss-free AND an edit
+        // made in the Structure panel actually reaches the run. Re-emitting the
+        // file's atoms verbatim (what this used to do) made the whole panel
+        // read-only after opening a config: changing a spin_S did nothing.
+        var crystalValue: JSONValue?
+        if let cs = rawObj?["crystal_structure"]?.objectValue {
+            var out = cs
+            let atoms: [JSONValue] = wyckoffAtoms.isEmpty
+                ? (cs["atoms_uc"]?.arrayValue ?? cs["wyckoff_atoms"]?.arrayValue ?? [])
+                : wyckoffAtoms.map { $0.payloadValue }
+            if cs["lattice_vectors"] == nil {
+                // Only the keys the file actually declared, so the app's
+                // placeholder defaults (space_group: 1) are never injected into a
+                // cell that did not ask for them.
+                if let fileLat = cs["lattice_parameters"]?.objectValue {
+                    let edited = ((try? JSONValue(encoding: lattice)) ?? .object([:])).objectValue ?? [:]
+                    var latOut: [String: JSONValue] = [:]
+                    for (k, v) in fileLat { latOut[k] = edited[k] ?? v }
+                    out["lattice_parameters"] = .object(latOut)
+                } else {
+                    out["lattice_parameters"] = (try? JSONValue(encoding: lattice)) ?? .object([:])
+                }
+            }
+            // A file that lists `atoms_uc` is already the full cell (explicit);
+            // only `wyckoff_atoms` needs symmetry expansion. Emit ONLY the key
+            // matching the mode, so the runner does its own (CLI-identical) one.
+            let mode = cs["atom_mode"]?.stringValue
+                ?? (cs["atoms_uc"] != nil ? "explicit"
+                    : (cs["wyckoff_atoms"] != nil ? "symmetry"
+                       : (cs["lattice_vectors"] != nil ? "explicit" : "symmetry")))
+            out["atom_mode"] = .string(mode)
+            out[mode == "explicit" ? "atoms_uc" : "wyckoff_atoms"] = .array(atoms)
+            out.removeValue(forKey: mode == "explicit" ? "wyckoff_atoms" : "atoms_uc")
+            out["magnetic_elements"] = cs["magnetic_elements"]
+                ?? .array(magneticElements.map { .string($0) })
+            out["dimensionality"] = cs["dimensionality"] ?? .number(3)
+            crystalValue = .object(out)
+        } else if !mcifDriven {
+            crystalValue = .object([
+                "lattice_parameters": (try? JSONValue(encoding: lattice)) ?? .object([:]),
+                atomMode == "explicit" ? "atoms_uc" : "wyckoff_atoms":
+                    .array(wyckoffAtoms.map { $0.payloadValue }),
+                "atom_mode": .string(atomMode),
+                "dimensionality": .number(3),
+                "magnetic_elements": .array(magneticElements.map { .string($0) }),
+            ])
+        }
+
+        // Interactions: symmetry rules are modelled by the designer, so the
+        // editor's version wins -- merged INTO the file's block so its siblings
+        // (single_ion_anisotropy, stevens, biquadratic, dipole_dipole, ...) stay.
+        // The designer's `{list: [...]}` wrapper is unwrapped to the bare list
+        // config_loader expects.
+        var interactionsFinal: JSONValue = rawObj?["interactions"] ?? interactionsValue
+        if var obj = interactionsFinal.objectValue {
+            // Only for a file that declares its own crystal: an mCIF-driven config
+            // has no editor-side structure to have edited the rules against.
+            if obj["symmetry_rules"] != nil, rawObj?["crystal_structure"] != nil {
+                obj["symmetry_rules"] = .array(symmetryInteractions.map { $0.payloadValue })
+                interactionsFinal = .object(obj)
+            }
+            if let list = interactionsFinal.objectValue?["list"] { interactionsFinal = list }
+        }
+
+        // A magnetic structure the file supplied is physics input and always
+        // ships; only a designer-built one is gated on the editor's toggle.
+        var magStructFinal: JSONValue?
+        if let fileMS = rawObj?["magnetic_structure"] {
+            var merged = Self.mergeEdits(
+                (try? JSONValue(encoding: magneticStructure)) ?? .object([:]),
+                over: fileMS,
+                defaults: (try? JSONValue(encoding: MagneticStructureSettings())) ?? .object([:])
+            ).objectValue ?? [:]
+            // Set explicitly rather than left to mergeEdits: turning the structure
+            // OFF lands back on the app's default (false), which mergeEdits reads
+            // as "untouched" and would not write -- and the runner treats a MISSING
+            // `enabled` as true, so the toggle would do nothing.
+            merged["enabled"] = .bool(magneticStructure.enabled)
+            magStructFinal = .object(merged)
+        } else if !mcifDriven, magneticStructure.enabled {
+            magStructFinal = (try? JSONValue(encoding: magneticStructure)) ?? .object([:])
+        }
 
         // calculation: strip UI-only fields; only send series_order when the
         // entangled series is actually requested (mirrors the web app).
@@ -758,9 +857,21 @@ extension MagCalcConfig {
         input["interactions"] = interactionsFinal
         // `parameters` takes the same rule: the app always carries H_mag/H_dir,
         // so an opened file with no field used to gain a zero-magnitude Zeeman
-        // term the CLI never adds (worth 6e-14 on CoRh2O4's bands).
-        input["parameters"] = settings("parameters", .object(parameters),
-                                       .object(blank.parameters))
+        // term the CLI never adds (worth 6e-14 on CoRh2O4's bands). The global `S`
+        // is dropped in both directions -- spin lives on the atoms.
+        var runParams = parameters
+        runParams.removeValue(forKey: "S")
+        runParams = (settings("parameters", .object(runParams),
+                              .object(blank.parameters)).objectValue ?? [:])
+        runParams.removeValue(forKey: "S")
+        // Interaction symbols sorted, then the field pair -- the order the web app
+        // writes and the order `parameter_order` has to agree with.
+        let fieldKeys = ["H_mag", "H_dir"]
+        let sortedParamKeys = runParams.keys.filter { !fieldKeys.contains($0) }.sorted()
+            + fieldKeys.filter { runParams[$0] != nil }
+        input["parameters"] = .object(runParams)
+        input["parameter_order"] = rawObj?["parameter_order"]
+            ?? .array(sortedParamKeys.map { .string($0) })
         input["tasks"] = tasksValue
         input["q_path"] = .object(qPoints)
         input["plotting"] = settings("plotting", plottingDict,
@@ -770,13 +881,18 @@ extension MagCalcConfig {
         input["powder_average"] = settings("powder_average",
                                            (try? JSONValue(encoding: powderAverage)) ?? .object([:]),
                                            (try? JSONValue(encoding: blank.powderAverage)) ?? .object([:]))
-        input["calculation"] = settings("calculation", .object(calcDict),
-                                        (try? JSONValue(encoding: blank.calculation)) ?? .object([:]))
+        // `cache_mode` is a pure performance knob (the symbolic matrix is
+        // deterministic per model topology), so 'auto' is always worth sending
+        // when the file did not pick one.
+        var calcOut = settings("calculation", .object(calcDict),
+                               (try? JSONValue(encoding: blank.calculation))
+                                ?? .object([:])).objectValue ?? [:]
+        if calcOut["cache_mode"] == nil { calcOut["cache_mode"] = .string("auto") }
+        input["calculation"] = .object(calcOut)
         input["output"] = settings("output", (try? JSONValue(encoding: output)) ?? .object([:]),
                                    (try? JSONValue(encoding: blank.output)) ?? .object([:]))
         if let crystalValue { input["crystal_structure"] = crystalValue }
         if let magStructFinal { input["magnetic_structure"] = magStructFinal }
-        if let po = rawObj?["parameter_order"] { input["parameter_order"] = po }
         // The blocks the app models are written OVER the file's, key by key, so
         // settings it has no widget for (fitting's data_file/vary/bounds, scga's
         // cross_section, thermal_mc's disorder/periodic, ...) are not replaced by
@@ -874,11 +990,11 @@ extension MagCalcConfig {
 
 extension WyckoffAtom {
     var payloadValue: JSONValue {
-        var o: [String: JSONValue] = [
-            "label": .string(label),
-            "pos": .array(pos.map { .number($0) }),
-            "spin_S": .number(spinS),
-        ]
+        // `extras` first, so the modelled fields win if a file ever carried both.
+        var o: [String: JSONValue] = extras
+        o["label"] = .string(label)
+        o["pos"] = .array(pos.map { .number($0) })
+        o["spin_S"] = .number(spinS)
         if let ion { o["ion"] = .string(ion) }
         if let element { o["element"] = .string(element) }
         return .object(o)
@@ -887,11 +1003,10 @@ extension WyckoffAtom {
 
 extension SymmetryInteraction {
     var payloadValue: JSONValue {
-        var o: [String: JSONValue] = [
-            "type": .string(type.rawValue),
-            "distance": .number(distance),
-            "value": value,
-        ]
+        var o: [String: JSONValue] = extras
+        o["type"] = .string(type.rawValue)
+        o["value"] = value
+        if let distance { o["distance"] = .number(distance) }
         if let refPair { o["ref_pair"] = .array(refPair.map { .string($0) }) }
         if let offset { o["offset"] = .array(offset.map { .number(Double($0)) }) }
         if let bondDirection { o["bond_direction"] = .string(bondDirection) }

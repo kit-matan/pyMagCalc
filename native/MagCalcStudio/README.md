@@ -37,6 +37,30 @@ xcodebuild -project MagCalcStudio.xcodeproj -scheme MagCalcStudio-iOS \
            -destination 'generic/platform=iOS Simulator' build
 ```
 
+## The emitter is tested against the web app's
+
+`MagCalcConfig.backendInput()` and `gui/src/lib/configIO.js` are two
+implementations of one rule — *the opened config file is the base; write only
+the edits the user actually made over it*. Only the JS one had a test, and the
+Swift one had silently drifted on **every** shipped config (it emitted whole
+settings blocks the file never declared, and blanked `fitting`'s `data_file` /
+`vary` / `bounds` on open).
+
+A third target, `magcalc-emit-config`, compiles the same `Sources/Models` into a
+headless tool that prints the config the app would RUN for a given file:
+
+```sh
+xcodebuild -project MagCalcStudio.xcodeproj -scheme magcalc-emit-config \
+           -configuration Release -derivedDataPath build/dd build
+build/dd/Build/Products/Release/magcalc-emit-config ../../examples/…/config.yaml
+```
+
+`tests/test_native_emitter_parity.py` builds it (only when the Swift sources are
+newer than the binary) and diffs its output against
+`node gui/tests/emit_run_config.mjs` for every config the smoke test runs. **Any
+change to one emitter owes a matching change to the other**, and that test is now
+what says so.
+
 ## Feature parity with the web app
 
 | Web tab | Native view |

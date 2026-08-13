@@ -11,9 +11,11 @@ export default function AppHeader({ onCifUpload, onMcifUpload, onYamlImport, onR
         <div>
           <h1 className="header-title">pyMagCalc Studio</h1>
           <div className="flex-gap-xs align-center">
-            <span className="subtitle">
+            {/* A server-opened file gives an ABSPATH; show the name and keep the
+                full path in the tooltip so the header cannot be blown out. */}
+            <span className="subtitle" title={currentFilePath || undefined}>
               {currentFilePath
-                ? `Editing ${currentFilePath}`
+                ? `Editing ${currentFilePath.split('/').pop()}`
                 : 'Configure Models & Calculate Spin-Waves'}
             </span>
           </div>
@@ -21,7 +23,7 @@ export default function AppHeader({ onCifUpload, onMcifUpload, onYamlImport, onR
       </div>
       <div className="header-actions">
         <button className="btn btn-secondary glass cursor-pointer" onClick={onOpenFile}
-          title="Open a config file from disk (the same file magcalc run reads)">
+          title="Open a config file from disk (the same file magcalc run reads). Goes through the backend, so the run happens in that file's directory and relative references resolve.">
           <FolderOpen size={16} /> Open File
         </button>
         <button className="btn btn-primary shadow-glow" onClick={() => onSave(false)}

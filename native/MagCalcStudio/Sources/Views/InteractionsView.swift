@@ -304,7 +304,11 @@ struct InteractionRuleCard: View {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Distance (Å)").font(.caption).foregroundStyle(.secondary)
-                    NumberField(label: "", value: $rule.distance)
+                    // `distance` is optional (a ref_pair + offset rule needs none);
+                    // typing one here declares it, and it is emitted from then on.
+                    NumberField(label: "", value: Binding(
+                        get: { rule.distance ?? 0 },
+                        set: { rule.distance = $0 }))
                         .frame(width: 100)
                 }
                 VStack(alignment: .leading, spacing: 3) {

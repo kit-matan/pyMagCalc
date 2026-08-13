@@ -54,6 +54,24 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1,2"
 
+  # Headless emitter: open a config file and print the config the app would RUN.
+  # It compiles the SAME Sources/Models the apps use -- no second copy of the
+  # emitter -- so tests/test_native_emitter_parity.py can diff it against
+  # `node gui/tests/emit_run_config.mjs`, which is the web app's equivalent.
+  # Without this the Swift side had no test at all and drifted silently.
+  magcalc-emit-config:
+    type: tool
+    platform: macOS
+    sources:
+      - path: Sources/Models
+      - path: Tools/EmitRunConfig
+    dependencies:
+      - package: Yams
+    settings:
+      base:
+        PRODUCT_NAME: magcalc-emit-config
+        CODE_SIGN_IDENTITY: "-"
+
 schemes:
   MagCalcStudio-macOS:
     build:
@@ -65,5 +83,11 @@ schemes:
     build:
       targets:
         MagCalcStudio-iOS: all
+    run:
+      config: Debug
+  magcalc-emit-config:
+    build:
+      targets:
+        magcalc-emit-config: all
     run:
       config: Debug

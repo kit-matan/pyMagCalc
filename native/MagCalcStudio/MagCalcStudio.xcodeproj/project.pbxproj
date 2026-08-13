@@ -15,6 +15,7 @@
 		24B781E61059FE278AD01EB4 /* SceneKitSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB3ADDCB0C0635B37F705C93 /* SceneKitSupport.swift */; };
 		2AC434D4F23704D03D69DDB7 /* LogStreamClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AD76BDECF04549A91067E31 /* LogStreamClient.swift */; };
 		2CAF8A143C5AB69F8D766209 /* EnvironmentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D2E1286A842B41E978E3768 /* EnvironmentView.swift */; };
+		3ACF448E4329F94E56B1A083 /* YAMLConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B3E9CAE784CF7FE7FD4CE5D /* YAMLConfig.swift */; };
 		3F1E9354A11F70DCB7D67EB7 /* space_groups.json in Resources */ = {isa = PBXBuildFile; fileRef = 9638CF0570B8E229E7AE9540 /* space_groups.json */; };
 		4811EE4E99C0BF7105854C73 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7313A17CF72940277C23ED9F /* SettingsView.swift */; };
 		4E28EC2C02A084FCD3B9DED1 /* InteractionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBACAEA15E11559BB3F050D9 /* InteractionsView.swift */; };
@@ -24,13 +25,16 @@
 		7695071EA1C52134FA215726 /* space_groups.json in Resources */ = {isa = PBXBuildFile; fileRef = 9638CF0570B8E229E7AE9540 /* space_groups.json */; };
 		780F87448809B414E62E2234 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2783F083FF3B6CFEBAC6D2A3 /* Components.swift */; };
 		7A40F68515A85ACED47C69B1 /* MagCalcStudioApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA76DFA64681DBEA76DE8FC8 /* MagCalcStudioApp.swift */; };
+		826ACF2D80117C97EE53A23E /* APIResponses.swift in Sources */ = {isa = PBXBuildFile; fileRef = 121B54B04E97892BF3F5600C /* APIResponses.swift */; };
 		831F15350C44A9E2B23670DB /* MagCalcConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A93EA424B2A581750D10E84 /* MagCalcConfig.swift */; };
 		87747FCCDE715E6E9CE522A8 /* APIResponses.swift in Sources */ = {isa = PBXBuildFile; fileRef = 121B54B04E97892BF3F5600C /* APIResponses.swift */; };
 		8AD0DE485E013B90DFA0778C /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7313A17CF72940277C23ED9F /* SettingsView.swift */; };
+		911D9EAB516DEB0F1B19530F /* MagCalcConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A93EA424B2A581750D10E84 /* MagCalcConfig.swift */; };
 		95A23C7A85007D7122765587 /* LocalBackendController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E970AD007500EA080566AD6 /* LocalBackendController.swift */; };
 		9876AC0BDE08E5328042D10B /* SpaceGroups.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F073A80464EE5A8512ED688 /* SpaceGroups.swift */; };
 		9CF109E390DCC636928CE8D6 /* ExchangeMatrix.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25E22CB5DC8FAE937FA5FA2B /* ExchangeMatrix.swift */; };
 		9D8E67C4B627F0AD682FBB09 /* RunView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03A16E81FB2B0A8763ED5D1E /* RunView.swift */; };
+		9EED03F0353FDE0C21461649 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED3FD1BE055C9CEA6FF64B25 /* main.swift */; };
 		A18E2D2EB07C2754FE695FEC /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2783F083FF3B6CFEBAC6D2A3 /* Components.swift */; };
 		A2B46B1622872BAA76004942 /* CrystalSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96FB47DCBFE486DC61E5926F /* CrystalSceneView.swift */; };
 		A783CE9B0896A57765482B66 /* JSONValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 151B4565A599347A78767848 /* JSONValue.swift */; };
@@ -40,13 +44,16 @@
 		AF2B01D78DE94B188A061759 /* CrystalSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96FB47DCBFE486DC61E5926F /* CrystalSceneView.swift */; };
 		B34CA23842529C2EB1BADE56 /* FittingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6087E2BBBBA654BAB3560C76 /* FittingView.swift */; };
 		BB0D451F5FF789ED5B1B57A5 /* Yams in Frameworks */ = {isa = PBXBuildFile; productRef = 640D180D39F2BCF7E2AC6C97 /* Yams */; };
+		C393A0EB3820DE50A8049A3E /* Yams in Frameworks */ = {isa = PBXBuildFile; productRef = 4BC0E93BBA851D414A3EC1EF /* Yams */; };
 		C3EA8CCB4DEDABD3D5E46E82 /* TasksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98CFCE2908CC24739FCB09B0 /* TasksView.swift */; };
 		C4E4C2532E0C41F51B576ED9 /* EnvironmentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D2E1286A842B41E978E3768 /* EnvironmentView.swift */; };
+		C79675F1BB9F851CDD7DA34D /* SpaceGroups.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F073A80464EE5A8512ED688 /* SpaceGroups.swift */; };
 		C9A92D231175DCA910D06DCD /* ExchangeMatrix.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25E22CB5DC8FAE937FA5FA2B /* ExchangeMatrix.swift */; };
 		CCEFD83D4ADC035BAABCF12A /* APIResponses.swift in Sources */ = {isa = PBXBuildFile; fileRef = 121B54B04E97892BF3F5600C /* APIResponses.swift */; };
 		CDDDEDE4B290B800387ED99C /* JSONValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 151B4565A599347A78767848 /* JSONValue.swift */; };
 		CDFE685CF502665AE6C01F7E /* YAMLConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B3E9CAE784CF7FE7FD4CE5D /* YAMLConfig.swift */; };
 		D887949AA030B5739D2EAFEB /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B1338D63391E57B500037E1 /* ContentView.swift */; };
+		DC63E4C7A255BA73DD3EF747 /* ExchangeMatrix.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25E22CB5DC8FAE937FA5FA2B /* ExchangeMatrix.swift */; };
 		DEFADC6B23308038330828F1 /* FittingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6087E2BBBBA654BAB3560C76 /* FittingView.swift */; };
 		E1E38E15E8A2D94D3A181387 /* StructureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DA4410D86ED94B0C3A286D3 /* StructureView.swift */; };
 		E52646AB7F245D517EBEA9F3 /* MagCalcConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A93EA424B2A581750D10E84 /* MagCalcConfig.swift */; };
@@ -55,6 +62,7 @@
 		ECEDB56727ED4C1503AE58A4 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70539559C011BD1C0F4F2F8 /* APIClient.swift */; };
 		EF5B632293B85C6105BE3F1F /* SceneKitSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB3ADDCB0C0635B37F705C93 /* SceneKitSupport.swift */; };
 		F005A576EC8A12C77336C9F4 /* TasksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98CFCE2908CC24739FCB09B0 /* TasksView.swift */; };
+		F01CCC056281D22C3231076A /* JSONValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 151B4565A599347A78767848 /* JSONValue.swift */; };
 		F8844E6195E88101F4A29B87 /* MagCalcStudioApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA76DFA64681DBEA76DE8FC8 /* MagCalcStudioApp.swift */; };
 		FAEB633C086B47169D5E3320 /* InteractionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBACAEA15E11559BB3F050D9 /* InteractionsView.swift */; };
 /* End PBXBuildFile section */
@@ -69,6 +77,7 @@
 		2B1338D63391E57B500037E1 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		4B0540B3868FD7A105529CA5 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		4F073A80464EE5A8512ED688 /* SpaceGroups.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpaceGroups.swift; sourceTree = "<group>"; };
+		593DF7494B4496D6E16D0F01 /* magcalc-emit-config */ = {isa = PBXFileReference; includeInIndex = 0; path = "magcalc-emit-config"; sourceTree = BUILT_PRODUCTS_DIR; };
 		5A9A6F2D63E0B7399B31BA19 /* MagCalcStudio-macOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "MagCalcStudio-macOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		5AD76BDECF04549A91067E31 /* LogStreamClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogStreamClient.swift; sourceTree = "<group>"; };
 		5B3E9CAE784CF7FE7FD4CE5D /* YAMLConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YAMLConfig.swift; sourceTree = "<group>"; };
@@ -86,6 +95,7 @@
 		CB3ADDCB0C0635B37F705C93 /* SceneKitSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneKitSupport.swift; sourceTree = "<group>"; };
 		E70539559C011BD1C0F4F2F8 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		EA76DFA64681DBEA76DE8FC8 /* MagCalcStudioApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MagCalcStudioApp.swift; sourceTree = "<group>"; };
+		ED3FD1BE055C9CEA6FF64B25 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -94,6 +104,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				BB0D451F5FF789ED5B1B57A5 /* Yams in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9B7A6A351F779C4D4D597518 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C393A0EB3820DE50A8049A3E /* Yams in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -114,6 +132,14 @@
 				1E970AD007500EA080566AD6 /* LocalBackendController.swift */,
 			);
 			path = Server;
+			sourceTree = "<group>";
+		};
+		15ABEF99760F49CBCDB3B78C /* EmitRunConfig */ = {
+			isa = PBXGroup;
+			children = (
+				ED3FD1BE055C9CEA6FF64B25 /* main.swift */,
+			);
+			path = EmitRunConfig;
 			sourceTree = "<group>";
 		};
 		43E8CC7DD370423B1CCBA852 /* App */ = {
@@ -146,6 +172,7 @@
 			children = (
 				B9BD06CA9485661C248B4ACB /* Resources */,
 				D768ABBE575FDB6457356AD6 /* Sources */,
+				E02E6BE8A59D529EE609AD70 /* Tools */,
 				BC89DEADD2771F54499AC217 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -192,6 +219,7 @@
 		BC89DEADD2771F54499AC217 /* Products */ = {
 			isa = PBXGroup;
 			children = (
+				593DF7494B4496D6E16D0F01 /* magcalc-emit-config */,
 				7C33EE66A203D669DBB9A6B6 /* MagCalcStudio-iOS.app */,
 				5A9A6F2D63E0B7399B31BA19 /* MagCalcStudio-macOS.app */,
 			);
@@ -210,6 +238,14 @@
 				A72246636399DB9B6053089D /* Visualizer */,
 			);
 			path = Sources;
+			sourceTree = "<group>";
+		};
+		E02E6BE8A59D529EE609AD70 /* Tools */ = {
+			isa = PBXGroup;
+			children = (
+				15ABEF99760F49CBCDB3B78C /* EmitRunConfig */,
+			);
+			path = Tools;
 			sourceTree = "<group>";
 		};
 		F6E7EEC414CCDF1F51B0F098 /* ViewModels */ = {
@@ -263,6 +299,25 @@
 			productReference = 7C33EE66A203D669DBB9A6B6 /* MagCalcStudio-iOS.app */;
 			productType = "com.apple.product-type.application";
 		};
+		ACC6698C76B2591D7FE31473 /* magcalc-emit-config */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B64F271072C52EBE25D01FFD /* Build configuration list for PBXNativeTarget "magcalc-emit-config" */;
+			buildPhases = (
+				514E7C688B94037477238195 /* Sources */,
+				9B7A6A351F779C4D4D597518 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "magcalc-emit-config";
+			packageProductDependencies = (
+				4BC0E93BBA851D414A3EC1EF /* Yams */,
+			);
+			productName = "magcalc-emit-config";
+			productReference = 593DF7494B4496D6E16D0F01 /* magcalc-emit-config */;
+			productType = "com.apple.product-type.tool";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -276,6 +331,9 @@
 						ProvisioningStyle = Automatic;
 					};
 					9D76C1C9A06AAC1679376645 = {
+						ProvisioningStyle = Automatic;
+					};
+					ACC6698C76B2591D7FE31473 = {
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -299,6 +357,7 @@
 			targets = (
 				9D76C1C9A06AAC1679376645 /* MagCalcStudio-iOS */,
 				69C396C634CAE4F827CF0614 /* MagCalcStudio-macOS */,
+				ACC6698C76B2591D7FE31473 /* magcalc-emit-config */,
 			);
 		};
 /* End PBXProject section */
@@ -323,6 +382,20 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		514E7C688B94037477238195 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				826ACF2D80117C97EE53A23E /* APIResponses.swift in Sources */,
+				DC63E4C7A255BA73DD3EF747 /* ExchangeMatrix.swift in Sources */,
+				F01CCC056281D22C3231076A /* JSONValue.swift in Sources */,
+				911D9EAB516DEB0F1B19530F /* MagCalcConfig.swift in Sources */,
+				C79675F1BB9F851CDD7DA34D /* SpaceGroups.swift in Sources */,
+				3ACF448E4329F94E56B1A083 /* YAMLConfig.swift in Sources */,
+				9EED03F0353FDE0C21461649 /* main.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		E21DD687308FD4EB66423360 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -519,6 +592,36 @@
 			};
 			name = Release;
 		};
+		5246E5B9F62191CB78FFBA1F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "edu.mahidol.magcalc.magcalc-emit-config";
+				PRODUCT_NAME = "magcalc-emit-config";
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		8251F621BC0DE52C2F708A0B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "-";
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "edu.mahidol.magcalc.magcalc-emit-config";
+				PRODUCT_NAME = "magcalc-emit-config";
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
 		9FACB2216F53F613DDD0D3EF /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -615,6 +718,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
+		B64F271072C52EBE25D01FFD /* Build configuration list for PBXNativeTarget "magcalc-emit-config" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5246E5B9F62191CB78FFBA1F /* Debug */,
+				8251F621BC0DE52C2F708A0B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
@@ -630,6 +742,11 @@
 
 /* Begin XCSwiftPackageProductDependency section */
 		1354214794623CBB78E41095 /* Yams */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 77A5E101365F9D1ECB0EBDC5 /* XCRemoteSwiftPackageReference "Yams" */;
+			productName = Yams;
+		};
+		4BC0E93BBA851D414A3EC1EF /* Yams */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 77A5E101365F9D1ECB0EBDC5 /* XCRemoteSwiftPackageReference "Yams" */;
 			productName = Yams;

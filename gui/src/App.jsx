@@ -45,6 +45,19 @@ function App() {
   const [currentFilePath, setCurrentFilePath] = useState(
     () => localStorage.getItem('magcalc_current_file') || null
   )
+  // Directory of that file, known ONLY when it was opened through the server
+  // (the browser's file pickers hand over a name, never a path). It is sent as
+  // `config_dir` with every run, so `from_mcif:` / `fitting.data_file:` /
+  // `cif_file:` resolve exactly as they do for `magcalc run <that file>`.
+  // Null => the run happens in the project root, as it always did.
+  const [currentFileDir, setCurrentFileDir] = useState(
+    () => localStorage.getItem('magcalc_current_dir') || null
+  )
+  // Server-backed Open dialog (recent files + a directory walk).
+  const [filePickerOpen, setFilePickerOpen] = useState(false)
+  const [recentFiles, setRecentFiles] = useState([])
+  const [browseListing, setBrowseListing] = useState(null)
+  const [browseError, setBrowseError] = useState(null)
   const [previewAtoms, setPreviewAtoms] = useState([]) // Expanded atoms for visualizer
   const [bonds, setBonds] = useState([]) // Bonds for visualizer
   const [hiddenBondLabels, setHiddenBondLabels] = useState(new Set()) // Labels of bonds to hide
@@ -402,6 +415,11 @@ function App() {
     else localStorage.removeItem('magcalc_current_file');
   }, [currentFilePath]);
 
+  React.useEffect(() => {
+    if (currentFileDir) localStorage.setItem('magcalc_current_dir', currentFileDir);
+    else localStorage.removeItem('magcalc_current_dir');
+  }, [currentFileDir]);
+
   // Symmetry Expansion Effect for Visualizer
   React.useEffect(() => {
     const updatePreview = async () => {
@@ -538,6 +556,7 @@ function App() {
       setInteractionMode('symmetry');
       setAtomMode('symmetry');
       setCurrentFilePath(null);
+      setCurrentFileDir(null);
       showNotify("Reset to defaults (aCVO)", "info");
     }
   }
@@ -581,10 +600,74 @@ function App() {
       const doc = yaml.load(event.target.result)
       // A browser-imported file has no writable handle, so it detaches the
       // "current file" (Save will open a Save dialog for a destination).
-      if (applyImportedDoc(doc)) { fileHandleRef.current = null; setCurrentFilePath(null) }
+      if (applyImportedDoc(doc)) {
+        fileHandleRef.current = null
+        setCurrentFilePath(null)
+        setCurrentFileDir(null)
+      }
     }
     reader.readAsText(file)
     e.target.value = ''
+  }
+
+  // --- Open through the server (the only route that knows the directory) ----
+  //
+  // A browser file picker cannot tell us WHERE the file is: the File System
+  // Access API exposes `handle.name` and nothing else. So a config carrying
+  // `from_mcif:`, `fitting.data_file:` or `cif_file:` -- all resolved relative to
+  // the config's own directory -- ran fine from the CLI and died on
+  // FileNotFoundError in the web app, which could only ever run in the project
+  // root. The server sits on the same machine and does know: /load-config
+  // returns an ABSPATH, which we keep and send back as `config_dir` on every run
+  // (exactly what the native app does with its real URL).
+  //
+  // The browser routes below ("Load YAML", and the Open fallback where the
+  // server is unreachable) are kept, and clear `currentFileDir` so they keep the
+  // previous project-root behaviour rather than inheriting a stale directory.
+  const refreshRecentFiles = async () => {
+    const res = await fetch('/api/recent-configs')
+    if (!res.ok) throw new Error(`recent-configs: ${res.status}`)
+    const data = await res.json()
+    setRecentFiles(data.files || [])
+    return data
+  }
+
+  const browseTo = async (dir) => {
+    setBrowseError(null)
+    try {
+      const res = await fetch('/api/browse-configs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dir: dir || undefined }),
+      })
+      if (!res.ok) throw new Error((await res.json()).detail || res.statusText)
+      setBrowseListing(await res.json())
+    } catch (err) {
+      setBrowseError(err.message)
+    }
+  }
+
+  const openConfigByPath = async (path) => {
+    try {
+      const res = await fetch('/api/load-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      })
+      if (!res.ok) throw new Error((await res.json()).detail || res.statusText)
+      const data = await res.json()
+      if (applyImportedDoc(data.config, { quiet: true })) {
+        // No writable browser handle for a server-opened file -- Save goes back
+        // through /save-config, which writes the same canonical YAML.
+        fileHandleRef.current = null
+        setCurrentFilePath(data.path)
+        setCurrentFileDir(data.dir)
+        setFilePickerOpen(false)
+        showNotify(`Opened ${data.path}`, 'success')
+      }
+    } catch (err) {
+      showNotify('Open failed: ' + err.message, 'error')
+    }
   }
 
   // --- File editing via native Finder dialogs (Open / Save) -----------------
@@ -603,11 +686,25 @@ function App() {
     if (applyImportedDoc(doc, { quiet: true })) {
       fileHandleRef.current = handle
       setCurrentFilePath(file.name)
+      // A browser-picked file carries no path, so the run stays in the project
+      // root; anything relative inside the config will fail there, loudly.
+      setCurrentFileDir(null)
       showNotify(`Opened ${file.name}`, 'success')
     }
   }
 
+  // Prefer the server picker: it is the only route that yields a directory.
+  // Fall back to the browser's own dialogs when the backend is not reachable.
   const openConfigFile = async () => {
+    try {
+      const data = await refreshRecentFiles()
+      await browseTo(data.project_root)
+      setFilePickerOpen(true)
+      return
+    } catch {
+      showNotify('Backend unavailable -- opening without a file path '
+        + '(relative references in the config will not resolve).', 'info')
+    }
     if (window.showOpenFilePicker) {
       try {
         const [handle] = await window.showOpenFilePicker({ types: FILE_PICKER_TYPES })
@@ -627,6 +724,11 @@ function App() {
     if (file) await applyFileObject(file, null)
   }
 
+  // Basename of the working file. `currentFilePath` is an ABSPATH when the file
+  // was opened through the server, and a browser Save dialog rejects a
+  // suggestedName containing separators.
+  const currentFileName = currentFilePath ? currentFilePath.split('/').pop() : null
+
   const saveConfigFile = async (saveAs = false) => {
     let data
     try {
@@ -636,12 +738,31 @@ function App() {
       return
     }
 
+    // A file opened through the server has an absolute path but no writable
+    // browser handle, so Save writes it back through /save-config -- the same
+    // canonical serializer, so the saved file is byte-identical to Export and
+    // directly runnable with `magcalc run`.
+    if (!saveAs && currentFileDir && currentFilePath && !fileHandleRef.current) {
+      try {
+        const res = await fetch('/api/save-config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: currentFilePath, text: data }),
+        })
+        if (!res.ok) throw new Error((await res.json()).detail || res.statusText)
+        showNotify(`Saved ${currentFilePath}`, 'success')
+      } catch (err) {
+        showNotify('Save failed: ' + err.message, 'error')
+      }
+      return
+    }
+
     if (window.showSaveFilePicker) {
       try {
         let handle = (!saveAs && fileHandleRef.current) ? fileHandleRef.current : null
         if (!handle) {
           handle = await window.showSaveFilePicker({
-            suggestedName: currentFilePath || 'config.yaml',
+            suggestedName: currentFileName || 'config.yaml',
             types: FILE_PICKER_TYPES,
           })
         }
@@ -668,7 +789,7 @@ function App() {
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = currentFilePath || 'config.yaml'
+      link.download = currentFileName || 'config.yaml'
       link.click()
       URL.revokeObjectURL(url)
       showNotify('Saved (download).', 'success')
@@ -729,7 +850,7 @@ function App() {
       if ('showSaveFilePicker' in window) {
         try {
           const handle = await window.showSaveFilePicker({
-            suggestedName: currentFilePath || 'config_designer.yaml',
+            suggestedName: currentFileName || 'config_designer.yaml',
             types: [{ description: 'YAML Configuration', accept: { 'text/yaml': ['.yaml', '.yml'] } }],
           });
           const writable = await handle.createWritable();
@@ -744,7 +865,7 @@ function App() {
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = currentFilePath || 'config_designer.yaml';
+        link.download = currentFileName || 'config_designer.yaml';
         link.click();
         URL.revokeObjectURL(url);
         showNotify(`Configuration exported (fallback download).`)
@@ -1036,10 +1157,15 @@ function App() {
     if (overrides.tasks) cfg.tasks = overrides.tasks
 
     try {
+      // `config_dir` makes the run happen in the opened file's directory, so
+      // `from_mcif`, `fitting.data_file`, `cif_file` and `python_model_file`
+      // resolve exactly as they do for `magcalc run <that file>`. Known only for
+      // a server-opened file (see openConfigByPath); omitted otherwise, which
+      // keeps the previous project-root behaviour.
       const response = await fetch('/api/run-calculation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config: cfg }),
+        body: JSON.stringify({ config: cfg, ...(currentFileDir ? { config_dir: currentFileDir } : {}) }),
       })
 
       if (!response.ok) {
@@ -1179,6 +1305,71 @@ function App() {
         hidden
         onChange={handleOpenFileFallback}
       />
+
+      {/* Open dialog, served by the backend. The browser's own picker cannot
+          report a path, so a config with relative references (from_mcif,
+          fitting.data_file, cif_file) could not be run from the web app at all;
+          this route returns an abspath, which becomes `config_dir` on Run. */}
+      {filePickerOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex center animate-fade-in"
+             onClick={() => setFilePickerOpen(false)}>
+          <div className="bg-surface border border-color rounded-xl p-lg shadow-glow max-w-2xl w-full max-h-[80vh] overflow-y-auto"
+               onClick={e => e.stopPropagation()}>
+            <h3 className="text-xl font-bold mb-md flex-between">
+              <span>Open Config File</span>
+              <button className="btn btn-xs btn-secondary"
+                      onClick={() => setFilePickerOpen(false)}>Close</button>
+            </h3>
+
+            {recentFiles.length > 0 && (
+              <>
+                <div className="text-xs text-muted mb-xs">Recent</div>
+                <div className="grid gap-xs mb-md">
+                  {recentFiles.map(f => (
+                    <div key={f.path}
+                         className={'card flex-between ' + (f.exists ? 'hover-glow cursor-pointer' : 'opacity-50')}
+                         onClick={() => f.exists && openConfigByPath(f.path)}>
+                      <div>
+                        <div className="text-sm font-bold">{f.name}</div>
+                        <div className="text-xs text-muted font-mono">{f.dir}</div>
+                      </div>
+                      {!f.exists && <span className="text-xs text-muted">missing</span>}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            <div className="text-xs text-muted mb-xs">Browse</div>
+            {browseError && <div className="text-xs text-error mb-xs">{browseError}</div>}
+            {browseListing && (
+              <>
+                <div className="text-xs font-mono mb-xs break-all">{browseListing.dir}</div>
+                <div className="grid gap-xs">
+                  {browseListing.parent && (
+                    <div className="card hover-glow cursor-pointer"
+                         onClick={() => browseTo(browseListing.parent)}>
+                      <span className="text-sm">📁 ..</span>
+                    </div>
+                  )}
+                  {browseListing.dirs.map(d => (
+                    <div key={d.path} className="card hover-glow cursor-pointer"
+                         onClick={() => browseTo(d.path)}>
+                      <span className="text-sm">📁 {d.name}</span>
+                    </div>
+                  ))}
+                  {browseListing.files.map(f => (
+                    <div key={f.path} className="card hover-glow cursor-pointer"
+                         onClick={() => openConfigByPath(f.path)}>
+                      <span className="text-sm">📄 {f.name}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       <main>
         <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} width={sidebarWidth} />
