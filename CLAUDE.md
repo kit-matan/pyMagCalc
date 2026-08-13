@@ -254,11 +254,35 @@ interactions:
   #
   # Ewald's A(q) is an infinite lattice sum, so it is NOT a bond list: it is added to
   # H(q) numerically, and to the classical energy via A(0) (so the minimiser optimises
-  # the same Hamiltonian LSWT diagonalises). Not yet supported with a single-k
-  # rotating-frame structure (each q +/- k channel needs its own A(q)) -- it raises
-  # rather than quietly using the wrong one; use a magnetic_supercell instead.
+  # the same Hamiltonian LSWT diagonalises).
   # g comes from the per-site `g`, else 2.
 ```
+
+**Ewald with a single-k (rotating-frame) structure** works as of 2026-08-13 (it used
+to refuse). Each of the three q ± k channels gets its own A(q), itself the
+Toth–Lake projector combination at that momentum. Read this before trusting the
+number:
+
+- it is EXACT when A(q) is uniaxial about the spiral axis — i.e. when that axis is a
+  3-fold or higher symmetry axis of the lattice and q lies along it — and when
+  2k is a reciprocal-lattice vector (`k_case 2`, where the ±2k umklapp folds back
+  into the same channel and is kept);
+- OTHERWISE it drops the ±2k terms, which leave the {q−k, q, q+k} channel set
+  entirely. That is the same approximation Sunny's `SpinWaveTheorySpiral` makes, and
+  it is not small: ~10–20 % of the dipolar shift on a chain whose axis lies in the
+  spiral plane. **The engine warns**, following
+  `magnetic_structure.enforce_rotational_symmetry` (`warn` default, `error`, `off`),
+  and names the dropped weight. Sunny's own `check_rotational_symmetry` cannot see
+  this — the dipolar term sits outside `interactions_union` — so the warning has no
+  counterpart there;
+- for an exact answer at commensurate k, use `crystal_structure.magnetic_supercell`.
+  Note that a dipolar term breaking the U(1) symmetry generally makes the spiral
+  itself unstable (Sunny errors outright on such models), so the warning is usually
+  telling you something about the physics, not only about the method.
+
+Validated in `tests/test_ewald_spiral.py`: against the explicit `magnetic_supercell`
+as an exact identity (both `k_case` branches, after the no-Ewald control passes) and
+against Sunny 0.8.1 at incommensurate k.
 
 **Per-site g-tensor** goes on the atom, not in `interactions`:
 

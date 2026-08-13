@@ -135,12 +135,14 @@ def test_ewald_rejects_unknown_method():
         GenericSpinModel(cfg)
 
 
-def test_ewald_with_single_k_is_rejected_not_silently_wrong():
-    """The rotating-frame machinery now EXISTS (core._ewald_J_rot) but is not
-    validated, so the refusal stays until the oracle does. A plausible spectrum
-    from an unchecked Hamiltonian is worse than an error -- see OPEN_WORK.md #1."""
-    """The three q +/- k channels each need their own A(q); rather than quietly use the
-    wrong one, refuse."""
+def test_ewald_with_single_k_runs_and_is_channel_resolved():
+    """The three q +/- k channels each need their own A(q), each of them the
+    rotating-frame projector combination at that momentum. This was REFUSED
+    outright until 2026-08-13, because the machinery existed but no oracle did;
+    `tests/test_ewald_spiral.py` is now that oracle (supercell identity + Sunny),
+    so the path runs. Here just pin that it produces the three channels and that
+    the dipolar term reaches them -- i.e. that the refusal is gone and nothing
+    silently no-ops in its place."""
     cfg = {
         "crystal_structure": {"lattice_vectors": LAT, "atoms_uc": [
             {"label": "A", "pos": [0.0, 0.0, 0.0], "spin_S": 1.0, "g": 2.0}]},
@@ -158,8 +160,19 @@ def test_ewald_with_single_k_is_rejected_not_silently_wrong():
     calc = mc.MagCalc(spin_model_module=m, spin_magnitude=1.0, cache_mode="none",
                       cache_file_base="ew_sk", hamiltonian_params=[])
     B = 2 * np.pi * np.linalg.inv(np.array(LAT, float)).T
-    with pytest.raises(NotImplementedError, match="UNVALIDATED"):
-        calc.calculate_sqw([np.array([0.2, 0, 0]) @ B], satellites=True)
+    qs = [np.array([0.2, 0, 0]) @ B]
+    res = calc.calculate_sqw(qs, satellites=True)
+    assert res.energies.shape == (1, 3)          # one channel per q +/- k
+
+    plain = copy.deepcopy(cfg)
+    plain["interactions"].pop("dipole_dipole")
+    m2 = GenericSpinModel(plain)
+    th2, ph2 = m2.generate_magnetic_structure()
+    m2.set_magnetic_structure(th2, ph2)
+    calc2 = mc.MagCalc(spin_model_module=m2, spin_magnitude=1.0, cache_mode="none",
+                       cache_file_base="ew_sk_none", hamiltonian_params=[])
+    e_plain = calc2.calculate_sqw(qs, satellites=True).energies
+    assert np.max(np.abs(np.real(res.energies - e_plain))) > 1e-4
 
 
 @pytest.mark.slow

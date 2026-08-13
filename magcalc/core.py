@@ -1855,12 +1855,35 @@ class MagCalc:
         geometry (its r̂r̂ structure) and is not uniaxial about an arbitrary
         axis -- so it needs the real projector combination.
 
-        Pinned to Sunny `SpinWaveTheorySpiral.jl:129-138`. MIND THE BRANCH: it is
-        THREE terms in the generic incommensurate case and FIVE when 2k is a
-        reciprocal-lattice vector, not the other way round. `GAP4_PLAN.md` had
-        this inverted until 2026-08-12; putting the two cross terms into the
-        generic branch gives a wrong H that still diagonalizes and still looks
-        like a spectrum.
+        Sunny's `SpinWaveTheorySpiral.jl:129-138` is the same algebra in ITS gauge.
+        MIND THE BRANCH: it is THREE terms in the generic incommensurate case and
+        FIVE when 2k is a reciprocal-lattice vector, not the other way round.
+        `GAP4_PLAN.md` had this inverted until 2026-08-12; putting the two cross
+        terms into the generic branch gives a wrong H that still diagonalizes and
+        still looks like a spectrum.
+
+        MIND THE GAUGE -- this is NOT a transcription of Sunny's expression, and
+        transcribing it is wrong. Writing the P_a A P_b decomposition of
+        U(-theta_i) A U(theta_j) (P in {R2, R1, R1*}, "charge" q_P = 0, +1, -1
+        under U), summing over cells, and folding in that `ewald.py` phases A over
+        the FULL bond vector while Sunny phases it over lattice translations only,
+        the coefficient of P_a A P_b is
+
+            exp(i (q_b - q_a) k.r_i) * A(q + q_b k)
+
+        so the DIAGONAL (q_a = q_b) terms carry no phase but pair R1 with q+k and
+        R1* with q-k -- the mirror image of Sunny's assignment, because pyMagCalc's
+        Fourier sign is the opposite one. The two orderings are indistinguishable
+        whenever A is uniaxial about the axis (then R1 A R1* = 0 and A commutes
+        with the rotation), which is exactly the regime where the whole method is
+        exact -- so the wrong one passes the obvious tests and fails only against
+        an oracle carrying an intra-cell offset. See `tests/test_ewald_spiral.py`.
+
+        The k_case 2 cross terms then carry exp(+/- 2i k.r_i): their absolute-phase
+        factor exp(i (q_b - q_a) 2 pi k.c) is unity because 2k is a reciprocal
+        lattice vector, but the intra-cell part of the FULL-bond-vector gauge
+        survives as a per-ROW phase. It is not symmetric in (i, j) and must not be
+        symmetrized -- that is pinned by `test_case2_cross_terms_are_needed`.
         """
         R1, R2 = self._spiral_projectors()
         R1c = np.conj(R1)
@@ -1875,13 +1898,23 @@ class MagCalc:
             return np.einsum("ab,ijbc,cd->ijad", L, J, R)
 
         out = (sandwich(R2, Jq, R2)
-               + sandwich(R1c, Jp, R1c)
-               + sandwich(R1, Jm, R1))
+               + sandwich(R1, Jp, R1)
+               + sandwich(R1c, Jm, R1c))
         if int(self.k_case) == 2:
             # 2k is a reciprocal-lattice vector: the satellites coincide and the
-            # two cross terms survive.
-            out = out + sandwich(R1, Jp, R1c) + sandwich(R1c, Jm, R1)
+            # two umklapp (cross) terms fold back into the same channel.
+            # The phase indexes the ROW only -- see the docstring; it is the
+            # intra-cell remnant of the full-bond-vector gauge, not a bond phase.
+            f = np.exp(2j * (self._cart_positions() @ k))[:, None, None, None]
+            out = (out + f * sandwich(R1c, Jp, R1)
+                       + np.conj(f) * sandwich(R1, Jm, R1c))
         return out
+
+    def _cart_positions(self):
+        """Cartesian coordinates of the sites, (n, 3)."""
+        cs = self.sm.config["crystal_structure"]
+        lat = np.asarray(cs["lattice_vectors"], dtype=float)
+        return np.asarray([a["pos"] for a in cs["atoms_uc"]], dtype=float) @ lat
 
     def _ewald_nambu(self, q_cart):
         """Dipolar contribution to H(q), in the host's g*H2 convention.
@@ -1930,7 +1963,67 @@ class MagCalc:
         """(Nq, 2N, 2N) dipolar contribution, or None when Ewald is not requested."""
         if self._ewald_spec() is None:
             return None
-        return np.array([self._ewald_nambu(q) for q in np.asarray(q_grid, float)])
+        q_grid = np.asarray(q_grid, float)
+        if self.k_cart is not None and self.k_case in (2, 3):
+            self._check_ewald_spiral_validity(q_grid)
+        return np.array([self._ewald_nambu(q) for q in q_grid])
+
+    def _check_ewald_spiral_validity(self, q_grid, tol=1e-6):
+        """Warn when the rotating-frame dipolar term is an APPROXIMATION.
+
+        The generic (`k_case` 3) three-term combination keeps only the part of
+        A(q) that commutes with rotations about the spiral axis. The dropped
+        pieces -- `R1 A R1*` and `R1* A R1` -- transfer momentum by -/+2k, so
+        they leave the {q-k, q, q+k} channel set and cannot be represented at
+        all. They vanish exactly when A(q) is uniaxial about the axis, which is
+        the only regime in which this path is exact; a lattice whose geometry
+        makes A(q) anisotropic in the spiral plane gets an answer that is wrong
+        by that term (measured: ~10-20% of the dipolar shift on a chain whose
+        axis lies in the plane).
+
+        This is the same approximation Sunny's `SpinWaveTheorySpiral` makes, and
+        Sunny's `check_rotational_symmetry` does NOT see it -- the dipolar term
+        lives outside `interactions_union`. So this check has no counterpart to
+        copy; it measures the dropped term directly.
+
+        `k_case` 2 is exempt: 2k is then a reciprocal-lattice vector, the umklapp
+        folds back into the same channel, and `_ewald_J_rot` keeps it.
+        """
+        if int(self.k_case) != 3 or getattr(self, "_ewald_spiral_checked", False):
+            return
+        self._ewald_spiral_checked = True
+        mode = (getattr(self.sm, "mag_struct_cfg", None) or {}).get(
+            "enforce_rotational_symmetry", "warn")
+        if mode == "off":
+            return
+
+        R1, R2 = self._spiral_projectors()
+        R1c = np.conj(R1)
+        worst = 0.0
+        for q in list(q_grid[:8]) + [np.zeros(3), np.asarray(self.k_cart, float)]:
+            A = self._ewald_J_lab(np.asarray(q, float))
+            scale = np.max(np.abs(A))
+            if scale < 1e-30:
+                continue
+            cross = max(
+                np.max(np.abs(np.einsum("ab,ijbc,cd->ijad", R1, A, R1c))),
+                np.max(np.abs(np.einsum("ab,ijbc,cd->ijad", R1c, A, R1))),
+            )
+            worst = max(worst, cross / scale)
+        if worst <= tol:
+            return
+
+        msg = (
+            "Long-range dipolar A(q) is NOT uniaxial about the spiral axis "
+            f"{np.round(self.spiral_axis, 6).tolist()} (dropped umklapp weight "
+            f"{worst:.3g} of |A|). The rotating-frame single-k method drops the "
+            "+/-2k terms, so the dipolar part of this spectrum is approximate -- "
+            "as it is in Sunny. Use crystal_structure.magnetic_supercell for an "
+            "exact treatment at commensurate k, or align the spiral axis with a "
+            "3-fold or higher symmetry axis of the lattice.")
+        if mode == "error":
+            raise ValueError(msg)
+        logger.warning(msg)
 
     def max_imaginary_energy(
         self,
@@ -2361,25 +2454,11 @@ class MagCalc:
         # combination at that momentum (`_ewald_J_rot`). The worker evaluates H at
         # +q_c and -q_c, so hand it both.
         #
-        # STILL REFUSED BY DEFAULT, and deliberately so. The machinery below is
-        # written and matches Sunny's corrected formula, but it has NOT been
-        # validated against an independent oracle: the intended check (commensurate
-        # k vs the explicit magnetic_supercell) does not yet agree even with the
-        # dipolar term switched OFF, so the harness itself is wrong and can prove
-        # nothing about this path. Shipping it would replace an honest refusal with
-        # a plausible-looking spectrum -- this repo's documented #1 hazard. Opt in
-        # with `dipole_dipole: {allow_single_k: true}` ONLY to work on the oracle.
-        # See OPEN_WORK.md item 1.
-        if dip_p is not None and use_single_k and not (
-                (self._ewald_spec() or {}).get("allow_single_k", False)):
-            raise NotImplementedError(
-                "Ewald dipole-dipole with a single-k (rotating-frame) structure is "
-                "implemented but UNVALIDATED, so it is refused rather than trusted: "
-                "the commensurate-vs-supercell oracle does not yet reproduce even "
-                "the no-Ewald control. Use a magnetic_supercell instead, or "
-                "dipole_dipole.method: truncated. To work on the oracle itself, set "
-                "dipole_dipole.allow_single_k: true (EXPERIMENTAL, may be wrong).")
-
+        # This was refused outright until 2026-08-13, when the oracle finally
+        # existed: `tests/test_ewald_spiral.py` pins it to the explicit
+        # magnetic_supercell (exact identity, both k_case branches) and to Sunny at
+        # incommensurate k. `_check_ewald_spiral_validity` warns in the one regime
+        # that stays approximate.
         dip_channels = None
         if dip_p is not None and use_single_k:
             kc = np.asarray(self.k_cart, dtype=float)

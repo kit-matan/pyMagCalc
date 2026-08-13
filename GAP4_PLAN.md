@@ -194,9 +194,16 @@ mixed-spin ferrimagnet against Sunny `:SUN`.
 **Risk.** Medium–high — this is the validated core. Do the decoupled-sublattice test
 *first*, confirm it passes on the current uniform-N code, and only then refactor.
 
-### #24b Ewald + rotating-frame single-k — METHOD FOUND IN SUNNY, ready to implement
+### #24b Ewald + rotating-frame single-k — **DONE 2026-08-13**
 
-**Status: not implemented, but no longer a derivation problem.** Sunny.jl is MIT
+**Status: implemented, validated, shipped.** `tests/test_ewald_spiral.py`. Read the
+correction at the end of this section before the plan text below it: transcribing
+Sunny's expression, as steps 1–4 tell you to, produces a WRONG Hamiltonian in
+pyMagCalc's Fourier gauge, and the wrong one passes every test that existed at the
+time. The plan below is kept because its reading of Sunny is right and its two-stage
+oracle is the one that worked; only the transcription step was too naive.
+
+**Status when written: not implemented, but no longer a derivation problem.** Sunny.jl is MIT
 licensed and in-repo at `../Sunny.jl-main`; this project already takes conventions
 from it (the Stevens table in `stevens.py` was generated from it). Take the METHOD
 from `src/Spiral/SpinWaveTheorySpiral.jl` rather than re-deriving — my own attempts
@@ -295,6 +302,58 @@ from a closer look that changed its nature rather than its size, and three of th
 wrong. Ten minutes reading the reference implementation settled it. The lesson is not
 subtle: when a validated implementation of the same physics is sitting in the repo as
 an oracle, read it before deriving.
+
+---
+
+**WHAT ACTUALLY HAPPENED (2026-08-13), i.e. the fifth correction.**
+
+Steps 1–4 above were carried out verbatim in `3a986ac`, and the result was WRONG.
+Reading Sunny correctly is necessary and not sufficient: **the two codes phase `A(q)`
+differently**, and the projector algebra is not invariant under that.
+`ewald.dipole_ewald_at_q` multiplies by `exp(i q·dr)` over the FULL bond vector (to
+match pyMagCalc's symbolic `H`), where Sunny phases over lattice translations only.
+Writing the `P_a A P_b` decomposition of `U(-θ_i) A U(θ_j)` with
+`P ∈ {R2, R1, R1*}` of charge `q_P = 0, +1, -1`, summing over cells and folding in
+that gauge, the coefficient of `P_a A P_b` is
+
+    exp(i (q_b - q_a) k·r_i) · A(q + q_b k)
+
+so in pyMagCalc's convention **R1 pairs with q+k and R1\* with q−k — the mirror of
+Sunny's** — and the `k_case 2` cross terms carry a per-ROW phase `exp(±2i k·r_i)`
+(their absolute-phase factor is unity because 2k is a RLV, but the intra-cell part of
+the full-bond gauge survives). It is not symmetric in (i, j) and must not be
+symmetrized.
+
+**Why this was invisible.** The mirrored assignment is *identical* whenever `A(q)` is
+uniaxial about the spiral axis (then `R1 A R1* = 0`), and identical for any one-site
+cell (`r_i = 0`). Both hold in every model this repo already used, so the wrong
+version reproduced the `magnetic_supercell` answer to 1e-15 on the first oracle model
+tried. It took a cell with TWO sites at an intra-cell offset AND the Sunny `S0`
+spin-direction convention (the position-spiral `local_directions` convention has zero
+relative phase in the rotating frame and also hides it) to separate them.
+
+**What the two-stage oracle actually needed.**
+
+1. The commensurate-k-vs-supercell identity is exact only where the method is —
+   `k_case 2` always, and `k_case 3` only when `A(q)` is uniaxial about the axis. The
+   test models therefore put k and q along a 4-fold axis. The `k_case 3` three-term
+   form otherwise drops the ±2k umklapp, which is a real ~10–20 % error on the
+   dipolar part, now warned about by `core._check_ewald_spiral_validity`.
+2. `k_case 2` is the ONLY way to test the cross terms: with a uniaxial `A` they are
+   exactly zero, so a non-uniaxial lattice is required, and 2k ∈ RLV is what makes
+   the supercell identity exact there anyway.
+3. Sunny at incommensurate k agreed to 1.3e-8 once the gauge was right. Note Sunny
+   *refuses* (PosDefException) most non-uniaxial spiral + dipole models — a U(1)-
+   breaking dipolar term generally destabilizes the spiral — which is a second reason
+   the useful test regime is the uniaxial one.
+
+The earlier note that the harness "does not agree even with Ewald off" was itself
+wrong: the no-Ewald control is exact to 1e-15 at commensurate k, including for a
+state that is not the ground state. That attempt had imposed a 120° spiral on a plain
+AFM chain (whose spiral minimum is k = 1/2, not 1/3) and, separately, risked
+comparing the two descriptions at q converted through *different* B-matrices — the
+supercell path keeps q in CHEMICAL RLU, so mixing them shifts q by a factor of the
+supercell dimension.
 
 ---
 
