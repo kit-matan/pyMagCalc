@@ -15,6 +15,9 @@ quantity.
 Validated three ways: the factor against Sunny's formula, its two analytic limits,
 and -- the one that would catch applying it upside-down -- a physical prediction it
 makes about a ferromagnet that the uncorrected spectrum badly violates.
+
+Every check here is a RATIO or a spread, so none of them can see an overall factor;
+the absolute scale is `tests/test_classical_absolute_normalization.py`.
 """
 import copy
 
@@ -145,9 +148,10 @@ def test_low_T_ferromagnet_weight_becomes_q_independent():
     residue being finite-T and finite-sampling. The two are a factor ~7 apart, so
     the tolerances below are nowhere near each other.
 
-    NB this pins the SHAPE, not the absolute scale: the classical S(q,w) carries a
-    normalization convention that has not been reconciled with the LSWT one (see
-    GAP_STATUS Gap 4 #17). Do not read an absolute intensity off this path yet.
+    This test pins the SHAPE only -- it measures a spread, in which any overall
+    factor cancels, which is why it went on passing while the absolute scale was
+    2pi/dt = 314x off. The scale was reconciled separately on 2026-08-13; its oracle
+    is the equal-time sum rule, in `tests/test_classical_absolute_normalization.py`.
     """
     kT = 0.05
 

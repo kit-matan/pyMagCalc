@@ -36,6 +36,25 @@ from .sun.entangled import _pair_matrix
 logger = logging.getLogger(__name__)
 
 
+def n_chemical_cells(model, supercell):
+    """Number of CHEMICAL unit cells in a `build_supercell` box.
+
+    The normalizing volume for every S(q) / S(q,ω) this module and
+    `classical_dynamics` produce, matching Sunny and pyMagCalc's own LSWT
+    (`MagCalc.supercell_ncells`, `SUNModel.n_cells`). Two factors multiply:
+    the sampler's own L₁×L₂×L₃ replication, and any `magnetic_supercell` the model
+    already carries -- `model.atom_pos()` is then the MAGNETIC cell, so its sites
+    span `prod(supercell_dims)` chemical cells before the sampler replicates it.
+
+    Note this counts CELLS, not surviving spins, so it does not change when
+    `disorder` removes sites: diluting a magnet lowers its scattering, and a
+    per-site normalization would divide that physics back out.
+    """
+    ncell = int(np.prod([int(x) for x in supercell]))
+    dims = getattr(model, 'supercell_dims', None) or [1, 1, 1]
+    return ncell * int(np.prod([int(x) for x in dims]))
+
+
 def build_supercell(model, params, supercell=(4, 4, 1), disorder=None,
                     periodic=(True, True, True)):
     """Assemble (H, b, N, S, pos) for a periodic L₁×L₂×L₃ supercell.
@@ -326,16 +345,22 @@ def static_correlations(model, params, q_cart, kT, supercell=(6, 6, 1),
 
     No dynamics: thermalize, then average the equal-time correlation
 
-        S(q) = (1/N) sum_ab P_ab(q) < S^a(q) S^b(q)* >,   S^a(q) = sum_r e^{-i q.r} S^a_r
+        S(q) = (1/n_cells) sum_ab P_ab(q) < S^a(q) S^b(q)* >,
+        S^a(q) = sum_r e^{-i q.r} S^a_r
 
     over decorrelated configurations, with P the neutron projector selected by
-    `cross_section`. The 1/N makes it PER SITE, so free isotropic spins give exactly
-    2S^2/3 in the `perp` channel and S^2 in `trace`, at every q and every
-    temperature -- the identity this is pinned to.
+    `cross_section`. The 1/n_cells makes it PER CHEMICAL CELL -- the normalization
+    LSWT and Sunny use -- so free isotropic spins give exactly n_atoms * 2S^2/3 in
+    `perp` and n_atoms * S^2 in `trace`, at every q and every temperature, which is
+    the identity this is pinned to. It used to divide by the SITE count instead;
+    that agrees for a one-site cell (every model this file was tested on) and is
+    n_atoms too small otherwise.
 
     This is the classical, all-temperature counterpart of the LSWT band sum
     (`numerical.static_intensities`): it needs no ordered state and so is valid above
-    T_N, where LSWT has nothing to say.
+    T_N, where LSWT has nothing to say. It is also exactly the frequency integral of
+    `classical_dynamics.sampled_correlations` (two-sided, uncorrected) -- the sum
+    rule that fixes both absolute scales at once.
     """
     from .classical_dynamics import _contract
 
@@ -360,7 +385,7 @@ def static_correlations(model, params, q_cart, kT, supercell=(6, 6, 1),
             g = H @ m.ravel() + b
         Sq = phase @ m                            # (n_q, 3)
         acc += np.einsum("qa,qb->qab", Sq.conj(), Sq)
-    acc /= (int(n_samples) * N)
+    acc /= (int(n_samples) * n_chemical_cells(model, supercell))
 
     sq = np.array([np.real(_contract(acc[i][None, :, :], qs[i], cross_section))[0]
                    for i in range(len(qs))])

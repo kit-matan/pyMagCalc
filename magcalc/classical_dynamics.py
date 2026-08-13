@@ -185,24 +185,53 @@ class DynamicsResult:
     classical_to_quantum: bool = False   # was the c2q factor already applied?
 
 
-def dynamical_structure_factor(traj, pos, q_cart, dt, cross_section="perp"):
+def dynamical_structure_factor(traj, pos, q_cart, dt, cross_section="perp", *,
+                               n_cells, two_sided=False):
     """S(q,ω) from one trajectory `traj` (n_t, N, 3) at cartesian q-vectors.
 
-    Returns (energies (n_t//2,), sqw (n_ω, n_q)). Time→ω by FFT; positive ω only.
+    Returns (energies, sqw (n_ω, n_q)) on the ABSOLUTE scale LSWT and Sunny use,
+
+        S^ab(q,ω) = (1/2π) ∫dt e^{-iωt} ⟨S^a(q,0)* S^b(q,t)⟩ / n_cells,
+        S^a(q,t)  = Σ_r e^{-iq·r} S^a_r(t),
+
+    whose defining property is the equal-time sum rule ∫dω S^ab(q,ω) =
+    ⟨S^a(q)* S^b(q)⟩ / n_cells. `n_cells` is the number of CHEMICAL cells in the
+    simulated box (Sunny's `prod(sys.dims)`), NOT the number of spins: LSWT S(q,ω)
+    is per chemical cell in both codes, so a cell with two magnetic atoms scatters
+    twice as much. It is keyword-only and has no default deliberately — the two
+    differ only when the cell holds more than one site, i.e. silently on exactly the
+    models a one-site test cannot reach.
+
+    `two_sided` returns the whole frequency axis (ascending, ω < 0 included) rather
+    than the ω ≥ 0 half; the classical spectrum is symmetric in ω, and it is the
+    two-sided integral that the sum rule above is a statement about. The one-sided
+    default is what `classical_to_quantum_factor` turns into a quantum S(q,ω ≥ 0).
+
+    Both normalizing factors were missing until 2026-08-13: the FFT was left as a
+    bare sum (so the result was 2π/dt too large — 314× at the default dt = 0.02) and
+    the spatial sum was divided by the site count rather than the cell count.
     """
     n_t, N, _ = traj.shape
+    if n_cells is None or int(n_cells) <= 0:
+        raise ValueError(f"n_cells must be a positive cell count, got {n_cells!r}.")
     qs = np.asarray(q_cart, float).reshape(-1, 3)
     phase = np.exp(-1j * (qs @ pos.T))                  # (n_q, N)
     # S^a(q, t) = Σ_r e^{-iq·r} S^a_r(t)  -> (n_t, n_q, 3)
     Sqt = np.einsum("qr,tra->tqa", phase, traj)
     Sqw = np.fft.fft(Sqt, axis=0)                       # (n_t, n_q, 3)
-    n_w = n_t // 2
-    energies = 2 * np.pi * np.fft.fftfreq(n_t, d=dt)[:n_w]
-    out = np.zeros((n_w, len(qs)))
+    energies = 2 * np.pi * np.fft.fftfreq(n_t, d=dt)
+    # |FFT|²/n_t is the DISCRETE spectral sum Σ_Δt C(Δt) e^{-iωΔt}; the continuous
+    # transform in the definition above needs the sampling interval and the 1/2π.
+    norm = dt / (2 * np.pi * n_t * int(n_cells))
+    sl = slice(None) if two_sided else slice(0, n_t // 2)
+    out = np.zeros((n_t if two_sided else n_t // 2, len(qs)))
     for iq, q in enumerate(qs):
-        tensor = np.einsum("wa,wb->wab", Sqw[:n_w, iq, :].conj(), Sqw[:n_w, iq, :])
-        out[:, iq] = np.real(_contract(tensor, q, cross_section)) / (n_t * N)
-    return energies, out
+        tensor = np.einsum("wa,wb->wab", Sqw[sl, iq, :].conj(), Sqw[sl, iq, :])
+        out[:, iq] = np.real(_contract(tensor, q, cross_section)) * norm
+    if two_sided:
+        order = np.argsort(energies)
+        return energies[order], out[order]
+    return energies[sl], out
 
 
 def _contract(tensor, q, cross_section):
@@ -260,11 +289,16 @@ def sampled_correlations(model, params, q_cart, kT, supercell=(6, 1, 1),
     `classical_to_quantum` (default on) rescales the result onto the quantum
     intensity scale -- see `classical_to_quantum_factor`. Without it the output is
     the raw classical S(q,ω), which equipartitions and therefore carries far too
-    much weight at ħω >> kT; set it False only to inspect that raw quantity."""
-    from .thermal_mc import build_supercell, _sweep
+    much weight at ħω >> kT; set it False only to inspect that raw quantity.
+
+    The ABSOLUTE scale is Sunny's and the LSWT engine's -- per chemical cell, with
+    the 1/2π of the time transform -- so the corrected result can be compared with
+    `calculate_sqw` and with data directly. See `dynamical_structure_factor`."""
+    from .thermal_mc import build_supercell, _sweep, n_chemical_cells
 
     H, b, N, S, pos = build_supercell(model, params, supercell, disorder=disorder,
                                       periodic=periodic)
+    n_cells = n_chemical_cells(model, supercell)
     rng = np.random.default_rng(seed)
     beta = 1.0 / kT
 
@@ -278,7 +312,7 @@ def sampled_correlations(model, params, q_cart, kT, supercell=(6, 1, 1),
             _sweep(m, g, H, b, beta, S, rng)
         traj = evolve(H, b, S, m, dt, n_steps, record_every)
         e, sqw = dynamical_structure_factor(traj, pos, q_cart, dt * record_every,
-                                            cross_section)
+                                            cross_section, n_cells=n_cells)
         acc = sqw if acc is None else acc + sqw
         energies = e
     sqw = acc / n_traj

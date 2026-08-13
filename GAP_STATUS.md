@@ -101,7 +101,7 @@ guard refuses). Never silently wrong.
 | 7 | **Ewald dipole-dipole** | ✅ | `dipole_dipole: {method: ewald}`; Sunny to 1.3e-8; truncated→Ewald convergence (needs no Julia). `tests/test_ewald.py` |
 | 8 | **LSWT 1/S corrections** | ✅ | `tasks.corrections`; Sunny + textbook square AFM: dE=−0.157947, dS→0.1966. `magcalc/corrections.py`, `tests/test_corrections.py` |
 | 9 | **SCGA (paramagnetic diffuse scattering)** | ✅ | `tasks: {scga: true}` + `scga: {temperature, mesh_density, cross_section}`. Self-consistent Gaussian approximation: classical spins, hard length constraint softened to a global Lagrange multiplier λ, static S(q) = kT·pref†(λ+J(q))⁻¹pref with λ from the spin sum rule. SAME `fourier_exchange_matrix` J(q) as the LT guard; single-λ (one symmetry class — Bravais + kagome/pyrochlore-type, refuses inequivalent sublattices). Above T_N, so the LSWT ground-state guard is auto-skipped for a pure-SCGA run. Validated: exact classical-chain closed form (λ=√(4J²+(3kT/S²)²), S(q)=3kT/(λ+2Jcosq)) to 1e-9; **Sunny 0.8.1 SCGA** on square-lattice AND kagome AFM — λ and S(q) to 6 digits (matches `ssf_perp`, apply_g, (2/3)Tr at q→0); sum rule + high-T flat limit. `magcalc/scga.py`, `tests/test_scga.py` |
-| 10 | **KPM (Chebyshev spectral S(q,ω))** | ✅ | `tasks: {kpm_sqw: true}` + `kpm: {e_min,e_max,e_step,fwhm,moments/tol}` (SU(N)/entangled modes). Para-unitary Chebyshev expansion of the one-magnon spectral function of the dynamical matrix D̂=gH₂ (=`SUNModel.hamiltonian`), following Lane et al. (arXiv:2312.08349) — Sunny's `SpinWaveTheoryKPM` method. Iterated matvecs only, no eigensolve: O(D·M) per q for large disordered/near-incommensurate cells. Validated against the engine's OWN exact diagonalization (`structure_factor`): as M grows KPM S(q,ω) → the exact Gaussian-broadened spectrum (rel L1 < 1e-3, integrated intensity to 1e-3); spectral bound γ verified to enclose the spectrum. **TWO BUGS FIXED 2026-08-13**, both invisible to the collinear square-lattice AFM that was the whole suite: (a) the Chebyshev recursion ran on D̂ where the structure factor needs conj(D̂) — identical whenever D̂ is real, but on a clean NON-COLLINEAR 81-site supercell it put ~5 % of the intensity on bands carrying none, at low energy, so a clean spectrum arrived pre-broadened; (b) the moments come from the annihilation block of the Nambu basis while `structure_factor` uses the creation block, whose weight matrices are complex conjugates — no effect on the symmetric channels, but `cross_section: chiral` came back SIGN-REVERSED on a plain ferromagnet. Now pinned on a non-collinear supercell and in the chiral channel. **KPM never diagonalizes, so it has no ground-state guard** and will return a plausible spectrum about a non-minimum; check H₂(q) ⪰ 0 yourself. `magcalc/sun/kpm.py`, `tests/test_kpm.py`, `tests/test_s09_disorder_kpm.py` |
+| 10 | **KPM (Chebyshev spectral S(q,ω))** | ✅ | `tasks: {kpm_sqw: true}` + `kpm: {e_min,e_max,e_step,fwhm,moments/tol}` (SU(N)/entangled modes). Para-unitary Chebyshev expansion of the one-magnon spectral function of the dynamical matrix D̂=gH₂ (=`SUNModel.hamiltonian`), following Lane et al. (arXiv:2312.08349) — Sunny's `SpinWaveTheoryKPM` method. Iterated matvecs only, no eigensolve: O(D·M) per q for large disordered/near-incommensurate cells. Validated against the engine's OWN exact diagonalization (`structure_factor`): as M grows KPM S(q,ω) → the exact Gaussian-broadened spectrum (rel L1 < 1e-3, integrated intensity to 1e-3); spectral bound γ verified to enclose the spectrum. **TWO BUGS FIXED 2026-08-13**, both invisible to the collinear square-lattice AFM that was the whole suite: (a) the Chebyshev recursion ran on D̂ where the structure factor needs conj(D̂) — identical whenever D̂ is real, but on a clean NON-COLLINEAR 81-site supercell it put ~5 % of the intensity on bands carrying none, at low energy, so a clean spectrum arrived pre-broadened; (b) the moments come from the annihilation block of the Nambu basis while `structure_factor` uses the creation block, whose weight matrices are complex conjugates — no effect on the symmetric channels, but `cross_section: chiral` came back SIGN-REVERSED on a plain ferromagnet. Now pinned on a non-collinear supercell and in the chiral channel. **KPM never diagonalizes, so it grows no ground-state guard of its own** — no Cholesky to fail, nothing for `on_imaginary` to catch — and returns a smooth, plausible spectrum about a saddle or a maximum. **Guarded 2026-08-13** (`SUNModel.is_stable_at` / `assert_stable` / `min_h2_eigenvalue`, run by the `kpm_sqw` task and by any script, see the Tier-3 #16 row). One more silent failure fixed with it: at a q where H(q) is IDENTICALLY zero (a ferromagnet at Γ, i.e. in every path) the spectral bound γ was 0 and `D̂/γ` returned a whole **NaN column**, into the saved map, the plot and the logged intensity range; it is now finite and warns that the value there is 0 rather than the q→0 limit. `magcalc/sun/kpm.py`, `tests/test_kpm.py`, `tests/test_kpm_stability.py`, `tests/test_s09_disorder_kpm.py` |
 | 11 | **Entangled units** | ✅ | `calculation.mode: entangled` + `units:` -- a cluster (dimer/trimer/...) becomes ONE effective SU(N) site (N = product Hilbert dim). Intra-unit coupling diagonalized exactly (reference = the unit ground state, e.g. a dimer SINGLET -- zero dipole, invisible to dipole/single-site SU(N) LSWT); excitations are the triplons. Generalized the SU(N) engine (per-site operators, generalized bond couplings, q-dependent staggered moment). Validated: isolated dimer flat triplon at omega=J; coupled-dimer chain omega=sqrt(J^2-JJ'cos) (bond-operator) to 7e-16; dimer structure factor (1-cos(q.d)) with the I(q=0)=0 selection rule. Optional Zeeman field (gamma*mu_B*H.sum_k S_k per unit) splits the multiplet. REAL MATERIALS: `examples/entangled/Cu5SbO6/` reproduces the J1-J2-J4 dimer expansion of Piyakulworawat et al., PRR 8, 013247 (2026) -- triplon band ~11-21 meV, dispersion = the bond-operator resummation of the paper's Eq. (A11), structure-factor selection rule Eq. (A14). `examples/entangled/Rb2Cu3SnF12/` -- the pinwheel-VBS single-dimer building block (Matan et al., Nat. Phys. 6, 865 (2010)): DM splits the Stot^z=0 from the +/-1 triplet, a c-axis field Zeeman-splits +/-1 (Fig. 4); the full deformed-kagome dispersion needs the 6-dimer geometry + high-order series expansion (strong coupling), beyond harmonic bond-operator. `magcalc/sun/entangled.py`, `examples/entangled/dimer_chain/`, `tests/test_entangled_units.py` |
 | 12 | **mCIF / magnetic space groups** | ✅ | `from_mcif:` + CLI `magcalc mcif`; Sunny on TbSb: identical sites + directions. `magcalc/mcif.py`, `tests/test_mcif.py` |
 
@@ -112,6 +112,7 @@ guard refuses). Never silently wrong.
 | 13 | GS search sees q≠0 instabilities | ✅ | Luttinger-Tisza ordering-vector guard (`spiral_opt.ordering_wavevector` + a 3rd runner guard). Catches a q≠0 spiral GS the in-cell anneal/energy-audit provably cannot reach AND whose k=0 magnon spectrum comes back real-positive (blind to both older guards). Validated on the J1-J2 chain: LT k* = analytic `arccos(-J1/4J2)/2π` = 0.230053 to 1e-6; a FM supplied for it is now flagged with k* + the single_k/supercell fix. Zero false positives across all example configs. `tests/test_q_neq_0_instability.py` |
 | 14 | Expose symmetry analyzer as CLI | ✅ | `magcalc symmetry <config> [--max-distance] [--json]` — space group, symmetry-inequivalent bond orbits, and the symmetry-ALLOWED exchange matrix per bond (Sunny `print_symmetry_table` analogue). New reusable `MagCalcConfigBuilder.from_config`. Validated: P4/mmm NN bond forced diagonal (analytic); Yb2Ti2O7 allowed form == the physical SpinW/Sunny matrix's zero/tie pattern. `tests/test_symmetry_cli.py` |
 | 15 | Broken `aCVO/config.yaml` (+ `KFe3J/config.yaml`) | ✅ | both were legacy `python_model_file` configs superseded by `config_acvo.yaml` / `config_kfe3j.yaml`; **retired** (untracked + git-ignored, kept locally). Fixed 2 general runner bugs kept: clear error for missing `crystal_structure`; `hasattr(model,'minimize')` no longer matches imported scipy. `tests/test_config_robustness.py` |
+| 16 | Ground-state guard for KPM (`H₂(q) ⪰ 0`) | ✅ | **2026-08-13.** KPM was the one spectrum path with no ground-state guard, structurally: it never diagonalizes, so there is no Cholesky to fail and no imaginary energy to report, and it returns a smooth plausible S(q,ω) about a saddle. Now `SUNModel.is_stable_at(q)` / `assert_stable(qs)` / `min_h2_eigenvalue(q)`, called by the runner's `kpm_sqw` task at **every q it computes** and by `disorder_kpm.py` — one shared implementation, one criterion. Two decisions worth keeping: (a) the test is a SHIFTED CHOLESKY (`H₂+εI ≻ 0`, ε = `calculation.h2_rel_tolerance`·‖H₂‖, default 1e-6), exact and 45× cheaper than `eigvalsh` at 2D=1800 (65× at 3200) — 1.3–4.9 % of the KPM cost at that q (2D = 288 → 1800) with the `hmat=` build shared, which is what makes checking every q affordable, and the instability IS q-specific (4 generic q find it on 1 S09 realization in 3, a 40-point path on 2 of 3); (b) the shift and its **q-INDEPENDENT** scale are not fudges — a Goldstone mode puts an exact zero in H₂ at the ordering wavevector, and a ferromagnet's H₂ is identically zero at Γ, so a purely relative per-q threshold is zero exactly where every path starts. Threshold measured, not chosen: on S09's 144-site cell over a 37-point path, a correctly relaxed state floors at min eig H₂ = −2e-10 (rel 5e-11) while σ=1/3 gives −3e-3 (rel 5e-4) — seven orders apart. Validated in `tests/test_kpm_stability.py` against (i) the closed form min eig H₂ = −S·J·(z−Σcos q·δ) for the ferromagnetic state of an antiferromagnet, which is minus the engine's own validated FM dispersion; (ii) `eigvalsh` on the same matrices, verdict by verdict; (iii) the exact classical boundary J₂ = \|J₁\|/4 of the frustrated FM chain. That chain is also the control that says the guard is not redundant: it is a genuine in-cell minimum with \|Im ω\| = 0 exactly, so guards 1 and 2 pass it and a `dispersion` run plots a plausible band. `kpm_sqw` also joined `_lswt_tasks`, so pairing it with a classical task no longer silences the up-front guards. `magcalc/sun/lswt.py`, `magcalc/runner.py` |
 
 ---
 
@@ -174,8 +175,35 @@ guard refuses). Never silently wrong.
   400 since a67f7cf, and fetched plots through the browser's `/api` dev-proxy prefix.
   Relative references (`from_mcif`, `fitting.data_file`, `cif_file`) now resolve
   because the run happens in the opened file's own directory — clients send
-  `config_dir` (the native app does; the browser's file picker only exposes a name,
-  so web-app runs of such configs still fail loudly rather than silently).
+  `config_dir`. The **web app can now send it too** (2026-08-13): its Open goes
+  through the server (`/load-config`, which returns an abspath) behind a
+  recent-files + browse picker, since the File System Access API exposes only
+  `handle.name` and no browser dialog can supply a path. Save on such a file goes
+  back through `/save-config`, and the browser-side Open routes remain as the
+  fallback with `config_dir` cleared (previous project-root behaviour, still
+  loud). Pinned by `tests/test_gui_relative_paths.py`, whose oracle is the CLI —
+  the shipped `examples/materials/mcif` config, opened and run through the server,
+  reproduces `magcalc run` band for band, and the same payload aimed at a
+  directory without the mCIF fails.
+- **The two emitters are now checked against each other** (2026-08-13). The web
+  app's `configIO.js` had `tests/test_gui_roundtrip.py`; the Swift
+  `MagCalcConfig.backendInput` had nothing, and disagreed with it on **all 58**
+  shipped configs. Root cause of most of it: Swift's `mergeEdits` treated "the
+  file has no such block" as "emit the app's whole struct", so opening a config
+  with no `minimization:` added `method: anneal, n_sweeps: 2000, …` to the run and
+  one with no `fitting:` gained a placeholder fit — the injected-default class
+  again. Three more, each a real loss: `fitting`'s `data_file`/`vary`/`bounds`/
+  `scale`/`background` and `minimization.n_sweeps` had NO import branch but were
+  re-emitted from the struct, so opening a fitting config and pressing Fit wrote
+  the app's blanks over the real ones; the crystal block was re-emitted from the
+  file verbatim, so every Structure-panel edit was discarded; and per-site keys the
+  app does not model (`g`, `charge`, `wyckoff`, `species` — `g` is the Zeeman
+  term) had nowhere to live. A third target, `magcalc-emit-config`, compiles the
+  same `Sources/Models` headless, and `tests/test_native_emitter_parity.py` diffs
+  it against `node gui/tests/emit_run_config.mjs` config by config. Parity is the
+  oracle because the JS side is itself pinned to `magcalc run`, so it chains back
+  to the CLI; the three specific losses are pinned directly against the file as
+  well, since parity alone cannot catch both sides being wrong together.
   The rule extends to `parameters`: the editor always carries `H_mag`/`H_dir`, so
   an opened file that declares no field used to gain `H_mag: 0, H_dir: [0, 0, 1]`
   — a zero-magnitude Zeeman term the CLI never adds. It is numerically nothing and
@@ -236,11 +264,21 @@ and per-item oracles: `GAP4_PLAN.md`.
 | 19 | Static / energy-integrated correlations | ✅ | `tasks.static_sqw` (LSWT) and `tasks.static_correlations` (classical) | Sunny `intensities_static` to 6e-9; free-spin sum rule 2S²/3 (perp) and S² (trace) EXACTLY, at every q and T |
 | 23 | Domain averaging in SU(N)/entangled | ✅ | `calculation.domains` (all three engines now) | rotate the crystal explicitly: S_rot(q) = S(Rᵀq) to 3e-15; average = weighted sum of separately built twins |
 | 27 | Crystal utilities + BZ paths | ✅ | `magcalc symmetry --cells / --species / --bz-path` | analytic bcc & rocksalt primitive cells (a³/2, a³/4); standardization idempotent; `seekpath` optional |
+| 17b | Classical S(q,ω) **absolute** normalization | ✅ 2026-08-13 | (automatic; `classical_dynamics`, `thermal_mc`, `sun/dynamics`) | the equal-time sum rule ∫dω S = ⟨S(q)\*S(q)⟩/n_cells against the SAME trajectory, to 1e-14, on a one-site AND a two-site cell and in the dipole AND CP^(N−1) paths; the free-spin per-cell identity n_atoms·2S²/3; grid independence in dt; and the LSWT band sum (itself pinned to Sunny) on a gapped low-T ferromagnet, to 1.5 % |
 
 **Notes.** #17: the correction fixes the SHAPE of the classical S(q,ω); its absolute
-normalization against LSWT is still unreconciled (measured ≈220 where LSWT gives S=1
-on a low-T ferromagnet) — do not read absolute intensities off that path yet, and see
-the open item below. #23: intensity is compared per DEGENERATE MULTIPLET, since inside
+normalization was reconciled separately on **2026-08-13** — see #17b, which this note
+used to defer to. #17b: the "≈220 where LSWT gives S = 1" recorded here was two
+ordinary bugs, not a convention — **(a)** the time FFT was never normalized, so the
+result was 2π/dt too large (314× at `dt: 0.02`) *and proportional to 1/dt*, and
+**(b)** the spatial sum was divided by the SITE count where LSWT and Sunny divide by
+the CELL count, so a multi-atom cell was a further `n_atoms` too small. (b) is the
+instructive one: every classical model in `tests/` had one site per cell, where the
+two divisors are identical, so no existing test could see it — and the shape tests
+that did exist all compare ratios, in which any overall factor cancels. The remaining
+~16 % when the *whole* frequency axis is integrated is spectral leakage, not scale:
+no time-domain window is applied (Sunny uses a cosine one) and `c2q` weights the
+sidelobes linearly in ω out to π/dt. #23: intensity is compared per DEGENERATE MULTIPLET, since inside
 a degenerate subspace the split between individual bands is basis-dependent while the
 multiplet sum is an observable. #27: `seekpath` is an optional dependency; without it
 `--bz-path` raises an actionable ImportError and the rest still works.
@@ -286,7 +324,7 @@ disordered system, which is a different question and should wait until one is as
 
 | # | Item | Phase | Why it is open |
 |---|---|---|---|
-| — | Classical S(q,ω) absolute normalization | 3 | opened by #17: the classical path's overall scale has never been reconciled with the LSWT/Sunny one. Shape is pinned, scale is not |
+| — | ~~Classical S(q,ω) absolute normalization~~ | 3 | ✅ **CLOSED 2026-08-13** — see the row added to Phase 1 below |
 | — | **Config-surface coverage** | — | AUDITED 2026-08-04: **11 of 69 documented config keys never appear in `tests/`** — see the section below. The recurring shape is that the FUNCTION is tested while the CONFIG PATH to it is not, which is precisely how a wiring bug survives |
 
 Everything else on the original Gap 4 list is closed. Two of the closures (#16b,

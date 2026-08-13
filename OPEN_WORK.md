@@ -19,9 +19,16 @@ S09 port — the fix stands on its own and is worth reading separately, since it
 changes every KPM spectrum of a non-collinear model and every `cross_section:
 chiral` KPM result.
 
+Item 4 adds `tests/test_classical_absolute_normalization.py` (**+11**: 10 fast, 1
+slow) and touches `classical_dynamics.py`, `thermal_mc.py` and `sun/dynamics.py`.
+
 **The full gate has NOT been re-run since item 3.** What has: the fast suite (568
-passed, 2 skipped, 11:54) and `-m ""` on the four touched suites (35 passed, 6:16).
-Run `pytest -m ""` from the workspace root before merging.
+passed, 2 skipped, 11:54), `-m ""` on item 3's four touched suites (35 passed, 6:16),
+and `-m ""` on item 4's seven (53 passed, 4:33 — `test_classical_dynamics`,
+`test_classical_to_quantum`, `test_static_correlations`, `test_sun_dynamics`,
+`test_disorder`, `test_thermal_mc`, `test_classical_absolute_normalization`) plus
+`test_sunny_tutorials -k "S02 or S04"`. Run `pytest -m ""` from the workspace root
+before merging.
 
 This file is the "what to do next" companion to `GAP_STATUS.md`, which is the
 authoritative record of *what is done and how it was validated*. Read
@@ -48,13 +55,13 @@ are the easiest to mistake for done.
 | 1 | Gap #24b — Ewald + rotating-frame single-k | **DONE** 2026-08-13 — oracle built, bug found, refusal lifted |
 | 2 | Sunny S06 — skyrmion lattice | **DONE** 2026-08-13 — ported at L = 40; the size WAS the blocker |
 | 3 | Sunny S09 — disorder + KPM | **DONE** 2026-08-13 — ported; found a KPM bug and a stability limit |
-| 4 | Classical S(q,ω) absolute normalization | **OPEN** — shape pinned, scale not |
+| 4 | Classical S(q,ω) absolute normalization | **DONE** 2026-08-13 — two bugs, not a convention; a lineshape follow-up is open |
 | 5 | Coverage follow-ups | **PARTIAL** — audit's 4 items done; 2 follow-ups + discovery shape open |
 | 6 | `minimization.tolerance` silently ineffective | **DONE** 2026-08-12 |
 | 7 | FeI2 dipole ground state | **PARTIAL** — physics answered; `examples/materials/FeI2` fix open |
-| 8 | Studio open→run limits | **OPEN** — 2 items |
+| 8 | Studio open→run limits | **DONE** 2026-08-13 — both closed; the Swift emitter had 4 live defects |
 | 9 | `anneal`'s polish could return a MAXIMUM | **DONE** 2026-08-13 — fixed + swept; a RELATED defect is open |
-| 10 | KPM has no ground-state guard | **OPEN** — opened by item 3 |
+| 10 | KPM has no ground-state guard | **DONE** 2026-08-13 — guarded per q; the cost objection dissolved |
 | A | `pytest.ini` collection scope | **DONE** 2026-08-12 |
 | B | Engine provenance — `magcalc where` | **DONE** 2026-08-12 |
 | C | Interpreter-startup shadow guard | **DONE** 2026-08-12 — `magcalc guard`; nothing outstanding |
@@ -256,25 +263,85 @@ the 120° order itself. It is stable for σ ≲ 0.1, which is what the port ship
 **The general point: KPM is the one path here with NO ground-state guard**, because
 it never diagonalizes — no Cholesky, so no positive-definiteness failure, so nothing
 for `on_imaginary` to catch. It returns a smooth, plausible S(q,ω) about a saddle.
-`disorder_kpm.py` checks H₂ ⪰ 0 itself and refuses by default. **Wiring that check
-into the runner's `kpm_sqw` task is the obvious follow-up and was NOT done** — see
-item 10.
+`disorder_kpm.py` checks H₂ ⪰ 0 itself and refuses by default. **That check is now the
+engine's**, shared by the script and the runner's `kpm_sqw` task and applied at every
+q either of them computes — item 10, closed the same day.
 
 ---
 
 ## 4. Classical S(q,ω) absolute normalization
 
-**Status: OPEN.** Opened by #17. The classical-dynamics path's overall scale has never been
-reconciled with the LSWT/Sunny one — **shape is pinned, scale is not**.
+**Status: DONE 2026-08-13.** All three classical estimators —
+`classical_dynamics.sampled_correlations`, `thermal_mc.static_correlations` and the
+CP^(N−1) `sun/dynamics.sampled_correlations` — are now on the LSWT/Sunny absolute
+scale, per chemical cell with the 1/2π of the time transform. Pinned in
+`tests/test_classical_absolute_normalization.py` (10 fast + 1 slow); **9 of the 10
+were confirmed to FAIL on the pre-fix code.** One follow-up is open, at the bottom.
 
-Treat a clean constant factor as a bug until proven otherwise. `GAP_STATUS.md`
-records a case where a 4/3 was documented as a "convention difference" for
-months and turned out to be wrong reference numbers in a test that only compared
-a ratio, in which any overall factor cancels.
+**The advice this item gave itself was right, and it was two bugs, not a convention.**
 
-Natural oracle: the low-T classical ferromagnet, whose peaks already fall on the
-exact LSWT dispersion (`tests/test_classical_to_quantum.py`,
-`classical_to_quantum_factor`) — extend from position to weight.
+1. **The time FFT was never normalized.** S(q,ω) is (1/2π)∫dt e^{−iωt}C(t); the code
+   kept the bare `np.fft.fft` sum, i.e. **2π/dt too large — 314× at the default
+   dt = 0.02, and PROPORTIONAL TO 1/dt**. Refining the time step moved the intensity,
+   and nothing compared two grids.
+2. **The spatial sum was divided by the SITE count, not the CELL count.** LSWT is per
+   chemical cell in both codes (`MagCalc.supercell_ncells`, `SUNModel.n_cells`,
+   Sunny's `1/√prod(sys.dims)`), so a two-atom cell scatters twice as much. **Every
+   classical model in `tests/` has one site per cell**, where the two divisors are
+   identical — so this was invisible by construction, not by accident. That is the
+   same shape as the `ref_pair` and `steepest_descent` traps: a property that is only
+   *false* on inputs no test reaches.
+
+**The oracle is an exact identity, and it had to be, because the physical check is
+too noisy to pin a scale.** ∫dω S^ab(q,ω) = ⟨S^a(q)\*S^b(q)⟩/n_cells is the defining
+property of S(q,ω), so checking it against the SAME trajectory needs no reference
+code and no fitted constant: it holds to **1e-14**, on a one-site and a two-site cell,
+in `trace` and `perp`, in the dipole and the CP^(N−1) path. Both factors move it (the
+2π/dt scales one side, the divisor scales it by n_atoms), so one identity catches
+both. `dynamical_structure_factor` grew a `two_sided` option so the two-sided integral
+the sum rule is a statement about is reachable from the shipped function, and the
+SU(N) transform was split out of `sampled_correlations` for the same reason.
+
+**Closing the loop with LSWT took three tries, and the two failures are the useful
+part.** The target is exact: for a ferromagnet, equipartition gives
+⟨|s^y_q|²⟩/n_cells = S·kT/ω_q, and c2q(ω_q) → ω_q/kT, so ∫₀^∞ → S/2 — precisely the
+LSWT band sum. Measured:
+
+| what was integrated | ratio to LSWT |
+|---|---|
+| plain Heisenberg chain, L = 20, kT = 0.02, whole axis | **1.45**, converged (n_traj 16 and 64 agree) |
+| gapped chain (20 T field), L = 32, kT = 0.005, whole axis | 1.16 |
+| the same, ±1 meV around each LSWT band | **1.015** (0.96–1.07 per q) |
+
+- The 1.45 is **physics**: in 1D with a Goldstone mode Σ_q 1/ω_q diverges, the order
+  parameter direction wanders over the trajectory, and lab-frame "transverse" weight
+  is inflated. It converges only as kT → 0 AND L → ∞, and it reads exactly like a
+  normalization error. A field gapping the mode removes it. (Mind the Zeeman sign
+  while doing that: pyMagCalc's is +μ_B B·g·S, so the moments settle ANTIparallel to
+  B — getting it backwards puts the structure at a stationary maximum and returns
+  bands |gμ_B B − ω_q|, which look perfectly reasonable.)
+- The remaining 16 % is **spectral leakage, not scale**: no time-domain window is
+  applied, so a rectangular one is implied, whose sidelobes fall only as 1/(ω−ω₀)²
+   — while c2q grows LINEARLY in ω out to the Nyquist frequency π/dt = 157 meV on a
+  4 meV band. Sunny multiplies its real-time correlations by a cosine window for
+  exactly this reason.
+
+**STILL OPEN — no time-domain window.** Adding Sunny's `window=:cosine` (it also
+offers `:rectangular`, i.e. today's behaviour) would remove that 16 % and the ringing
+around every sharp classical mode, at the cost of broadening S(ω) by about one
+frequency bin Δω = 2π/T. It changes every classical lineshape, so it wants its own
+commit and its own before/after measurement; the sum-rule tests above are insensitive
+to it (a window rescales C(Δt), not the ω-integral of the unwindowed transform), so
+the oracle has to be the ±window/full-axis ratio table above.
+
+**Also found, and NOT chased: the CP^(N−1) sampler does not equilibrate at low kT.**
+The SU(N) classical intensity against `SUNModel.structure_factor` on a gapped S = 1
+AFM chain at kT = 0.005 swings **0.30 → 1.63** with `therm_sweeps` and `sigma` alone
+(400/0.02 → 3000/0.05), i.e. the Metropolis step size is not adapted and the answer
+is controlled by it, not by the physics. That is why the SU(N) half of this item is
+pinned by the exact sum rule and by grid independence rather than against LSWT. An
+acceptance-targeted `sigma` (the standard fix) plus a low-T equilibration check is its
+own item, with the single-site coherent-state partition function as the oracle.
 
 ---
 
@@ -406,29 +473,73 @@ are untouched. Until that is done, leave the `on_imaginary: warn` in place.
 
 ## 8. Studio — the two limits left after the 2026-08-12 open→run fix
 
-**Status: OPEN — two items.**
+**Status: DONE 2026-08-13.** Both are closed. Nothing outstanding; the notes below
+are what the second one turned up, which was much more than the item expected.
 
-`gui/src/lib/configIO.js` (web) and `MagCalcConfig.backendInput` (native) are now
-two implementations of one rule — *the file is the base, write only real edits
-over it* — kept honest by `tests/test_gui_roundtrip.py`, which drives the web one
-over all 59 shipped configs and runs four of them against their own CLI run band
-for band. Two things that rule does not reach:
+**1. Relative paths from the web app — done as written.** The Open button now goes
+through the server: `GET /recent-configs` + `POST /browse-configs` (a directory
+walk, since the recent list starts empty) feed a picker, `POST /load-config`
+returns the **abspath**, and the app sends `config_dir` on every run exactly as
+the native app does. `from_mcif:` / `fitting.data_file:` / `cif_file:` therefore
+resolve. Save on a server-opened file goes back through `/save-config` (no
+writable browser handle exists for it), and the two browser routes ("Load YAML",
+and Open when the backend is unreachable) stay, clearing `config_dir` so they keep
+the old project-root behaviour rather than inheriting a stale directory.
 
-1. **Relative paths from the web app.** A run happens in the opened file's
-   directory only when the client sends `config_dir`. The native app can (it has
-   a real `URL`); the browser's File System Access API exposes only
-   `handle.name`, so a web-app run of a config with `from_mcif:` /
-   `fitting.data_file:` / `cif_file:` fails with FileNotFoundError. It fails
-   *loudly*, which is the acceptable end of the trade, but the fix is real: route
-   the web app's Open through the server's `/load-config` (which returns an
-   abspath and is currently dead code) behind a "recent files" picker, then send
-   `config_dir` like the native app does.
-2. **No second implementation is tested.** The Swift side has no equivalent of
-   `roundtrip.test.mjs`; it compiles (`xcodebuild … MagCalcStudio-macOS`) and was
-   fixed by inspection against the JS. The cheap oracle is the JS emitter itself:
-   a small XCTest that loads the same example configs and diffs
-   `backendInput()` against `node gui/tests/emit_run_config.mjs`. Until that
-   exists, treat any change to one side as owing a matching change to the other.
+Pinned by `tests/test_gui_relative_paths.py` (4 tests, fast), whose oracle is the
+CLI: the shipped `examples/materials/mcif` config — the one config that reaches a
+sibling file by relative path — opened and run through the server reproduces
+`magcalc run <that file>` to 1e-12, and **the same payload aimed at a directory
+without the mCIF fails**, which is the control that a server ignoring `config_dir`
+could not pass. One incidental cleanup made that control possible without writing
+into the real checkout: `/run-calculation` recomputed `project_root` as a local,
+so nothing could redirect the default run directory; it reads the module-level
+global now.
+
+**2. The Swift emitter had no test — and disagreed with the web one on ALL 58
+shipped configs.** The item called this "no second implementation is tested" and
+expected drift; what it was, was four separate live defects. The tool built to
+find them is `magcalc-emit-config`, a third xcodegen target compiling the SAME
+`Sources/Models` headless (`native/MagCalcStudio/Tools/EmitRunConfig/`), diffed
+against `node gui/tests/emit_run_config.mjs` by
+`tests/test_native_emitter_parity.py` (4 configs fast + all 58 slow + 3 direct
+pins). Every diff below was measured before and after.
+
+- **`mergeEdits` read "the file has no such block" as "emit the app's whole
+  struct".** The web app's starts from `clone(fileBlock) || {}` and skips
+  untouched defaults. So opening a config with no `minimization:` added `method:
+  anneal, n_sweeps: 2000, num_starts: 4, early_stopping: 10` to the run, and one
+  with no `fitting:` gained a placeholder fit. This is item 6's class exactly —
+  an injected anneal-only key is what crashed the minimizer there, after which
+  the run died at the ground-state guard blaming the magnetic structure. 54 of
+  58 configs.
+- **`fitting.data_file`, `vary`, `bounds`, `scale`, `background`,
+  `energy_broadening` and `minimization.n_sweeps` had NO import branch but WERE
+  re-emitted from the struct.** A struct field that is written but never read is
+  strictly worse than one that is missing: it silently overwrites. Opening
+  `examples/fitting/fit_dispersion.yaml` and pressing Fit sent `data_file: ""`,
+  `vary: []`, `bounds: {}` — it fitted nothing.
+- **The crystal block was re-emitted from the file verbatim**, so every edit made
+  in the native Structure panel was discarded after opening a config (the web app
+  fixed the same bug in `buildStructPayload` earlier). Switching to the editor's
+  atoms then required somewhere to keep the per-site keys the app does not
+  model — `g` (32 sites across the examples; it IS the Zeeman term), `charge`,
+  `wyckoff`, `species` — hence `WyckoffAtom.extras`, and `SymmetryInteraction`
+  needed the same for `name` plus an OPTIONAL `distance` (it was defaulting to
+  0 and emitting `distance: 0.0` on `ref_pair` + `offset` rules).
+- **Smaller, all real:** `parameter_order` was emitted only when the file carried
+  one; the global `S` was not stripped; `cache_mode: auto` was not supplied; the
+  `calculate_dispersion`/`calculate_sqw_map` aliases were absent (harmless — the
+  runner defaults both to True — but a difference).
+
+**Why parity is a legitimate oracle here** (it looks like comparing two
+unverified things): the JS side is itself pinned to `magcalc run` by
+`test_gui_roundtrip.py`, band for band on four configs, so "equals the JS
+emitter" chains back to the CLI. What parity cannot catch is both sides being
+wrong the same way, so the three losses above are ALSO pinned directly against
+the file (`test_native_keeps_the_fitting_block_the_file_declared`,
+`…keeps_per_site_keys_it_does_not_model`,
+`…does_not_invent_a_block_the_file_omitted`).
 
 ---
 
@@ -509,36 +620,65 @@ and its own commit.
 
 ## 10. KPM has no ground-state guard, and cannot grow one for free
 
-**Status: OPEN.** Opened by item 3.
+**Status: DONE 2026-08-13.** `SUNModel.is_stable_at(q)` / `assert_stable(qs)` /
+`min_h2_eigenvalue(q)` (`magcalc/sun/lswt.py`), called by the runner's `kpm_sqw` task
+at EVERY q it computes and by `disorder_kpm.py` -- one implementation, one criterion.
+Pinned in `tests/test_kpm_stability.py` (26 tests, all fast). Nothing outstanding;
+the notes below are what the answer turned on.
 
-Every other spectrum path here refuses to expand about a non-minimum: the Cholesky in
-`_bogoliubov` fails on a non-positive-definite `H2`, and `on_imaginary` turns that
-into a hard error. **KPM never diagonalizes** -- that is the entire point of it -- so
-it has no such failure mode and returns a smooth, plausible S(q,w) about a saddle or
-a maximum. Item 3 met this for real: at Sunny's own disorder strength the relaxed
-120-degree state has min eig H2 = -1e-2 and |Im w| = 0.16 meV on a 1.591 meV band,
-and the KPM map looks fine.
+**The cost objection dissolved, and that decided the design.** The question is BINARY
+-- is H2(q) positive definite -- so it does not need an eigensolve at all: a Cholesky
+decides it exactly and is **45x cheaper than `eigvalsh` at 2D = 1800, 65x at 3200**
+(73 ms vs 3.3 s). Against KPM's own 1.7 s/q at S09's L = 30, and sharing the g H2
+build via the new `kpm_sqw(..., hmat=)`, the guard costs **1.3 % of a KPM q at
+2D = 288 and 4.9 % at 2D = 1800**, measured end to end. So there was no
+need to sample q thinly, which is the part that would have been dangerous: the
+instability is q-specific (4 generic q find it on 1 realization in 3, a 40-point path
+on 2 of 3), and a thin sample is the "a check a wrong answer passes" shape again.
+Check every q you compute. The Lanczos idea recorded here was measured too (m = 60
+caught every negative eigenvalue at 18 % of the KPM cost) and dropped: its error is
+one-sided in the WRONG direction -- Ritz values bound lambda_min from ABOVE, so it can
+report a genuinely unstable state as stable.
 
-`examples/sunny_tutorials/S09_triangular_AFM/disorder_kpm.py` does the check itself
-(`eigvalsh(H2) >= 0` over the q-path, refuse by default). The runner's `kpm_sqw` task
-does NOT.
+**The threshold is a shifted Cholesky, and the shift is not a fudge.** `H2 + eps I`
+positive definite <=> min eig H2 > -eps. Without a shift the guard refuses every
+gapless magnet: a Goldstone mode puts an EXACT zero eigenvalue in H2 at the ordering
+wavevector, and a ferromagnet's H2 is identically zero at Gamma -- which is in every
+path ever plotted. For the same reason the scale multiplying `h2_rel_tolerance`
+(default 1e-6) is **q-independent** (`_reference_h2_scale`, measured once at two
+generic q sized from the model's own bond lengths): a purely per-q relative threshold
+is zero exactly where the band touches zero, and inconsistent from q to q everywhere
+else. The default was measured, not chosen -- S09's 144-site cell over a 37-point path
+through Gamma and K:
 
-**Why it is not a two-line fix.** The runner's guard runs once, on the calculator's
-own reference state, before any task -- and for `kpm_sqw` that is the right place
-only when the model came from the config. The interesting KPM models are exactly the
-ones built or perturbed in a script (`apply_bond_disorder` is Python-only), which the
-runner never sees. So the useful shape is probably a cheap, reusable
-`SUNModel.is_stable_at(q)` / `assert_stable(qs)` that both the runner and a script
-call, rather than a runner-side check alone.
+| state | min eig H2 | relative |
+|---|---|---|
+| clean, exact 120-degree | -3e-15 | 7e-16 |
+| sigma = 0.1 disorder, relaxed | -2e-10 | 5e-11 |
+| sigma = 1/3 disorder, relaxed | -3e-3 | 5e-4 |
 
-**Cost matters here.** A full `eigvalsh` per q is O(D^3) and would undo KPM's whole
-advantage on the large cells it exists for. Sampling a handful of q is what the
-existing `stability_report`/`max_imaginary_energy` already do, and is probably right
--- but note the instability is q-SPECIFIC: on the 9x9 S09 cell, scanning only 4
-generic q found it on 1 disorder realization in 3, while a 40-point path found it on
-2 of 3. A guard that samples too thinly is the "check a wrong answer passes" shape
-again. The honest cheap version may be a Lanczos/power estimate of the smallest
-eigenvalue of H2 rather than a full solve.
+seven orders between the noise floor and a real instability, so the tolerance sits
+five orders above one and two and a half below the other.
+
+**The guard is not redundant with the two that already ran, and the control says so.**
+A frustrated FERROMAGNETIC chain (J1 < 0, J2 > |J1|/4, whose true state is an
+incommensurate spiral) is a genuine minimum WITHIN its one-site cell, and its
+spectrum is entirely real -- max |Im w| = 0 exactly. The energy audit relaxes and
+stays put; the imaginary check reads zero; a `dispersion` run of that config succeeds
+and plots a plausible band (pinned as a test, so it stays a control). Only H2(q) >= 0
+knows better. It is also strictly sharper than the imaginary check in general: at a
+stationary MAXIMUM H2 stays diagonal, so g H2 is entirely real. (The dipole engine's
+Luttinger-Tisza guard would catch the chain -- it does not run in SU(N) mode.)
+
+**Two things found in passing.** `kpm_sqw` was missing from the runner's `_lswt_tasks`,
+so `{kpm_sqw: true, thermal_mc: true}` silenced the up-front guards for the whole run
+(fixed, pinned). And at a q where H(q) is identically zero -- a ferromagnet at Gamma
+-- the spectral bound gamma was 0, so `D-hat/gamma` produced a whole **NaN q-column**,
+silently, into the saved .npz, the plot, and the logged intensity range. It is finite
+now and warns: the value there is 0, not the q -> 0 limit, because the +/-omega poles
+coincide and cancel. There is no oracle at that single q (the exact path cannot be
+evaluated there either -- the Cholesky in `_bogoliubov` fails on the Goldstone zero),
+so the warning says "read that column as undefined" rather than inventing a number.
 
 ---
 

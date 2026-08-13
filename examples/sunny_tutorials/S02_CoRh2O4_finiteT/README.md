@@ -73,13 +73,18 @@ ordering wavevector than at a generic zone-interior point, and the contrast must
 **sharpen on cooling** (checked at 46 K vs the tutorial's 16 K).
 
 The underlying machinery carries its own exact pins: the free-spin sum rule
-`2S²/3` (perp) and `S²` (trace) at every q and every T for the static estimator, and
-Sunny's own `c2q` formula plus detailed balance for the dynamic one.
+`n_atoms·2S²/3` (perp) and `n_atoms·S²` (trace) at every q and every T for the static
+estimator, and Sunny's own `c2q` formula plus detailed balance for the dynamic one.
 
-**Absolute intensities are not pinned.** The classical `S(q,ω)` normalization has
-never been reconciled with the LSWT/Sunny one — the *shape* is validated, the overall
-scale is not (see `GAP_STATUS.md`, Gap 4, the open normalization item). Read
-relative intensities off this, not absolute ones.
+**Absolute intensities ARE now on the LSWT/Sunny scale** (2026-08-13; this entry used
+to say the opposite). Both classical estimators are normalized per chemical cell with
+the 1/2π of the time transform, pinned by the equal-time sum rule
+`∫dω S(q,ω) = ⟨S(q)*S(q)⟩/n_cells` at machine precision and, on a gapped low-T
+ferromagnet, against the LSWT band sum to ~2 % — see
+`tests/test_classical_absolute_normalization.py`. One caveat remains and it is a
+lineshape one, not a scale one: no time-domain window is applied, so integrating the
+`c2q`-corrected spectrum over the *whole* frequency axis picks up ~16 % of leakage
+(`OPEN_WORK.md`). Integrate over the feature you care about.
 
 ## Running it
 

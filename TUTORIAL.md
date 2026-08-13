@@ -791,6 +791,19 @@ tasks: {kpm_sqw: true}
 kpm: {e_min: 0, e_max: 10, e_step: 0.05, fwhm: 0.1, tol: 0.02}    # or moments: N
 ```
 
+KPM never diagonalizes, which is the point of it — and means it cannot notice by
+itself that it is expanding about a non-minimum (there is no Cholesky to fail, so no
+imaginary energy to report; it would return a smooth, plausible, wrong S(q,ω)). The
+task therefore checks `min eig H₂(q) ≥ 0` at **every q it computes**, which the
+ordinary ground-state guards cannot substitute for: they run once, on the reference
+state within its own cell, and a state can be a genuine in-cell minimum while being
+unstable to a modulation that cell cannot hold. It costs 1-5 % of the KPM work.
+`calculation.on_imaginary` downgrades or disables it with the other two guards, and
+`calculation.h2_rel_tolerance` (default 1e-6, relative to ‖H₂‖) sets the threshold.
+A model you build or perturb in a **script** is not seen by the runner, so call
+`model.assert_stable(qs_cart)` yourself — see
+`examples/sunny_tutorials/S09_triangular_AFM/disorder_kpm.py`.
+
 Each evaluates on the config's `q_path` (SCGA / KPM / SampledCorrelations) or the
 temperature list (thermal MC) and writes an `.npz` (`scga.npz`, `thermal_mc.npz`,
 `sampled_correlations.npz`, `kpm_sqw.npz`). What each is validated against:
@@ -799,8 +812,15 @@ temperature list (thermal MC) and writes an `.npz` (`scga.npz`, `thermal_mc.npz`
 |---|---|---|
 | `scga` | self-consistent Gaussian, `kT(λ+J(q))⁻¹` | Sunny SCGA (square + kagome) + exact chain |
 | `thermal_mc` | parallel-tempering Metropolis on a PBC supercell | Langevin function + exact classical dimer |
-| `sampled_correlations` | RK4 Landau–Lifshitz on thermal states, space-time FFT | Larmor freq., energy conservation, LSWT dispersion |
+| `sampled_correlations` | RK4 Landau–Lifshitz on thermal states, space-time FFT | Larmor freq., energy conservation, LSWT dispersion, and the equal-time sum rule for the absolute scale |
 | `kpm_sqw` | para-unitary Chebyshev of the LSWT spectral function | the engine's own exact diagonalization |
+
+The classical intensities are on the **same absolute scale as `calculate_sqw` and
+Sunny** — per chemical cell, with the 1/2π of the time transform (fixed 2026-08-13;
+they used to be 2π/dt ≈ 314× too large and a further `n_atoms` too small). Integrate
+over the feature rather than the whole frequency axis: no time-domain window is
+applied, so leakage weighted by the linearly growing classical→quantum factor adds
+~16 % if you sum everything out to the Nyquist frequency.
 
 ## 4i. 1/S corrections
 

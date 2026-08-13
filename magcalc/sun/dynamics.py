@@ -260,7 +260,9 @@ def sampled_correlations(model, q_cart, kT, dt=0.02, n_steps=512, n_traj=4,
     The SU(N) counterpart of `classical_dynamics.sampled_correlations`: thermalize by
     Metropolis on CP^(N-1), evolve deterministically, Fourier transform the moment
     M^a(q, t) in time. `classical_to_quantum` applies the same correspondence factor
-    as the dipole path (Gap 4 #17).
+    as the dipole path (Gap 4 #17), and the result carries the same ABSOLUTE
+    normalization as `SUNModel.structure_factor` -- per chemical cell, with the 1/2pi
+    of the time transform -- so it can be compared with the LSWT spectrum directly.
 
     THE MODEL MUST BE BIG ENOUGH FOR THE q YOU ASK FOR. This is real-space dynamics:
     a chemical cell of two sites cannot represent a spin wave at q = 0.3, and asking
@@ -281,6 +283,10 @@ def sampled_correlations(model, q_cart, kT, dt=0.02, n_steps=512, n_traj=4,
     spectrum has nothing to do with magnons. Pass `random_start=True` only well above
     the ordering temperature. This mirrors Sunny's workflow: minimize, then thermalize.
 
+    The per-trajectory transform is `dynamical_structure_factor` below; call it
+    directly for the whole frequency axis (`two_sided`) or to hand it a trajectory
+    you built yourself.
+
     `subtract_elastic` removes the time-average of M(q, t), i.e. the ELASTIC line.
     Off by default, matching Sunny, whose S(q,w) contains it. Turn it on to isolate
     the inelastic response: for an ordered state at low T the static moment dominates,
@@ -292,8 +298,9 @@ def sampled_correlations(model, q_cart, kT, dt=0.02, n_steps=512, n_traj=4,
     qs = np.asarray(q_cart, float).reshape(-1, 3)
     rng = np.random.default_rng(seed)
     n_rec = int(np.ceil(n_steps / record_every))
-    energies = 2 * np.pi * np.fft.fftfreq(n_rec, d=dt * record_every)[:n_rec // 2]
-    acc = np.zeros((n_rec // 2, len(qs)))
+    dt_rec = dt * record_every
+    energies = None
+    acc = None
 
     for _ in range(int(n_traj)):
         if random_start:
@@ -306,20 +313,54 @@ def sampled_correlations(model, q_cart, kT, dt=0.02, n_steps=512, n_traj=4,
             Z = [np.asarray(z, complex).copy() for z in model.Z]
         thermalize(model, Z, kT, therm_sweeps, rng, sigma)
         traj = evolve(model, Z, dt, n_steps, record_every)
-        # M^a(q, t) -> M^a(q, w)
-        Mt = np.array([[moment_of(model, cfg, q) for q in qs] for cfg in traj])
-        if subtract_elastic:
-            Mt = Mt - Mt.mean(axis=0, keepdims=True)
-        Mw = np.fft.fft(Mt, axis=0)[:n_rec // 2]          # (n_w, n_q, 3)
-        for iq, q in enumerate(qs):
-            tensor = np.einsum("wa,wb->wab", Mw[:, iq, :].conj(), Mw[:, iq, :])
-            acc[:, iq] += np.real(_contract(tensor, q, cross_section)) / (
-                n_rec * max(model.L, 1))
+        e, sqw = dynamical_structure_factor(
+            model, traj, qs, dt_rec, cross_section=cross_section,
+            subtract_elastic=subtract_elastic)
+        acc = sqw if acc is None else acc + sqw
+        energies = e
 
     sqw = acc / int(n_traj)
     if classical_to_quantum:
         sqw = sqw * classical_to_quantum_factor(energies, kT)[:, None]
     return energies, sqw
+
+
+def dynamical_structure_factor(model, traj, q_cart, dt, cross_section="perp",
+                               subtract_elastic=False, two_sided=False):
+    """S(q,w) from ONE CP^(N-1) trajectory, on the absolute LSWT/Sunny scale.
+
+        S^ab(q,w) = (1/2pi) int dt e^{-iwt} <M^a(q,0)* M^b(q,t)> / n_cells
+
+    with M(q) the neutron moment amplitude `moment_of` builds (the staggered
+    combination for entangled units). Split out of `sampled_correlations` so the
+    normalization has a per-trajectory oracle: its defining property is the
+    equal-time sum rule int dw S = <|M(q)|^2>/n_cells, checked at machine precision
+    in `tests/test_classical_absolute_normalization.py`.
+
+    Both factors below were missing until 2026-08-13, exactly as in the dipole path:
+    the transform kept the bare `np.fft.fft` sum (2pi/dt too large, and dependent on
+    the time step), and the divisor was the SITE count where `SUNModel.structure_factor`
+    -- the spectrum this is meant to be compared with -- divides by `n_cells`.
+    """
+    from ..classical_dynamics import _contract
+
+    qs = np.asarray(q_cart, float).reshape(-1, 3)
+    Mt = np.array([[moment_of(model, cfg, q) for q in qs] for cfg in traj])
+    if subtract_elastic:
+        Mt = Mt - Mt.mean(axis=0, keepdims=True)
+    n_rec = len(traj)
+    energies = 2 * np.pi * np.fft.fftfreq(n_rec, d=dt)
+    Mw = np.fft.fft(Mt, axis=0)                              # (n_rec, n_q, 3)
+    norm = dt / (2 * np.pi * n_rec * max(int(getattr(model, "n_cells", 1)), 1))
+    sl = slice(None) if two_sided else slice(0, n_rec // 2)
+    out = np.zeros((n_rec if two_sided else n_rec // 2, len(qs)))
+    for iq, q in enumerate(qs):
+        tensor = np.einsum("wa,wb->wab", Mw[sl, iq, :].conj(), Mw[sl, iq, :])
+        out[:, iq] = np.real(_contract(tensor, q, cross_section)) * norm
+    if two_sided:
+        order = np.argsort(energies)
+        return energies[order], out[order]
+    return energies[sl], out
 
 def damped_deriv(model, Z, damping):
     """dZ_i/dt = -i h_i Z_i - lambda (h_i - <h_i>) Z_i -- dissipative CP^(N-1) flow.

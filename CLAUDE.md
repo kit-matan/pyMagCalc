@@ -352,15 +352,17 @@ answer and can afford it, `mode: SUN` is exact and needs no factor at all.
 
 LSWT is an expansion about a classical energy MINIMUM. Expand about anything else
 and the spectrum is meaningless -- but it will still *look* like a spectrum. The
-engine now refuses to do that: **two independent guards run before any task**, and
-a failure is a hard error, not a warning.
+engine now refuses to do that: **two independent guards run before any task** (and a
+third, sharper one per q for `kpm_sqw`, which cannot rely on either), and a failure is
+a hard error, not a warning.
 
 ```yaml
 calculation:
-  on_imaginary: error        # error (default) | warn | off  -- controls BOTH guards
+  on_imaginary: error        # error (default) | warn | off  -- controls ALL THREE
   imaginary_tolerance: 1.0e-4      # meV, ABSOLUTE  |  guard 1 fires only if
   imaginary_rel_tolerance: 5.0e-3  # fraction of the bandwidth  |  BOTH are exceeded
   energy_tolerance: 1.0e-6         # meV per cell (per SITE in SU(N) mode)
+  h2_rel_tolerance: 1.0e-6         # guard 3 (kpm_sqw): min eig H2 / ||H2||
 ```
 
 1. **Imaginary-energy check** (`max_imaginary_energy`) -- a non-minimum with
@@ -381,6 +383,21 @@ calculation:
    SU(N) mode runs its OWN energy audit (`sun/adapter.py`) off the same
    `energy_tolerance` key but in meV **per site** -- it is the only thing that can
    catch a dipole-derived state pasted under `mode: SUN` (§5c).
+3. **H₂(q) ⪰ 0, per q -- `tasks: {kpm_sqw: true}` only** (`SUNModel.is_stable_at` /
+   `assert_stable`, `tests/test_kpm_stability.py`). Guards 1 and 2 are necessary and
+   *not sufficient* for KPM, which never diagonalizes and so has no Cholesky to fail:
+   both run on the reference state within its own cell, and a state can be a genuine
+   in-cell minimum with an entirely real spectrum while being unstable to a
+   modulation the cell cannot represent (a frustrated ferromagnetic chain whose true
+   state is an incommensurate spiral — guard 1 reads |Im ω| = 0 *exactly*, guard 2
+   relaxes and stays put, a `dispersion` run of it succeeds and plots a plausible
+   band). H₂(q) ⪰ 0 is the exact criterion and is strictly sharper than guard 1: at a
+   stationary maximum H₂ stays diagonal, so g·H₂ is entirely real. It runs at **every
+   q the KPM computes**, not a sample, because the instability is q-specific — one
+   shifted Cholesky (`H₂ + εI ≻ 0`, ε = `h2_rel_tolerance`·‖H₂‖) is exact and 45×
+   cheaper than an eigensolve at 2D = 1800, i.e. 1–5 % of the KPM work at that q. The
+   shift is not a fudge: a Goldstone mode puts an *exact* zero in H₂ at the ordering
+   wavevector and at Γ, so an unshifted test would refuse every gapless magnet.
 
 `tests/test_guard_tolerances.py` pins all of this against the exact tilt identity
 ΔE(θ) = 2·J·S²·(1 − cos θ) for a Néel chain, and each knob is bracketed above and
@@ -670,6 +687,8 @@ kpm: {e_min: 0, e_max: 10, e_step: 0.05, fwhm: 0.1, tol: 0.02}    # or moments: 
   produces a magnetization of the right magnitude and the wrong sign.
   Validated: Larmor omega = g mu_B B, RK4 energy conservation, and the low-T
   ferromagnet peaks fall on the exact LSWT dispersion.
+  **ABSOLUTE INTENSITIES ARE COMPARABLE WITH LSWT as of 2026-08-13** -- see
+  section 6a below, which also says what the remaining lineshape caveat is.
 * **KPM** (`magcalc/sun/kpm.py`) -- para-unitary Chebyshev expansion of the LSWT
   spectral function (Lane et al. / Sunny's `SpinWaveTheoryKPM`); O(D*M) matvecs, no
   eigensolve, for large SU(N)/entangled cells. Validated: converges to the engine's
@@ -677,13 +696,24 @@ kpm: {e_min: 0, e_max: 10, e_step: 0.05, fwhm: 0.1, tol: 0.02}    # or moments: 
   supercell and in the antisymmetric (`chiral`) channel as well as the symmetric
   ones -- two bugs lived in exactly the gap between those (2026-08-13, see
   `tests/test_kpm.py`), and both were invisible to a collinear test.
-  **KPM NEVER DIAGONALIZES, so it is the one path here that cannot notice it is
-  expanding about a non-minimum**: no Cholesky, hence no positive-definiteness
-  failure, hence no ground-state guard. It returns a smooth, plausible S(q,w) about
-  a saddle or a maximum. Check the reference state yourself (H2(q) >= 0, or
-  `max_imaginary`) before trusting a KPM spectrum -- see
-  `examples/sunny_tutorials/S09_triangular_AFM/disorder_kpm.py`, which refuses on
-  that check by default.
+  **KPM NEVER DIAGONALIZES, so by itself it cannot notice it is expanding about a
+  non-minimum**: no Cholesky, hence no positive-definiteness failure, hence nothing
+  for `on_imaginary` to catch. It returns a smooth, plausible S(q,w) about a saddle
+  or a maximum. The check therefore has to be made explicitly, and is -- guard 3
+  above, `min eig H2(q) >= 0` at **every q computed**, run by the `kpm_sqw` task and
+  by `examples/sunny_tutorials/S09_triangular_AFM/disorder_kpm.py`, both through the
+  same `SUNModel.assert_stable(qs)`. **A model built or perturbed in a SCRIPT must
+  call it itself** (`apply_bond_disorder` and friends are Python-only, so the runner
+  never sees those models):
+
+  ```python
+  model.assert_stable(qs_cart)                 # raises unless H2(q) >= 0 at every q
+  model.is_stable_at(q, hmat=H)                # one shifted Cholesky, reuses your H
+  model.min_h2_eigenvalue(q)                   # how negative, for the report
+  ```
+
+  At Sunny's own disorder strength (sigma = 1/3) this refuses, and correctly: the
+  relaxed 120-degree state is genuinely not a minimum there.
 
 ## 6. Intensity / experiment layer
 
@@ -786,3 +816,46 @@ energy_cut:
 ```
 
 Reference: SW10 (energy_cut), SW37 (resolution polynomial).
+
+## 6a. The CLASSICAL S(q,ω) is on that same absolute scale (2026-08-13)
+
+`sampled_correlations`, `static_correlations` and the SU(N)
+`sun_sampled_correlations` are all normalized the way `calculate_sqw` and Sunny are:
+
+    S^ab(q,ω) = (1/2π) ∫dt e^{-iωt} ⟨S^a(q,0)* S^b(q,t)⟩ / n_cells
+
+**per CHEMICAL CELL, with the 1/2π of the time transform.** This entry used to say
+the opposite — "the shape is validated, the scale is not; do not read an absolute
+intensity off this path" — and the missing scale was two ordinary bugs, not a
+convention:
+
+* the time FFT was never normalized, so every classical S(q,ω) was **2π/dt too
+  large** — 314× at the default `dt: 0.02`, and *proportional to 1/dt*, so refining
+  the time step moved the intensity;
+* the spatial sum was divided by the **site** count instead of the **cell** count, so
+  a cell with `n_atoms` magnetic atoms came out `n_atoms` too small. Invisible to
+  every test, because every classical model tested here had one site per cell.
+
+The oracle is an exact identity, not a number: `∫dω S(q,ω) = ⟨S(q)*S(q)⟩/n_cells`,
+checked against the same trajectory at machine precision on a one-site AND a two-site
+cell (`tests/test_classical_absolute_normalization.py`, which also pins the free-spin
+per-cell sum rule and the grid independence the missing 1/dt broke). The physical
+close of the loop: a gapped low-T ferromagnet's `c2q`-corrected classical intensity
+equals the LSWT band sum to ~2 %, and that band sum is pinned to Sunny in
+`tests/test_absolute_normalization.py`.
+
+Two things to know when you read an absolute number off it:
+
+1. **Integrate over the feature, not the whole axis.** No time-domain window is
+   applied (Sunny multiplies by a cosine one), so a rectangular window is implied and
+   its sidelobes fall only as 1/(ω−ω₀)² — while `c2q` grows LINEARLY in ω out to the
+   Nyquist frequency π/dt, which is 157 meV at `dt: 0.02`. Integrating everything
+   therefore overshoots by ~16 % on a 4 meV band. A ±1 meV window around the band
+   gives 1.015.
+2. **`classical_to_quantum` does not make a classical spin quantum.** It fixes the
+   Bose weighting; the classical spin still has |S| = S where the quantum one has
+   S(S+1), and a classical mode still softens at finite kT (21 % at kT = 0.15 on the
+   SU(N) chain). Compare at kT ≪ ω, and mind that a gapless magnet in a small cell
+   has a wandering order parameter that inflates the transverse weight (45 % on an
+   L = 20 Heisenberg chain at kT = 0.02) — a finite-size effect that reads exactly
+   like a normalization error.

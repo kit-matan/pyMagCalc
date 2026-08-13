@@ -39,7 +39,8 @@ def test_larmor_precession_frequency():
     H, b, N, S, pos = build_supercell(m, [Bz], supercell=(1, 1, 1))
     dt, nsteps = 0.01, 4096
     traj = evolve(H, b, S, np.array([[S, 0, 0.0]]), dt, nsteps)
-    e, sqw = dynamical_structure_factor(traj, pos, np.array([[0, 0, 0]]), dt, "trace")
+    e, sqw = dynamical_structure_factor(traj, pos, np.array([[0, 0, 0]]), dt, "trace",
+                                        n_cells=1)
     peak = e[int(np.argmax(sqw[1:, 0])) + 1]
     d_omega = 2 * np.pi / (nsteps * dt)
     assert abs(peak - GAMMA * MU_B * Bz) < 1.5 * d_omega

@@ -9,10 +9,14 @@ validated by one test:
     Metropolis samples (Sunny `SampledCorrelationsStatic`). No dynamics, no ordered
     state, valid above T_N where LSWT has nothing to say.
 
-The classical one is normalized PER SITE, which makes free isotropic spins an exact,
-temperature-independent, model-free identity: 2S^2/3 in `perp` and S^2 in `trace` at
-every q. That is the oracle for the normalization, and it fixes it without appeal to
-any other code.
+The classical one is normalized PER CHEMICAL CELL, as LSWT and Sunny are, which makes
+free isotropic spins an exact, temperature-independent, model-free identity:
+n_atoms * 2S^2/3 in `perp` and n_atoms * S^2 in `trace` at every q. That is the
+oracle for the normalization, and it fixes it without appeal to any other code.
+
+EVERY MODEL BELOW HAS ONE SITE PER CELL, where per-cell and per-site coincide
+exactly -- which is why the estimator's actual per-SITE divisor survived here until
+2026-08-13. The two-site case is in `tests/test_classical_absolute_normalization.py`.
 """
 import copy
 
@@ -105,9 +109,9 @@ def _free_model(S):
                                         (2.0, "trace", 4.0)])
 def test_free_spins_give_the_exact_sum_rule(S, cs, exact):
     """N uncorrelated spins of length S: <S^a(q) S^b(q)*> = N (S^2/3) delta_ab at
-    EVERY q, so the per-site S(q) is (S^2/3) Tr P = 2S^2/3 for `perp` and S^2 for
-    `trace`, independent of q and of temperature. This fixes the normalization
-    outright -- no oracle, no fitted constant."""
+    EVERY q, so the per-cell S(q) is (S^2/3) Tr P = 2S^2/3 for `perp` and S^2 for
+    `trace` on this ONE-SITE cell, independent of q and of temperature. This fixes
+    the normalization outright -- no oracle, no fitted constant."""
     m, B = _free_model(S)
     q = np.array([[0.13, 0.2, 0], [0.31, 0, 0], [0.5, 0.5, 0]]) @ B
     r = static_correlations(m, [], q, kT=1.0, supercell=(6, 6, 1), n_samples=400,
