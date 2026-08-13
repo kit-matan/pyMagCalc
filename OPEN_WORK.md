@@ -2,33 +2,26 @@
 
 Last updated **2026-08-13**, `master` at `00083a6` (pushed).
 
-**Full gate GREEN on this tree: 672 passed, 3 skipped** (`pytest -m ""` from the
-workspace root, 39:06). Trail: 621 (2026-08-12 baseline) → 635 after the
-provenance + shadow-guard work (+5 `test_install_provenance`, +8
+**Full gate GREEN on this tree: 790 passed, 3 skipped** (`pytest -m ""` from the
+workspace root, 44:30 — the first 20 min of it against a load average of 30+, so
+that time is an upper bound, not a baseline). Trail: 621 (2026-08-12 baseline) → 635
+after the provenance + shadow-guard work (+5 `test_install_provenance`, +8
 `test_shadow_guard`, +1 newly-discovered CCSF config) → 637 with the two
-`test_ccsf_fit_roundtrip` tests → 650 with item 1's `test_ewald_spiral` → **672**
-with item 2's (**+22**: 14 `test_sun_quench`, 5 S06 in `test_sunny_tutorials`,
-3 `test_annealing` for item 9). Both `chore/open-work-housekeeping` and
-`feat/open-work-followups` were fast-forward merged into `master` after a green
-gate; both are level with it and can be pruned.
+`test_ccsf_fit_roundtrip` tests → 650 with item 1's `test_ewald_spiral` → 672 with
+item 2's (+22: 14 `test_sun_quench`, 5 S06 in `test_sunny_tutorials`, 3
+`test_annealing` for item 9) → **790** with items 10, 8 and 4 (+118: 26
+`test_kpm_stability`, 4 `test_gui_relative_paths`, the `test_native_emitter_parity`
+set including all 58 configs under `-m ""`, and 11
+`test_classical_absolute_normalization`).
 
-Items 1, 2, 9 and 3 are committed on `feat/s06-cp2-skyrmions`, **5 commits ahead of
-`master`** (which is at `f819694`), unmerged and unpushed. Item 3 is two of them:
-`5812975` the KPM fix (`magcalc/sun/kpm.py`, `tests/test_kpm.py`) and `ff9fbfe` the
-S09 port — the fix stands on its own and is worth reading separately, since it
-changes every KPM spectrum of a non-collinear model and every `cross_section:
-chiral` KPM result.
-
-Item 4 adds `tests/test_classical_absolute_normalization.py` (**+11**: 10 fast, 1
-slow) and touches `classical_dynamics.py`, `thermal_mc.py` and `sun/dynamics.py`.
-
-**The full gate has NOT been re-run since item 3.** What has: the fast suite (568
-passed, 2 skipped, 11:54), `-m ""` on item 3's four touched suites (35 passed, 6:16),
-and `-m ""` on item 4's seven (53 passed, 4:33 — `test_classical_dynamics`,
-`test_classical_to_quantum`, `test_static_correlations`, `test_sun_dynamics`,
-`test_disorder`, `test_thermal_mc`, `test_classical_absolute_normalization`) plus
-`test_sunny_tutorials -k "S02 or S04"`. Run `pytest -m ""` from the workspace root
-before merging.
+Items 1, 2, 9, 3, 10, 8 and 4 are committed on `feat/s06-cp2-skyrmions`, **8 commits
+ahead of `f819694`**, pushed, and fast-forward merged into `master` after the green
+gate above. Item 3 is two of them: `5812975` the KPM fix (`magcalc/sun/kpm.py`,
+`tests/test_kpm.py`) and `ff9fbfe` the S09 port — the fix stands on its own and is
+worth reading separately, since it changes every KPM spectrum of a non-collinear
+model and every `cross_section: chiral` KPM result. `chore/open-work-housekeeping`
+and `feat/open-work-followups` were merged the same way earlier and are level with
+`master`; all three can be pruned.
 
 This file is the "what to do next" companion to `GAP_STATUS.md`, which is the
 authoritative record of *what is done and how it was validated*. Read
