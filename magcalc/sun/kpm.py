@@ -97,18 +97,49 @@ class KPMResult:
 
 
 def kpm_sqw(model, q_cart, energies, fwhm, n_moments=None, tol=0.02,
-            cross_section="perp", ion=None, gamma=None):
+            cross_section="perp", ion=None, gamma=None, hmat=None):
     """KPM estimate of S(q,ω) at one q, on the given energy grid, Gaussian-broadened
     with the supplied `fwhm`. `n_moments` (or `tol`, which sets M from the bandwidth)
-    controls resolution. Returns a KPMResult."""
+    controls resolution. Returns a KPMResult.
+
+    NOTHING HERE CHECKS THAT THE REFERENCE STATE IS A MINIMUM, and no part of this
+    method can: there is no eigensolve, so no Cholesky to fail. About a saddle or a
+    maximum it returns a smooth, plausible, meaningless S(q,ω). Callers must check
+    for themselves — `SUNModel.is_stable_at(q)` / `assert_stable(qs)`, which the
+    runner's `kpm_sqw` task and `examples/.../S09_triangular_AFM/disorder_kpm.py`
+    both do, at every q they compute.
+
+    `hmat` lets the caller supply the g H₂ it already built for this exact q (it must
+    be `model.hamiltonian(q_cart)` — nothing here can check that). Building it is the
+    dominant per-q cost at large D (620 ms of KPM's 1.7 s at S09's L = 30), so
+    sharing one build with the stability guard is what keeps the guard at a few percent."""
     from ..numerical import contract_cross_section
 
-    HMat = np.asarray(model.hamiltonian(np.asarray(q_cart, float)), dtype=complex)
+    HMat = np.asarray(model.hamiltonian(np.asarray(q_cart, float))
+                      if hmat is None else hmat, dtype=complex)
     D2 = HMat.shape[0]
     D = D2 // 2
     g = np.concatenate([np.ones(D), -np.ones(D)])
     if gamma is None:
         gamma = spectral_bound(HMat)
+    if not np.isfinite(gamma) or gamma <= 0.0:
+        # H(q) is IDENTICALLY ZERO -- a ferromagnet at Gamma, exactly, and Gamma is in
+        # every path ever plotted. The rescaling Â = D̂/gamma then divided 0 by 0 and
+        # the whole q-column came back NaN, SILENTLY, into the saved .npz and the plot
+        # (and into the "intensity range" log line, as nan). Any positive gamma leaves
+        # Â = 0, so the expansion is at least well defined -- but the answer it gives
+        # is zero, not the q -> 0 limit: with every mode at omega = 0 the +omega and
+        # -omega poles coincide and cancel in the g-weighted moments. That is a real
+        # ambiguity at a single q (the exact path cannot be evaluated there either --
+        # the Cholesky in `_bogoliubov` fails on the Goldstone zero), not something
+        # this can quietly paper over, so it says so.
+        gamma = 1.0
+        logger.warning(
+            "KPM: H(q) is identically zero at q = %s (a Goldstone point, e.g. Gamma "
+            "for a ferromagnet). Every mode sits at omega = 0, where the +/-omega "
+            "poles coincide and cancel: the returned S(q,w) is 0 there, and is NOT "
+            "the limit of the neighbouring q. Read that column as undefined.",
+            np.round(np.asarray(q_cart, float), 6).tolist())
     # THE RECURSION RUNS ON conj(D-hat), NOT D-hat, and the reason is exact rather
     # than cosmetic. Writing T for the para-unitary Bogoliubov matrix and M = v T,
     #

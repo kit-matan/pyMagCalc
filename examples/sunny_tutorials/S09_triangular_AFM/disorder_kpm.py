@@ -14,11 +14,14 @@ large real-space cell, applied AFTER the clean ground state is found and followe
 a re-relaxation. There is no config surface for that sequence, and inventing one
 would hide the step that actually matters (the re-relaxation).
 
-READ THIS BEFORE TRUSTING A DISORDERED SPECTRUM. KPM never diagonalizes, so --
-unlike every other path in this engine -- it CANNOT notice that it is expanding
-about a non-minimum: it will return a smooth, plausible, wrong S(q,w). This script
-therefore checks stability explicitly (`max |Im w|` over the path, and the sharper
-`min eig H2 >= 0`) and refuses by default when the check fails.
+READ THIS BEFORE TRUSTING A DISORDERED SPECTRUM. KPM never diagonalizes, so it
+CANNOT notice by itself that it is expanding about a non-minimum: no Cholesky to
+fail, no imaginary energy to report, just a smooth, plausible, wrong S(q,w). The
+check has to be made explicitly, and this script makes it with the engine's shared
+one -- `SUNModel.assert_stable(qs)`, `min eig H2(q) >= 0` at every q, the same
+criterion the runner's `kpm_sqw` task now applies to a config -- and refuses by
+default when it fails. (`max |Im w|` is also reported, and is the WEAKER of the two:
+a stationary maximum keeps H2 diagonal, so it can read exactly zero.)
 
 That is not a hypothetical. At Sunny's own disorder strength, sigma = 1/3, the
 relaxed 120-degree state IS unstable on this model -- see the README for the
@@ -99,18 +102,20 @@ def q_path(n_per_seg=40):
 
 
 def stability(mdl, qs_cart):
-    """(max |Im w|, min eig H2) over the path. H2 >= 0 at every q is the exact
-    criterion for the reference state to be a classical minimum; the imaginary
-    parts are what that failure looks like downstream."""
-    im, lo = 0.0, np.inf
-    for q in qs_cart:
-        H = np.asarray(mdl.hamiltonian(q), complex)
-        D = H.shape[0] // 2
-        g = np.concatenate([np.ones(D), -np.ones(D)])
-        H2 = g[:, None] * H                       # g @ (g H2) = H2
-        lo = min(lo, float(np.linalg.eigvalsh(0.5 * (H2 + H2.conj().T)).min()))
-        im = max(im, float(np.max(np.abs(np.imag(np.linalg.eigvals(H))))))
-    return im, lo
+    """(stable?, max |Im w|, min eig H2) over the path. H2 >= 0 at every q is the
+    exact criterion for the reference state to be a classical minimum; the imaginary
+    parts are what that failure looks like downstream -- and not always, which is
+    why the H2 number is the one this script refuses on.
+
+    The VERDICT comes from `SUNModel.assert_stable`, the engine's shared check (one
+    shifted Cholesky per q), so this script and the runner's `kpm_sqw` task apply the
+    same criterion at the same tolerance rather than two hand-rolled ones. The two
+    numbers are measured exactly here, for the table."""
+    stable = mdl.assert_stable(qs_cart, on_failure="off")["stable"]
+    lo = min(float(mdl.min_h2_eigenvalue(q, method="exact")) for q in qs_cart)
+    im = max(float(np.max(np.abs(np.imag(np.linalg.eigvals(
+        np.asarray(mdl.hamiltonian(q), complex)))))) for q in qs_cart)
+    return stable, im, lo
 
 
 def sqw(mdl, qs_cart, energies, fwhm, tol):
@@ -233,7 +238,7 @@ def main():
         apply_bond_disorder(mdl, args.sigma, seed=seed)
         t0 = time.time()
         e = mdl.minimize_energy(n_restarts=1, max_iter=3000, tol=1e-15) / mdl.L
-        im, lo = stability(mdl, qs[::5])
+        stable, im, lo = stability(mdl, qs[::5])
         t_rel = time.time() - t0
         smap = sqw(mdl, qs, energies, args.fwhm, args.tol)
         acc += smap
@@ -242,7 +247,7 @@ def main():
         print(f"  seed {seed}: E/site = {e:+.8f}  max|Im w| = {im:.2e}  "
               f"min eig H2 = {lo:+.2e}  width {mt[0]:.4f}  peak {mt[1]:.3f}  "
               f"above {mt[2]:.4f}  ({t_rel:.1f} s relax)")
-        if lo < -1e-6 and not args.force:
+        if not stable and not args.force:
             raise SystemExit(
                 f"\nThe relaxed disordered state is NOT a classical minimum "
                 f"(min eig H2 = {lo:.2e}, max |Im w| = {im:.2e} on a "

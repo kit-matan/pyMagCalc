@@ -43,6 +43,29 @@ from .operators import (coherent_from_direction, local_basis, spin_matrices,
 
 logger = logging.getLogger(__name__)
 
+#: Default tolerance for the H2 >= 0 ground-state check, RELATIVE to ||H2||_inf.
+#: See `SUNModel.is_stable_at` for the measurements that bracket it -- it sits five
+#: orders above the observed noise floor of a correctly relaxed state and two and a
+#: half orders below a real instability. Overridable per call, and from a config as
+#: `calculation.h2_rel_tolerance`.
+H2_REL_TOL = 1e-6
+
+
+def _h2_scale(A: np.ndarray) -> float:
+    """||A||_inf -- an upper bound on the spectral radius, in one pass over the
+    matrix rather than an eigensolve. Measured 1.00-1.06x max eig H2 on S09."""
+    return float(np.abs(A).sum(axis=1).max()) if A.size else 0.0
+
+
+def _is_positive_definite(A: np.ndarray) -> bool:
+    """Cholesky as a yes/no test. Exact, and 45x cheaper than `eigvalsh` at
+    2D = 1800 (65x at 3200) -- which is what makes checking EVERY q affordable."""
+    try:
+        np.linalg.cholesky(A)
+        return True
+    except np.linalg.LinAlgError:
+        return False
+
 
 def _reject_unsupported_terms(model, engine: str = "SU(N)",
                               supports_biquadratic: bool = True) -> None:
@@ -180,6 +203,10 @@ class SUNModel:
     def _prepare(self):
         """Rotate every local operator into the |Z> basis and cache the pieces."""
         L, nop = self.L, self.n_ops
+        # The stability guard's energy scale depends on the reference state and on the
+        # bonds, both of which this rebuilds -- and `apply_bond_disorder` /
+        # `minimize_energy` end here, so this is where a stale one would come from.
+        self._h2_scale_ref = None
         # Per-site (ragged) rather than one rectangular array: M_i varies with S_i.
         self.s0 = np.zeros((L, nop), dtype=complex)        # <Z|O^p|Z>
         self.t = [np.zeros((nop, m), dtype=complex) for m in self.Ms]   # <0|O^p|m>
@@ -275,6 +302,220 @@ class SUNModel:
     def max_imaginary(self, q_cart: np.ndarray) -> float:
         ev = np.linalg.eigvals(self.hamiltonian(q_cart))
         return float(np.max(np.abs(np.imag(ev))))
+
+    # -------------------------------------------------- the H2 >= 0 stability check
+    #
+    # Every OTHER spectrum path in this engine refuses to expand about a non-minimum
+    # for free: `_bogoliubov` Choleskys H2, that fails when H2 is not positive
+    # definite, and `on_imaginary` turns the failure into a hard error. KPM never
+    # diagonalizes -- that is the whole point of it -- so it has no such failure mode
+    # and returns a smooth, plausible S(q,w) about a saddle or a maximum. These four
+    # methods are the guard KPM (and any script that perturbs a model in Python) has
+    # to call for itself.
+    #
+    # H2(q) >= 0 at every q is the EXACT criterion, and it is strictly sharper than
+    # the imaginary-energy check the runner already runs: a stationary MAXIMUM keeps
+    # H2 diagonal, so g H2 has real eigenvalues and `max_imaginary` returns 0.0 while
+    # the state is as wrong as a state can be (see tests/test_kpm_stability.py, which
+    # pins that case to the closed form min eig H2 = -S J (z - sum_d cos q.d), i.e.
+    # MINUS this engine's own validated ferromagnet dispersion -- flip the exchange,
+    # flip the curvature).
+    #
+    # THE COST, which is why this is a Cholesky and not an eigensolve. A full
+    # `eigvalsh` per q is O(D^3) and would undo KPM's whole advantage on the large
+    # cells it exists for: at S09's L = 30 (900 sites, 2D = 1800) it costs 3.1 s/q
+    # against KPM's own 1.7 s/q. But the question here is BINARY -- is H2 + eps I
+    # positive definite -- and a Cholesky answers exactly that, at 73 ms/q, 45x
+    # cheaper than the eigensolve (65x at 2D = 3200). End to end, with the g H2 build
+    # shared via `kpm_sqw(..., hmat=)`, the guard costs a measured 1.3 % of a KPM q at
+    # 2D = 288 and 4.9 % at 2D = 1800. At that price there is no reason to sample q
+    # thinly, which matters: the instability is q-SPECIFIC (on the 9x9 S09 cell, 4
+    # generic q found it on 1 disorder realization in 3, a 40-point path on 2 of 3),
+    # and a guard that samples too thinly is the "a check a wrong answer passes is not
+    # a check" shape again. Check every q you compute.
+    def h2_matrix(self, q_cart, hmat=None) -> np.ndarray:
+        """The Hermitian H2(q) of the Bogoliubov problem, symmetrised.
+
+        `hamiltonian()` returns g H2 (the metric is folded in), so this is
+        g @ hamiltonian(q). Pass `hmat` to reuse a g H2 you already built for this
+        exact q -- building it is the dominant cost here (66 ms of the 81 ms an
+        eigensolve check took at S09's L = 12), so the KPM path shares one build
+        between the guard and the spectrum.
+        """
+        H = np.asarray(self.hamiltonian(q_cart) if hmat is None else hmat, dtype=complex)
+        D = H.shape[0] // 2
+        g = np.concatenate([np.ones(D), -np.ones(D)])
+        A = g[:, None] * H
+        return 0.5 * (A + A.conj().T)
+
+    def _reference_h2_scale(self) -> float:
+        """A q-INDEPENDENT energy scale for the guard's tolerance, cached.
+
+        `||H2(q)||_inf` alone will not do, and the failure is not a corner case: at
+        Gamma a ferromagnet's H2 is EXACTLY ZERO, so a purely relative shift is zero
+        there and the Cholesky decides on round-off -- a guaranteed false alarm at a
+        q-point that is in every path ever plotted. The same happens wherever a band
+        touches zero (the frustrated chain at its instability boundary). A per-q scale
+        is also inconsistent in the ordinary case: it makes the ABSOLUTE threshold
+        vary from q to q with the local bandwidth.
+
+        So the scale is measured once at a generic q -- two of them, since the point
+        is to avoid a q where something cancels -- and reused. The q are sized from
+        the model's OWN bond lengths (|q| ~ pi / typical |dr|, so q.dr is a radian or
+        so) rather than fixed in Cartesian units, which would sit near Gamma for a
+        1 A lattice and be aliased for a 10 A one. It is an estimate of ||H2||_inf
+        over the zone, not a bound; it multiplies a 1e-6 tolerance that has five
+        orders of margin on each side, so a factor of two here is immaterial.
+        Invalidated by `_prepare`, i.e. by every relaxation and every disorder draw.
+        """
+        if getattr(self, "_h2_scale_ref", None) is None:
+            d = 1.0
+            if self.bonds:
+                lens = [float(np.linalg.norm(b[2])) for b in self.bonds]
+                lens = [x for x in lens if x > 1e-12]
+                if lens:
+                    d = float(np.median(lens))
+            k = np.pi / d
+            self._h2_scale_ref = max(
+                _h2_scale(self.h2_matrix(k * np.array(u) / np.linalg.norm(u)))
+                for u in ([0.4472136, 0.5773503, 0.6831301],
+                          [-0.8017837, 0.2672612, -0.5345225]))
+        return self._h2_scale_ref
+
+    def is_stable_at(self, q_cart, rel_tol: float = H2_REL_TOL, hmat=None,
+                     h2=None) -> bool:
+        """Is the reference state a classical minimum AT THIS q, i.e. H2(q) >= 0?
+
+        One shifted Cholesky: H2 + eps I positive definite <=> min eig H2 > -eps,
+        with eps = `rel_tol` * the energy scale (`_reference_h2_scale`, which is why
+        that is not simply ||H2(q)||_inf). The shift is what makes this usable on a
+        real magnet -- a Goldstone mode puts an EXACT zero eigenvalue in H2 at the
+        ordering wavevector (and at Gamma), so an unshifted positive-definiteness
+        test would refuse every gapless model at exactly the q the user cares about.
+
+        The threshold is RELATIVE for the same reason the imaginary-mode guard's is:
+        an absolute meV cutoff cannot separate a real instability from a minimizer's
+        residual across models whose energy scales differ by orders of magnitude.
+        ||H2||_inf is the scale rather than max eig H2 because it costs one pass over
+        the matrix instead of an eigensolve, and it is an upper bound on the spectral
+        radius (measured 1.00-1.06x max eig on S09, so a tight one -- and it is taken
+        once, q-independently, so it costs nothing per q at all). The default 1e-6
+        sits five orders above the observed noise floor and
+        two-and-a-half below a real instability -- measured on S09's 144-site cell
+        over a 37-point path through Gamma and K:
+
+            clean, exact 120-degree state          min eig H2 = -3e-15  (rel 7e-16)
+            sigma = 0.1  disorder, relaxed         min eig H2 = -2e-10  (rel 5e-11)
+            sigma = 1/3  disorder, relaxed         min eig H2 = -3e-3   (rel 5e-4)
+
+        the last of which is Sunny's own tutorial setting, and is genuinely unstable.
+        """
+        # `h2_matrix` hands back a fresh array, so the shift goes in place -- at
+        # 2D = 1800 an avoidable copy of H2 is 50 MB, and this runs at every q. A
+        # caller-supplied `h2` is copied, since it is not ours to modify.
+        A = (self.h2_matrix(q_cart, hmat=hmat) if h2 is None
+             else np.array(h2, dtype=complex, copy=True))
+        idx = np.diag_indices(A.shape[0])
+        A[idx] = A[idx] + float(rel_tol) * self._reference_h2_scale()
+        return _is_positive_definite(A)
+
+    def min_h2_eigenvalue(self, q_cart, hmat=None, h2=None, method: str = "auto",
+                          n_bisect: int = 30) -> float:
+        """min eig H2(q) as a NUMBER -- the size of the instability, for reporting.
+
+        `method`: 'exact' (eigvalsh), 'bisect' (bisection on the Cholesky shift, i.e.
+        the same decision `is_stable_at` makes, repeated), or 'auto' (exact up to
+        2D = 512, bisection above, where the eigensolve is the more expensive of the
+        two by a factor that grows as D). The bisection converges to ||H2||_inf *
+        2^-n_bisect, ~1e-9 relative at the default 30, and both routes are pinned
+        against each other in tests/test_kpm_stability.py.
+
+        Only the VERDICT is on the hot path (`is_stable_at`, one Cholesky); this is
+        called once, at a q that already failed, to say how badly.
+        """
+        # Ours to shift in place (see `is_stable_at`); a supplied `h2` is copied.
+        A = (self.h2_matrix(q_cart, hmat=hmat) if h2 is None
+             else np.array(h2, dtype=complex, copy=True))
+        n = A.shape[0]
+        if method == "auto":
+            method = "exact" if n <= 512 else "bisect"
+        if method == "exact":
+            return float(np.linalg.eigvalsh(A).min())
+        if method != "bisect":
+            raise ValueError(f"method must be 'auto', 'exact' or 'bisect', got {method!r}.")
+        scale = _h2_scale(A)
+        if scale <= 0.0:
+            return 0.0
+        # min eig H2 lies in [-scale, scale] (||.||_inf bounds the spectral radius),
+        # and H2 - s I is positive definite exactly when min eig H2 > s.
+        lo, hi = -scale, scale
+        idx = np.diag_indices(n)
+        diag = A[idx].copy()            # only the diagonal moves, and `cholesky`
+        for _ in range(int(n_bisect)):  # copies its own input, so A is reused as-is
+            mid = 0.5 * (lo + hi)
+            A[idx] = diag - mid
+            if _is_positive_definite(A):
+                lo = mid
+            else:
+                hi = mid
+        return 0.5 * (lo + hi)
+
+    def assert_stable(self, qs_cart, rel_tol: float = H2_REL_TOL,
+                      on_failure: str = "error", context: str = "", hmats=None) -> dict:
+        """Refuse to expand about a non-minimum: check H2(q) >= 0 over `qs_cart`.
+
+        Returns {'stable', 'n_checked', 'n_unstable', 'q_worst', 'min_eig', 'rel_tol'}
+        and, when a q fails, raises ValueError (`on_failure='error'`, the default),
+        logs a warning ('warn'), or stays quiet ('off' -- it still returns the
+        report). The three spellings are `calculation.on_imaginary`'s, so a config
+        that has knowingly downgraded the other two ground-state guards downgrades
+        this one with them.
+
+        Pass the q you are ABOUT TO COMPUTE, all of them: the check is 1-5 % of a KPM
+        q, and the instability is q-specific. `hmats`, if given, must be the
+        already-built g H2 for each q, in the same order.
+        """
+        if on_failure not in ("error", "warn", "off"):
+            raise ValueError(f"on_failure must be 'error', 'warn' or 'off', "
+                             f"got {on_failure!r}.")
+        qs = np.asarray(qs_cart, float).reshape(-1, 3)
+        bad = []
+        for iq, q in enumerate(qs):
+            hm = None if hmats is None else hmats[iq]
+            if not self.is_stable_at(q, rel_tol=rel_tol, hmat=hm):
+                bad.append(iq)
+        report = {"stable": not bad, "n_checked": len(qs), "n_unstable": len(bad),
+                  "q_worst": None, "min_eig": 0.0, "rel_tol": float(rel_tol)}
+        if not bad:
+            return report
+        iq = bad[0]
+        report["q_worst"] = qs[iq]
+        report["min_eig"] = self.min_h2_eigenvalue(
+            qs[iq], hmat=None if hmats is None else hmats[iq])
+        if on_failure != "off":
+            msg = (
+                f"The reference state is NOT a classical minimum{context}: H2(q) has a "
+                f"NEGATIVE eigenvalue at {len(bad)} of {len(qs)} q-points "
+                f"(worst so far: min eig H2 = {report['min_eig']:.3e} at q_cart = "
+                f"{np.round(qs[iq], 5).tolist()}).\n"
+                f"LSWT about a non-minimum is meaningless. KPM cannot notice this for "
+                f"you -- it never diagonalizes, so there is no Cholesky to fail and no "
+                f"imaginary energy to report; it returns a smooth, plausible, wrong "
+                f"S(q,w).\n"
+                f"  * Re-relax the reference state (SUNModel.minimize_energy, or "
+                f"`tasks: {{minimization: true}}`), and check the energy is "
+                f"reproducible across seeds.\n"
+                f"  * If the state was perturbed (bond disorder, a field, a pressure "
+                f"term), the perturbation may have destabilized the ORDER itself -- "
+                f"that is physics, and the answer is a different reference state, not "
+                f"a looser tolerance.\n"
+                f"  * If the instability is understood and intended, set "
+                f"`calculation: {{on_imaginary: warn}}` (or pass on_failure='warn')."
+            )
+            if on_failure == "error":
+                raise ValueError(msg)
+            logger.warning(msg)
+        return report
 
     # ------------------------------------------------------- host bridge
     @staticmethod

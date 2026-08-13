@@ -108,11 +108,14 @@ disorder period does not lower the energy — the disorder is destabilising the 
 order itself, which is the physics that makes YbMgGaO₄ interesting in the first
 place.
 
-**KPM cannot notice.** It never diagonalizes, so unlike every other path in this
-engine it will return a smooth, plausible spectrum about a non-minimum. That is why
-`disorder_kpm.py` checks `H₂ ⪰ 0` itself and refuses by default; `--force`
-reproduces the tutorial's setting anyway. The shipped default is σ = 0.1, which is
-stable and still broadens measurably.
+**KPM cannot notice by itself.** It never diagonalizes, so there is no Cholesky to
+fail and no imaginary energy to report: about a non-minimum it returns a smooth,
+plausible spectrum. The check is now the engine's — `SUNModel.assert_stable(qs)`,
+`min eig H₂(q) ≥ 0` at every q, one shifted Cholesky each — and both this script and
+the runner's `kpm_sqw` task apply it, at the same tolerance, rather than two
+hand-rolled versions. `disorder_kpm.py` refuses by default; `--force` reproduces the
+tutorial's setting anyway. The shipped default is σ = 0.1, which is stable and still
+broadens measurably.
 
 Sunny's own tutorial makes no such check — its `SpinWaveTheoryKPM` has no
 positive-definiteness guard, and the model is the same one.

@@ -658,8 +658,14 @@ def run_calculation(config_file: str):
     # NB: the powder task key is 'powder_average' (not 'powder') and fitting also
     # runs LSWT -- listing the wrong key here silently disabled the guard for
     # e.g. {scga: true, powder_average: true} runs.
+    # `kpm_sqw` belongs here even though it never diagonalizes: it is an LSWT
+    # spectrum about the same reference state, so a run pairing it with a classical
+    # task -- {kpm_sqw: true, thermal_mc: true} -- must NOT have the guards silenced.
+    # Its own per-q H2 >= 0 check (section 3e) is an addition to these, not a
+    # replacement: that one catches an instability at a particular q, this one
+    # catches a reference state that is not a minimum at all.
     _lswt_tasks = ('dispersion', 'sqw_map', 'corrections', 'powder_average',
-                   'energy_cut', 'fit', 'static_sqw')
+                   'energy_cut', 'fit', 'static_sqw', 'kpm_sqw')
     _classical_only = ('scga', 'thermal_mc', 'sampled_correlations',
                        'static_correlations', 'wang_landau',
                        'sun_sampled_correlations')
@@ -1211,6 +1217,7 @@ def run_calculation(config_file: str):
                          "(a SUNModel-backed calculator).")
         else:
             from magcalc.sun.kpm import kpm_sqw
+            from magcalc.sun import lswt as _sun_lswt
             kp = final_config.get('kpm', {}) or {}
             e_min = kp.get('e_min', 0.0)
             e_max = kp.get('e_max', 10.0)
@@ -1221,6 +1228,13 @@ def run_calculation(config_file: str):
                 B = compute_b_matrix(spin_model)
                 q_rlu = q_vectors if q_vectors is not None else \
                     generate_q_path_from_config(final_config)
+                # Before the matmul, which reports an empty path as a gufunc core
+                # dimension mismatch and nothing else.
+                if q_rlu is None or not len(q_rlu):
+                    raise ValueError(
+                        "kpm_sqw: empty q-path. `q_path` needs named points plus a "
+                        "`path:` list of their labels -- see "
+                        "examples/sunny_tutorials/S09_triangular_AFM/config_supercell.yaml.")
                 q_cart = np.asarray(q_rlu, float) @ B
                 ions = None
                 try:
@@ -1230,14 +1244,47 @@ def run_calculation(config_file: str):
                 ion0 = ions[0] if ions else None
                 smap = np.zeros((len(energies), len(q_cart)))
                 nmom = kp.get('moments')
+                # THE GROUND-STATE GUARD, PER q. The up-front guards above run once,
+                # on the calculator's own reference state; that is necessary and not
+                # sufficient here. KPM never diagonalizes, so unlike every other
+                # spectrum path it has no Cholesky to fail and no imaginary energy to
+                # report -- about a saddle it returns a smooth, plausible, wrong
+                # S(q,w). H2(q) >= 0 is the exact criterion, it is SHARPER than the
+                # imaginary-energy check (a stationary maximum keeps H2 diagonal, so
+                # max|Im w| = 0), and one shifted Cholesky costs 1-5 % of the KPM work
+                # at the same q -- so check EVERY q rather than a sample. That matters:
+                # the instability is q-specific (on S09's 9x9 cell 4 generic q found it
+                # on 1 disorder realization in 3, a 40-point path on 2 of 3).
+                h2_rel_tol = float(calc_config.get(
+                    'h2_rel_tolerance', _sun_lswt.H2_REL_TOL))
+                guard = on_imaginary if on_imaginary in ('error', 'warn') else 'off'
+                unstable = []
                 for iq, q in enumerate(q_cart):
+                    # One build of g H2 per q, shared by the guard and the spectrum.
+                    hq = np.asarray(model_obj.hamiltonian(np.asarray(q, float)),
+                                    dtype=complex)
+                    if guard != 'off' and not model_obj.is_stable_at(
+                            q, rel_tol=h2_rel_tol, hmat=hq):
+                        unstable.append(iq)
+                        if guard == 'error':
+                            # Refuse HERE rather than after the whole map: the report
+                            # names this q, and nothing computed past it would be
+                            # meaningful anyway.
+                            model_obj.assert_stable(
+                                q_cart[iq:iq + 1], rel_tol=h2_rel_tol,
+                                on_failure='error', hmats=[hq],
+                                context=" (KPM S(q,w), q-point "
+                                        f"{iq + 1} of {len(q_cart)})")
                     r = kpm_sqw(model_obj, q, energies, fwhm,
                                 n_moments=nmom, tol=kp.get('tol', 0.02),
                                 cross_section=kp.get('cross_section', 'perp'),
-                                ion=ion0)
+                                ion=ion0, hmat=hq)
                     smap[:, iq] = r.intensities
-                if not len(q_cart):
-                    raise ValueError("kpm_sqw: empty q-path.")
+                if unstable:
+                    model_obj.assert_stable(
+                        q_cart[unstable[:1]], rel_tol=h2_rel_tol, on_failure='warn',
+                        context=f" (KPM S(q,w): {len(unstable)} of {len(q_cart)} "
+                                f"q-points; on_imaginary is {on_imaginary!r})")
                 logger.info(
                     f"KPM S(q,w): {len(q_cart)} q x {len(energies)} E, "
                     f"~{r.n_moments} moments (gamma={r.gamma:.3f}); "
