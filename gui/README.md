@@ -15,6 +15,29 @@ The React Compiler is not enabled on this template because of its impact on dev 
 
 If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
 
+## Where a run's output files go
+
+Both Studio clients (web and native) run through `/run-calculation`, and where the
+outputs land follows the config, not the app:
+
+* **A config you opened from disk** — the client sends `config_dir`, the run happens
+  in that directory exactly as `magcalc run <file>` would, and the plots and `.npz`
+  land **beside the config**. This is what keeps a figure directory self-contained.
+* **A config with no file behind it** (built in the editor, or opened through the
+  browser's file picker, which hands over only a name) — the run falls back to the
+  project root, where nothing owns the outputs, so everything it produces goes into
+  **`app_runs/`** (`GUI_OUTPUT_SUBDIR` in `gui/server.py`; gitignored). Delete that
+  folder whenever you like: it is entirely regenerable.
+
+The run still *executes* in the project root either way — only the output paths move
+— so a config's own relative references (`from_mcif:`, `fitting.data_file:`,
+`cif_file:`, `python_model_file:`) resolve exactly as they do for the CLI. The
+runnable record of the run, `.config_gui_run.yaml`, stays at the run root for the
+same reason; `magcalc run .config_gui_run.yaml` reproduces the run.
+
+Custom output names are kept, not overridden: a config asking for `G1_h00_d.npz` gets
+that file, inside the folder.
+
 ## Minimization (ground state)
 
 The **Method** selector in *Tasks & Plotting → Minimization Parameters* now offers:

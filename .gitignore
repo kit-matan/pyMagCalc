@@ -55,6 +55,11 @@ gui/frontend_debug*.log
 # Launcher logs
 .magcalc_logs/
 
+# Web Studio / native app run outputs. A run with no opened config file falls
+# back to the project root, and writes everything it produces here instead of
+# loose in the checkout (gui/server.py: GUI_OUTPUT_SUBDIR).
+app_runs/
+
 # Run-output artifacts (live alongside config files; should not be tracked)
 mag_structure.json
 mag_structure.png

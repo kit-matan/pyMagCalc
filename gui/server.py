@@ -241,10 +241,24 @@ LOGGING_INITIALIZED = False
 # background thread (the previous approach) cannot be killed cooperatively.
 CURRENT_PROC = None
 
-# Directory of the last run, used by /run-artifact to serve the plots/data the
-# run produced. File-mode runs execute in the config file's own directory (like
-# the CLI), so outputs can land anywhere -- not just under the /files mount.
+# The directory the last run EXECUTED in (its cwd, and the directory its config
+# file sits in). File-mode runs execute in the config file's own directory, like
+# the CLI, so this can be anywhere -- not just under the /files mount. Outputs
+# are served from LAST_OUTPUT_DIR below, which is not always the same place.
 LAST_RUN_DIR = None
+
+# Where the last run's OUTPUT files went. Usually the run directory itself, but
+# a config-mode run with no `config_dir` falls back to the project root, and
+# dropping a dozen plots/.npz into the checkout root is pure clutter -- there is
+# no config there they belong to. Such a run writes into this subdirectory
+# instead (see `_pin_gui_outputs`). Tracked separately from LAST_RUN_DIR because
+# the run still EXECUTES in the run directory: the config's own relative
+# references (`from_mcif:`, `fitting.data_file:`) must keep resolving exactly as
+# they do for the CLI, which is the whole reason `config_dir` exists.
+LAST_OUTPUT_DIR = None
+
+# The dedicated folder for app-generated outputs, relative to the run directory.
+GUI_OUTPUT_SUBDIR = "app_runs"
 
 class StreamToLogger:
     """
@@ -323,7 +337,25 @@ async def websocket_logs(websocket: WebSocket):
 
 # ... (rest of code)
 
-def _pin_gui_outputs(cfg: Dict[str, Any]) -> Dict[str, Any]:
+# The runner's `output:` data files, with its own defaults. Kept in step with
+# magcalc/runner.py -- `tests/test_gui_output_dir.py` asserts a run leaves the
+# run directory clean, so a key added there and missed here fails the test
+# rather than quietly reintroducing a loose file.
+GUI_DATA_OUTPUTS = {
+    "disp_data_filename": "disp_data.npz",
+    "sqw_data_filename": "sqw_data.npz",
+    "powder_data_filename": "powder_data.npz",
+    "corrections_filename": "corrections.npz",
+    "thermal_mc_filename": "thermal_mc.npz",
+    "sampled_correlations_filename": "sampled_correlations.npz",
+    "scga_filename": "scga.npz",
+    "kpm_filename": "kpm_sqw.npz",
+    "disp_csv_filename": "disp_data.csv",
+    "sqw_csv_filename": "sqw_data.csv",
+}
+
+
+def _pin_gui_outputs(cfg: Dict[str, Any], subdir: str = "") -> Dict[str, Any]:
     """Force the plot/fit output filenames the UI knows how to fetch.
 
     The ONLY transformation the GUI applies to a config before running it: it
@@ -332,7 +364,24 @@ def _pin_gui_outputs(cfg: Dict[str, Any]) -> Dict[str, Any]:
     interactions, magnetic_structure, parameters, tasks) -- those are written
     and run exactly as the CLI would read them. This is the whole point of the
     file-backed design: `.config_gui_run.yaml` is a real, runnable config.
+
+    `subdir` (relative to the run directory) puts every output the run produces
+    in one dedicated folder instead of loose in the run directory. It is a name
+    change only -- the run still executes in the run directory, so relative
+    references INSIDE the config resolve unchanged. The runner creates the
+    parent directory of every output path it writes (`_safe_makedirs`), so a
+    relative subdirectory needs nothing else from us.
+
+    Data filenames the config already carries are PREFIXED, not replaced: a
+    config asking for `G1_h00_d.npz` keeps that name, in the folder. Otherwise
+    the runner's own defaults are pinned explicitly, because unnamed data files
+    default relative to the config and would stay loose in the run directory --
+    which is how loose `.npz` accumulated at the checkout root while the plots,
+    being pinned, were cleaned before every run.
     """
+    def _at(name: str) -> str:
+        return os.path.join(subdir, name) if subdir else name
+
     plotting = cfg.setdefault("plotting", {})
 
     # The GUI drives plotting via the `plotting` block; strip any explicit
@@ -342,28 +391,36 @@ def _pin_gui_outputs(cfg: Dict[str, Any]) -> Dict[str, Any]:
             cfg["tasks"].pop(k, None)
 
     plotting["save_plot"] = True
-    plotting["disp_plot_filename"] = "disp_plot.png"
-    plotting["sqw_plot_filename"] = "sqw_plot.png"
-    plotting["powder_plot_filename"] = "powder_plot.png"
-    plotting["structure_plot_filename"] = "mag_structure.png"
-    plotting["scga_plot_filename"] = "scga_plot.png"
-    plotting["thermal_mc_plot_filename"] = "thermal_mc_plot.png"
-    plotting["sampled_correlations_plot_filename"] = "sampled_correlations_plot.png"
-    plotting["kpm_plot_filename"] = "kpm_plot.png"
-    plotting["energy_cut_plot_filename"] = "energy_cut.png"
+    plotting["disp_plot_filename"] = _at("disp_plot.png")
+    plotting["sqw_plot_filename"] = _at("sqw_plot.png")
+    plotting["powder_plot_filename"] = _at("powder_plot.png")
+    plotting["structure_plot_filename"] = _at("mag_structure.png")
+    plotting["scga_plot_filename"] = _at("scga_plot.png")
+    plotting["thermal_mc_plot_filename"] = _at("thermal_mc_plot.png")
+    plotting["sampled_correlations_plot_filename"] = _at("sampled_correlations_plot.png")
+    plotting["kpm_plot_filename"] = _at("kpm_plot.png")
+    plotting["energy_cut_plot_filename"] = _at("energy_cut.png")
 
     if cfg.get("tasks", {}).get("fit") or (cfg.get("fitting") or {}).get("enabled"):
-        plotting["fit_plot_filename"] = "fit_comparison.png"
+        plotting["fit_plot_filename"] = _at("fit_comparison.png")
         output = cfg.setdefault("output", {})
-        output["fit_report_filename"] = "fit_report.txt"
-        output["fit_params_filename"] = "fit_params.yaml"
+        output["fit_report_filename"] = _at("fit_report.txt")
+        output["fit_params_filename"] = _at("fit_params.yaml")
+
+    if subdir:
+        output = cfg.setdefault("output", {})
+        for key, default in GUI_DATA_OUTPUTS.items():
+            name = output.get(key) or default
+            # An absolute path is the user saying exactly where it goes.
+            if not os.path.isabs(str(name)):
+                output[key] = _at(os.path.basename(str(name)))
     return cfg
 
 
-def _clean_stale_outputs(run_dir: str) -> None:
+def _clean_stale_outputs(out_dir: str) -> None:
     """Remove plots/structure JSON from a previous run so the UI never serves stale results."""
-    stale = glob.glob(os.path.join(run_dir, "*_plot.png"))
-    stale += [os.path.join(run_dir, f) for f in (
+    stale = glob.glob(os.path.join(out_dir, "*_plot.png"))
+    stale += [os.path.join(out_dir, f) for f in (
         "mag_structure.png", "mag_structure.json", "disp_plot.png", "sqw_plot.png",
         "scga_plot.png", "thermal_mc_plot.png", "sampled_correlations_plot.png",
         "kpm_plot.png", "energy_cut.png", "fit_comparison.png")]
@@ -408,8 +465,13 @@ async def trigger_calculation(payload: Dict[str, Any]):
 
         # --- Determine what file to run and where ---------------------------
         run_path = payload.get("path")
+        # Outputs land in the run directory unless we say otherwise; only the
+        # project-root fallback below redirects them into a dedicated folder.
+        out_subdir = ""
         if run_path:
             # File mode: run the on-disk file untouched, in its own directory.
+            # The config is NOT rewritten here, so its own output filenames
+            # stand and the outputs land beside it, exactly as for the CLI.
             run_config_path = os.path.abspath(run_path)
             if not os.path.exists(run_config_path):
                 raise HTTPException(status_code=404,
@@ -421,7 +483,6 @@ async def trigger_calculation(payload: Dict[str, Any]):
             if cfg is None:
                 raise HTTPException(status_code=400,
                                     detail="Payload must contain 'config' or 'path'.")
-            cfg = _pin_gui_outputs(dict(cfg))
             run_dir = default_run_dir
             cfg_dir = payload.get("config_dir")
             if cfg_dir:
@@ -431,14 +492,28 @@ async def trigger_calculation(payload: Dict[str, Any]):
                         status_code=400,
                         detail=f"config_dir is not a directory: {cfg_dir}")
                 run_dir = cfg_dir
+            else:
+                # No opened file: the run falls back to the project root, where
+                # nothing owns the outputs. Give them their own folder rather
+                # than scattering them through the checkout.
+                out_subdir = GUI_OUTPUT_SUBDIR
+            cfg = _pin_gui_outputs(dict(cfg), out_subdir)
+            # The run config itself stays in the run directory, NOT in the output
+            # folder: the runner resolves a config's relative references against
+            # `os.path.dirname(config_file)`, so moving it would silently
+            # re-root `from_mcif:` / `fitting.data_file:` one level down.
             run_config_path = os.path.join(run_dir, ".config_gui_run.yaml")
             with open(run_config_path, 'w') as f:
                 compact_yaml_dump(cfg, f)
 
-        global LAST_RUN_DIR
-        LAST_RUN_DIR = run_dir
+        out_dir = os.path.join(run_dir, out_subdir) if out_subdir else run_dir
+        os.makedirs(out_dir, exist_ok=True)
 
-        _clean_stale_outputs(run_dir)
+        global LAST_RUN_DIR, LAST_OUTPUT_DIR
+        LAST_RUN_DIR = run_dir
+        LAST_OUTPUT_DIR = out_dir
+
+        _clean_stale_outputs(out_dir)
 
         logging.getLogger().info(f"Starting calculation with config: {run_config_path}")
         # Explicit info for the UI
@@ -506,9 +581,10 @@ async def trigger_calculation(payload: Dict[str, Any]):
                 raise HTTPException(status_code=499, detail="Calculation stopped by user.")
             raise HTTPException(status_code=500, detail="Calculation failed. See logs for details.")
 
-        # 3. Collect outputs from the run directory. They are served through
-        # /run-artifact (keyed on LAST_RUN_DIR) so both a project-root config run
-        # and an in-place file run in any directory display correctly.
+        # 3. Collect outputs from the run's OUTPUT directory. They are served
+        # through /run-artifact (keyed on LAST_OUTPUT_DIR) so a project-root
+        # config run (outputs in their own folder), a run beside an opened file,
+        # and an in-place file run in any directory all display correctly.
         results = {
             "message": "Calculation completed successfully.",
             "plots": [],
@@ -523,13 +599,13 @@ async def trigger_calculation(payload: Dict[str, Any]):
                      "scga_plot.png", "thermal_mc_plot.png",
                      "sampled_correlations_plot.png", "kpm_plot.png",
                      "energy_cut.png"):
-            if os.path.exists(os.path.join(run_dir, name)):
+            if os.path.exists(os.path.join(out_dir, name)):
                 results["plots"].append(_artifact(name))
 
-        if os.path.exists(os.path.join(run_dir, "fit_comparison.png")):
+        if os.path.exists(os.path.join(out_dir, "fit_comparison.png")):
             results["plots"].append(_artifact("fit_comparison.png"))
             # Surface the best-fit parameters to the UI alongside the plot.
-            fit_params_path = os.path.join(run_dir, "fit_params.yaml")
+            fit_params_path = os.path.join(out_dir, "fit_params.yaml")
             if os.path.exists(fit_params_path):
                 try:
                     with open(fit_params_path) as fpf:
@@ -539,10 +615,10 @@ async def trigger_calculation(payload: Dict[str, Any]):
                 except Exception:
                     pass
 
-        if os.path.exists(os.path.join(run_dir, "mag_structure.png")):
+        if os.path.exists(os.path.join(out_dir, "mag_structure.png")):
             # Send the JSON structure data too (the 3D viewer prefers it); the
             # frontend decides which to show.
-            if os.path.exists(os.path.join(run_dir, "mag_structure.json")):
+            if os.path.exists(os.path.join(out_dir, "mag_structure.json")):
                 results["plots"].append(_artifact("mag_structure.json"))
             results["plots"].append(_artifact("mag_structure.png"))
 
@@ -587,14 +663,15 @@ async def run_artifact(name: str):
     """
     Serve a file (plot PNG, structure JSON, fit report) produced by the last run.
 
-    Keyed on LAST_RUN_DIR so it works whether the run wrote into the project root
-    (config mode) or into an opened file's own directory (file mode). Only a bare
-    basename is honoured, so this cannot read arbitrary paths.
+    Keyed on LAST_OUTPUT_DIR so it works whether the run wrote into the project
+    root's dedicated output folder (config mode with no opened file) or into an
+    opened file's own directory (file mode, and config mode with `config_dir`).
+    Only a bare basename is honoured, so this cannot read arbitrary paths.
     """
-    if LAST_RUN_DIR is None:
+    if LAST_OUTPUT_DIR is None:
         raise HTTPException(status_code=404, detail="No calculation has been run yet.")
     safe = os.path.basename(name)
-    path = os.path.join(LAST_RUN_DIR, safe)
+    path = os.path.join(LAST_OUTPUT_DIR, safe)
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail=f"Artifact not found: {safe}")
     return FileResponse(path)
