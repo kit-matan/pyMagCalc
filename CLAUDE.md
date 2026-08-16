@@ -643,8 +643,19 @@ Reference: `magcalc/sun/entangled.py`, `tests/test_entangled_units.py`.
 `pytest` runs the FAST suite (**697 of 876 collected tests**): the `slow`
 marker (pytest.ini) holds the deep validations (ED oracles, convergence sweeps,
 integration runs). The last full gate was **882 passed, 1 skipped** (`pytest -m ""`
-from the workspace root, 2026-08-16, 33 min, 883 collected there since it also picks
-up `fMagCalc/tests`). Rules:
+from the workspace root, 2026-08-17, **12 min**, 883 collected there since it also
+picks up `fMagCalc/tests`).
+
+Both pytest.ini files carry `-n auto --dist worksteal` (pytest-xdist), which is the
+whole of that 33 min -> 12 min; the fast suite went 6 m 07 s -> 4 m 37 s. **Nothing was
+deselected or weakened to get it** -- same 882/1. Use **`-n0`** when you need `-s`, pdb,
+or a live per-test name. The remaining floor is a single test:
+`test_classical_absolute_normalization`'s 128-trajectory LL average is ~7 min of serial
+Python, so the gate cannot go below it until `sampled_correlations` parallelizes its
+trajectory loop (it is a plain `for it in range(n_traj)`), and its cost is the
+statistical tolerance the test asserts -- do not trim `n_traj` to save time.
+
+Rules:
 
 - iterate with `pytest`; run a feature's deep checks with `pytest -m slow -k <name>`;
 - **before merging to master, ALWAYS run `pytest -m ""` (everything)** -- the fast
