@@ -30,6 +30,10 @@ magcalc = "magcalc.cli:main"
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
+    # REQUIRED, not optional: both pytest.ini files put `-n auto --dist worksteal`
+    # in addopts, and an unknown option in addopts makes pytest exit 4 before it
+    # collects anything. `worksteal` needs xdist >= 2.3.
+    "pytest-xdist>=3.0",
 ]
 gui = [
     "fastapi>=0.100",
