@@ -84,14 +84,29 @@ struct CrystalSceneView: View {
 enum CameraPreset {
     case iso, top, front, side
 
-    /// Camera positions from the web app's CameraRig (z-up).
-    var position: SIMD3<Double> {
+    /// Viewing direction, from the web app's CameraRig (z-up).
+    var direction: SIMD3<Double> {
         switch self {
-        case .iso: return SIMD3(12, 12, 10)
-        case .top: return SIMD3(0, 0, 15)
-        case .front: return SIMD3(0, -15, 2)
-        case .side: return SIMD3(15, 0, 2)
+        case .iso: return simd_normalize(SIMD3(12, 12, 10))
+        case .top: return SIMD3(0, 0, 1)
+        case .front: return simd_normalize(SIMD3(0, -15, 2))
+        case .side: return simd_normalize(SIMD3(15, 0, 2))
         }
+    }
+
+    /// Camera position that frames a sphere of `radius` about `center`.
+    ///
+    /// The distances were copied from the web app as CONSTANTS (12,12,10 etc.),
+    /// which only ever framed a ~5 A cell: at a = 20.6 A (alpha-CVO) the camera
+    /// sits inside the structure and the preview shows a wall of spheres. Same
+    /// rule as SceneBuilder.standardScene — fit the content, don't assume a size.
+    func position(center: SIMD3<Double>, radius: Double, fieldOfView: Double = 50) -> SIMD3<Double> {
+        let halfFOV = fieldOfView * .pi / 360
+        // 1.1: the fieldOfView applies to the viewport's larger dimension, so
+        // the other one is tighter than the nominal 50 degrees. `radius` is a
+        // bounding SPHERE, already generous for an elongated cell.
+        let distance = max(radius / tan(halfFOV) * 1.1, 6)
+        return center + direction * distance
     }
 }
 
@@ -143,11 +158,19 @@ private struct CrystalSceneRepresentable: PlatformViewRepresentable {
         // Rebuilding the scene resets the user's orbit; preserve the camera
         // transform across data updates, but honor explicit preset clicks.
         let previousTransform = view.pointOfView?.worldTransform
+        // ... and re-frame when the model changes SIZE (another config opened,
+        // a lattice parameter edited): an orbit kept from a 5 A cell leaves a
+        // 20 A one filling the whole frame.
+        let radius = contentBounds().radius
+        let resized = abs(radius - context.coordinator.lastRadius)
+            > 0.2 * max(radius, context.coordinator.lastRadius)
+        context.coordinator.lastRadius = radius
+
         view.scene = buildScene()
         let cameraNode = view.scene?.rootNode.childNode(withName: "camera", recursively: false)
         if context.coordinator.lastPresetTick != presetTick || context.coordinator.lastPresetTick == -1 {
             context.coordinator.lastPresetTick = presetTick
-        } else if let previousTransform {
+        } else if let previousTransform, !resized {
             cameraNode?.transform = previousTransform
         }
         view.pointOfView = cameraNode
@@ -157,6 +180,7 @@ private struct CrystalSceneRepresentable: PlatformViewRepresentable {
         var onBondTap: (VisualizerBond?) -> Void
         var bonds: [VisualizerBond] = []
         var lastPresetTick = -1
+        var lastRadius = 0.0
 
         init(onBondTap: @escaping (VisualizerBond?) -> Void) {
             self.onBondTap = onBondTap
@@ -211,22 +235,26 @@ private struct CrystalSceneRepresentable: PlatformViewRepresentable {
         fillNode.position = SCNVector3(-10, 10, 10)
         scene.rootNode.addChildNode(fillNode)
 
-        // Camera: z-up like the web scene.
+        // Camera: z-up like the web scene, framed on the actual structure.
+        let content = contentBounds()
         let camera = SCNCamera()
-        camera.zFar = 1000
+        let p = preset.position(center: content.center, radius: content.radius)
+        camera.zFar = max(1000, simd_length(p - content.center) * 4)
         camera.fieldOfView = 50
         let cameraNode = SCNNode()
         cameraNode.name = "camera"
         cameraNode.camera = camera
-        let p = preset.position
-        cameraNode.position = SCNVector3(Float(p.x), Float(p.y), Float(p.z))
-        cameraNode.look(at: SCNVector3(0, 0, 0), up: SCNVector3(0, 0, 1), localFront: SCNVector3(0, 0, -1))
+        cameraNode.position = SceneBuilder.v3(p)
+        cameraNode.look(at: SceneBuilder.v3(content.center),
+                        up: SCNVector3(0, 0, 1), localFront: SCNVector3(0, 0, -1))
         scene.rootNode.addChildNode(cameraNode)
 
         // Grid in the XY plane (web: gridHelper rotated into XY).
-        scene.rootNode.addChildNode(gridNode())
+        scene.rootNode.addChildNode(gridNode(center: content.center, radius: content.radius))
 
-        // Atoms + labels + spin arrows.
+        // Atoms + labels + spin arrows. Label sizes are in Angstrom, so they
+        // scale with the cell to stay legible at the framing distance.
+        let labelScale = max(1.0, content.radius / 9)
         let spinDirCart = lattice.cartesian(fromFractional: [0, 0, 1])
         for atom in atoms {
             let pos = lattice.cartesian(fromFractional: atom.pos)
@@ -234,7 +262,8 @@ private struct CrystalSceneRepresentable: PlatformViewRepresentable {
                 SceneBuilder.atomNode(at: pos, radius: 0.5,
                                       color: VizColor.atom(label: atom.label, dark: dark))
             )
-            scene.rootNode.addChildNode(labelNode(atom.label, at: pos + SIMD3(0, 0, 0.9)))
+            scene.rootNode.addChildNode(labelNode(atom.label, at: pos + SIMD3(0, 0, 0.9),
+                                                  size: 0.35 * labelScale))
             scene.rootNode.addChildNode(
                 SceneBuilder.arrowNode(origin: pos, direction: spinDirCart,
                                        length: 1.8, color: VizColor.spin)
@@ -280,7 +309,7 @@ private struct CrystalSceneRepresentable: PlatformViewRepresentable {
                 let mid = (start + end) / 2
                 let offset: SIMD3<Double> = bond.type == "dm" ? SIMD3(0, 0, 0.4) : .zero
                 scene.rootNode.addChildNode(labelNode(label, at: mid + offset,
-                                                      color: color, size: 0.32))
+                                                      color: color, size: 0.32 * labelScale))
             }
 
             // DM vector arrow at the midpoint.
@@ -298,7 +327,7 @@ private struct CrystalSceneRepresentable: PlatformViewRepresentable {
                 scene.rootNode.addChildNode(ghostAtomNode(at: end))
                 scene.rootNode.addChildNode(labelNode(atoms[bond.atomJ].label,
                                                       at: end + SIMD3(0, 0, 0.6),
-                                                      color: VizColor.ghost, size: 0.28))
+                                                      color: VizColor.ghost, size: 0.28 * labelScale))
             }
         }
 
@@ -352,18 +381,53 @@ private struct CrystalSceneRepresentable: PlatformViewRepresentable {
         return node
     }
 
-    private func gridNode() -> SCNNode {
+    /// Centre and bounding radius of everything drawn: atoms, bond endpoints
+    /// (offset partners and their ghosts included) and the unit cell itself, so
+    /// a one-atom cell is still framed by its box.
+    private func contentBounds() -> (center: SIMD3<Double>, radius: Double) {
+        var points: [SIMD3<Double>] = []
+        for atom in atoms { points.append(lattice.cartesian(fromFractional: atom.pos)) }
+        for bond in bonds where bond.atomJ < atoms.count {
+            var fj = atoms[bond.atomJ].pos
+            for k in 0..<min(3, bond.offset.count) { fj[k] += Double(bond.offset[k]) }
+            points.append(lattice.cartesian(fromFractional: fj))
+        }
+        for corner in [[0.0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1],
+                       [1, 1, 0], [1, 0, 1], [0, 1, 1], [1, 1, 1]] {
+            points.append(lattice.cartesian(fromFractional: corner))
+        }
+        guard let first = points.first else { return (.zero, 6) }
+
+        var lo = first, hi = first
+        for p in points {
+            lo = simd_min(lo, p)
+            hi = simd_max(hi, p)
+        }
+        let center = (lo + hi) / 2
+        // +1 A of margin for the atom spheres and their labels.
+        let radius = max(simd_length(hi - lo) / 2 + 1.0, 3.0)
+        return (center, radius)
+    }
+
+    private func gridNode(center: SIMD3<Double>, radius: Double) -> SCNNode {
         let node = SCNNode()
         let color = PlatformColor(white: dark ? 0.18 : 0.8, alpha: 0.7)
-        let extent = 10
-        for i in -extent...extent {
-            let d = Double(i)
+        // Cover the structure (was a fixed +/-10 A about the origin, i.e. a
+        // patch smaller than a 20 A cell and off to one side of it), with the
+        // spacing widened so the line count stays sane.
+        let extent = max(5.0, (radius * 1.1).rounded(.up))
+        let step = max(1.0, (extent / 10).rounded(.up))
+        let lines = Int(extent / step)
+        let cx = (center.x / step).rounded() * step
+        let cy = (center.y / step).rounded() * step
+        for i in -lines...lines {
+            let d = Double(i) * step
             node.addChildNode(SceneBuilder.cylinderNode(
-                from: SIMD3(-Double(extent), d, 0), to: SIMD3(Double(extent), d, 0),
-                radius: 0.006, color: color))
+                from: SIMD3(cx - extent, cy + d, 0), to: SIMD3(cx + extent, cy + d, 0),
+                radius: 0.006 * step, color: color))
             node.addChildNode(SceneBuilder.cylinderNode(
-                from: SIMD3(d, -Double(extent), 0), to: SIMD3(d, Double(extent), 0),
-                radius: 0.006, color: color))
+                from: SIMD3(cx + d, cy - extent, 0), to: SIMD3(cx + d, cy + extent, 0),
+                radius: 0.006 * step, color: color))
         }
         return node
     }

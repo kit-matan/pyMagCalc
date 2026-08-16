@@ -211,6 +211,15 @@ struct CrystalVisualizerPanel: View {
                                  atoms: data.atoms,
                                  bonds: data.bonds.filter { !model.hiddenBondKeys.contains($0.valueKey) })
                 bondLegend(data: data)
+            } else if model.serverReachable, let error = model.visualizerError {
+                ContentUnavailableView {
+                    Label("Preview unavailable", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(error)
+                } actions: {
+                    Button("Try Again") { model.refreshVisualizer() }
+                        .buttonStyle(.borderedProminent)
+                }
             } else if model.serverReachable {
                 ContentUnavailableView(
                     "No structure yet",
