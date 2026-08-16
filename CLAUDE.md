@@ -640,17 +640,47 @@ Reference: `magcalc/sun/entangled.py`, `tests/test_entangled_units.py`.
 
 ## 5f2. Test suite: fast by default, FULL before merge
 
-`pytest` runs the FAST suite (**654 of 832 collected tests**): the `slow`
+`pytest` runs the FAST suite (**697 of 876 collected tests**): the `slow`
 marker (pytest.ini) holds the deep validations (ED oracles, convergence sweeps,
-integration runs). The last full gate was **837 passed, 3 skipped** (`pytest -m ""`
-from the workspace root, 2026-08-16, 46 min under load, which also picks up
-`fMagCalc/tests`). Rules:
+integration runs). The last full gate was **882 passed, 1 skipped** (`pytest -m ""`
+from the workspace root, 2026-08-16, 33 min, 883 collected there since it also picks
+up `fMagCalc/tests`). Rules:
 
 - iterate with `pytest`; run a feature's deep checks with `pytest -m slow -k <name>`;
 - **before merging to master, ALWAYS run `pytest -m ""` (everything)** -- the fast
   suite alone is NOT a merge gate;
 - every feature must keep at least one quick pinned test OUTSIDE `slow`, so the
-  fast suite still touches all code paths.
+  fast suite still touches all code paths;
+- **run it as `pytest -m "" -rs` and account for every skip.** A skip is not a pass,
+  and a MODULE-level one is invisible without `-rs`.
+
+### A skipped module is a silent hole (2026-08-16)
+
+The gate read "3 skipped" for a month and only ONE was a real optional dependency.
+`tests/test_magcalc.py` guards its imports with a `try/except ImportError` that calls
+`pytest.skip(..., allow_module_level=True)` -- and its import list still named
+`_calculate_K_Kd`, which `9699a86` ("sweep dead code") had deleted from `linalg.py`.
+Nothing in the file used the symbol; the stale line alone **took all 24 of its tests
+dark**, and the file was 4 % of the suite. Same commit, same blind spot: it also changed
+`gram_schmidt` to ZERO rank-deficient columns instead of returning numpy's arbitrary
+orthonormal completion, and the two tests asserting the old `Q^d Q = I` contract went
+dark in the very commit that invalidated them -- so they never failed. Restoring the
+module surfaced them immediately (22 passed, 2 failed) and they now pin the real
+contract: one column zeroed, `Q^d Q` = the projector onto the survivors, survivors still
+spanning the input's column space, warning logged.
+
+`fMagCalc/tests/test_pymagcalc_integration.py` was the same shape one repo over -- it
+skipped on `examples/KFe3J`, a path the examples reorg had moved to
+`examples/materials/KFe3J`, so the Fortran-vs-NumPy S(Q,w) oracle
+(`|E - E_oracle| < 1e-8`) had not run since. **A skipif whose condition is a filesystem
+path rots silently when the file moves**; prefer one that fails loudly, or assert the
+path exists in a cheap always-on test.
+
+The surviving skip is `seekpath` and it is structural: `tests/test_cell_utils.py:146`
+needs the package PRESENT (it checks seekpath's own spacegroup determination against
+spglib's) and `:161` needs it ABSENT (it checks the ImportError is actionable), so
+exactly one of the pair always skips. `pip install seekpath` swaps which -- worth it, as
+it trades a message check for a genuine third-party oracle. The count cannot reach zero.
 
 ## 5g. Beyond LSWT: diffuse, thermal, and dynamical methods
 

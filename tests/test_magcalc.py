@@ -21,7 +21,6 @@ try:
         _calculate_alpha_matrix,
         _apply_gram_schmidt,
         _match_and_reorder_minus_q,
-        _calculate_K_Kd,
         KKdMatrix,
         ZERO_MATRIX_ELEMENT_THRESHOLD,
         DEGENERACY_THRESHOLD,
@@ -47,16 +46,29 @@ def test_gram_schmidt_orthonormal_output():
     assert_allclose(identity_check, expected_identity, atol=1e-14, rtol=1e-14)
 
 
-def test_gram_schmidt_rank_deficient():
+def test_gram_schmidt_rank_deficient(caplog):
+    # col3 = col1 + col2, so the input has rank 2 in 3 columns. numpy's QR would
+    # return an arbitrary orthonormal completion of the deficient column; gram_schmidt
+    # zeroes it instead, so _calculate_alpha_matrix downstream sees a zero-norm mode.
     A = np.array(
         [[1.0, 0.0, 1.0], [0.0, 1.0, 1.0], [0.0, 0.0, 0.0]], dtype=np.complex128
     )
-    expected_cols = 3
-    Q = gram_schmidt(A)
-    assert Q.shape == (A.shape[0], expected_cols)
-    identity_check = np.conj(Q.T) @ Q
-    expected_identity = np.eye(expected_cols)
-    assert_allclose(identity_check, expected_identity, atol=1e-14, rtol=1e-14)
+    with caplog.at_level(logging.WARNING):
+        Q = gram_schmidt(A)
+    assert "Rank deficiency" in caplog.text
+    assert Q.shape == A.shape
+
+    norms = np.linalg.norm(Q, axis=0)
+    kept = norms > 1e-14
+    assert kept.sum() == 2, "exactly one of the three columns is linearly dependent"
+
+    # Q^d Q is the projector onto the kept columns: identity there, zero elsewhere.
+    expected = np.diag(kept.astype(float))
+    assert_allclose(np.conj(Q.T) @ Q, expected, atol=1e-14, rtol=1e-14)
+
+    # The kept columns still span the input's column space.
+    Qk = Q[:, kept]
+    assert_allclose(Qk @ (np.conj(Qk.T) @ A), A, atol=1e-14, rtol=1e-14)
 
 
 def test_gram_schmidt_single_vector():
@@ -180,14 +192,21 @@ def test_apply_gs_rank_deficient_block(caplog):
     eigvecs[:, 2] = [0.0, 1.0, 0.0, 0.0]
     threshold = 1e-13
     test_label = "test"
-    result_vecs = _apply_gram_schmidt(eigvals, eigvecs, threshold, test_label)
+    with caplog.at_level(logging.WARNING):
+        result_vecs = _apply_gram_schmidt(eigvals, eigvecs, threshold, test_label)
+    # The degenerate block is spanned by a single vector (both columns are e2), so one
+    # of the two is zeroed rather than completed to an arbitrary orthonormal pair.
+    assert "Rank deficiency" in caplog.text
     assert result_vecs.shape == eigvecs.shape
     assert_allclose(result_vecs[:, 0], eigvecs[:, 0], atol=1e-14, rtol=1e-14)
     assert_allclose(result_vecs[:, 3], eigvecs[:, 3], atol=1e-14, rtol=1e-14)
     degen_block_output = result_vecs[:, 1:3]
+    kept = np.linalg.norm(degen_block_output, axis=0) > 1e-14
+    assert kept.sum() == 1, "the rank-1 block keeps exactly one vector"
     identity_check = np.conj(degen_block_output.T) @ degen_block_output
-    expected_identity = np.eye(2)
-    assert_allclose(identity_check, expected_identity, atol=1e-14, rtol=1e-14)
+    assert_allclose(
+        identity_check, np.diag(kept.astype(float)), atol=1e-14, rtol=1e-14
+    )
     col1_is_correct_dir = np.allclose(
         np.abs(degen_block_output[:, 0]), [0, 1, 0, 0], atol=1e-14
     )
