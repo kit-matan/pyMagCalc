@@ -44,7 +44,7 @@ interactions:
   - {type: heisenberg, distance: 6.0, value: J2}   # 2nd NN along the chain (2a)
 magnetic_structure:
   enabled: true
-  type: spiral
+  type: single_k
   k: [0.384973271919, 0.0, 0.0]
   axis: [0.0, 0.0, 1.0]
 tasks: {minimization: false, dispersion: true}

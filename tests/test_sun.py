@@ -25,6 +25,54 @@ FEI2_CONFIG = os.path.join(
     os.path.dirname(__file__), "..", "examples", "materials", "FeI2", "config_fei2.yaml"
 )
 
+
+
+def _fei2_cfg():
+    """The FeI2 config as a HAMILTONIAN, with its magnetic structure stripped.
+
+    This file is two things at once: the shipped DIPOLE reference (a 16-site
+    [1, 4, 4] cell holding the real 2-up-2-down stripe, ground state annealed) and
+    the exchange table these Sunny-pinned SU(N) comparisons are built from. The
+    tests below need the CHEMICAL cell -- they impose their own non-diagonal
+    [[1,0,0],[0,1,-2],[0,1,2]] supercell and their own directions -- so handing them
+    the magnetic cell would silently give them 64 sites and the wrong reciprocal
+    basis.
+
+    Reading it through this filter is what let the config itself be FIXED
+    (OPEN_WORK item 7): it carried `on_imaginary: warn` and a spiral structure
+    2.5 meV/site above the minimum for as long as the two roles were entangled,
+    because correcting the structure would have moved these Sunny numbers. Stripping
+    in memory beats a second copy of the exchange table, which would drift.
+    """
+    import yaml
+
+    cfg = yaml.safe_load(open(FEI2_CONFIG))
+    cfg["crystal_structure"].pop("magnetic_supercell", None)
+    cfg.pop("magnetic_structure", None)
+    cfg.pop("minimization", None)
+    return cfg
+
+
+def test_the_fei2_config_ships_the_magnetic_cell_and_the_tests_strip_it():
+    """Pins BOTH halves of the separation, in one place.
+
+    If the config ever loses its `magnetic_supercell`, it is back to being a
+    Hamiltonian with no ground state and the dipole reference is gone; if
+    `_fei2_cfg` ever stops stripping it, the Sunny comparisons below silently run on
+    a 64-site cell in the wrong basis. Neither failure announces itself in a
+    spectrum, which is the whole reason these two roles were entangled for so long.
+    """
+    import yaml
+
+    shipped = yaml.safe_load(open(FEI2_CONFIG))
+    assert shipped["crystal_structure"]["magnetic_supercell"] == [1, 4, 4]
+    assert "magnetic_structure" not in shipped        # searched for, not asserted
+    assert (shipped.get("calculation") or {}).get("on_imaginary") is None
+
+    stripped = _fei2_cfg()
+    assert "magnetic_supercell" not in stripped["crystal_structure"]
+    assert len(GenericSpinModel(stripped).atom_pos()) == 1     # the chemical cell
+
 A = 4.0
 LAT = [[A, 0, 0], [0, 9.0, 0], [0, 0, 9.0]]
 B = 2 * np.pi * np.linalg.inv(np.array(LAT, float)).T
@@ -340,7 +388,7 @@ def test_fei2_su3_matches_sunny():
     }
     MSUPER = [[1, 0, 0], [0, 1, -2], [0, 1, 2]]
 
-    cfg = yaml.safe_load(open(FEI2_CONFIG))
+    cfg = _fei2_cfg()
     m = GenericSpinModel(cfg)
     lat = np.array(m.config["crystal_structure"]["lattice_vectors"], float)
 
@@ -380,7 +428,7 @@ def test_fei2_su3_intensities_match_sunny():
     }
     MSUPER = [[1, 0, 0], [0, 1, -2], [0, 1, 2]]
 
-    cfg = yaml.safe_load(open(FEI2_CONFIG))
+    cfg = _fei2_cfg()
     m = GenericSpinModel(cfg)
     lat = np.array(m.config["crystal_structure"]["lattice_vectors"], float)
     mdl = SUNModel.from_generic_model(m, supercell=MSUPER, directions=[[0, 0, 1]] * 4)
@@ -412,8 +460,7 @@ def test_runner_mode_sun_end_to_end(tmp_path):
 
     from magcalc.runner import run_calculation
 
-    cfg = yaml.safe_load(open(FEI2_CONFIG))
-    cfg.pop("magnetic_structure", None)
+    cfg = _fei2_cfg()
     cfg["crystal_structure"]["magnetic_supercell"] = {
         "matrix": [[1, 0, 0], [0, 1, -2], [0, 1, 2]]}
     cfg["calculation"] = {"mode": "SUN", "cache_mode": "none"}
@@ -434,7 +481,7 @@ def test_nondiagonal_supercell_refused_in_dipole_mode(tmp_path):
     silently fall back to the chemical cell (which would give wrong physics quietly)."""
     import yaml
 
-    cfg = yaml.safe_load(open(FEI2_CONFIG))
+    cfg = _fei2_cfg()
     cfg["crystal_structure"]["magnetic_supercell"] = {
         "matrix": [[1, 0, 0], [0, 1, -2], [0, 1, 2]]}
     cfg["calculation"] = {"cache_mode": "none"}          # dipole (default)
@@ -446,7 +493,7 @@ def test_runner_rejects_unknown_mode(tmp_path):
     import yaml
 
     from magcalc.runner import run_calculation
-    cfg = yaml.safe_load(open(FEI2_CONFIG))
+    cfg = _fei2_cfg()
     cfg["calculation"] = {"mode": "quantum", "cache_mode": "none"}
     cfg["tasks"] = {"dispersion": False}
     p = tmp_path / "bad.yaml"
@@ -467,7 +514,7 @@ def test_wrong_sun_reference_state_is_INVISIBLE_to_the_imaginary_check():
     import yaml
 
     MSUPER = [[1, 0, 0], [0, 1, -2], [0, 1, 2]]
-    cfg = yaml.safe_load(open(FEI2_CONFIG))
+    cfg = _fei2_cfg()
     m = GenericSpinModel(cfg)
     lat = np.array(m.config["crystal_structure"]["lattice_vectors"], float)
 
@@ -498,7 +545,7 @@ def test_sun_refuses_a_structure_with_the_wrong_number_of_sites(tmp_path):
 
     from magcalc.runner import run_calculation
 
-    cfg = yaml.safe_load(open(FEI2_CONFIG))
+    cfg = _fei2_cfg()
     cfg["crystal_structure"]["magnetic_supercell"] = {
         "matrix": [[1, 0, 0], [0, 1, -2], [0, 1, 2]]}
     cfg["calculation"] = {"mode": "SUN", "cache_mode": "none"}
@@ -526,7 +573,7 @@ def test_dipole_mode_warns_when_single_ion_bands_would_be_missing(caplog):
 
     from magcalc.runner import _advise_sun_mode
 
-    cfg = yaml.safe_load(open(FEI2_CONFIG))
+    cfg = _fei2_cfg()
     m = GenericSpinModel(cfg)
     with caplog.at_level(logging.WARNING):
         _advise_sun_mode(m)

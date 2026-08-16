@@ -16,6 +16,7 @@ Import these; do not re-type the numbers.
 enforces that, by checking the engines share this object AND that no module has
 reintroduced a literal of its own.
 """
+import math as _math
 
 # Bohr magneton, meV / T.
 #
@@ -43,29 +44,40 @@ GAMMA_ELECTRON = 2.0
 # --------------------------------------------------------------------------
 # Dipolar prefactor: mu0 * mu_B^2, meV * A^3.
 #
-# THEY DO NOT AGREE, AND THE VALUES ARE PRESERVED RATHER THAN RECONCILED.
-# These two are nominally the same Sunny constant with and without the 4*pi,
-# but they were truncated independently:
+# RECONCILED 2026-08-15, deliberately and as an ACCURACY CHANGE -- read this
+# before "tidying" it further.
 #
-#     MU0_MUB2_MEV_A3 / (4*pi) = 0.053681511234
-#     DIPOLE_PREFACTOR_MEV_A3  = 0.05368216
-#     -> 6.5e-7 absolute, 1.2e-5 RELATIVE apart
+# The two dipolar paths (ewald.py's exact lattice sum, generic_model.py's
+# truncated real-space sum) need the same constant with and without the 4*pi, and
+# for a long time they carried two INDEPENDENTLY typed literals that disagreed:
 #
-# So deriving either from the other is NOT a no-op refactor; it is an accuracy
-# change to whichever path gets the new number. That matters concretely:
-# `test_truncated_sum_converges_to_ewald` asserts the truncated real-space sum
-# reaches the Ewald answer to 1e-4 absolute on a ~4 meV band, and a 1.2e-5
-# relative shift is ~5e-5 there -- the same order as the tolerance.
+#     MU0_MUB2_MEV_A3 = 0.6745817653   (Sunny's value, truncated to 10 figures)
+#     DIPOLE_PREFACTOR_MEV_A3 = 0.05368216   (as typed)
+#     mu0 mu_B^2 / 4pi        = 0.05368151123615953
+#     -> the second was 1.2e-5 RELATIVE too large; not a truncation of the first
+#        at all, but a different number.
 #
-# This is the `MU_B` lesson again (see above): a truncation that every pinned
-# number was measured against is load-bearing, and "tidying" it silently moves
-# results. Reconciling these two -- picking the CODATA value, deriving one from
-# the other, and RE-MEASURING the pinned dipolar numbers -- is a deliberate
-# change that deserves its own commit and its own oracle run. Until then they
-# live here, side by side, where the discrepancy is visible instead of being
-# two unrelated-looking literals in two modules.
-MU0_MUB2_MEV_A3 = 0.6745817653      # used by ewald.py (exact lattice sum)
-DIPOLE_PREFACTOR_MEV_A3 = 0.05368216  # used by generic_model.py (truncated sum)
+# Which one is right is not a matter of taste: mu0*mu_B^2 is a physical constant,
+# Sunny states it to full double precision as 0.6745817653324668
+# (Sunny.jl-main/src/Units.jl, `vacuum_permeability`), and 4*pi is exact. So the
+# 4-pi-reduced constant is now DERIVED rather than typed, and cannot drift again.
+#
+# What this moved, measured rather than assumed: only the TRUNCATED sum, by
+# -1.2e-5 relative, and in the direction of the Ewald result it is checked
+# against -- `test_truncated_sum_converges_to_ewald` compares the two paths to
+# 1e-4 absolute on a ~4 meV band, where this is a ~5e-5 shift, i.e. the same
+# order as the tolerance. It was re-run before and after (see the test's own
+# note) rather than the tolerance being widened to fit. `MU0_MUB2_MEV_A3` itself
+# moved by 4.8e-11 relative, going to Sunny's full precision.
+#
+# This is NOT the `MU_B` case above, and the difference is the point: MU_B's
+# four-figure truncation is what every pinned Zeeman number in the repo was
+# MEASURED against, so moving it would invalidate those references. Nothing was
+# pinned against 0.05368216 -- the only test of the truncated sum is a comparison
+# with the Ewald path, which used the other constant. There was no reference to
+# preserve, only an inconsistency.
+MU0_MUB2_MEV_A3 = 0.6745817653324668   # Sunny Units.jl; used by ewald.py
+DIPOLE_PREFACTOR_MEV_A3 = MU0_MUB2_MEV_A3 / (4.0 * _math.pi)  # generic_model.py
 
 __all__ = [
     "MU_B",

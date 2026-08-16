@@ -45,11 +45,18 @@ def status():
     return 0 if active else 1
 
 
-def install():
+def install_quietly():
+    """The write itself, with no output. Used by the CLI's first-run arming
+    (`magcalc.cli._arm_shadow_guard`), which prints its own one-line notice."""
     module, pth = paths()
     shutil.copyfile(SOURCE, module)
     with open(pth, "w") as handle:
         handle.write(PTH_LINE)
+    return module, pth
+
+
+def install():
+    module, pth = install_quietly()
     print("installed %s" % module)
     print("installed %s" % pth)
     print("\nEvery Python process on this interpreter now warns when more than one")

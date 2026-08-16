@@ -19,6 +19,60 @@ app = typer.Typer(help="PyMagCalc: Linear Spin-Wave Theory Calculator CLI")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', datefmt='%H:%M:%S')
 logger = logging.getLogger("magcalc")
 
+
+def _arm_shadow_guard():
+    """Install the interpreter-startup shadow guard on first CLI use.
+
+    THIS IS WHAT CLOSES THE "fresh venv starts unprotected" HOLE (OPEN_WORK item C).
+    `magcalc/provenance.py` can only report when the GOOD copy wins -- a stale
+    checkout that wins outright has no `provenance.py`, so the only tell is the
+    absence of a line you would have to already be looking for. Only something in
+    site-packages, outside every `magcalc` copy, can catch that, and until now
+    nothing installed it: the guard shipped, and a new environment never had it.
+
+    Why here and not in the build. The obvious wiring -- a `pip install -e .` hook --
+    was rejected earlier for a good reason: a build hook that writes into
+    site-packages can break the install itself (sandboxed builds, read-only or
+    root-owned prefixes, wheels built for another machine). Doing it on the first CLI
+    RUN keeps the same effect and drops that hazard entirely: it is the user's own
+    interpreter, the failure is recoverable, and every path here is swallowed. The
+    two files it writes are the exact ones `magcalc guard --install` writes, so the
+    manual command remains the documented, inspectable form of the same thing.
+
+    `MAGCALC_SHADOW_GUARD=off` -- already the guard's own opt-out -- also suppresses
+    the install, so the deliberate-second-checkout workflow is untouched.
+    """
+    if str(os.environ.get("MAGCALC_SHADOW_GUARD", "")).lower() in (
+            "off", "0", "false", "no"):
+        return
+    try:
+        from magcalc import _shadow_guard_install as gi
+        module, pth = gi.paths()
+        if os.path.isfile(module) and os.path.isfile(pth):
+            return                      # already armed; the common path, two stats
+        gi.install_quietly()
+        typer.secho(
+            "Installed the magcalc shadow guard into this interpreter "
+            "(warns when more than one `magcalc` is importable). "
+            "`magcalc guard --uninstall` to remove, MAGCALC_SHADOW_GUARD=off to "
+            "silence.", fg=typer.colors.CYAN, err=True)
+    # SystemExit as well as Exception: `_shadow_guard_install.site_packages()`
+    # raises SystemExit when it cannot find purelib, which `except Exception` does
+    # NOT catch -- so an unusual prefix would have killed the calculation over a
+    # diagnostic, the exact thing this is not allowed to do. KeyboardInterrupt is
+    # deliberately still allowed through.
+    except (Exception, SystemExit) as exc:
+        # Never fail a calculation over a diagnostic. `magcalc where` still reports
+        # that the guard is inactive, which is the state this leaves behind.
+        logger.debug(f"shadow guard not installed automatically: {exc}")
+
+
+@app.callback()
+def _main():
+    """Runs before every subcommand."""
+    _arm_shadow_guard()
+
+
 @app.command()
 def where():
     """

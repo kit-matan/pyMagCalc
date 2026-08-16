@@ -55,14 +55,104 @@ def n_chemical_cells(model, supercell):
     return ncell * int(np.prod([int(x) for x in dims]))
 
 
+def onsite_quadratic(model, params, n):
+    """The chemical cell's ON-SITE energy as a quadratic form: (H_on, b_on), or None.
+
+    E_onsite(m) = ½ mᵀ H_on m + b_onᵀ m over the 3n Cartesian components of the
+    cell's n spins — the `single_ion_anisotropy` / `sia_matrix` / `stevens` terms
+    that `spin_interactions` (a BOND table) does not carry.
+
+    **Until 2026-08-15 `build_supercell` had no such term at all**, so every
+    real-space classical sampler — `thermal_mc`, `wang_landau`,
+    `static_correlations`, `sampled_correlations` — silently modelled an
+    anisotropic magnet as exchange-only (measured on Sunny tutorial S06: `H_zz`
+    came back as the bare exchange sum, with the easy-plane D = 19 simply absent),
+    while `build_supercell`'s own docstring called H "the exchange/anisotropy
+    Hessian". Nothing caught it because every test here is bond-only — a property
+    that has never been false in the suite, the same shape as the `ref_pair` and
+    `steepest_descent` traps.
+
+    The terms are read from the MODEL'S OWN assembly (`_compute_sia_terms`, which
+    also folds in `_compute_sia_matrix_terms` and `_compute_stevens_terms`), not
+    re-implemented here, so anisotropy targeting, parameter resolution and the RCS
+    renormalization (`calculation.anisotropy_renormalization`) cannot drift from
+    what LSWT diagonalizes. (H, b) are then extracted by exact numeric probing of
+    that expression, the same identities `MagCalc._extract_classical_quadratic`
+    uses; unlike that one, a non-quadratic result RAISES rather than falling back,
+    because this sampler has no symbolic path to fall back to.
+
+    Raises NotImplementedError for a Stevens term of rank k ≥ 4: its classical
+    polynomial is quartic/sextic in the spin components, so it is not expressible
+    in E = ½ mᵀH m + bᵀm at all. Rank 2 (`sia`, `sia_matrix`, `stevens` k = 2) is
+    exactly quadratic and is carried exactly.
+    """
+    import sympy as sp
+
+    inters = getattr(model, "interactions_config", None) or []
+    onsite_types = {"sia", "single_ion_anisotropy", "sia_matrix",
+                    "anisotropy_matrix", "stevens"}
+    if not any(i.get("type") in onsite_types for i in inters):
+        return None
+
+    pr = list(params or [])
+    _Jex, _DM, _Kex, p_rest, pmap = model._prepare_interaction_matrices(pr)
+    d = 3 * n
+    comps = sp.symbols(f"_mc0:{d}", real=True)
+    Sxyz = [list(comps[3 * i:3 * i + 3]) for i in range(n)]
+    expr = model._compute_sia_terms(Sxyz, p_rest, pmap)
+    expr = model._apply_substitution_and_filter(sp.sympify(expr), pr)
+    unresolved = sorted(str(s) for s in expr.free_symbols
+                        if not str(s).startswith("_mc"))
+    if unresolved:
+        raise ValueError(
+            f"on-site anisotropy left unresolved parameter(s) {unresolved}; the "
+            f"classical samplers need numeric values (check `parameters` / "
+            f"`parameter_order`).")
+    Ef = sp.lambdify(comps, expr, modules="numpy")
+
+    # Exact for a quadratic: c = E(0); b_i = (E(e_i) − E(−e_i))/2;
+    # H_ii = E(e_i) + E(−e_i) − 2c; H_ij = E(e_i+e_j) − E(e_i) − E(e_j) + c.
+    eye = np.eye(d)
+    zero = np.zeros(d)
+    c = float(Ef(*zero))
+    Ep = np.array([float(Ef(*eye[i])) for i in range(d)])
+    Em = np.array([float(Ef(*(-eye[i]))) for i in range(d)])
+    b_on = (Ep - Em) / 2.0
+    H_on = np.zeros((d, d))
+    H_on[np.diag_indices(d)] = Ep + Em - 2.0 * c
+    for i in range(d):
+        for j in range(i + 1, d):
+            H_on[i, j] = H_on[j, i] = float(Ef(*(eye[i] + eye[j]))) - Ep[i] - Ep[j] + c
+
+    S_ref = float(np.max(np.abs(np.asarray(model.spin_magnitudes(), float))) or 1.0)
+    rng = np.random.default_rng(0)
+    scale = max(abs(c), float(np.abs(H_on).max()) * S_ref**2, 1.0)
+    for _ in range(4):
+        mv = rng.uniform(-S_ref, S_ref, size=d)
+        quad = 0.5 * (mv @ (H_on @ mv)) + b_on @ mv + c
+        if abs(quad - float(Ef(*mv))) > 1e-8 * scale:
+            raise NotImplementedError(
+                "the real-space classical samplers (thermal_mc, wang_landau, "
+                "static_correlations, sampled_correlations) evaluate "
+                "E = 1/2 m^T H m + b^T m, and this model's on-site anisotropy is "
+                "NOT quadratic in the spin components — a Stevens term of rank "
+                "k >= 4 (quartic/sextic). It cannot be carried by this energy "
+                "form; use `mode: SUN` (which holds the full operator), or drop "
+                "the k >= 4 terms if they are negligible. Refusing rather than "
+                "silently sampling the model without them.")
+    return H_on, b_on
+
+
 def build_supercell(model, params, supercell=(4, 4, 1), disorder=None,
                     periodic=(True, True, True)):
     """Assemble (H, b, N, S, pos) for a periodic L₁×L₂×L₃ supercell.
 
     H (3N×3N) is the exchange/anisotropy Hessian; b (3N,) the Zeeman field term, so
     E = ½ mᵀH m + bᵀm. Bonds come from `spin_interactions` (both directions, giving a
-    symmetric H — the ½ convention), the field from `_resolve_field` with the
-    per-site g-tensor (default g=2), matching the LSWT engine.
+    symmetric H — the ½ convention), the on-site anisotropy from `onsite_quadratic`
+    (see there: it was MISSING entirely until 2026-08-15), the field from
+    `_resolve_field` with the per-site g-tensor (default g=2), matching the LSWT
+    engine.
 
     SITE-LEVEL INHOMOGENEITY (Gap 4 #16, classical half). Two options:
 
@@ -134,6 +224,19 @@ def build_supercell(model, params, supercell=(4, 4, 1), disorder=None,
                 H[3 * a:3 * a + 3, 3 * bnb:3 * bnb + 3] += M
 
     b = np.zeros(3 * N)
+
+    # On-site anisotropy. Every site of a cell is contiguous in the flat index
+    # (site() = cell_id*n + i), so the cell's own 3n-block receives H_on whole --
+    # the on-site terms couple only spins within one chemical cell, so this is the
+    # complete contribution, replicated per cell.
+    onsite = onsite_quadratic(model, params, n)
+    if onsite is not None:
+        H_on, b_on = onsite
+        for cc in cells:
+            s0 = 3 * site(cc, 0)
+            H[s0:s0 + 3 * n, s0:s0 + 3 * n] += H_on
+            b[s0:s0 + 3 * n] += b_on
+
     Hvec = _resolve_field(model, params)
     if Hvec is not None and np.linalg.norm(Hvec) > 0:
         g = _g_tensors(model, n)
@@ -141,7 +244,7 @@ def build_supercell(model, params, supercell=(4, 4, 1), disorder=None,
             bi = MU_B * (g[i].T @ np.asarray(Hvec, float))
             for cc in cells:
                 a = site(cc, i)
-                b[3 * a:3 * a + 3] = bi
+                b[3 * a:3 * a + 3] += bi
 
     pos = np.zeros((N, 3))
     for cc in cells:

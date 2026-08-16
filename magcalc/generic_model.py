@@ -12,12 +12,12 @@ from tqdm import tqdm
 from .constants import GAMMA_ELECTRON, MU_B
 from .stevens import rcs_lambda, stevens_polynomial
 
-# mu0 * muB^2 / (4*pi), in meV * Angstrom^3. Cross-checked against Sunny 0.8.1,
-# whose Units(:meV, :angstrom).vacuum_permeability = 0.6745817653 is mu0*muB^2
-# (no 4pi). NOTE: that division is NOT exact here -- 0.6745817653/(4*pi) is
-# 0.053681511, while this constant is 0.05368216, a 1.2e-5 RELATIVE difference.
-# The two were truncated independently. Do not "fix" one from the other without
-# re-measuring the pinned dipolar numbers; see constants.py.
+# mu0 * muB^2 / (4*pi), in meV * Angstrom^3 -- now DERIVED from the same
+# MU0_MUB2_MEV_A3 that ewald.py uses (Sunny 0.8.1's
+# Units(:meV, :angstrom).vacuum_permeability, at full precision), so the truncated
+# real-space sum and the exact Ewald sum cannot carry different constants. Until
+# 2026-08-15 this was an independently typed 0.05368216, i.e. 1.2e-5 RELATIVE too
+# large; see constants.py for what that move was measured against.
 from .constants import DIPOLE_PREFACTOR_MEV_A3  # noqa: F401  (see constants.py)
 
 logger = logging.getLogger(__name__)

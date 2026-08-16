@@ -1,27 +1,43 @@
 # Open work — pick-up notes
 
-Last updated **2026-08-13**, `master` at `00083a6` (pushed).
+Last updated **2026-08-16**. The 2026-08-13 session's work (items 1–10, A–E) is on
+`master` at `f848853`; the 2026-08-15 session closed **every remaining open item —
+5, 7, 11, 12, 13, 14 and C** — and opened one new one (15, found inside item 12), which
+2026-08-16 closed. **Nothing is open.** None of it is committed; the working tree
+carries all of it.
 
-**Full gate GREEN on this tree: 790 passed, 3 skipped** (`pytest -m ""` from the
-workspace root, 44:30 — the first 20 min of it against a load average of 30+, so
-that time is an upper bound, not a baseline). Trail: 621 (2026-08-12 baseline) → 635
-after the provenance + shadow-guard work (+5 `test_install_provenance`, +8
-`test_shadow_guard`, +1 newly-discovered CCSF config) → 637 with the two
-`test_ccsf_fit_roundtrip` tests → 650 with item 1's `test_ewald_spiral` → 672 with
-item 2's (+22: 14 `test_sun_quench`, 5 S06 in `test_sunny_tutorials`, 3
-`test_annealing` for item 9) → **790** with items 10, 8 and 4 (+118: 26
-`test_kpm_stability`, 4 `test_gui_relative_paths`, the `test_native_emitter_parity`
-set including all 58 configs under `-m ""`, and 11
-`test_classical_absolute_normalization`).
+**Full gate GREEN on this tree: 837 passed, 3 skipped, 0 failed** (`pytest -m ""` from
+the workspace root, 2026-08-16, 45:46 — the machine was contended, load average 56 at
+the peak, so that time is an upper bound; the 2026-08-15 run of the same gate took
+30:22 at 830 passed). **NOT COMMITTED**: the work is in the working tree, on `master`.
+Branch before committing.
 
-Items 1, 2, 9, 3, 10, 8 and 4 are committed on `feat/s06-cp2-skyrmions`, **8 commits
-ahead of `f819694`**, pushed, and fast-forward merged into `master` after the green
-gate above. Item 3 is two of them: `5812975` the KPM fix (`magcalc/sun/kpm.py`,
-`tests/test_kpm.py`) and `ff9fbfe` the S09 port — the fix stands on its own and is
-worth reading separately, since it changes every KPM spectrum of a non-collinear
-model and every `cross_section: chiral` KPM result. `chore/open-work-housekeeping`
-and `feat/open-work-followups` were merged the same way earlier and are level with
-`master`; all three can be pruned.
+(The one-test accounting note from 2026-08-15 has resolved itself: `--collect-only`
+now reports 832 from inside `pyMagCalc/` and 839 from the workspace root, exactly
+837 + 3 skipped − 1. The cause was as suspected — `test_config_smoke` parametrizes over
+a filesystem glob of `examples/`, so its count moves by design.)
+
+Trail: 621 (2026-08-12 baseline) → 635 after the provenance + shadow-guard work → 637
+with `test_ccsf_fit_roundtrip` → 650 with item 1's `test_ewald_spiral` → 672 with
+item 2's → 790 with items 10, 8 and 4 → 830 with items 11, 12, 13, 14, 5, 7 and C
+(+40: 6 `test_thermal_mc`, 10 `test_classical_window`, 12
+`test_sun_sampler_equilibration`, 4 `test_config_key_coverage`, 3 `test_shadow_guard`,
+2 `test_config_smoke`, and one each in `test_ewald`, `test_kpm_stability`,
+`test_sun`) → **837** with item 15 (+7, all in `test_classical_window`, which is now 17
+tests). 832 collect from inside `pyMagCalc/`, of which 654 are the fast default suite.
+
+Items 1, 2, 9, 3, 10, 8 and 4 were committed on `feat/s06-cp2-skyrmions`, pushed, and
+fast-forward merged into `master`. Item 3 is two commits: `5812975` the KPM fix
+(`magcalc/sun/kpm.py`, `tests/test_kpm.py`) and **`91ae993`** the S09 port — the fix
+stands on its own and is worth reading separately, since it changes every KPM spectrum
+of a non-collinear model and every `cross_section: chiral` KPM result. (An earlier
+draft of this file cited `ff9fbfe` for the S09 port; that commit exists only in the
+reflog and is NOT reachable from `master`. `91ae993` is the one on `master`.)
+
+**Four merged branches are still lying around and can all be pruned**, each verified
+level with or an ancestor of `master`: `feat/s06-cp2-skyrmions` (= `master`),
+`docs/gate-637` (`f819694`), `feat/open-work-followups` (`00083a6`) and
+`chore/open-work-housekeeping` (`21ecba2`).
 
 This file is the "what to do next" companion to `GAP_STATUS.md`, which is the
 authoritative record of *what is done and how it was validated*. Read
@@ -43,43 +59,109 @@ Every section below opens with a `**Status:**` line; this is the index. `PARTIAL
 means the hard question is answered but an action is still outstanding — those
 are the easiest to mistake for done.
 
+**If you are picking this file up cold, read only the OPEN rows** — as of 2026-08-16
+there are none. Everything else is kept for the traps it documents, not because
+anything is left in it. Note the pattern in how the last few arrived: items 11–14 were
+all found *inside* the previous session's work and written up rather than fixed in the
+same commit, and item 15 was found inside item 12 the same way. That is the intended
+flow — the alternative is a commit that changes several unrelated numbers at once and
+cannot be reviewed. The next item here will almost certainly be found the same way, so
+add it rather than folding it into whatever you are doing.
+
+### Open
+
+| # | Item | Status |
+|---|---|---|
+| — | nothing open | — |
+
+### Closed 2026-08-16
+
+| # | Item | Status |
+|---|---|---|
+| 15 | The classical window needs `subtract_elastic`, and nothing enforces the pairing | **DONE** — reported, with the amplification named; `on_elastic_leakage` |
+
+### Closed 2026-08-15
+
+| # | Item | Status |
+|---|---|---|
+| 5 | Coverage follow-ups | **DONE** — all three pieces; the escalation found 7 configs on a deprecated key |
+| 11 | `thermal_mc.build_supercell` carries NO single-ion anisotropy | **DONE** — fixed; 5 of 6 new tests confirmed failing before |
+| 12 | No time-domain window on the classical S(q,ω) | **DONE** — added as OPT-IN; the measurement is why it is not the default |
+| 13 | CP^(N−1) sampler does not equilibrate at low kT | **DONE** — step size adapts; pinned to a closed-form partition function |
+| 14 | The two dipolar prefactors are duplicated and NOT reconciled | **DONE** — derived from one constant; Ewald gate re-run |
+| 7 | FeI2 dipole ground state | **DONE** — config fixed, `on_imaginary: warn` gone, Sunny pins intact |
+| C | Interpreter-startup shadow guard | **DONE** — armed on first CLI use, not at build time |
+
+### Closed earlier
+
 | # | Item | Status |
 |---|---|---|
 | 1 | Gap #24b — Ewald + rotating-frame single-k | **DONE** 2026-08-13 — oracle built, bug found, refusal lifted |
 | 2 | Sunny S06 — skyrmion lattice | **DONE** 2026-08-13 — ported at L = 40; the size WAS the blocker |
 | 3 | Sunny S09 — disorder + KPM | **DONE** 2026-08-13 — ported; found a KPM bug and a stability limit |
-| 4 | Classical S(q,ω) absolute normalization | **DONE** 2026-08-13 — two bugs, not a convention; a lineshape follow-up is open |
-| 5 | Coverage follow-ups | **PARTIAL** — audit's 4 items done; 2 follow-ups + discovery shape open |
+| 4 | Classical S(q,ω) absolute normalization | **DONE** 2026-08-13 — two bugs, not a convention |
 | 6 | `minimization.tolerance` silently ineffective | **DONE** 2026-08-12 |
-| 7 | FeI2 dipole ground state | **PARTIAL** — physics answered; `examples/materials/FeI2` fix open |
-| 8 | Studio open→run limits | **DONE** 2026-08-13 — both closed; the Swift emitter had 4 live defects |
-| 9 | `anneal`'s polish could return a MAXIMUM | **DONE** 2026-08-13 — fixed + swept; a RELATED defect is open |
-| 10 | KPM has no ground-state guard | **DONE** 2026-08-13 — guarded per q; the cost objection dissolved |
+| 8 | Studio open→run limits | **DONE** 2026-08-13 — the Swift emitter had 4 live defects |
+| 9 | `anneal`'s polish could return a MAXIMUM | **DONE** 2026-08-13 |
+| 10 | KPM has no ground-state guard | **DONE** 2026-08-13 — guarded per q |
 | A | `pytest.ini` collection scope | **DONE** 2026-08-12 |
 | B | Engine provenance — `magcalc where` | **DONE** 2026-08-12 |
-| C | Interpreter-startup shadow guard | **DONE** 2026-08-12 — `magcalc guard`; nothing outstanding |
-| D | Stale OneDrive trees deleted | **DONE** 2026-08-12 — both rescued-file follow-ups closed |
-| E | `mu_B` → `constants.py` | **DONE** 2026-08-12 — dipolar prefactor folded in too |
+| D | Stale OneDrive trees deleted | **DONE** 2026-08-12 |
+| E | `mu_B` → `constants.py` | **DONE** 2026-08-12 — the prefactor question was item 14 |
 
-**All four small items that used to hang off C/D/E are now CLOSED** (2026-08-12):
+---
 
-- **C** — `magcalc guard [--install|--uninstall]`. The source moved into the
-  package (`magcalc/_shadow_guard.py`), which fixed a hole bigger than the one
-  logged: `tools/` is not shipped by a non-editable `pip install`, so a wheel user
-  could not install the guard *at all*. Still per-interpreter by design — a fresh
-  venv starts unprotected and `magcalc where` says so. A build hook that writes to
-  site-packages remains deliberately out of scope.
-- **D** — `tests/test_ccsf_fit_roundtrip.py` pins the rescued fit demo; and the
+## What was run (2026-08-15)
+
+**The merge gate passed: `pytest -m ""` from the workspace root → 830 passed, 3
+skipped, 0 failed, 30:22.** That is the authoritative result; the per-file runs below
+are only the order in which things were checked while the work was in progress.
+
+| file | result |
+|---|---|
+| `test_thermal_mc.py` | 9 passed (`-m ""`) — item 11 |
+| `test_classical_window.py` | 10 passed (`-m ""`) — new, item 12 |
+| `test_classical_absolute_normalization.py` + `test_classical_dynamics.py` + `test_sun_dynamics.py` + the above | 32 passed (`-m ""`) |
+| `test_wang_landau.py` | 11 passed |
+| `test_ewald.py` + `test_ewald_spiral.py` | 21 passed (`-m ""`) — the item-14 oracle re-run |
+| `test_sun.py` | 26 passed — the Sunny-pinned FeI2 comparisons, after item 7 |
+| `test_shadow_guard.py` + `test_install_provenance.py` | 16 passed (`-m ""`) — item C |
+| `test_sun_sampler_equilibration.py` | 12 passed (`-m ""`) — new, item 13 |
+| `test_config_key_coverage.py` | 4 passed — new, item 5 |
+| `test_config_smoke.py -m ""` | 60 passed (17:53) in HARVEST mode; the escalating version is in the gate above |
+| `examples/materials/FeI2/config_fei2.yaml` | runs clean end to end, guard at default `error`, max abs Im ω = 2.4e-15 |
+
+**What was NOT measured, and why it is named rather than estimated.** The machine sat
+at load average 250–340 all session (other users' processes), and two supporting
+measurements were abandoned after ~20 minutes of wall clock each with under 16 s of
+CPU accrued: the before/after truncated-vs-Ewald residual table (item 14) and the
+end-to-end SU(N) intensity swing (item 13). Neither is the deciding evidence for its
+item — item 14 rests on the re-run Ewald gate, item 13 on an exact partition function
+— but both are worth taking on a quiet machine. See also the process-pool note under
+"Standing facts".
+
+**The four small items that used to hang off C/D/E are all CLOSED** — three on
+2026-08-12, and the fourth (the dipolar prefactor, item 14) on 2026-08-15:
+
+- **C** — `magcalc guard [--install|--uninstall]`, with the source inside the package
+  (`magcalc/_shadow_guard.py`) rather than in `tools/`, which a non-editable
+  `pip install` does not ship — that hole was bigger than the one logged, since a
+  wheel user could not install the guard *at all*. The "a fresh venv starts
+  unprotected" remainder was closed 2026-08-15 by arming it on the first CLI command;
+  see the C entry below for why that is a run-time and not a build-time hook.
+- **D** — `tests/test_ccsf_fit_roundtrip.py` pins the rescued fit demo, and it
+  asserts the right thing: the values that GENERATED the synthetic data
+  (J1 = 13.3, J2 = −0.24, recorded in the CSV header), not the fit output observed
+  when the demo was rescued — so it cannot certify a drifted fit as correct. The
   rescued aCVO model is tracked at
-  `examples/materials/aCVO/legacy_spin_model_sf_2024.py`.
-- **E** — both dipolar prefactors now live in `constants.py`. **Their values were
-  NOT reconciled**, and that is the point: `MU0_MUB2_MEV_A3/(4π) = 0.053681511`
-  but `DIPOLE_PREFACTOR_MEV_A3 = 0.05368216` — 1.2e-5 RELATIVE apart, truncated
-  independently. Deriving either from the other is an accuracy change, not a
-  refactor: `test_truncated_sum_converges_to_ewald` asserts to 1e-4 absolute on a
-  ~4 meV band, where that shift is ~5e-5 — the same order as the tolerance. A
-  comment in `generic_model.py` claimed the division was exact; it is now
-  corrected. Reconciling them deserves its own commit and its own oracle run.
+  `examples/materials/aCVO/legacy_spin_model_sf_2024.py`; the copy at the workspace
+  root, `archive/legacy/aCVO_2024_snapshot/spin_model_sf.py`, is byte-identical to it
+  apart from the 19-line provenance header, i.e. a redundant duplicate rather than the
+  only copy.
+- **E** — both dipolar prefactors moved into `constants.py`, which removed the
+  duplication across modules and left a numerical disagreement of 1.2e-5 relative
+  standing in plain sight. That is item 14, and it is closed: the 4-pi-reduced
+  constant is now DERIVED from the other rather than typed.
 
 ---
 
@@ -319,79 +401,97 @@ LSWT band sum. Measured:
   4 meV band. Sunny multiplies its real-time correlations by a cosine window for
   exactly this reason.
 
-**STILL OPEN — no time-domain window.** Adding Sunny's `window=:cosine` (it also
-offers `:rectangular`, i.e. today's behaviour) would remove that 16 % and the ringing
-around every sharp classical mode, at the cost of broadening S(ω) by about one
-frequency bin Δω = 2π/T. It changes every classical lineshape, so it wants its own
-commit and its own before/after measurement; the sum-rule tests above are insensitive
-to it (a window rescales C(Δt), not the ω-integral of the unwindowed transform), so
-the oracle has to be the ±window/full-axis ratio table above.
+**Two things this item found and deliberately did not fix**, each now an item of its
+own because each changes numbers this item's tests are insensitive to:
 
-**Also found, and NOT chased: the CP^(N−1) sampler does not equilibrate at low kT.**
-The SU(N) classical intensity against `SUNModel.structure_factor` on a gapped S = 1
-AFM chain at kT = 0.005 swings **0.30 → 1.63** with `therm_sweeps` and `sigma` alone
-(400/0.02 → 3000/0.05), i.e. the Metropolis step size is not adapted and the answer
-is controlled by it, not by the physics. That is why the SU(N) half of this item is
-pinned by the exact sum rule and by grid independence rather than against LSWT. An
-acceptance-targeted `sigma` (the standard fix) plus a low-T equilibration check is its
-own item, with the single-site coherent-state partition function as the oracle.
+- **no time-domain window → item 12.** The scale is right; the lineshape still
+  implies a rectangular window, which is where the residual 16 % above comes from.
+- **the CP^(N−1) sampler does not equilibrate at low kT → item 13.** It is why the
+  SU(N) half of this item is pinned by the exact sum rule and by grid independence
+  rather than against LSWT.
 
 ---
 
 ## 5. Coverage follow-ups
 
-**Status: PARTIAL.** The audit's own four items are done; two follow-ups and the
-discovery-shape problem remain open.
+**Status: DONE 2026-08-15.** All three open pieces are closed.
 
-The 2026-08-04/05 audit closed its four items (config smoke test, `kitaev`,
-guard tolerances, combination matrix — see `GAP_STATUS.md` §"Config-surface
-coverage audit"). Where the two recorded follow-ups stand:
+**(a) Enumerate config keys from the CODE, not the docs — DONE.**
+`tests/config_keys.py` parses the package with `ast` and records every
+`<block>.get("key")` / `<block>["key"]` where the block is a local bound to a config
+section; `tests/test_config_key_coverage.py` asserts every one of them appears in a
+shipped config or a test, with an explicit reasoned `ALLOWED` list for the rest.
+**194 keys across 21 blocks**, of which 20 were unexercised.
 
-- **Enumerate config keys from the CODE, not the docs.** STILL OPEN. The audit
-  swept *documented* keys against `tests/`, so
-  `calculation.imaginary_rel_tolerance` — in neither the docs nor the tests —
-  was invisible to the very process meant to find gaps. Sweeping
-  `calc_config.get(...)` call sites has been done for the `calculation:` block
-  (clean, apart from internal `cache_file_base`); the other blocks (`tasks`,
-  `plotting`, `minimization`, `scga`, `thermal_mc`, …) have not.
-- **Escalate a whitelist of WARNINGs in the config smoke test.** STILL OPEN (it
-  fails on ERROR log records only), but item 6's case no longer argues for it:
-  that failure is now a hard error, so the smoke test catches it as an ERROR.
-  What changed in its favour is the *prerequisite*: escalating warnings is only
-  viable once benign ones stop firing routinely, and two that fired on
-  correctly-written configs are gone (2026-08-12) — `num_starts <
-  early_stopping` no longer warns for the Monte-Carlo methods, where
-  `early_stopping` is meaningless and a handful of runs is the recommendation;
-  and `plt.show()` on a non-interactive backend no longer warns, because
-  `plotting.show_plot_if_possible()` does not call it.
+It paid for itself on the first run, and in exactly the predicted shape: it found
+**`calculation.h2_rel_tolerance`** — guard 3's threshold, added by item 10 three days
+earlier, documented prominently in CLAUDE.md, read by `runner.py`, and named by NO
+test and NO config. That is `calculation.imaginary_rel_tolerance` again, one item
+later, and a docs-first sweep could not have found it either time. It is covered now
+(`test_kpm_stability.py::test_h2_rel_tolerance_reaches_the_guard_from_the_config`,
+bracketed either side of a known instability rather than checked one-sided).
 
-**Discovery, not just execution (2026-08-12).** The smoke test's glob is
-`examples/*/*/config*.yaml`, and `examples/fitting/fit_dispersion.yaml` is one
-directory shallow AND not named `config*` — invisible on both counts. It went on
-shipping as TUTORIAL.md's `magcalc fit` example with every bond listed in one
-direction only (halving each J) and no `magnetic_structure` at all (expanding
-about a stationary maximum), while its own "recovers the true values" check
-passed, because the shipped data had been generated from that same broken model.
-An `EXTRA` list now covers it, and the blanket `future_exmaples` exclusion is
-gone — that exclusion is why its FeI2 config sat 2.5 meV/site above the ground
-state (item 7).
+Two things about the audit worth knowing before extending it. The AST walk is a
+heuristic — it fails in the SAFE direction (a key it cannot see is one nothing else
+would have seen either; a spurious entry surfaces as a loud "covered nowhere" and gets
+deleted by hand). And `exercised_keys()` EXCLUDES the audit's own two files: without
+that, `test_config_key_coverage.py` names every key it excuses, the text sweep finds
+those names, and the audit certifies exactly the keys it was told to ignore. That
+self-fulfilling version was written first and passed.
 
-**Mind the two numbers.** `examples/future_exmaples/` is gitignored
-(`.gitignore:35`), so its four configs exist only in a working tree that has them:
-coverage is **55 configs here, 51 on a fresh clone** — every runnable config under
-`examples/` except the four in `SKIP`. Dropping the exclusion is therefore a
-no-op for CI and only helps whoever has the staging directory locally. If those
-configs are worth protecting from rot, they have to be tracked first (`git add
--f`, or un-ignore the directory); until then "staging is covered" is true only on
-one machine. Re-check either number with
+**(b) Escalate WARNINGs in the config smoke test — DONE.**
+`tests/test_config_smoke.py` collects at WARNING level and fails on any warning not
+matching `ALLOWED_WARNINGS`, with a harvest mode (`MAGCALC_SMOKE_HARVEST=<path>`) that
+records instead of asserting — so the list was built from a real run of all 58 configs
+rather than guessed, and can be rebuilt the same way when a config is added.
+
+**The whole surface is four distinct messages**, which is why escalating was viable at
+all once the two benign ones were removed in 2026-08-12:
+
+| message | configs | verdict |
+|---|---|---|
+| the dipole-mode SU(N) advisory | 9 | expected — allow-listed |
+| "is NOT a classical energy minimum" | 3 | expected — each carries a deliberate `on_imaginary: warn` |
+| "Magnon energies are IMAGINARY" | 4 | same, plus SW03's commensurate approximation |
+| `type: spiral` is deprecated | 1 | **a real finding — fixed, see below** |
+
+**The escalation caught something on its first run, and it was not the warning it
+looked like.** SW08 warned that `magnetic_structure: {type: spiral}` is deprecated —
+but SEVEN shipped configs used that spelling (SW08, SW15, SW18, SW22, SW23, SW26,
+SW37) and only one warned, because `_LEGACY_MS_WARNED` in `generic_model.py` fires the
+deprecation **once per PROCESS**. Under pytest it therefore attaches itself to whatever
+runs first, and the suite randomizes order — so a warning-based check on it would have
+been flaky, and a warning-based check is not the right tool. All seven are migrated to
+`type: single_k`, which is safe BY CONSTRUCTION (that branch of
+`normalize_magnetic_structure` rewrites `cfg['type']` and nothing else) and is pinned
+as an exact identity rather than by re-verifying seven spectra
+(`test_spiral_and_single_k_normalize_identically`). A separate test greps every shipped
+config for both deprecated spellings, which is order-independent
+(`test_no_shipped_config_still_uses_a_deprecated_structure_type`).
+
+**(c) Discovery is no longer a glob plus a hand-list — DONE.** The criterion is now
+what a config IS, not what it is called: any `*.yaml` at any depth under `examples/`
+that parses to a mapping carrying `crystal_structure` or `from_mcif`. The `EXTRA` list
+is gone. The three `*_fit_params.yaml` outputs are excluded by the same content test
+with no name-based special case.
+
+That shape mattered: `examples/fitting/fit_dispersion.yaml` was one directory shallow
+AND not named `config*`, so it was invisible on both counts — and went on shipping as
+TUTORIAL.md's `magcalc fit` example with every bond listed in one direction only
+(halving each J) and no `magnetic_structure` at all (expanding about a stationary
+maximum), while its own "recovers the true values" check passed because the shipped
+data had been generated from that same broken model. Adding it to a list fixed that
+one file and left the shape. **Cross-checked when the content test landed: it
+discovers EXACTLY the same 58 configs**, so it is a change of shape, not of coverage.
+
+**Mind the two numbers.** `examples/future_exmaples/` is gitignored, so its configs
+exist only in a working tree that has them: coverage is **58 configs here, 54 on a
+fresh clone**. Item 7's fix moved the corrected FeI2 physics into the tracked
+`examples/materials/FeI2/config_fei2.yaml`, so the staging FeI2 config is now a
+redundant near-duplicate and the smoke test runs both (~4.5 min each). Deleting the
+staging copy would be reasonable and was left to the owner. Re-check the numbers with
 
     python -c "import sys; sys.path.insert(0,'tests'); import test_config_smoke as t; print(len(t._configs()))"
-
-after adding examples. The remaining shape problem is that discovery is still a
-glob plus a hand-list: a config named neither `config*.yaml` nor listed in
-`EXTRA` is still invisible.
-
----
 
 ## 6. ~~Loose end — `minimization.tolerance` is silently ineffective~~
 
@@ -420,49 +520,42 @@ configs (see `GAP_STATUS.md`, "Open a config, press Run").
 
 ---
 
-## 7. FeI2 dipole — the "needs investigation" note now has an answer
+## 7. FeI2 dipole — closed
 
-**Status: PARTIAL.** The physics question is ANSWERED (below). Two actions remain
-open: `examples/materials/FeI2/config_fei2.yaml` still carries `on_imaginary:
-warn` and cannot be fixed without first separating its Hamiltonian from its
-structure; and the corrected `examples/future_exmaples/FeI2` config is gitignored,
-so it exists in no commit.
+**Status: DONE 2026-08-15.** `examples/materials/FeI2/config_fei2.yaml` no longer
+carries `on_imaginary: warn`; it runs with the guards at their default `error` and
+reaches max |Im ω| = 2.4e-15 meV. `tests/test_sun.py` is green (26 passed), including
+the Sunny-pinned E/site and band comparisons this item was afraid of moving.
 
-`examples/materials/FeI2/config_fei2.yaml` opens with
+**The physics (recorded 2026-08-12, unchanged).** FeI2 orders as a COLLINEAR
+2-up-2-down stripe at k = (0, −1/4, 1/4), and no rotating-frame
+`single_k`/`propagation_vector` form can represent it — that form rotates each
+successive cell by a fixed angle, giving up / in-plane / down / in-plane at k = 1/4.
+On the real-space `magnetic_supercell: [1, 4, 4]` (16 sites), annealing reaches
+**E = −46.372796 meV per cell = −2.898300 meV/site**, reproducibly. The config's old
+declared structure sat ~2.5 meV/site above it. This is the DIPOLE minimum; the SU(N)
+ground state is −2.91893118 meV/site, and with an anisotropy present the two genuinely
+differ (CLAUDE.md §5c) — they are not meant to agree.
 
-    # on_imaginary: warn -- the supplied structure is not the exact classical minimum
-    # of this Hamiltonian. Flagged by the ground-state guard; needs investigation.
+**What unblocked it: separating the two roles WITHOUT a second copy of the exchange
+table.** The obstacle was real — `tests/test_sun.py` uses this file as its Hamiltonian
+source and builds its own non-diagonal SU(N) supercell from it, so giving the config a
+magnetic cell would have silently handed those Sunny-validated comparisons a 16-site
+cell and the wrong reciprocal basis. The fix is `_fei2_cfg()` in that test: it loads
+the file and strips `crystal_structure.magnetic_supercell`, `magnetic_structure` and
+`minimization` in memory, so the tests see the CHEMICAL cell. A structure-free second
+file would have duplicated a 7-rule exchange table — the drift hazard that produced
+item 14. `test_the_fei2_config_ships_the_magnetic_cell_and_the_tests_strip_it` pins
+BOTH halves in one place, because neither failure announces itself in a spectrum: lose
+the supercell and the shipped config is a Hamiltonian with no ground state; lose the
+strip and the Sunny comparisons quietly run on 64 sites.
 
-**The answer (2026-08-12):** FeI2 orders as a COLLINEAR 2-up-2-down stripe at
-k = (0, −1/4, 1/4), and no rotating-frame `single_k`/`propagation_vector` form can
-represent it — that form rotates each successive cell by a fixed angle, giving
-up / in-plane / down / in-plane at k = 1/4. On the real-space `magnetic_supercell:
-[1, 4, 4]` (16 sites), annealing reaches **E = −46.372796 meV per cell =
-−2.898300 meV/site**, reproducibly (3–4 of 4 runs hit it at seeds 0, 1, 2, 7).
-That is the value the guard was reporting as unreachable, and the config's
-declared structure sits ~2.5 meV/site above it. Note this is the DIPOLE minimum;
-the SU(N) ground state is −2.91893118 meV/site, and with an anisotropy present
-the two genuinely differ (CLAUDE.md §5c) — they are not meant to agree.
-
-`examples/future_exmaples/FeI2/config_fei2.yaml` has been fixed this way and now
-runs with the guards at their default `error` — but that directory is **gitignored**
-(`.gitignore:35`), so the fix lives in the working tree only and is not in any
-commit. Either track it (`git add -f`) or accept that it will be lost on a clean
-checkout; the physics above is recorded here precisely so it survives either way.
-
-**Why `examples/materials/FeI2/config_fei2.yaml` was NOT changed with it:**
-`tests/test_sun.py` uses that file as its Hamiltonian source and builds its own
-SU(N) supercell from it (`SUNModel.from_generic_model(m, supercell=MSUPER, ...)`),
-reading `m.config["crystal_structure"]["lattice_vectors"]` to form the chemical
-reciprocal basis. Adding `magnetic_supercell` there would silently hand those
-Sunny-validated comparisons (E/site to 1e-6, bands and intensities to 1e-4) a
-16-site cell and the wrong basis. Doing it properly means separating the
-Hamiltonian from the structure in that config — split the interactions into a
-fragment both configs include, or point `test_sun.py` at a structure-free copy —
-and then re-running `pytest tests/test_sun.py -m ""` to confirm the Sunny numbers
-are untouched. Until that is done, leave the `on_imaginary: warn` in place.
-
----
+**The gitignored staging copy is no longer the only home for this.**
+`examples/future_exmaples/FeI2/config_fei2.yaml` carried the corrected config and
+existed in no commit; its content is now the tracked
+`examples/materials/FeI2/config_fei2.yaml`. The staging file was left in place (it is
+the owner's) and is now a redundant near-duplicate that the smoke test also runs — see
+item 5.
 
 ## 8. Studio — the two limits left after the 2026-08-12 open→run fix
 
@@ -598,16 +691,10 @@ guards are what would have caught this downstream (a maximum is exactly what gua
 exists for), so a direct `minimize_energy` call, or a config running
 `on_imaginary: warn|off`, had no second line of defence.
 
-**Related, not yet chased:** `thermal_mc.build_supercell` builds `H` purely from
-`spin_interactions` (bonds), so it carries **no single-ion anisotropy at all** —
-measured directly on S06, where `H_zz` came back as the bare exchange sum and D = 19
-was simply absent, while its docstring calls `H` "the exchange/anisotropy Hessian".
-That builder feeds `thermal_mc`, `wang_landau`, `static_correlations` and the
-classical `sampled_correlations`. It is a *different* builder from the annealer's
-(`MagCalc._extract_classical_quadratic`, which is correct — verified), so this is a
-separate defect and was NOT fixed here. It deserves its own item, its own oracle
-(the exact single-spin-in-a-field-plus-anisotropy partition function is closed form)
-and its own commit.
+**Related, not yet chased → item 11:** `thermal_mc.build_supercell` carries no
+single-ion anisotropy at all. It is a *different* builder from the annealer's
+(`MagCalc._extract_classical_quadratic`, which is correct — verified), so nothing in
+this item is affected by it.
 
 ---
 
@@ -675,6 +762,244 @@ so the warning says "read that column as undefined" rather than inventing a numb
 
 ---
 
+## 11. `thermal_mc.build_supercell` carried NO single-ion anisotropy
+
+**Status: DONE 2026-08-15.** `magcalc/thermal_mc.py::onsite_quadratic` +
+`tests/test_thermal_mc.py` (6 new tests; **5 of the 6 were confirmed to FAIL on the
+pre-fix code**, the sixth being the RCS one, which passed vacuously against a zero
+matrix and was strengthened so it cannot).
+
+**What it was.** `build_supercell` assembled the classical `H` from `spin_interactions`
+alone — a BOND table — so `single_ion_anisotropy` / `sia_matrix` / `stevens` never
+entered it, while its own docstring called `H` "the exchange/anisotropy Hessian".
+Measured on a bond-free model with D = 2.5: `H` came back with **exactly zero nonzero
+entries**. It fed `thermal_mc`, `wang_landau`, `static_correlations` and the classical
+`sampled_correlations`, so an anisotropic magnet was silently sampled as exchange-only
+in all four.
+
+**How it is fixed, and why not by re-implementing.** `onsite_quadratic` calls the
+model's OWN `_compute_sia_terms` (which already folds in `_compute_sia_matrix_terms`
+and `_compute_stevens_terms`) on symbolic components, then extracts (H, b) by the same
+exact probing identities `MagCalc._extract_classical_quadratic` uses. So anisotropy
+targeting, parameter resolution and the RCS renormalization
+(`calculation.anisotropy_renormalization`) cannot drift from what LSWT diagonalizes —
+a second transcription of the on-site rules is precisely the kind of duplicate that
+produced the two dipolar prefactors (item 14).
+
+**A limit, made loud rather than silent.** A Stevens term of rank k ≥ 4 has a
+quartic/sextic classical polynomial and simply cannot live in `E = ½mᵀHm + bᵀm`. It now
+RAISES, naming `mode: SUN` as the route that carries the full operator. Rank 2 (`sia`,
+`sia_matrix`, `stevens` k = 2) is exactly quadratic and is carried exactly.
+
+**The oracle is the exact single-spin partition function**, as this item predicted: one
+classical spin in a field with a uniaxial D has E(u) = D S²u² + bSu, so ⟨E⟩ and ⟨m_z⟩
+are 1-D quadratures — the same shape the Langevin and classical-dimer tests here
+already use. The structural pin is sharper still: on a D-only model the on-site block
+must be exactly 2D·nnᵀ, which is the defect stated as a number.
+
+**Blast radius, swept: no shipped config was affected.** Of the four configs that use a
+sampler fed by this builder, only `examples/sunny_tutorials/S04_FeI2_finiteT` carries an
+on-site anisotropy — and it uses `sun_sampled_correlations`, i.e. the CP^(N−1) path
+through `sun/lswt.py`, which builds its on-site terms itself. Nothing else could have
+been.
+
+---
+
+## 12. Time-domain window on the classical S(q,ω)
+
+**Status: DONE 2026-08-15, as an OPT-IN** — `classical_dynamics.lag_window` /
+`_window_correlation`, shared by the dipole and CP^(N−1) transforms,
+`window: cosine|rectangular` on both `sampled_correlations:` and
+`sun_sampled_correlations:`. Pinned in `tests/test_classical_window.py` (10 tests).
+**The default stays `rectangular`, and that decision is a measurement — see below and
+item 15.**
+
+**The implementation is Sunny's, and it reduces to one line of algebra.** The window is
+applied to the CORRELATION in the lag domain (Blackman–Tukey, as Sunny does), not as a
+taper on the trajectory. `w(Δt) = cos²(π|Δt|/n_t)`, and
+
+    cos²(x) = ½ + ¼e^{2ix} + ¼e^{−2ix}
+
+so windowing the correlation is **IDENTICAL to convolving the spectrum with the
+3-point kernel [¼, ½, ¼]** — one bin Δω = 2π/T of Hann broadening, exactly. Measured
+agreement with that identity: **1.1e-16** on a spectrum of scale 1.9. Everything else
+follows from it rather than being observed:
+
+- the kernel is non-negative → a windowed S(q,ω) cannot dip below zero where the raw
+  periodogram was positive (a general lag window CAN);
+- it sums to 1 → the **two-sided** ω-integral, hence every sum rule, is preserved to
+  machine precision.
+
+**That second point is why this item needed its own oracle.** This item predicted that
+`tests/test_classical_absolute_normalization.py` would be insensitive to the change,
+and it is — *exactly* so, not approximately. The identity above is the oracle instead.
+
+**WHAT THE ITEM GOT WRONG, and it is the important part.** The item proposed the
+window as a fix for the ~16 % whole-axis overshoot and offered the default as a
+preference. It is not a preference. The same one-bin smear lands on the ELASTIC delta
+of an ordered magnet, and `classical_to_quantum_factor` is 1 at ω = 0 but |ω|/kT one
+bin away — **31** at kT = 0.005 with Δω = 0.153 meV. On the gapped ferromagnetic chain
+(L = 24, n_traj = 16, q = 0.15; LSWT `perp` band sum 0.5):
+
+| window | `subtract_elastic` | whole-axis / LSWT | first inelastic bin |
+|---|---|---|---|
+| rectangular | false | 1.55 | 0.00006 |
+| rectangular | true | 1.40 | 0.00006 |
+| cosine | false | **2.60** | **9.10** — 18× the entire band sum, from ONE bin |
+| cosine | true | 1.40 | 0.00005 |
+
+The two windows agree once the delta is removed: it *was* the whole difference. So the
+window makes the whole-axis integral WORSE, not better, on an ordered magnet — unless
+the elastic line is removed first. `subtract_elastic` was therefore added to the dipole
+path too (the SU(N) path had it all along), and `window: cosine` +
+`subtract_elastic: true` is the combination that behaves.
+
+**Do not compare the table above with item 4's 1.16 / 1.015.** That was measured at
+L = 32, n_traj = 128, n_steps = 4096 and five q; this is a cheaper setting (L = 24,
+n_traj = 16, n_steps = 2048) forced by machine load, so its absolute ratios carry
+finite-size and statistical error that item 4's do not. What it establishes is the
+RELATIVE effect of the window, which is what this item is about. Re-measuring the
+absolute table at item 4's setting is worth doing and was not done.
+
+---
+
+## 13. The CP^(N−1) sampler did not equilibrate at low kT
+
+**Status: DONE 2026-08-15.** `sun/dynamics.thermalize` adapts the Metropolis step size
+and reports what it did (`ThermalizeInfo`); `sun_sampled_correlations:` gains
+`adapt_sigma`, `target_acceptance`, `on_unequilibrated`. Pinned in
+`tests/test_sun_sampler_equilibration.py` (12 tests).
+
+**The design, and why it is split in two halves.** The step size is tuned toward
+`target_acceptance` (~0.5) over the FIRST half of the sweeps and then held FIXED for
+the second half — adapting while measuring would break detailed balance, and the
+equilibration verdict has to be made on a chain whose proposal is not moving. The
+adaptation gain decays as 1/√k so it settles rather than oscillating. The upper clip on
+`sigma` is 10 and is not a limitation: the proposal is `Z + σv` RENORMALIZED, so by
+σ ≈ 10 the candidate is a uniform draw on the sphere, i.e. an independence sampler —
+which is why at high kT the target acceptance is simply unreachable (even a uniform
+draw is accepted ~83 % of the time) and the adaptation saturates instead of running
+away.
+
+**The oracle is the sampler's own partition function, in closed form**, which is what
+makes this a test of the SAMPLER with no spectrum and no reference code in the way. For
+a decoupled site with on-site A = diag(a₁..a_N) the coherent-state energy is
+Σᵢ aᵢ|zᵢ|², and the Fubini–Study measure makes |z|² uniform on the simplex, so
+
+    Z(β) = ∫_simplex e^{−β Σ aᵢpᵢ} dp = Σᵢ e^{−βaᵢ} / Π_{j≠i} β(a_j − aᵢ)
+
+exactly (checked against a 2-D quadrature before being used). ⟨E⟩ = −d lnZ/dβ.
+
+**Measured, at kT = 0.05 / 0.2 / 1.0 on 6 decoupled S = 1 sites:**
+
+| | ⟨E⟩ vs exact | acceptance |
+|---|---|---|
+| fixed σ = 0.02, kT = 1 | **+32 %** (−2.57 vs −3.78) | 0.995 — accepts everything, moves nowhere |
+| fixed σ = 0.02, kT = 0.05 | +1.5 % | 0.894 |
+| adapted, from σ = 0.02 | within 1.5 % at every kT | 0.47–0.83 |
+| adapted, from σ = 0.5 | agrees with the above to 4 % | 0.46–0.83 |
+
+The last two rows are the property the item named — the answer no longer depends on
+where `sigma` started — and the drift diagnostic flags exactly the three broken runs
+and none of the good ones.
+
+**Not re-measured: the end-to-end 0.30 → 1.63 intensity swing** this item quoted from
+item 4. A partial run (n_traj = 4, one q) narrowed it from a factor 1.76 to a factor
+1.16 before the machine load made the full comparison unaffordable. The sampler itself
+is now pinned against an exact result, which is the stronger claim; the end-to-end
+number is worth re-taking.
+
+---
+
+## 14. The two dipolar prefactors are reconciled
+
+**Status: DONE 2026-08-15.** `magcalc/constants.py`:
+
+    MU0_MUB2_MEV_A3 = 0.6745817653324668            # Sunny Units.jl, full precision
+    DIPOLE_PREFACTOR_MEV_A3 = MU0_MUB2_MEV_A3 / (4*pi)   # DERIVED, not typed
+
+**Which value is right was not a matter of taste.** μ₀μ_B² is a physical constant,
+Sunny states it to full double precision (`Sunny.jl-main/src/Units.jl`,
+`vacuum_permeability`), and 4π is exact. The old `DIPOLE_PREFACTOR_MEV_A3 = 0.05368216`
+was **not a truncation of the Ewald constant at all** — μ₀μ_B²/4π is 0.05368151123615953,
+so it was 1.2e-5 relative too large. The 4-pi-reduced constant is now derived and cannot
+drift again; `tests/test_ewald.py::test_the_two_dipolar_prefactors_are_one_constant`
+pins the derivation rather than the digits.
+
+**Why this is NOT the `MU_B` case, which is the distinction worth keeping.** `MU_B`'s
+four-figure truncation is load-bearing because every pinned Zeeman number in the repo
+was MEASURED against it. Nothing was ever pinned against 0.05368216: the only test of
+the truncated sum is a comparison with the Ewald path, which used the other constant.
+There was no reference to preserve, only an inconsistency — so this is an accuracy fix,
+where moving `MU_B` would not be.
+
+**The oracle was re-run, not the tolerance widened**, which is what this item asked
+for: `pytest tests/test_ewald.py tests/test_ewald_spiral.py -m ""` → **21 passed**,
+including `test_truncated_sum_converges_to_ewald` (1e-4 absolute on a ~4 meV band,
+where this shift is ~5e-5) and `test_ewald_classical_energy_matches_sunny` (1e-9
+against Sunny's `energy_per_site`, which `MU0_MUB2_MEV_A3`'s own 4.8e-11 move had to
+survive and did).
+
+**Not measured: the before/after residual table** (max |truncated − Ewald| at cutoffs
+12/30/45). The run was abandoned at ~20 min of wall clock with almost no CPU time
+accrued — the cutoff-30+ real-space sums build a huge bond list and the per-q pool
+spends its time spawning workers on a machine at load 300. The gate above is the
+decisive evidence; the table would only have been colour.
+
+---
+
+## 15. `window: cosine` is a trap without `subtract_elastic` — now reported
+
+**Status: DONE 2026-08-16.** `classical_dynamics.check_elastic_leakage`, called by BOTH
+`classical_dynamics.sampled_correlations` and `sun/dynamics.sampled_correlations`, with
+`on_elastic_leakage: warn|error|off` on both config blocks. Pinned in
+`tests/test_classical_window.py` section 5 (7 new tests, 17 in the file).
+
+**What it was.** The measurement in item 12: on an ordered magnet, `window: cosine`
+alone puts the smeared elastic delta into the first inelastic bin, where `c2q`
+multiplies it by |ω|/kT — 9.10 in a spectrum whose entire LSWT band sum is 0.5.
+`subtract_elastic: true` removes it completely. All three switches are independent
+booleans defaulting to false, so the dangerous combination was one keystroke away and
+said nothing.
+
+**Option 1 of the three, as this item predicted** — warn rather than imply, because
+making `cosine` imply `subtract_elastic` would silently change what the config asked
+for, and because leaving it to the docs is exactly the shape of hazard the house rules
+say not to leave to documentation. What made it implementable is that the trigger is a
+COMPUTED NUMBER, not a guess:
+
+    amplification = c2q(Δω),   Δω = 2π/T the energy grid step
+
+so the warning names the factor it is triggering on. It fires only when all four hold:
+`window: cosine`, `subtract_elastic: false`, `classical_to_quantum` on, and
+amplification ≥ 2 (i.e. kT ≲ Δω/1.6). Below that threshold the smear costs no more than
+the one bin of Hann broadening `lag_window` documents — which is the point of using the
+window — so warning there would only train the user to ignore it.
+
+**Engine-level, not runner-level**, for item 10's reason: the S09-style scripts drive
+`sampled_correlations` from Python and never see the runner. The runner passes the key
+through on both blocks, and `test_the_guard_is_on_by_default_and_reachable_from_a_config`
+drives a real config through `run_calculation` to pin that half.
+
+**Oracle: item 12's four rows.** `check_elastic_leakage` must fire on
+(cosine, subtract_elastic=false, kT=0.005) and stay quiet on the other three — the rows
+that behaved — and the number in the message is checked against
+`classical_to_quantum_factor` itself (an identity, not a constant retyped into the test),
+which at item 12's grid reproduces the ~31 the item measured. The kT condition is
+bracketed either side of the threshold on the factor rather than on a chosen kT.
+
+**Gate:** the merge gate was run, not only the targeted files. `pytest -m ""` from the
+workspace root → **837 passed, 3 skipped, 0 failed, 45:46** (2026-08-16), against the
+2026-08-15 baseline of 830 passed, 3 skipped — +7 is exactly this item's new tests. The
+targeted run first — `test_classical_window.py`, `test_config_key_coverage.py`,
+`test_sun_dynamics.py`, `test_classical_dynamics.py`, `test_classical_to_quantum.py`,
+`test_sun_sampler_equilibration.py`, `test_classical_absolute_normalization.py` at
+`-m ""` → 65 passed (3:30). The 45-minute wall clock against the baseline's 30 is
+machine contention (load average peaked at 56 mid-run, and the per-q pool phase is
+where it went), not new work in the suite.
+
+---
+
 ## Also worth knowing
 
 ### Standing facts (no action)
@@ -684,16 +1009,27 @@ so the warning says "read that column as undefined" rather than inventing a numb
   `fix/sunny-parity-audit`, `docs/cu5sbo6-powder-comparison`,
   `docs/rb2cu3snf12-order8`, `test/coverage-audit-items-2-4`) were pruned after
   checking each tip was an ancestor of `origin/master` with nothing unpushed —
-  no history was lost, every commit is reachable from `master`. Items A–E below
-  were developed on `chore/open-work-housekeeping`, and the item-1 machinery plus
-  the C/D/E follow-ups on `feat/open-work-followups`. Both were **fast-forward
-  merged into `master`** after a green full gate (2026-08-12 and 2026-08-13); both
-  are level with `master` and can be pruned.
+  no history was lost. Items A–E were developed on `chore/open-work-housekeeping`,
+  the item-1 machinery plus the C/D/E follow-ups on `feat/open-work-followups`, and
+  items 1/2/3/4/8/9/10 on `feat/s06-cp2-skyrmions`; all were **fast-forward merged
+  into `master`** after a green full gate. **Four merged branches are still present
+  and every one is an ancestor of `master`, so all four can be pruned:**
+  `feat/s06-cp2-skyrmions`, `docs/gate-637`, `feat/open-work-followups`,
+  `chore/open-work-housekeeping`. **The 2026-08-15 work is uncommitted, on `master`
+  itself** — branch it before committing.
 - **The merge gate is `pytest -m ""`**, and from the *workspace root* plain
   `pytest` is already the full suite (the root `pytest.ini` deliberately does
   not inherit `-m "not slow"`). It takes ~30 min unloaded and can take 2.5 h on
   a busy machine. Don't pipe it through `tail` — that hides all progress until
   it exits.
+- **Beware the runner's process pools when you write a measurement script.** Two
+  supporting measurements were abandoned this session after ~20 minutes of wall clock
+  each with under 16 s of CPU accrued: the per-q pool was spawning short-lived workers
+  faster than a loaded machine could start them. A harvest script that `chdir`s is
+  worse still — multiprocessing's spawn re-executes the main module by path, so the
+  workers died on a relative `sys.path` entry and were respawned in a loop (that is
+  what took the load average past 300). Use absolute paths and an
+  `if __name__ == "__main__":` guard, or drive one config per subprocess.
 
 ### A. `pytest.ini` collection scope — **DONE 2026-08-12**
 
@@ -737,48 +1073,71 @@ so the warning says "read that column as undefined" rather than inventing a numb
   **That left one hole, now closed** (see the next entry): none of the above runs
   when a stale copy wins *outright*, because that copy has no `provenance.py`.
 
-### C. Interpreter-startup shadow guard — **DONE 2026-08-12** (one small item open)
+### C. Interpreter-startup shadow guard — **DONE 2026-08-15**
 
-- **The guard** — `tools/magcalc_shadow_guard.py` + `tools/install_shadow_guard.py`. This is the
-  half the in-package detector structurally cannot cover, and it also removes the
-  "second checkout silently re-arms the hazard" caveat: the guard lives in
-  site-packages, *outside every `magcalc` copy*, so it reports no matter which one
-  wins, including a brand-new checkout.
+- **The guard** — `magcalc/_shadow_guard.py`, installed by `magcalc guard --install`
+  (`tools/install_shadow_guard.py` still works for a source checkout; the module lives
+  INSIDE the package because `tools/` is not shipped by a non-editable
+  `pip install`, so a wheel user could not install the guard at all). It is the half
+  the in-package detector structurally cannot cover: the guard sits in site-packages,
+  *outside every `magcalc` copy*, so it reports no matter which one wins — including a
+  brand-new checkout.
 
   ```bash
-  python tools/install_shadow_guard.py            # install (per interpreter)
-  python tools/install_shadow_guard.py --status   # / --uninstall
+  magcalc guard              # report status (per interpreter)
+  magcalc guard --install    # / --uninstall
   ```
 
-  `magcalc where` now states whether it is active, so the protection level is
-  never a guess. `MAGCALC_SHADOW_GUARD=off` silences it for the legitimate case
-  (a git worktree, a deliberate version comparison). Cost: **254 µs** per
-  interpreter startup, plus one string compare per import.
+  `magcalc where` states whether it is active, so the protection level is never a
+  guess. `MAGCALC_SHADOW_GUARD=off` silences it for the legitimate case (a git
+  worktree, a deliberate version comparison). Cost: **254 µs** per interpreter
+  startup, plus one string compare per import.
 
-  **THE TIMING TRAP, and the reason the guard is not a simple startup check.**
-  The obvious implementation — survey `sys.path` when the `.pth` runs — is blind
-  to the main hazard. At `.pth` execution time `sys.path[0]` is **not yet the
-  working directory**: for `python -c` the `''` entry is prepended *after* site
-  initialisation. The first version did exactly that, passed a PYTHONPATH test,
-  and reported all clear when run from inside a stale checkout. The check is
-  therefore **deferred** to the moment `magcalc` is imported, via an observer
-  parked at the front of `sys.meta_path` whose `find_spec` surveys and then
-  always returns `None`. `tests/test_shadow_guard.py` pins this with a throwaway
-  venv carrying two real `.pth` files — the guard, and an eager probe that
-  records what a startup check *would* have concluded (`EAGER=False`).
+  **THE TIMING TRAP, and the reason the guard is not a simple startup check.** The
+  obvious implementation — survey `sys.path` when the `.pth` runs — is blind to the
+  main hazard. At `.pth` execution time `sys.path[0]` is **not yet the working
+  directory**: for `python -c` the `''` entry is prepended *after* site
+  initialisation. The first version did exactly that, passed a PYTHONPATH test, and
+  reported all clear when run from inside a stale checkout. The check is therefore
+  **deferred** to the moment `magcalc` is imported, via an observer parked at the
+  front of `sys.meta_path` whose `find_spec` surveys and then always returns `None`.
+  `tests/test_shadow_guard.py` pins this with a throwaway venv carrying two real
+  `.pth` files — the guard, and an eager probe that records what a startup check
+  *would* have concluded (`EAGER=False`).
 
-  Second non-obvious detail: stderr alone is not enough. Under `pytest` the
-  import happens inside the capture, so the banner is buffered and shown only if
-  something else fails — and "ran the suite inside a stale checkout" is exactly a
-  case where everything passes. The guard therefore also raises a real
-  `MagcalcShadowWarning`, which lands in pytest's warnings summary on a green run.
+  Second non-obvious detail: stderr alone is not enough. Under `pytest` the import
+  happens inside the capture, so the banner is buffered and shown only if something
+  else fails — and "ran the suite inside a stale checkout" is exactly a case where
+  everything passes. The guard therefore also raises a real `MagcalcShadowWarning`,
+  which lands in pytest's warnings summary on a green run.
 
-  **STILL OPEN.** Nothing installs the guard automatically, so a **fresh venv
-  starts unprotected**. `magcalc where` says so, which is the cheap mitigation;
-  wiring it into `pip install -e .` is the obvious next step and was left out
-  deliberately (a build hook that writes to site-packages is its own hazard).
+- **CLOSED 2026-08-15: the guard now ARMS ITSELF on the first `magcalc` CLI use.**
+  `magcalc.cli._arm_shadow_guard`, called from an `@app.callback()` that runs before
+  every subcommand: if the two files are already there it returns after two `stat`
+  calls, otherwise it installs them and prints one line to stderr. A fresh venv is
+  therefore protected from its first command, which is what "nothing installs it" was
+  about.
 
-### D. Stale OneDrive trees — **DONE 2026-08-12** (two follow-ups open)
+  **Why run-time and not build-time.** Wiring it into `pip install -e .` was rejected
+  earlier for a good reason and that reason still stands: a build hook that writes
+  into site-packages can break the install itself (sandboxed builds, read-only or
+  root-owned prefixes, cross-built wheels). Doing it on the first CLI run keeps the
+  effect and drops the hazard — it is the user's own interpreter, it is recoverable,
+  and every path is swallowed. `MAGCALC_SHADOW_GUARD=off` suppresses the install as
+  well as the guard, so the deliberate-second-checkout workflow is untouched.
+
+  **The test found a live defect in the first version of this**, which is worth
+  keeping: `_shadow_guard_install.site_packages()` raises `SystemExit` when it cannot
+  find purelib, and `except Exception` does NOT catch that — so an unusual prefix
+  would have killed the calculation over a diagnostic, the exact thing the guard's own
+  design rules forbid. It catches `(Exception, SystemExit)` now, and still lets
+  `KeyboardInterrupt` through. Pinned by
+  `test_arming_never_fails_the_command`, plus two throwaway-venv tests
+  (`test_first_cli_run_arms_the_guard_in_a_fresh_environment`, which also checks the
+  notice is NOT reprinted on the second run, and
+  `test_the_env_var_opt_out_also_suppresses_the_install`).
+
+### D. Stale OneDrive trees — **DONE 2026-08-12** (both follow-ups now closed)
 
 - **Both stale trees are DELETED** (~2.6 GB). They were
   `~/Library/CloudStorage/OneDrive-MahidolUniversity/research/magcalc_archived/`
@@ -796,21 +1155,26 @@ so the warning says "read that column as undefined" rather than inventing a numb
     13.286 ± 0.009 / −0.237 ± 0.004 (`CCSF_fit_report.txt`). It lands next to the
     `config_ccsf.yaml` it reads, so it is runnable as-is. This is a genuine
     end-to-end check of the fitting path — an exact-identity oracle in the sense
-    GAP_STATUS.md means. **STILL OPEN:** it is pinned by no test of its own. It is
-    only exercised by `test_config_smoke.py`, which asserts the run produces no
-    ERROR records — not that the fit RECOVERS J1 = 13.3, J2 = −0.24. A ~10-line
-    test asserting the recovered values would make it the oracle it deserves to be.
-    (The two fit outputs are gitignored, since the smoke test rewrites them in the
-    merge gate; the expected values live in the config's header comment.)
+    GAP_STATUS.md means. **CLOSED 2026-08-12** by
+    `tests/test_ccsf_fit_roundtrip.py`. It had been exercised only by
+    `test_config_smoke.py`, which asserts the run produces no ERROR records — not
+    that the fit RECOVERS anything. The new test asserts against **the values that
+    generated the data** (J1 = 13.3, J2 = −0.24, read from the CSV header), not
+    against the output observed at rescue time (13.2860735, −0.2372…), so a fit that
+    drifts cannot certify itself; a second test checks the header still records those
+    generating values, so the two cannot silently diverge. (The two fit outputs stay
+    gitignored, since the smoke test rewrites them in the merge gate.)
   - `archive/legacy/aCVO_2024_snapshot/spin_model_sf.py` — the legacy hand-written
-    α-Cu₂V₂O₇ model, reference only. **STILL OPEN:** the workspace root is not a
-    git repository and `pyMagCalc/archive/` is gitignored, so this file — which
-    existed nowhere else — is again in an unversioned directory. It needs a
-    deliberate home if it is worth keeping.
+    α-Cu₂V₂O₇ model, reference only. **CLOSED 2026-08-12:** it is tracked at
+    `examples/materials/aCVO/legacy_spin_model_sf_2024.py`, with a provenance header
+    explaining why it lives there rather than in `archive/` (the workspace root is not
+    a git repository and `pyMagCalc/archive/` is gitignored, so there was nowhere else
+    it could be version-controlled at all). The root `archive/` copy is byte-identical
+    below that header and is now a duplicate, not the only copy.
 
   The other ~8900 untracked files were a `gui/node_modules.onedrive-bak/` copy.
 
-### E. `mu_B` consolidation — **DONE 2026-08-12** (one small item open)
+### E. `mu_B` consolidation — **DONE 2026-08-12** (the prefactor question is item 14)
 
 - **`mu_B` now lives in `magcalc/constants.py`.** It used to be
   a `5.788e-2` literal in six modules (`generic_model` ×2, `spiral_opt`,
@@ -826,8 +1190,9 @@ so the warning says "read that column as undefined" rather than inventing a numb
   package for a re-typed literal. That second half is the one that matters — a
   stray `mu_B = 5.788e-2` back inside a function would restore the original
   hazard while the identity check still passed.
-- **STILL OPEN — the dipolar prefactor is still duplicated.** `ewald.MU0_MUB2_MEV_A3 =
-  0.6745817653` and `generic_model.DIPOLE_PREFACTOR_MEV_A3 = 0.05368216` are the
-  same Sunny constant with and without the 4π. Both are module-level and
-  cross-referenced in comments, so they are far less drift-prone than the `mu_B`
-  locals were, but folding them into `constants.py` is the obvious next step.
+- **The dipolar prefactors were folded in too, and NOT reconciled — see item 14.**
+  `MU0_MUB2_MEV_A3 = 0.6745817653` and `DIPOLE_PREFACTOR_MEV_A3 = 0.05368216` both
+  live in `constants.py` now (`ewald.py` and `generic_model.py` import them), so the
+  duplication this entry was about is gone. What remains is that they are the same
+  Sunny constant with and without the 4π and **their values disagree at 1.2e-5
+  relative**, which is a numerical question rather than a refactor.

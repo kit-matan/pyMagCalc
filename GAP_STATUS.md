@@ -8,15 +8,23 @@ Reference oracle: **Sunny.jl 0.8.1** is checked out in-repo at
 `../Sunny.jl-main`, and Julia 1.12 + Sunny 0.8.1 are installed. Use them (and textbook
 analytic results) to validate every new feature — see "How things were validated" below.
 
-Status: **merged to `master`** (PR #2). All of the below — Gap 1, Gap 2, Ewald
-(Gap 3 #7), SU(N) (Gap 3 #1), 1/S corrections (#8), mCIF (#12), the Studio web +
-native apps, and the Sunny.jl tutorial ports — now live on the default branch. The
-two former development branches (`feature/sun-mode`, `feature/gap-closure-ewald`)
-have been consolidated and retired; `feature/gap-closure-ewald` was fully contained
-in the merge and is deleted.
+Status, **2026-08-15**. Gap 1, Gap 2, Gap 3 (SU(N), Ewald, entangled units, KPM,
+SCGA, thermal MC, 1/S corrections, mCIF) and **all of Gap 4** are closed, and all
+nine Sunny tutorials are ported. Everything through 2026-08-13 is on `master`
+(`f848853`); the 2026-08-15 follow-up work is in the working tree and **has not had a
+full gate run** — see `OPEN_WORK.md`, "What has and has not been run". That session
+closed the four follow-ups the 2026-08-13 work had opened (the classical time-domain
+window, `thermal_mc.build_supercell`'s missing single-ion anisotropy, the CP^(N−1)
+sampler's step size, the two dipolar prefactors) plus FeI₂'s `on_imaginary: warn` and
+the shadow guard's installation. This file records what is *done and how it was
+validated*; what is still open is deliberately not here — it is `OPEN_WORK.md`, the
+"what to do next" companion.
 
-Test suite: 208 tests (`python -m pytest tests`). Every new feature has a test that
-pins it to an **independent reference** (Sunny, or an exact analytic identity), never a
+Test suite: **837 passed, 3 skipped** on the last full gate (`pytest -m ""` from the
+workspace root, 2026-08-16, 46 min under load). 832 tests collect from inside
+`pyMagCalc/`, of which 654 are the fast default suite. The merge gate is
+`pytest -m ""`; plain `pytest` is not. Every feature has a test pinned to an
+**independent reference** (Sunny, or an exact analytic identity), never a
 self-generated golden number.
 
 ---
@@ -88,16 +96,18 @@ Validation gates, in order of how loudly they fail:
 - **FeI₂** — E/site −2.91893118, 8 bands + intensities to 4e-4, via the config bridge +
   a non-diagonal magnetic supercell + the CP^(N-1) ground-state search.
 
-Runs on 38/47 example configs; the rest **refuse honestly** (incommensurate/spiral/auto-
-supercell → not supported; mixed-spin → not yet; frustrated GS search not converging →
-guard refuses). Never silently wrong.
+Ran on 38 of the 47 example configs that shipped when this was measured; the rest
+**refuse honestly** (incommensurate/spiral/auto-supercell → not supported; mixed-spin
+→ since closed by Gap 4 #24a; frustrated GS search not converging → guard refuses).
+Never silently wrong. (The figure has not been re-measured: the tree now ships **58**
+runnable configs, 54 of them tracked — see the coverage audit below.)
 
 ### Tier 2 (capability parity) — ✅ ALL DONE (Wang–Landau closed by Gap 4 #22)
 
 | # | Item | Status | Notes |
 |---|---|---|---|
-| 5 | **Finite-T classical dynamics (SampledCorrelations)** | ✅ | `tasks: {sampled_correlations: true}` + `sampled_correlations: {temperature, supercell, dt, n_steps, n_traj, therm_sweeps}`. Real-time Landau–Lifshitz dynamics (undamped RK4, dS/dt=−S×B) on Metropolis-thermalized states; S(q,ω)=⟨\|Σ_r e^{−iq·r}S_r(t)\|²⟩ by space-time FFT, whole q-path × energy grid in one shot. Validated: single-spin Larmor ω=gμ_B B; RK4 energy conservation (drift ~1e-8); the low-T ferromagnet S(q,ω) peaks fall on the EXACT LSWT magnon dispersion the engine computes (<5%, →0 as T→0). `magcalc/classical_dynamics.py`, `tests/test_classical_dynamics.py` |
-| 6 | **Thermal Monte-Carlo (parallel tempering)** | ✅ | `tasks: {thermal_mc: true}` + `thermal_mc: {temperatures, supercell, n_sweeps, n_equil}`. Finite-T thermodynamics on an explicit PBC supercell (built from `spin_interactions` + `_resolve_field`, same classical energy ½mᵀHm+bᵀm the minimizer uses); replica-exchange Metropolis over a T-ladder. Reports ⟨E⟩/N, C/N=Var(E)/(NkT²), magnetization, susceptibility. Validated: N free spins in a field = Langevin −L(βgμ_B·B·S) exactly; classical Heisenberg dimer ⟨E⟩(T)=−JS²L(βJS²) and C(T) from the exact partition function; parallel tempering ≡ independent single-T Metropolis. Wang–Landau still not done. `magcalc/thermal_mc.py`, `tests/test_thermal_mc.py` |
+| 5 | **Finite-T classical dynamics (SampledCorrelations)** | ✅ | `tasks: {sampled_correlations: true}` + `sampled_correlations: {temperature, supercell, dt, n_steps, n_traj, therm_sweeps}`. Real-time Landau–Lifshitz dynamics (undamped RK4, dS/dt=−S×B) on Metropolis-thermalized states; S(q,ω)=⟨\|Σ_r e^{−iq·r}S_r(t)\|²⟩ by space-time FFT, whole q-path × energy grid in one shot. Validated: single-spin Larmor ω=gμ_B B; RK4 energy conservation (drift ~1e-8); the low-T ferromagnet S(q,ω) peaks fall on the EXACT LSWT magnon dispersion the engine computes (<5%, →0 as T→0). Extended since: Langevin thermalization + the symplectic implicit-midpoint integrator + `suggest_timestep` (Gap 4 #18), and the **absolute intensity scale**, which was two bugs and is now equal to LSWT's and Sunny's (Gap 4 #17b, 2026-08-13). `magcalc/classical_dynamics.py`, `tests/test_classical_dynamics.py`, `tests/test_classical_absolute_normalization.py` |
+| 6 | **Thermal Monte-Carlo (parallel tempering)** | ✅ | `tasks: {thermal_mc: true}` + `thermal_mc: {temperatures, supercell, n_sweeps, n_equil}`. Finite-T thermodynamics on an explicit PBC supercell (built from `spin_interactions` + `_resolve_field`, same classical energy ½mᵀHm+bᵀm the minimizer uses); replica-exchange Metropolis over a T-ladder. Reports ⟨E⟩/N, C/N=Var(E)/(NkT²), magnetization, susceptibility. Validated: N free spins in a field = Langevin −L(βgμ_B·B·S) exactly; classical Heisenberg dimer ⟨E⟩(T)=−JS²L(βJS²) and C(T) from the exact partition function; parallel tempering ≡ independent single-T Metropolis. Wang–Landau closed separately by Gap 4 #22. **KNOWN DEFECT (2026-08-13, still open):** `build_supercell` assembles `H` from `spin_interactions` alone, so it carries **no single-ion anisotropy** — measured on S06, where `H_zz` came back as the bare exchange sum and D = 19 was simply absent, while the docstring calls `H` "the exchange/anisotropy Hessian". It feeds `thermal_mc`, `wang_landau`, `static_correlations` and the classical `sampled_correlations`. It is a *different* builder from the annealer's (`MagCalc._extract_classical_quadratic`, verified correct), so nothing above is affected. `OPEN_WORK.md` item 11. `magcalc/thermal_mc.py`, `tests/test_thermal_mc.py` |
 | 7 | **Ewald dipole-dipole** | ✅ | `dipole_dipole: {method: ewald}`; Sunny to 1.3e-8; truncated→Ewald convergence (needs no Julia). `tests/test_ewald.py` |
 | 8 | **LSWT 1/S corrections** | ✅ | `tasks.corrections`; Sunny + textbook square AFM: dE=−0.157947, dS→0.1966. `magcalc/corrections.py`, `tests/test_corrections.py` |
 | 9 | **SCGA (paramagnetic diffuse scattering)** | ✅ | `tasks: {scga: true}` + `scga: {temperature, mesh_density, cross_section}`. Self-consistent Gaussian approximation: classical spins, hard length constraint softened to a global Lagrange multiplier λ, static S(q) = kT·pref†(λ+J(q))⁻¹pref with λ from the spin sum rule. SAME `fourier_exchange_matrix` J(q) as the LT guard; single-λ (one symmetry class — Bravais + kagome/pyrochlore-type, refuses inequivalent sublattices). Above T_N, so the LSWT ground-state guard is auto-skipped for a pure-SCGA run. Validated: exact classical-chain closed form (λ=√(4J²+(3kT/S²)²), S(q)=3kT/(λ+2Jcosq)) to 1e-9; **Sunny 0.8.1 SCGA** on square-lattice AND kagome AFM — λ and S(q) to 6 digits (matches `ssf_perp`, apply_g, (2/3)Tr at q→0); sum rule + high-T flat limit. `magcalc/scga.py`, `tests/test_scga.py` |
@@ -168,8 +178,9 @@ guard refuses). Never silently wrong.
   decimals, degrading every fitted value on open. The rule now is **the file is the
   base**: the whole document is kept and only genuinely-edited keys are written over
   it (`gui/src/lib/configIO.js`, mirrored in `MagCalcConfig.backendInput`). Pinned by
-  `tests/test_gui_roundtrip.py` (all 59 shipped configs through the app's open→run
-  transform, plus four run end-to-end against their own CLI run, band for band) and
+  `tests/test_gui_roundtrip.py` (every config under `examples/` through the app's
+  open→run transform — 62 in this tree, a broader glob than the smoke test's 58 —
+  plus four run end-to-end against their own CLI run, band for band) and
   `tests/test_atom_mode_explicit.py`. The native app's Run additionally posted the
   pre-`config-as-source` `{"data": …}` envelope, which the server had rejected with
   400 since a67f7cf, and fetched plots through the browser's `/api` dev-proxy prefix.
@@ -320,34 +331,53 @@ question", and it plausibly does: dilution thermodynamics, open-boundary/finite-
 effects and diluted S(q,ω) are all reachable now. 16b buys LSWT *spectra* of a
 disordered system, which is a different question and should wait until one is asked.
 
-### Still open (all phases), 2026-08-04
+### Still open, updated 2026-08-13
 
-| # | Item | Phase | Why it is open |
-|---|---|---|---|
-| — | ~~Classical S(q,ω) absolute normalization~~ | 3 | ✅ **CLOSED 2026-08-13** — see the row added to Phase 1 below |
-| — | **Config-surface coverage** | — | AUDITED 2026-08-04: **11 of 69 documented config keys never appear in `tests/`** — see the section below. The recurring shape is that the FUNCTION is tested while the CONFIG PATH to it is not, which is precisely how a wiring bug survives |
+**Every numbered Gap 4 item is closed** — #24b and the classical-normalization item,
+the last two, landed 2026-08-13 — **and so is every follow-up those closures opened**,
+the last of them (the classical window's `subtract_elastic` pairing) on 2026-08-16.
+Follow-up work lives in `OPEN_WORK.md` with its injection point and its oracle; the
+table here is only the index, and it is currently all strikethrough.
 
-Everything else on the original Gap 4 list is closed. Two of the closures (#16b,
-#26) delivered *capability* that the corresponding Sunny tutorials did not exercise
-for months; **both are now exercised** (S06 2026-08-13, S09 2026-08-13), and each
-port found something the capability's own tests had missed — a 3-orders-of-magnitude
-performance wall in the CP^(N−1) derivative for #26, and two bugs in `sun/kpm.py` for
-#16b. The tutorial table below still tracks port status separately and deliberately
-does not inherit the engine's status: that separation is what made both gaps
-visible.
+| Item | Where | Why it is open |
+|---|---|---|
+| ~~Classical S(q,ω) absolute normalization~~ | — | ✅ **CLOSED 2026-08-13** — Phase 1 row #17b |
+| ~~Ewald + rotating-frame single-k (#24b)~~ | — | ✅ **CLOSED 2026-08-13** — Phase 2 row #24b |
+| ~~No time-domain window on the classical S(q,ω)~~ | — | ✅ **CLOSED 2026-08-15** — `window: cosine` added (Sunny's lag window), OPT-IN. Pinned by the exact identity cos²(x) = ½ + ¼e^{2ix} + ¼e^{−2ix}, i.e. windowing ≡ convolving with [¼, ½, ¼], to 1.1e-16. It is not the default here because that same one-bin smear hits the elastic delta, which `c2q` then multiplies by ω/kT = 31 — measured 9.10 in one bin against a whole band sum of 0.5. Pair it with the new `subtract_elastic`. `OPEN_WORK.md` items 12 and 15 |
+| ~~`thermal_mc.build_supercell` carries no single-ion anisotropy~~ | — | ✅ **CLOSED 2026-08-15** — `thermal_mc.onsite_quadratic` reads the terms from the model's own `_compute_sia_terms` and extracts (H, b) by exact probing; rank-k ≥ 4 Stevens now RAISES rather than vanishing. Pinned to the closed-form single-spin partition function; 5 of 6 new tests confirmed failing before. No shipped config was affected. `OPEN_WORK.md` item 11 |
+| ~~The CP^(N−1) sampler does not equilibrate at low kT~~ | — | ✅ **CLOSED 2026-08-15** — the Metropolis step size is tuned to a target acceptance over the first half of the thermalization and held fixed for the measured half, and the residual energy drift is reported (`on_unequilibrated`). Pinned against the sampler's OWN partition function in closed form (Fubini–Study ⇒ \|z\|² uniform on the simplex). The fixed-step sampler was 32 % wrong at kT = 1 with 99.5 % acceptance. `OPEN_WORK.md` item 13 |
+| ~~The two dipolar prefactors disagree at 1.2e-5~~ | — | ✅ **CLOSED 2026-08-15** — `DIPOLE_PREFACTOR_MEV_A3` is now DERIVED as `MU0_MUB2_MEV_A3/(4π)` from Sunny's full-precision constant, instead of an independently typed 0.05368216. Taken as a deliberate accuracy change and the Ewald oracle re-run (21 passed), not a widened tolerance. `OPEN_WORK.md` item 14 |
+| ~~Config-surface coverage~~ | — | ✅ **CLOSED 2026-08-15**, all three follow-ups. Keys are enumerated from the CODE (`tests/config_keys.py`, 194 keys / 21 blocks — it immediately found `calculation.h2_rel_tolerance`, documented and read by the runner but named by no test, the `imaginary_rel_tolerance` shape repeating); discovery is by CONTENT rather than a glob plus a hand-list; and the smoke test now FAILS on any warning outside a reasoned allow-list. The escalation's first run found 7 shipped configs on the deprecated `type: spiral`, of which only one ever warned (the deprecation fires once per process) — all migrated, pinned by an exact identity and by an order-independent grep. `OPEN_WORK.md` item 5 |
+| ~~`window: cosine` is a trap without `subtract_elastic`~~ | — | ✅ **CLOSED 2026-08-16** — `classical_dynamics.check_elastic_leakage`, on both samplers and both config blocks (`on_elastic_leakage: warn\|error\|off`). It REPORTS rather than deciding — implying `subtract_elastic` would silently change what the config asked for — and it triggers on a computed number, the amplification c2q(Δω) at the first bin, which it names; quiet unless it reaches 2 (kT ≲ Δω/1.6), since below that the window costs only the one bin of Hann broadening it advertises. Oracle: item 12's four rows, with the factor checked against `classical_to_quantum_factor` itself. `OPEN_WORK.md` item 15 |
+
+Two of the Gap 4 closures (#16b, #26) delivered *capability* that the corresponding
+Sunny tutorials did not exercise for months; **both are now exercised** (S06 and S09,
+both 2026-08-13), and each port found something the capability's own tests had missed
+— a 3-orders-of-magnitude performance wall in the CP^(N−1) derivative for #26, and two
+bugs in `sun/kpm.py` for #16b. The tutorial table below tracks port status separately
+and deliberately does not inherit the engine's status: that separation is what made
+both gaps visible.
 
 Convention difference, not a gap: Sunny's `ssf_perp` applies the g-tensor by
 default (4× at g = 2). pyMagCalc's S(Q,ω) is spin-only = `apply_g=false`.
 
 ---
 
-## Sunny tutorial ports — 8 of 9, updated 2026-08-13
+## Sunny tutorial ports — 9 of 9, updated 2026-08-13
 
-`examples/sunny_tutorials/README.md` has the per-tutorial detail.
+`examples/sunny_tutorials/README.md` has the per-tutorial detail and is the
+authoritative row-by-row record.
 
 | ported & pinned | ported, not pinned | not ported |
 |---|---|---|
-| 01, 02, 03, 04, 05, **06**, 08 | 07 (Ewald *engine* pinned; this config's spectrum not compared) | 09 |
+| 01, 02, 03, 04, 05, **06**, 08, **09** | 07 (Ewald *engine* pinned to Sunny at 1.3e-8; this config's own spectrum never compared) | — |
+
+**All nine are ported as of 2026-08-13**, 06 and 09 being the last two. The one
+remaining caveat is 07, which is only *transitively* justified: the engine it
+exercises is pinned, the pyrochlore's own bands are not. Sunny's example works in
+kelvin (J₁ = 0.304 K) and reshapes to the primitive cell before minimizing, so a real
+comparison has to reconcile units and land on the same dipolar ground state. Treat
+S07 as a worked example, not as a validated result.
 
 **06 is PORTED as of 2026-08-13**, at Sunny's own L = 40 and as a real quench.
 Pinned to Sunny 0.8.1 at **5.4e-13** — the energy of an ARBITRARY coherent-state
@@ -444,8 +474,10 @@ physics); then `kitaev`; then the guard tolerances; then the combination matrix.
 
 ### Progress
 
-**1. Config smoke test — ✅ DONE.** `tests/test_config_smoke.py` runs all 52 shipped
-configs and fails on an ERROR *log record*, not just an exception (the runner catches
+**1. Config smoke test — ✅ DONE.** `tests/test_config_smoke.py` runs every shipped
+config — **58 in this tree, 54 on a fresh clone** (the four under
+`examples/future_exmaples/` are gitignored, so "staging is covered" is true on one
+machine only) — and fails on an ERROR *log record*, not just an exception (the runner catches
 and logs, so exception-only assertions see nothing). It immediately found a live bug:
 the deprecated `propagation_vector -> single_k` mapping inserts `cone_angle_deg: None`
 explicitly, and one of the two read sites lacked the `or 0.0` guard, so `float(None)`

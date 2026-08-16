@@ -371,3 +371,27 @@ def test_kpm_is_treated_as_an_LSWT_task_by_the_up_front_guards(tmp_path):
                          "n_sweeps": 10, "n_equil": 5}
     msg = _run(tmp_path, copy.deepcopy(cfg))
     assert msg is not None and "NOT a classical" in msg
+
+
+def test_h2_rel_tolerance_reaches_the_guard_from_the_config(tmp_path):
+    """`calculation.h2_rel_tolerance` must actually move guard 3's threshold.
+
+    Found by `tests/test_config_key_coverage.py`, which enumerates config keys from
+    the CODE: this key is documented in CLAUDE.md, read by `runner.py`, and until now
+    was named by no test and no shipped config -- the same shape as
+    `calculation.imaginary_rel_tolerance`, which is what motivated auditing from the
+    source in the first place. `SUNModel.is_stable_at`'s `rel_tol` had unit coverage;
+    the CONFIG PATH to it had none, and a typo in the key name would have been
+    silent (it has a default).
+
+    Bracketed either side of a known instability rather than checked one-sided: the
+    frustrated chain's H2 goes about 5e-2 negative relative to the reference scale,
+    so a tolerance below that must still refuse and one well above must accept.
+    """
+    strict = _run(tmp_path, _chain_cfg(h2_rel_tolerance=1e-6), name="strict.yaml")
+    assert strict is not None and "NOT a classical minimum" in strict
+
+    # A tolerance wider than the instability turns the guard off for this model --
+    # which is the point: the number is the knob, not the verdict.
+    loose = _run(tmp_path, _chain_cfg(h2_rel_tolerance=10.0), name="loose.yaml")
+    assert loose is None, f"h2_rel_tolerance did not reach the guard: {loose}"

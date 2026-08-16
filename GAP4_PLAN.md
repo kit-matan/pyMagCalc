@@ -1,24 +1,45 @@
 # Plan — closing the 12 remaining Sunny gaps (Gap 4)
 
-Companion to `GAP_STATUS.md` §"Gap 4 — Still open" (audit of 2026-08-03). One entry
-per open item, ordered into phases by value/effort. Effort figures are estimates in
-working days for someone who already knows this codebase; treat the *ordering* as the
-firm part and the numbers as indicative.
+Companion to `GAP_STATUS.md` §"Gap 4 — parity with Sunny 0.8.1" (audit of
+2026-08-03). One entry per item, ordered into phases by value/effort. Effort figures
+were estimates in working days for someone who already knows this codebase; the
+*ordering* was the firm part and the numbers indicative. **All items are now closed —
+see the status box below; this is a record, not a work list.**
 
 **Keep this file updated when an item moves, and delete it when the table is empty.**
 
-> **Status 2026-08-04.** All four phases worked through. Closed: #17, #19, #23, #27
-> (Phase 1); #25, #21, #24a (Phase 2); #18, #22 (Phase 3); #16a, #16b, #26 (Phase 4).
-> Open: **#24b** (estimate revised 3 d → 1 w, derivation written up below) and the
-> classical S(q,ω) absolute normalization opened by #17. **#20 closed 2026-08-04.**
+> ## ✅ **COMPLETE — every item on this plan is closed (2026-08-13).**
 >
-> Two SHIPPED BUGS were found along the way, both in field handling and both silent:
-> the Zeeman term was dropped entirely in `mode: SUN`, and `H_dir` was flattened to a
-> scalar so every field in every engine was forced along +z. Neither was visible to a
-> suite in which no model applies a field off the z axis. See GAP_STATUS's trap list.
+> Closed 2026-08-03/04: #17, #19, #23, #27 (Phase 1); #25, #21, #24a (Phase 2); #18,
+> #22, #20 (Phase 3); #16a, #16b, #26 (Phase 4).
+> Closed **2026-08-13**, the last two: **#24b** (Ewald + rotating-frame single-k) and
+> the **classical S(q,ω) absolute normalization** that #17 opened (recorded as #17b in
+> `GAP_STATUS.md`).
 >
-> Tutorials 06 and 09 remain unported, but **no longer for want of engine
-> capability** — both are now reference-state problems. See GAP_STATUS.
+> **The summary table at the bottom is now empty of open work, so by this file's own
+> rule it is due for deletion.** It has NOT been deleted, deliberately: its per-item
+> retrospectives — the five successive characterizations of #24b, the corrected #22
+> oracle, the #26 factor-of-two that was not a factor of two — are the part worth
+> keeping, and they are the reason each item cost what it did. Read it as a closed
+> record, not as a work list. The live work list is `OPEN_WORK.md`.
+>
+> **Follow-ups these closures opened** (all in `OPEN_WORK.md`, none of them Gap 4
+> parity items): no time-domain window on the classical S(q,ω) — the scale is now
+> right, the lineshape still implies a rectangular window; `thermal_mc.build_supercell`
+> carries no single-ion anisotropy; the CP^(N−1) sampler does not equilibrate at low
+> kT; two config-coverage follow-ups.
+>
+> Three SHIPPED BUGS were found along the way, all silent. Two in field handling: the
+> Zeeman term was dropped entirely in `mode: SUN`, and `H_dir` was flattened to a
+> scalar so every field in every engine was forced along +z — neither visible to a
+> suite in which no model applies a field off the z axis. The third, found while
+> writing the S06 config: `method: anneal`, the documented default ground-state
+> search, could return a local **MAXIMUM** on every seed. See GAP_STATUS's trap list.
+>
+> **Tutorials 06 and 09 are now ported** (2026-08-13), which is what closed the last
+> capability question here: #26 and #16b had delivered capability that nothing
+> exercised for months, and each port found something the capability's own tests had
+> missed. All nine Sunny tutorials are ported.
 
 ---
 
@@ -133,12 +154,12 @@ porting Sunny's path tables by hand.
 
 ---
 
-## Phase 2 — parity for work you would publish — ✅ 3 of 4 DONE (2026-08-03)
+## Phase 2 — parity for work you would publish — ✅ ALL DONE (#25/#21/#24a 2026-08-03; #24b 2026-08-13)
 
 These affect results, not convenience. Each is contained but touches validated code,
 so each needs its identity test *before* the refactor, not after.
 
-### #25 Blume–Maleev / arbitrary polarization frames — ~2 days
+### #25 Blume–Maleev / arbitrary polarization frames — ✅ DONE (~2 days)
 
 **What.** Cross-sections are currently P ∥ q only (`perp`, `trace`, `chiral`, `sf±`,
 components). Sunny's `ssf_custom_bm` supports an arbitrary polarization axis in the
@@ -157,7 +178,7 @@ point — the whole change should land there plus the validator in
 what `tests/test_polarized.py` was built to pin — extend it rather than starting a
 new file.
 
-### #21 General pair couplings in SU(N) — ~3 days
+### #21 General pair couplings in SU(N) — ✅ DONE (~3 days)
 
 **What.** Arbitrary two-site operators (Sunny `set_pair_coupling!`). **Most of this
 already exists**: the audit added the operator-pair machinery for biquadratic, so
@@ -357,7 +378,7 @@ supercell dimension.
 
 ---
 
-## Phase 3 — new machinery — ✅ #18, #22 DONE (2026-08-04); #20 deferred
+## Phase 3 — new machinery — ✅ ALL DONE (2026-08-04; #20 was not deferred after all)
 
 Genuinely new code rather than extensions. Independent of each other; can be done in
 any order or in parallel.
@@ -419,7 +440,7 @@ so this drops to Phase 4. Ask before building.
 
 ---
 
-## Phase 4 — ✅ #16 step 1 DONE (2026-08-04); the rest still gated
+## Phase 4 — ✅ ALL DONE (2026-08-04), and both are now exercised by a tutorial port
 
 Both are multi-week. Neither is on the critical path for anything currently in
 `examples/`. Do not start either without a specific calculation that requires it.
@@ -470,12 +491,31 @@ is `SUNModel.local_field`, already built for the ground-state search, so propaga
 instead of minimizing is a few dozen lines. The N=2 dipole-limit gate passes to
 4.8e-10, which is the strong result here.
 
-What did NOT close is the finite-T S(q,ω) built on top: it peaks at roughly HALF the
-SU(N) LSWT energy (1.95x, stable across kT, with real spectral weight, so not noise).
-The EOM and integrator are independently verified, so the defect lies between the
-trajectory and the spectrum -- CP^(N-1) thermal sampling, the moment operator, or a
-genuine factor in the N > 2 correspondence. Left as a visible xfail rather than
-guessed at. **S04 and S06 remain blocked** on resolving it.
+**The finite-T S(q,ω) on top of it did close, and the way it did is the lesson.** It
+was recorded here as peaking at roughly HALF the SU(N) LSWT energy — "1.95x, stable
+across kT, with real spectral weight, so not noise" — and left as a visible xfail
+rather than guessed at, on the reasoning that the EOM and integrator were
+independently verified so the defect had to lie between the trajectory and the
+spectrum. **There was no factor of two.** Two ordinary mistakes were stacked, and
+neither was in the code being suspected:
+
+1. **No supercell.** The dynamics ran on the CHEMICAL cell — two sites — and was
+   compared with the infinite-lattice LSWT band at q = 0.3. A two-site system cannot
+   represent that wavevector at all, so the "spectrum" was a two-site normal mode.
+   LSWT needs no supercell because it works in q-space; real-space dynamics does.
+2. **Temperature.** Classical dynamics renormalizes a mode DOWNWARD at finite kT — 21 %
+   below the band at kT = 0.15, a real effect — and only kT → 0 recovers the harmonic
+   value. Measured hardening at q = (0.25, 0, 0), LSWT band 1.9391: kT = 0.30 → 0.077,
+   0.15 → 1.534, 0.06 → 1.841, **0.02 → 1.918 (0.989 of the band)**.
+
+Both are pinned in `tests/test_sun_dynamics.py`, and the discriminating test is the
+*trend*: a constant offset would not shrink as kT falls. No xfail remains in the
+suite. **S04 and S06 are both ported** (S06 2026-08-13).
+
+The transferable part: "stable across kT, real spectral weight, ratio near 2" is the
+signature this project treats as a bug — and it was, but a clean-looking constant
+factor can also be two unrelated setup errors that happen to compose. Suspecting the
+new machinery was the wrong instinct; the harness around it was never checked.
 
 ---
 
@@ -490,18 +530,25 @@ guessed at. **S04 and S06 remain blocked** on resolving it.
 | ✅ 2 | 25 | Blume–Maleev polarization frames | 2 d | low–med | Sunny `ssf_custom_bm`; P∥q reduces to `sf±` |
 | ✅ 2 | 21 | General pair couplings | 3 d | med | biquadratic via the general path (exact) |
 | ✅ 2 | 24a | Mixed-spin SU(N) | 3 d | med–high | decoupled sublattices (exact) |
-| 2 | 24b | Ewald + rotating-frame single-k | **1 w** | med–high | commensurate k vs supercell (exact) |
+| ✅ 2 | 24b | Ewald + rotating-frame single-k | **1 w** | med–high | commensurate k vs supercell (exact), then Sunny at incommensurate k (1.3e-8) |
 | ✅ 3 | 18 | Langevin / ImplicitMidpoint | 3 d | low–med | existing exact Langevin-function tests |
-| ✅ 3 | 22 | Wang–Landau | 3 d | low | Beale's exact 2-D Ising g(E) |
+| ✅ 3 | 22 | Wang–Landau | 3 d | low | the classical dimer's g(E), EXACTLY FLAT in closed form (**not** Beale's Ising g(E) — see the item) |
 | ✅ 3 | 20 | NeXus binning | 4 d | low | Sunny `load_nxs`; count conservation |
 | ✅ 4 | 16a | Vacancies + open boundaries (classical) | 3 d | — | exact restriction identity; analytic bond counts |
 | ✅ 4 | 16b | Bond disorder in LSWT (via KPM) | ~2 h | — | σ=0 bit-identical; Hermiticity 9e-16; spread monotone in σ |
 | ✅ 4 | 26 | SU(N) classical dynamics | ~1 d | — | N=2 reduces to Landau–Lifshitz to 4.8e-10; low-T S(q,ω) within 1.1% of the LSWT band |
 
-Phase 1 landed 2026-08-03 (see GAP_STATUS.md for what each was pinned to).
-Phases 2–3 total roughly four more weeks and close 7 of the 9 remaining line
-items (#24 is two).
-Phase 4 is deliberately open-ended.
+**All 14 rows are closed.** Phase 1 landed 2026-08-03, Phases 2–3 and Phase 4's
+#16a/#16b/#26 on 2026-08-03/04, and the last two — #24b and the classical
+normalization — on 2026-08-13. `GAP_STATUS.md` records what each was pinned to; `OPEN_WORK.md` carries
+the follow-ups they opened.
+
+The estimates are left as written for calibration. Two are worth noting against the
+outcome: #24b was estimated at 3 d, revised to 1 w after four wrong characterizations,
+and the implementation itself took about an hour once the formula was in hand — the
+week went into building the oracle that caught the transcription bug. #26's headline
+work (~1 d) was right, and the item then sat for nine days behind a "factor of two"
+that was two setup errors in the test harness.
 
 ## Non-goals
 

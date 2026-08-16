@@ -420,7 +420,8 @@ Methods:
 
 * `anneal` (= `monte_carlo`) -- **the default choice.** Metropolis with a geometric
   cooling schedule (SpinW `anneal`; Sunny `LocalSampler`'s uniform / flip / delta
-  proposal mix), then an L-BFGS polish so the answer is a true stationary point.
+  proposal mix), then a `steepest_descent` polish that is **kept only if it lowers
+  the energy** (see the warning below -- it used to be taken unconditionally).
   Crosses barriers, so it does not get trapped. Optional: `n_sweeps`, `T_start`,
   `T_end` (meV; defaults derived from the coupling scale), `polish`.
 * `steep` (= `optmagsteep`) -- iteratively align each spin with its local field
@@ -447,6 +448,23 @@ All methods report `hits` (how many runs reached the best energy) and warn when
 `max(10, 2 x n_sites)` instead of a flat 10. **Accept a ground state only when the
 energy is reproducible across several `seed`s** -- and the guards above will catch
 you if it is not.
+
+**REPRODUCIBILITY IS NOT CORRECTNESS** (2026-08-13). That last rule is necessary and
+NOT sufficient, and this is the case that proves it: `anneal`'s `steepest_descent`
+polish used to be taken **unconditionally**, and that step aligns each spin with the
+field from everything EXCEPT itself, so it ignores the on-site block `H_ii`. With a
+large single-ion term it is not a descent step at all. On the S06 skyrmion model
+(easy-plane D = 19, one site per cell, so all 12 bonds fold into `H_ii`) Metropolis
+found the exact minimum E = -4.644706 and the polish walked it up to **+0.520665, a
+local MAXIMUM** -- on every seed, at 500 and 5000 sweeps, so `minimize_energy`
+reported "4 of 4 runs hit the minimum". **A deterministic bug downstream of a
+stochastic search reproduces perfectly.** What caught it was an analytic minimum in
+closed form, not a repeat run. Both halves are fixed (the polish is kept only if it
+lowers the energy; `steepest_descent` returns the best state it saw), and the shipped
+configs were swept -- only S06 and the staging FeI2 config carry both `anneal` and an
+on-site term, and FeI2's ground state was unchanged. Note the second line of defence
+is the guards above, so a **direct `minimize_energy` call outside the runner**, or a
+config running `on_imaginary: warn|off`, had none.
 
 ## 5c. SU(N) mode (single-ion / multipolar excitations)
 
@@ -622,8 +640,11 @@ Reference: `magcalc/sun/entangled.py`, `tests/test_entangled_units.py`.
 
 ## 5f2. Test suite: fast by default, FULL before merge
 
-`pytest` runs the FAST suite (~4 min): the `slow` marker (pytest.ini) holds the
-deep validations (ED oracles, convergence sweeps, integration runs). Rules:
+`pytest` runs the FAST suite (**654 of 832 collected tests**): the `slow`
+marker (pytest.ini) holds the deep validations (ED oracles, convergence sweeps,
+integration runs). The last full gate was **837 passed, 3 skipped** (`pytest -m ""`
+from the workspace root, 2026-08-16, 46 min under load, which also picks up
+`fMagCalc/tests`). Rules:
 
 - iterate with `pytest`; run a feature's deep checks with `pytest -m slow -k <name>`;
 - **before merging to master, ALWAYS run `pytest -m ""` (everything)** -- the fast
@@ -672,6 +693,22 @@ kpm: {e_min: 0, e_max: 10, e_step: 0.05, fwhm: 0.1, tol: 0.02}    # or moments: 
   supercell built from `spin_interactions` + `_resolve_field`, same classical energy
   `1/2 m^T H m + b^T m` as `annealing`. Validated vs the Langevin function (free spins
   in field) and the exact classical dimer ⟨E⟩(T), C(T).
+  **ON-SITE ANISOTROPY WAS MISSING FROM THIS BUILDER UNTIL 2026-08-15.** `H` came
+  from the bond list alone, so `single_ion_anisotropy` / `sia_matrix` / `stevens`
+  never reached **`thermal_mc`, `wang_landau`, `static_correlations` or the classical
+  `sampled_correlations`** -- an anisotropic model was silently sampled as
+  exchange-only in all four (measured on S06: `H_zz` was the bare exchange sum, with
+  D = 19 simply absent), while the docstring already called `H` "the
+  exchange/anisotropy Hessian". Every test here was bond-only, so the property had
+  never been false in the suite -- the `ref_pair` / `steepest_descent` shape again.
+  `thermal_mc.onsite_quadratic` now reads the terms from the MODEL'S OWN assembly
+  (`_compute_sia_terms`, so targeting, parameter resolution and the RCS
+  renormalization cannot drift from LSWT) and extracts (H, b) by exact numeric
+  probing. Pinned against the closed-form single-spin partition function in
+  `tests/test_thermal_mc.py`; 5 of its 6 new tests were confirmed to FAIL before.
+  **A Stevens term of rank k >= 4 now RAISES here**: its classical polynomial is
+  quartic/sextic, so `E = 1/2 m^T H m + b^T m` cannot carry it at all -- use
+  `mode: SUN`. Refusing beats sampling the model without it.
 * **Wang-Landau** (`magcalc/thermal_mc.py`) -- flat-histogram sampling of g(E), so
   the whole T sweep is post-processing rather than one simulation per T. Validated on
   the classical dimer, whose g(E) is EXACTLY FLAT in closed form.
@@ -687,8 +724,9 @@ kpm: {e_min: 0, e_max: 10, e_step: 0.05, fwhm: 0.1, tol: 0.02}    # or moments: 
   produces a magnetization of the right magnitude and the wrong sign.
   Validated: Larmor omega = g mu_B B, RK4 energy conservation, and the low-T
   ferromagnet peaks fall on the exact LSWT dispersion.
-  **ABSOLUTE INTENSITIES ARE COMPARABLE WITH LSWT as of 2026-08-13** -- see
-  section 6a below, which also says what the remaining lineshape caveat is.
+  **ABSOLUTE INTENSITIES ARE COMPARABLE WITH LSWT as of 2026-08-13**, and the
+  LINESHAPE can be windowed as of 2026-08-15 (`window: cosine`, opt-in -- pair it
+  with `subtract_elastic: true`) -- see section 6a below.
 * **KPM** (`magcalc/sun/kpm.py`) -- para-unitary Chebyshev expansion of the LSWT
   spectral function (Lane et al. / Sunny's `SpinWaveTheoryKPM`); O(D*M) matvecs, no
   eigensolve, for large SU(N)/entangled cells. Validated: converges to the engine's
@@ -844,18 +882,86 @@ close of the loop: a gapped low-T ferromagnet's `c2q`-corrected classical intens
 equals the LSWT band sum to ~2 %, and that band sum is pinned to Sunny in
 `tests/test_absolute_normalization.py`.
 
-Two things to know when you read an absolute number off it:
+### The time-domain window (2026-08-15) — OPT-IN, and pair it with `subtract_elastic`
 
-1. **Integrate over the feature, not the whole axis.** No time-domain window is
-   applied (Sunny multiplies by a cosine one), so a rectangular window is implied and
-   its sidelobes fall only as 1/(ω−ω₀)² — while `c2q` grows LINEARLY in ω out to the
-   Nyquist frequency π/dt, which is 157 meV at `dt: 0.02`. Integrating everything
-   therefore overshoots by ~16 % on a 4 meV band. A ±1 meV window around the band
-   gives 1.015.
-2. **`classical_to_quantum` does not make a classical spin quantum.** It fixes the
+```yaml
+sampled_correlations:     {window: cosine, subtract_elastic: true}
+sun_sampled_correlations: {window: cosine, subtract_elastic: true}
+# default for both: window: rectangular, subtract_elastic: false
+```
+
+Nothing tapered the time correlation before the ω transform, i.e. a RECTANGULAR
+window was implied, whose sidelobes fall only as 1/(ω−ω₀)² — and `c2q` grows LINEARLY
+in ω out to the Nyquist frequency π/dt, 157 meV at `dt: 0.02`, so leakage off a 4 meV
+band is amplified across a 40× wider axis (item 4 measured +16 % on the whole-axis
+integral). `window: cosine` is Sunny's fix for exactly this.
+
+**What it costs is exactly one bin, and that is provable rather than asserted:**
+cos²(x) = ½ + ¼e^{2ix} + ¼e^{−2ix}, so windowing the correlation is IDENTICAL to
+convolving the spectrum with the 3-point kernel [¼, ½, ¼] — one bin Δω = 2π/T of Hann
+broadening. Two consequences follow and are pinned in
+`tests/test_classical_window.py`: the kernel is non-negative, so the windowed S(q,ω)
+cannot dip below zero where the raw one was positive; and it sums to 1, so **the
+two-sided ω-integral and every sum rule are preserved to machine precision** — which
+is also why `tests/test_classical_absolute_normalization.py` is structurally blind to
+this change and the identity above had to be the oracle instead.
+
+**WHY IT IS OPT-IN HERE AND SUNNY'S DEFAULT THERE — measured, not preference.** That
+same one-bin smear lands on the ELASTIC delta of an ordered magnet, and `c2q` is 1 at
+ω = 0 but |ω|/kT one bin away — **31** at kT = 0.005 with Δω = 0.153 meV. On the
+gapped ferromagnetic chain (L = 24, q = 0.15; LSWT `perp` band sum 0.5):
+
+| window | `subtract_elastic` | whole-axis / LSWT | first inelastic bin |
+|---|---|---|---|
+| rectangular | false | 1.55 | 0.00006 |
+| rectangular | true | 1.40 | 0.00006 |
+| cosine | false | **2.60** | **9.10** ← 18× the whole band sum, from one bin |
+| cosine | true | 1.40 | 0.00005 |
+
+The two windows agree once the delta is removed — it *was* the entire difference. So
+turn the window on for lineshape work, and turn `subtract_elastic` on with it.
+
+**Forgetting the pairing is REPORTED, not left to this page** (2026-08-16,
+`classical_dynamics.check_elastic_leakage`, on both entry points and both config
+blocks). The warning fires only when all four hold — `window: cosine`,
+`subtract_elastic: false`, `classical_to_quantum` on, and the amplification c2q(Δω) ≥ 2
+(kT ≲ Δω/1.6, which is the condition that makes it dangerous) — and it names the factor
+it triggered on. It reports rather than deciding: making `cosine` imply
+`subtract_elastic` would silently change what the config asked for.
+
+```yaml
+sampled_correlations: {window: cosine, on_elastic_leakage: warn}   # warn | error | off
+```
+
+One thing left to know when you read an absolute number off this path:
+
+* **`classical_to_quantum` does not make a classical spin quantum.** It fixes the
    Bose weighting; the classical spin still has |S| = S where the quantum one has
    S(S+1), and a classical mode still softens at finite kT (21 % at kT = 0.15 on the
-   SU(N) chain). Compare at kT ≪ ω, and mind that a gapless magnet in a small cell
-   has a wandering order parameter that inflates the transverse weight (45 % on an
-   L = 20 Heisenberg chain at kT = 0.02) — a finite-size effect that reads exactly
-   like a normalization error.
+  SU(N) chain). Compare at kT ≪ ω, and mind that a gapless magnet in a small cell
+  has a wandering order parameter that inflates the transverse weight (45 % on an
+  L = 20 Heisenberg chain at kT = 0.02) — a finite-size effect that reads exactly
+  like a normalization error.
+
+**The CP^(N−1) sampler adapts its step size (2026-08-15).** `sigma` does not change
+the stationary distribution, only how fast the chain reaches it — which made a fixed
+`sigma` formally harmless and practically decisive: at low kT nearly every proposal
+was rejected, the chain barely moved, and `sun_sampled_correlations` returned the
+spectrum of its starting state. Measured: the SU(N) classical intensity swung
+**0.30 → 1.63** on `therm_sweeps`/`sigma` alone. It is now tuned toward
+`target_acceptance` (~0.5) over the first half of the thermalization and held fixed
+for the second half (adapting while measuring would break detailed balance), and the
+residual energy drift over that fixed half is checked against its own fluctuation:
+
+```yaml
+sun_sampled_correlations:
+  adapt_sigma: true          # default
+  target_acceptance: 0.5
+  on_unequilibrated: warn    # warn (default) | error | off
+```
+
+Pinned in `tests/test_sun_sampler_equilibration.py` against the sampler's OWN
+partition function in closed form — for a decoupled site the coherent-state energy is
+Σ_i a_i |z_i|², the Fubini–Study measure makes |z|² uniform on the simplex, so
+Z(β) = Σ_i e^{−βa_i} / Π_{j≠i} β(a_j − a_i) exactly. That pins the sampler with no
+spectrum and no reference code in the way.

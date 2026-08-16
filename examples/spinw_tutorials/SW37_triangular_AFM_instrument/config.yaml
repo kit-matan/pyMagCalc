@@ -43,7 +43,7 @@ interactions:
   - {type: heisenberg, distance: 3.0, value: J}   # triangular-lattice NN
 magnetic_structure:
   enabled: true
-  type: spiral
+  type: single_k
   k: [0.3333333333333333, 0.3333333333333333, 0.0]
   axis: [0.0, 0.0, 1.0]
 tasks: {minimization: false, dispersion: true, sqw_map: true}

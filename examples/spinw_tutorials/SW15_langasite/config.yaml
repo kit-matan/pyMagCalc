@@ -188,7 +188,7 @@ interactions:
   value: J5
 magnetic_structure:
   enabled: true
-  type: spiral
+  type: single_k
   k: [0.0, 0.0, 0.14275]
   axis: [0.0, 0.0, 1.0]
   local_directions:

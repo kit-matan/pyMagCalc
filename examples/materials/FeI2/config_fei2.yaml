@@ -1,5 +1,34 @@
-# on_imaginary: warn -- the supplied structure is not the exact classical minimum
-# of this Hamiltonian. Flagged by the ground-state guard; needs investigation.
+# FeI2 -- dipole LSWT about the TRUE classical ground state.
+#
+# THIS FILE USED TO OPEN WITH:
+#     # on_imaginary: warn -- the supplied structure is not the exact classical
+#     # minimum of this Hamiltonian. Flagged by the guard; needs investigation.
+# It is investigated, and the answer is below. The guard was right.
+#
+# FeI2 orders as a COLLINEAR 2-up-2-down stripe with k = (0, -1/4, 1/4), and a
+# rotating-frame `propagation_vector`/`single_k` structure CANNOT represent that:
+# that form rotates each successive cell by a fixed angle, so at k = 1/4 it gives
+# up / in-plane / down / in-plane. This config asserted exactly such a spiral and
+# sat ~2.5 meV/site above the minimum (-0.403 vs -2.898 meV/site), with
+# `on_imaginary: warn` carrying it past the guard.
+#
+# The fix is the real-space commensurate cell (k = 1/4 -> 4x along b and c) with
+# the ground state SEARCHED FOR rather than asserted. Monte-Carlo annealing reaches
+# E = -46.372796 meV per 16-site cell = -2.898300 meV/site, reproducibly (3-4 of 4
+# runs on seeds 0, 1, 2, 7). The guards now run at their default `error`.
+#
+# NOTE ON MODE: this is the DIPOLE engine, so -2.8983 meV/site is the classical
+# DIPOLE minimum. It is deliberately NOT the SU(N) ground state (-2.91893118
+# meV/site): a coherent state has <Sz^2> != (S n_z)^2, so with an anisotropy the
+# two genuinely differ (CLAUDE.md 5c). FeI2's famous bound state is a single-ion
+# excitation dipole LSWT structurally cannot show -- the engine warns about that on
+# every run of this file. For the physics use `config_fei2_sun.yaml`, which is
+# validated against Sunny band by band. This one is the dipole reference.
+#
+# `tests/test_sun.py` reads this file as its HAMILTONIAN source and strips the two
+# structure keys in memory (see `_fei2_cfg` there), so the Sunny-pinned SU(N)
+# comparisons keep the chemical cell and their own non-diagonal supercell. That
+# separation is what made fixing the structure here possible at all.
 experiment:
   name: FeI2_LSWT
   description: Replication of Sunny.jl FeI2 tutorial (Anisotropic Exchange + SIA)
@@ -21,6 +50,9 @@ crystal_structure:
     charge: 2
   atom_mode: symmetry
   magnetic_elements: [Fe]
+  # k = (0, -1/4, 1/4) -> 4x along b and c. Declared explicitly rather than 'auto'
+  # because there is no `magnetic_structure` block for 'auto' to read.
+  magnetic_supercell: [1, 4, 4]
 parameters:
   J1pm: -0.236
   J1pmpm: -0.161
@@ -100,17 +132,10 @@ interactions:
     ref_pair: [Fe, Fe]
     distance: 9.74
     offset: [1, 2, 1]
-magnetic_structure:
-  type: propagation_vector
-  k: [0, -0.25, 0.25]
-  u: [0, 0, 1]
-  v: [1, 0, 0]
-  subtype: planar
-minimization:
-  enabled: true
-  method: L-BFGS-B
-  tolerance: 1e-5
-  max_iterations: 2000
+# No `magnetic_structure`: the ground state is SEARCHED FOR, not asserted -- that is
+# the whole correction here. Annealing crosses barriers, which a 16-site frustrated
+# easy-axis cell needs (CLAUDE.md, "Finding the ground state").
+minimization: {enabled: true, method: anneal, num_starts: 4, n_sweeps: 2000, seed: 0}
 plotting:
   show_plot: false
   save_plot: true
@@ -126,5 +151,3 @@ q_path:
 tasks:
   minimization: true
   dispersion: true
-calculation:
-  on_imaginary: warn

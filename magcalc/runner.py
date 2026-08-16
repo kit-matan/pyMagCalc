@@ -1393,7 +1393,13 @@ def run_calculation(config_file: str):
                     sigma=float(sd_cfg.get('sigma', 0.1)),
                     classical_to_quantum=bool(
                         sd_cfg.get('classical_to_quantum', True)),
-                    subtract_elastic=bool(sd_cfg.get('subtract_elastic', False)))
+                    subtract_elastic=bool(sd_cfg.get('subtract_elastic', False)),
+                    window=sd_cfg.get('window', 'rectangular'),
+                    on_elastic_leakage=sd_cfg.get('on_elastic_leakage', 'warn'),
+                    adapt_sigma=bool(sd_cfg.get('adapt_sigma', True)),
+                    target_acceptance=float(
+                        sd_cfg.get('target_acceptance', 0.5)),
+                    on_unequilibrated=sd_cfg.get('on_unequilibrated', 'warn'))
                 logger.info(
                     f"SU(N) SampledCorrelations (kT={kT} meV, {calculator.model.L} sites): "
                     f"S(q,w) {sqw.shape}, E up to {w.max():.3g} meV.")
@@ -1428,6 +1434,9 @@ def run_calculation(config_file: str):
                     seed=int(sd.get('seed', 0)),
                     classical_to_quantum=bool(
                         sd.get('classical_to_quantum', True)),
+                    window=sd.get('window', 'rectangular'),
+                    subtract_elastic=bool(sd.get('subtract_elastic', False)),
+                    on_elastic_leakage=sd.get('on_elastic_leakage', 'warn'),
                     **_disorder_opts(sd))
                 logger.info(
                     f"SampledCorrelations (kT={kT} meV): S(q,w) {res.sqw.shape} "

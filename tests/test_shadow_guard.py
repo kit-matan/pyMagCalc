@@ -182,3 +182,68 @@ def test_provenance_reports_whether_the_guard_is_active():
     assert isinstance(provenance.startup_guard_active(), bool)
     text = provenance.describe(verbose=True)
     assert "startup guard:" in text
+
+
+# --------------------------------------------------------------------------
+# The guard is now ARMED AUTOMATICALLY on first CLI use (OPEN_WORK item C).
+#
+# Shipping the guard was not enough: nothing installed it, so every fresh
+# virtualenv started unprotected -- and "unprotected" here means the one failure
+# mode `provenance.py` structurally cannot report (a stale copy winning outright).
+# The build-time hook that would have fixed it was rejected, correctly: writing
+# into site-packages from `pip install` can break the install itself. Doing it on
+# the first CLI RUN has the same effect without that hazard, which is what these
+# pin -- in a THROWAWAY venv, so the developer's own interpreter is untouched.
+def _throwaway_venv(tmp_path):
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip",
+                    "--system-site-packages", str(tmp_path / "v")], check=True,
+                   capture_output=True)
+    venv = tmp_path / "v"
+    return venv, next(venv.glob("lib/python*/site-packages"))
+
+
+def _cli(venv, args, env_extra=None):
+    env = dict(os.environ, PYTHONPATH=str(LIVE_ROOT))
+    env.pop("MAGCALC_SHADOW_GUARD", None)
+    env.update(env_extra or {})
+    return subprocess.run([str(venv / "bin" / "python"), "-m", "magcalc.cli", *args],
+                          capture_output=True, text=True, env=env)
+
+
+@pytest.mark.slow
+def test_first_cli_run_arms_the_guard_in_a_fresh_environment(tmp_path):
+    """A fresh venv starts unprotected; ONE `magcalc` command must fix that."""
+    venv, site_packages = _throwaway_venv(tmp_path)
+    assert not (site_packages / "zz_magcalc_shadow_guard.pth").exists()
+
+    proc = _cli(venv, ["where"])
+    assert (site_packages / "magcalc_shadow_guard.py").is_file(), proc.stderr
+    assert (site_packages / "zz_magcalc_shadow_guard.pth").is_file(), proc.stderr
+    assert "shadow guard" in proc.stderr.lower()
+
+    # ... and says nothing the second time: this must not be a per-run banner.
+    again = _cli(venv, ["where"])
+    assert "Installed the magcalc shadow guard" not in again.stderr
+
+
+@pytest.mark.slow
+def test_the_env_var_opt_out_also_suppresses_the_install(tmp_path):
+    """MAGCALC_SHADOW_GUARD=off is the deliberate-second-checkout escape hatch (a
+    git worktree, a version comparison). It has to keep working, or the fix would
+    make that workflow impossible rather than merely noisy."""
+    venv, site_packages = _throwaway_venv(tmp_path)
+    _cli(venv, ["where"], env_extra={"MAGCALC_SHADOW_GUARD": "off"})
+    assert not (site_packages / "zz_magcalc_shadow_guard.pth").exists()
+
+
+def test_arming_never_fails_the_command(monkeypatch):
+    """A read-only or oddly-laid-out prefix must cost a debug line, not the run.
+    This is the same rule the guard itself follows: a diagnostic that can break a
+    calculation is worse than the bug it reports."""
+    from magcalc import _shadow_guard_install as gi
+    from magcalc import cli
+
+    monkeypatch.delenv("MAGCALC_SHADOW_GUARD", raising=False)
+    monkeypatch.setattr(gi, "paths", lambda: (_ for _ in ()).throw(
+        SystemExit("cannot locate site-packages")))
+    cli._arm_shadow_guard()          # must not raise

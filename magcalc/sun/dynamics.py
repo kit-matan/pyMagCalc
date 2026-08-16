@@ -224,11 +224,112 @@ def metropolis_sweep(model, Z, beta, rng, sigma=0.5):
     return acc / max(model.L, 1)
 
 
-def thermalize(model, Z, kT, n_sweeps, rng, sigma=0.5):
+class ThermalizeInfo:
+    """What `thermalize` actually did -- the diagnostics the sampler used to hide.
+
+    `sigma` the step size it ended on, `acceptance` the rate over the fixed-sigma
+    second half, `energies` the per-sweep energy, `drift` the residual relaxation
+    over that second half measured in units of its own fluctuation, and
+    `equilibrated` the verdict (`drift <= drift_tolerance`).
+    """
+
+    __slots__ = ("sigma", "acceptance", "energies", "drift", "equilibrated")
+
+    def __init__(self, sigma, acceptance, energies, drift, equilibrated):
+        self.sigma = float(sigma)
+        self.acceptance = float(acceptance)
+        self.energies = np.asarray(energies, float)
+        self.drift = float(drift)
+        self.equilibrated = bool(equilibrated)
+
+    def __repr__(self):
+        return (f"ThermalizeInfo(sigma={self.sigma:.4g}, "
+                f"acceptance={self.acceptance:.3f}, drift={self.drift:.2f}, "
+                f"equilibrated={self.equilibrated})")
+
+
+def thermalize(model, Z, kT, n_sweeps, rng, sigma=0.5, adapt=True,
+               target_acceptance=0.5, on_unequilibrated="warn",
+               drift_tolerance=1.0, return_info=False):
+    """Metropolis-equilibrate `Z` at temperature `kT`, ADAPTING the step size.
+
+    **Why the adaptation is not a nicety** (OPEN_WORK item 13). `sigma` does not
+    change the stationary distribution, only how fast the chain reaches it -- so a
+    fixed `sigma` is formally harmless and practically decisive. With the old fixed
+    `sigma = 0.5` at low temperature almost every proposal is uphill by >> kT and is
+    rejected, so the chain barely moves and returns whatever it started from with a
+    perfectly plausible spectrum. Measured on a gapped S = 1 AFM chain at
+    kT = 0.005: the SU(N) classical intensity relative to
+    `SUNModel.structure_factor` swung **0.30 -> 1.63** on the sampler knobs alone
+    (`therm_sweeps`/`sigma` from 400/0.02 to 3000/0.05), i.e. the answer was set by
+    the defaults rather than by the physics, and BOTH ends of that range look fine.
+
+    The step size is therefore tuned toward `target_acceptance` (~0.5) over the
+    first half of the sweeps and then held FIXED for the second half, which is what
+    is measured: adapting while measuring would break detailed balance, and the
+    equilibration verdict has to be made on a chain whose proposal is not moving.
+
+    `on_unequilibrated`: "warn" (default), "error", or "off". The check compares the
+    residual drift of the energy across the fixed-sigma half against that half's own
+    fluctuation -- a chain still sliding downhill by more than it fluctuates has not
+    equilibrated, whatever its acceptance rate says. It is reported rather than
+    silently absorbed, because "the sampler had not converged" and "the physics is
+    like that" are indistinguishable in the output spectrum.
+
+    Returns `Z` (as before), or `(Z, ThermalizeInfo)` with `return_info=True`.
+    """
     beta = 1.0 / float(kT)
-    for _ in range(int(n_sweeps)):
-        metropolis_sweep(model, Z, beta, rng, sigma)
-    return Z
+    n = max(int(n_sweeps), 1)
+    n_adapt = n // 2 if adapt else 0
+    sig = float(sigma)
+    target = float(target_acceptance)
+
+    # Phase 1: tune sigma. The multiplicative rule is scale-free and its gain decays
+    # like 1/sqrt(step), so it settles instead of oscillating about the target.
+    for k in range(n_adapt):
+        acc = metropolis_sweep(model, Z, beta, rng, sig)
+        gain = 2.0 / np.sqrt(k + 1.0)
+        # Upper clip 10, and it is not a limitation: the proposal is `Z + sigma*v`
+        # RENORMALIZED, so by sigma ~ 10 the candidate is already a uniform draw on
+        # the sphere -- an independence sampler, which is the best a symmetric
+        # proposal can do. At high kT the target acceptance is simply unreachable
+        # (even a uniform draw is accepted ~80 % of the time), so the adaptation
+        # saturates there instead of running the step size off to infinity.
+        sig = float(np.clip(sig * np.exp(gain * (acc - target)), 1e-4, 10.0))
+
+    # Phase 2: fixed sigma, recorded. This is the half the verdict is made on.
+    energies, accs = [], []
+    for _ in range(n - n_adapt):
+        accs.append(metropolis_sweep(model, Z, beta, rng, sig))
+        energies.append(energy(model, Z))
+    energies = np.asarray(energies, float)
+
+    drift, equilibrated = 0.0, True
+    if len(energies) >= 4:
+        half = len(energies) // 2
+        spread = float(energies[half:].std())
+        # A flat chain has spread ~ 0 and drift ~ 0; guard the ratio with the same
+        # scale so an exactly frozen chain does not read as infinitely drifted.
+        scale = max(spread, 1e-12 * max(abs(float(energies.mean())), 1.0), 1e-30)
+        drift = abs(float(energies[:half].mean() - energies[half:].mean())) / scale
+        equilibrated = drift <= float(drift_tolerance)
+
+    mode = str(on_unequilibrated or "warn").lower()
+    if not equilibrated and mode != "off":
+        msg = (f"CP^(N-1) thermalization has NOT equilibrated at kT={kT:g}: the "
+               f"energy still drifts by {drift:.1f}x its own fluctuation over the "
+               f"measured half of {n} sweeps (final acceptance "
+               f"{float(np.mean(accs)) if accs else float('nan'):.2f}, sigma={sig:.3g}). "
+               f"The spectrum from this state is set by the sampler settings, not by "
+               f"the physics -- raise `therm_sweeps`. Set "
+               f"`on_unequilibrated: off` to proceed anyway.")
+        if mode == "error":
+            raise RuntimeError(msg)
+        logger.warning(msg)
+
+    info = ThermalizeInfo(sig, float(np.mean(accs)) if accs else float("nan"),
+                          energies, drift, equilibrated)
+    return (Z, info) if return_info else Z
 
 
 def moment_of(model, Z, q_cart):
@@ -254,7 +355,10 @@ def moment_of(model, Z, q_cart):
 def sampled_correlations(model, q_cart, kT, dt=0.02, n_steps=512, n_traj=4,
                          therm_sweeps=200, record_every=1, cross_section="perp",
                          seed=0, sigma=0.5, classical_to_quantum=True,
-                         subtract_elastic=False, random_start=False):
+                         subtract_elastic=False, random_start=False,
+                         window="rectangular", adapt_sigma=True,
+                         target_acceptance=0.5, on_unequilibrated="warn",
+                         on_elastic_leakage="warn"):
     """S(q,w) from CP^(N-1) trajectories on thermally sampled coherent states.
 
     The SU(N) counterpart of `classical_dynamics.sampled_correlations`: thermalize by
@@ -291,14 +395,19 @@ def sampled_correlations(model, q_cart, kT, dt=0.02, n_steps=512, n_traj=4,
     Off by default, matching Sunny, whose S(q,w) contains it. Turn it on to isolate
     the inelastic response: for an ordered state at low T the static moment dominates,
     and on a coarse energy grid its delta smears over several bins and can outweigh
-    the magnon peak entirely.
+    the magnon peak entirely. `window: cosine` WITHOUT it is the trap
+    `classical_dynamics.check_elastic_leakage` reports (`on_elastic_leakage`): the
+    window smears that delta into the first inelastic bin, which c2q then amplifies.
     """
-    from ..classical_dynamics import _contract, classical_to_quantum_factor
+    from ..classical_dynamics import (_contract, check_elastic_leakage,
+                                      classical_to_quantum_factor)
 
     qs = np.asarray(q_cart, float).reshape(-1, 3)
     rng = np.random.default_rng(seed)
     n_rec = int(np.ceil(n_steps / record_every))
     dt_rec = dt * record_every
+    check_elastic_leakage(window, subtract_elastic, classical_to_quantum, kT,
+                          dt_rec, n_rec, on_elastic_leakage)
     energies = None
     acc = None
 
@@ -311,11 +420,16 @@ def sampled_correlations(model, q_cart, kT, dt=0.02, n_steps=512, n_traj=4,
                 Z.append(v / np.linalg.norm(v))
         else:
             Z = [np.asarray(z, complex).copy() for z in model.Z]
-        thermalize(model, Z, kT, therm_sweeps, rng, sigma)
+        _, tinfo = thermalize(model, Z, kT, therm_sweeps, rng, sigma,
+                              adapt=adapt_sigma,
+                              target_acceptance=target_acceptance,
+                              on_unequilibrated=on_unequilibrated,
+                              return_info=True)
+        logger.info(f"CP^(N-1) thermalization: {tinfo}")
         traj = evolve(model, Z, dt, n_steps, record_every)
         e, sqw = dynamical_structure_factor(
             model, traj, qs, dt_rec, cross_section=cross_section,
-            subtract_elastic=subtract_elastic)
+            subtract_elastic=subtract_elastic, window=window)
         acc = sqw if acc is None else acc + sqw
         energies = e
 
@@ -326,7 +440,8 @@ def sampled_correlations(model, q_cart, kT, dt=0.02, n_steps=512, n_traj=4,
 
 
 def dynamical_structure_factor(model, traj, q_cart, dt, cross_section="perp",
-                               subtract_elastic=False, two_sided=False):
+                               subtract_elastic=False, two_sided=False,
+                               window="rectangular"):
     """S(q,w) from ONE CP^(N-1) trajectory, on the absolute LSWT/Sunny scale.
 
         S^ab(q,w) = (1/2pi) int dt e^{-iwt} <M^a(q,0)* M^b(q,t)> / n_cells
@@ -341,8 +456,13 @@ def dynamical_structure_factor(model, traj, q_cart, dt, cross_section="perp",
     the transform kept the bare `np.fft.fft` sum (2pi/dt too large, and dependent on
     the time step), and the divisor was the SITE count where `SUNModel.structure_factor`
     -- the spectrum this is meant to be compared with -- divides by `n_cells`.
+
+    `window: cosine` tapers the time correlation before the frequency transform;
+    `rectangular` (the default, and the pre-2026-08-15 behaviour) does not. Shared
+    with the dipole path -- see `classical_dynamics.lag_window` for what it fixes and
+    for the measured reason it is opt-in. Pair it with `subtract_elastic` above.
     """
-    from ..classical_dynamics import _contract
+    from ..classical_dynamics import _contract, _window_correlation, lag_window
 
     qs = np.asarray(q_cart, float).reshape(-1, 3)
     Mt = np.array([[moment_of(model, cfg, q) for q in qs] for cfg in traj])
@@ -352,10 +472,14 @@ def dynamical_structure_factor(model, traj, q_cart, dt, cross_section="perp",
     energies = 2 * np.pi * np.fft.fftfreq(n_rec, d=dt)
     Mw = np.fft.fft(Mt, axis=0)                              # (n_rec, n_q, 3)
     norm = dt / (2 * np.pi * n_rec * max(int(getattr(model, "n_cells", 1)), 1))
+    win = lag_window(n_rec, window)
     sl = slice(None) if two_sided else slice(0, n_rec // 2)
     out = np.zeros((n_rec if two_sided else n_rec // 2, len(qs)))
     for iq, q in enumerate(qs):
-        tensor = np.einsum("wa,wb->wab", Mw[sl, iq, :].conj(), Mw[sl, iq, :])
+        # windowed on the full periodic frequency axis, then sliced -- see
+        # classical_dynamics.lag_window
+        tensor = np.einsum("wa,wb->wab", Mw[:, iq, :].conj(), Mw[:, iq, :])
+        tensor = _window_correlation(tensor, win)[sl]
         out[:, iq] = np.real(_contract(tensor, q, cross_section)) * norm
     if two_sided:
         order = np.argsort(energies)

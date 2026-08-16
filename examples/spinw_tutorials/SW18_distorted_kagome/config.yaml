@@ -290,7 +290,7 @@ interactions:
   value: Jip
 magnetic_structure:
   enabled: true
-  type: spiral
+  type: single_k
   k: [0.785902495, 0.0, 0.107048756]
   axis: [0.0, 0.0, 1.0]
   local_directions:

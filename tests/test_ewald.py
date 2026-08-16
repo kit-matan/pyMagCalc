@@ -120,8 +120,27 @@ def test_A_is_hermitian_in_the_right_sense():
 
 
 def test_prefactor_matches_sunny_units():
-    # Sunny: Units(:meV, :angstrom).vacuum_permeability = mu0 * muB^2
-    assert abs(MU0_MUB2_MEV_A3 - 0.6745817653) < 1e-9
+    # Sunny: Units(:meV, :angstrom).vacuum_permeability = mu0 * muB^2, stated to
+    # full double precision in Sunny.jl-main/src/Units.jl.
+    assert MU0_MUB2_MEV_A3 == 0.6745817653324668
+
+
+def test_the_two_dipolar_prefactors_are_one_constant(): 
+    """The truncated real-space sum and the exact Ewald sum must use the SAME
+    mu0 muB^2 (OPEN_WORK item 14).
+
+    They did not until 2026-08-15: `DIPOLE_PREFACTOR_MEV_A3` was an independently
+    typed 0.05368216 where mu0 muB^2/(4 pi) is 0.05368151123615953, i.e. 1.2e-5
+    RELATIVE too large -- not a truncation of the Ewald constant but a different
+    number, in a path whose only test is a comparison against the Ewald one. This
+    pins the derivation rather than the digits, so it cannot drift apart again.
+    """
+    from magcalc.constants import DIPOLE_PREFACTOR_MEV_A3, MU0_MUB2_MEV_A3
+    from magcalc.generic_model import DIPOLE_PREFACTOR_MEV_A3 as USED_BY_TRUNCATED
+
+    assert DIPOLE_PREFACTOR_MEV_A3 == MU0_MUB2_MEV_A3 / (4.0 * np.pi)
+    assert USED_BY_TRUNCATED is DIPOLE_PREFACTOR_MEV_A3
+    assert abs(DIPOLE_PREFACTOR_MEV_A3 - 0.05368151123615953) < 1e-17
 
 
 def test_ewald_rejects_unknown_method():

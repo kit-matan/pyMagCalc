@@ -73,7 +73,7 @@ interactions:
     value: J3
 magnetic_structure:
   enabled: true
-  type: spiral
+  type: single_k
   k: [0.14285714285714285, 0.14285714285714285, 1.0]
   axis: [0.7071067811865475, 0.7071067811865475, 0.0]
   local_directions:
