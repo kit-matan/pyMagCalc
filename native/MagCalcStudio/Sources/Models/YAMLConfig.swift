@@ -264,6 +264,11 @@ enum YAMLConfig {
                 // example configs use that orientation.
                 let rows = lvArr.map { $0.arrayValue?.compactMap { $0.doubleValue } ?? [] }
                 if rows.allSatisfy({ $0.count == 3 }) {
+                    // Keep the vectors themselves, not only the derived a/b/c:
+                    // any payload built without the raw document would otherwise
+                    // emit `lattice_parameters` plus the placeholder
+                    // `space_group: 1`. See MagCalcConfig.explicitLatticeVectors.
+                    config.explicitLatticeVectors = rows
                     func nrm(_ v: [Double]) -> Double { (v[0]*v[0] + v[1]*v[1] + v[2]*v[2]).squareRoot() }
                     func ang(_ u: [Double], _ v: [Double]) -> Double {
                         let d = nrm(u) * nrm(v)

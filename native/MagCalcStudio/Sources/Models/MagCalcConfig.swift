@@ -570,6 +570,19 @@ struct MagCalcConfig: Codable, Hashable {
     /// the task it exists to run.
     var extraTasks: [String: JSONValue] = [:]
 
+    /// The file's `crystal_structure.lattice_vectors`, when it gave the cell that
+    /// way. `LatticeParameters` cannot hold them -- it is a/b/c/angles plus a
+    /// space group -- so the importer derives a/b/c from the vectors and drops
+    /// them, and any payload built from the editor model alone came back out as
+    /// `lattice_parameters` carrying `spaceGroup`, whose default is **1**.
+    /// `space_group: 1` is P1, the identity alone, and the backend honours a
+    /// declared group instead of detecting the real one from the structure, so
+    /// every `ref_pair` rule collapsed to its own reference bond: 18 bonds on
+    /// NaCVO where the web app -- which keeps the vectors on `config.lattice` and
+    /// emits them in the same place -- drew 72. Keeping them is also lossless for
+    /// a cell in a non-standard orientation, which a/b/c/angles cannot express.
+    var explicitLatticeVectors: [[Double]]?
+
     enum CodingKeys: String, CodingKey {
         case lattice, parameters, tasks, plotting, minimization, calculation, fitting, output
         case scga, kpm
@@ -746,55 +759,7 @@ extension MagCalcConfig {
         // silently replaced an experimentally determined magnetic cell.
         let mcifDriven = rawObj?["crystal_structure"] == nil && rawObj?["from_mcif"] != nil
 
-        // Crystal structure: the file's block is the base, but the ATOMS come from
-        // the editor -- WyckoffAtom now carries every per-site key the file had
-        // (see `extras`), so emitting the editor's list is loss-free AND an edit
-        // made in the Structure panel actually reaches the run. Re-emitting the
-        // file's atoms verbatim (what this used to do) made the whole panel
-        // read-only after opening a config: changing a spin_S did nothing.
-        var crystalValue: JSONValue?
-        if let cs = rawObj?["crystal_structure"]?.objectValue {
-            var out = cs
-            let atoms: [JSONValue] = wyckoffAtoms.isEmpty
-                ? (cs["atoms_uc"]?.arrayValue ?? cs["wyckoff_atoms"]?.arrayValue ?? [])
-                : wyckoffAtoms.map { $0.payloadValue }
-            if cs["lattice_vectors"] == nil {
-                // Only the keys the file actually declared, so the app's
-                // placeholder defaults (space_group: 1) are never injected into a
-                // cell that did not ask for them.
-                if let fileLat = cs["lattice_parameters"]?.objectValue {
-                    let edited = ((try? JSONValue(encoding: lattice)) ?? .object([:])).objectValue ?? [:]
-                    var latOut: [String: JSONValue] = [:]
-                    for (k, v) in fileLat { latOut[k] = edited[k] ?? v }
-                    out["lattice_parameters"] = .object(latOut)
-                } else {
-                    out["lattice_parameters"] = (try? JSONValue(encoding: lattice)) ?? .object([:])
-                }
-            }
-            // A file that lists `atoms_uc` is already the full cell (explicit);
-            // only `wyckoff_atoms` needs symmetry expansion. Emit ONLY the key
-            // matching the mode, so the runner does its own (CLI-identical) one.
-            let mode = cs["atom_mode"]?.stringValue
-                ?? (cs["atoms_uc"] != nil ? "explicit"
-                    : (cs["wyckoff_atoms"] != nil ? "symmetry"
-                       : (cs["lattice_vectors"] != nil ? "explicit" : "symmetry")))
-            out["atom_mode"] = .string(mode)
-            out[mode == "explicit" ? "atoms_uc" : "wyckoff_atoms"] = .array(atoms)
-            out.removeValue(forKey: mode == "explicit" ? "wyckoff_atoms" : "atoms_uc")
-            out["magnetic_elements"] = cs["magnetic_elements"]
-                ?? .array(magneticElements.map { .string($0) })
-            out["dimensionality"] = cs["dimensionality"] ?? .number(3)
-            crystalValue = .object(out)
-        } else if !mcifDriven {
-            crystalValue = .object([
-                "lattice_parameters": (try? JSONValue(encoding: lattice)) ?? .object([:]),
-                atomMode == "explicit" ? "atoms_uc" : "wyckoff_atoms":
-                    .array(wyckoffAtoms.map { $0.payloadValue }),
-                "atom_mode": .string(atomMode),
-                "dimensionality": .number(3),
-                "magnetic_elements": .array(magneticElements.map { .string($0) }),
-            ])
-        }
+        let crystalValue: JSONValue? = crystalStructurePayload()
 
         // Interactions: symmetry rules are modelled by the designer, so the
         // editor's version wins -- merged INTO the file's block so its siblings
@@ -953,35 +918,115 @@ extension MagCalcConfig {
         return parts.isEmpty ? fallback : parts
     }
 
+    /// The `crystal_structure` block, built ONCE for both the run path
+    /// (`backendInput`) and the structure endpoints (`structurePayload`).
+    ///
+    /// It has to be one builder, because the two disagreeing is invisible until
+    /// someone compares the 3D preview with what the run computed. It did:
+    /// `structurePayload` used to emit `rawImport`'s block verbatim, or -- with
+    /// no file open -- `lattice_parameters` straight off `LatticeParameters`,
+    /// whose `spaceGroup` DEFAULTS TO 1. `space_group: 1` is P1, i.e. the
+    /// identity alone, and the backend honours a declared group instead of
+    /// detecting one from the structure (as the CLI does), so every `ref_pair`
+    /// rule expanded to its own bond and nothing else. On NaCVO that drew 18
+    /// bonds and 6 out-of-cell partners in the native preview against the web
+    /// app's 72 and 30 -- the web's builder is shared between its preview and
+    /// its run config and never injects the placeholder.
+    ///
+    /// Returns nil only for an mCIF-driven config, whose structure the runner
+    /// fills in from the file.
+    func crystalStructurePayload() -> JSONValue? {
+        let rawObj = rawImport?.objectValue
+        let mcifDriven = rawObj?["crystal_structure"] == nil && rawObj?["from_mcif"] != nil
+
+        // The file's block is the base, but the ATOMS come from the editor --
+        // WyckoffAtom carries every per-site key the file had (see `extras`), so
+        // emitting the editor's list is loss-free AND an edit made in the
+        // Structure panel actually reaches the run. Re-emitting the file's atoms
+        // verbatim (what this used to do) made the whole panel read-only after
+        // opening a config: changing a spin_S did nothing.
+        if let cs = rawObj?["crystal_structure"]?.objectValue {
+            var out = cs
+            let atoms: [JSONValue] = wyckoffAtoms.isEmpty
+                ? (cs["atoms_uc"]?.arrayValue ?? cs["wyckoff_atoms"]?.arrayValue ?? [])
+                : wyckoffAtoms.map { $0.payloadValue }
+            if cs["lattice_vectors"] == nil {
+                // Only the keys the file actually declared, so the app's
+                // placeholder defaults (space_group: 1) are never injected into a
+                // cell that did not ask for them.
+                if let fileLat = cs["lattice_parameters"]?.objectValue {
+                    let edited = ((try? JSONValue(encoding: lattice)) ?? .object([:])).objectValue ?? [:]
+                    var latOut: [String: JSONValue] = [:]
+                    for (k, v) in fileLat { latOut[k] = edited[k] ?? v }
+                    out["lattice_parameters"] = .object(latOut)
+                } else {
+                    out["lattice_parameters"] = (try? JSONValue(encoding: lattice)) ?? .object([:])
+                }
+            }
+            // A file that lists `atoms_uc` is already the full cell (explicit);
+            // only `wyckoff_atoms` needs symmetry expansion. Emit ONLY the key
+            // matching the mode, so the runner does its own (CLI-identical) one.
+            let mode = cs["atom_mode"]?.stringValue
+                ?? (cs["atoms_uc"] != nil ? "explicit"
+                    : (cs["wyckoff_atoms"] != nil ? "symmetry"
+                       : (cs["lattice_vectors"] != nil ? "explicit" : "symmetry")))
+            out["atom_mode"] = .string(mode)
+            out[mode == "explicit" ? "atoms_uc" : "wyckoff_atoms"] = .array(atoms)
+            out.removeValue(forKey: mode == "explicit" ? "wyckoff_atoms" : "atoms_uc")
+            out["magnetic_elements"] = cs["magnetic_elements"]
+                ?? .array(magneticElements.map { .string($0) })
+            out["dimensionality"] = cs["dimensionality"] ?? .number(3)
+            return .object(out)
+        }
+        guard !mcifDriven else { return nil }
+        // Vectors when the cell was given that way, exactly as the web app does
+        // (`config.lattice.lattice_vectors ? {lattice_vectors} : {lattice_parameters}`).
+        // Emitting `lattice_parameters` here instead would inject the editor's
+        // placeholder `space_group: 1` -- see `explicitLatticeVectors`.
+        let cellKey: [String: JSONValue] = explicitLatticeVectors.map {
+            ["lattice_vectors": .array($0.map { row in .array(row.map { .number($0) }) })]
+        } ?? ["lattice_parameters": (try? JSONValue(encoding: lattice)) ?? .object([:])]
+        var out: [String: JSONValue] = cellKey
+        out[atomMode == "explicit" ? "atoms_uc" : "wyckoff_atoms"] =
+            .array(wyckoffAtoms.map { $0.payloadValue })
+        out["atom_mode"] = .string(atomMode)
+        out["dimensionality"] = .number(3)
+        out["magnetic_elements"] = .array(magneticElements.map { .string($0) })
+        return .object(out)
+    }
+
     /// Payload for structure-only endpoints (/get-neighbors, /analyze-bonds,
-    /// /get-visualizer-data).
+    /// /get-visualizer-data). Shares `crystalStructurePayload()` with the run
+    /// path, so the 3D preview shows the bonds the run will actually use.
     func structurePayload(includeInteractions: Bool = false) -> JSONValue {
         let rawObj = rawImport?.objectValue
-        var data: [String: JSONValue] = [
-            "crystal_structure": rawObj?["crystal_structure"] ?? .object([
-                "lattice_parameters": (try? JSONValue(encoding: lattice)) ?? .object([:]),
-                "wyckoff_atoms": .array(wyckoffAtoms.map { $0.payloadValue }),
-                "atom_mode": .string(atomMode),
-            ]),
-        ]
+        var data: [String: JSONValue] = [:]
+        if let cs = crystalStructurePayload() { data["crystal_structure"] = cs }
         if let ms = rawObj?["magnetic_structure"] { data["magnetic_structure"] = ms }
         if includeInteractions {
-            if let it = rawObj?["interactions"] {
-                data["interactions"] = it
-            } else {
-                // Mirrors the web app's preview payload: symmetry rules always,
-                // explicit list only in explicit mode, SIA alongside.
-                var inter: [String: JSONValue] = [
-                    "symmetry_rules": .array(symmetryInteractions.map { $0.payloadValue }),
-                    "single_ion_anisotropy": .array(singleIonAnisotropy.map {
-                        (try? JSONValue(encoding: $0)) ?? .object([:])
-                    }),
-                ]
-                if interactionMode == "explicit" {
-                    inter["list"] = .array(explicitInteractions.map { $0.payloadValue })
+            // The file's block is the base so its siblings (single_ion_anisotropy,
+            // stevens, biquadratic, dipole_dipole, ...) reach the preview, but the
+            // symmetry rules come from the EDITOR -- otherwise a rule added or
+            // retyped in the Interactions panel did not appear in the preview
+            // until the file was saved and reopened. Same rule as `backendInput`.
+            var interactionsFinal: JSONValue = rawObj?["interactions"] ?? .object([
+                "symmetry_rules": .array(symmetryInteractions.map { $0.payloadValue }),
+                "single_ion_anisotropy": .array(singleIonAnisotropy.map {
+                    (try? JSONValue(encoding: $0)) ?? .object([:])
+                }),
+            ])
+            if var obj = interactionsFinal.objectValue {
+                if obj["symmetry_rules"] != nil, rawObj?["crystal_structure"] != nil {
+                    obj["symmetry_rules"] = .array(symmetryInteractions.map { $0.payloadValue })
+                    interactionsFinal = .object(obj)
                 }
-                data["interactions"] = .object(inter)
             }
+            if interactionMode == "explicit", rawObj?["interactions"] == nil,
+               var obj = interactionsFinal.objectValue {
+                obj["list"] = .array(explicitInteractions.map { $0.payloadValue })
+                interactionsFinal = .object(obj)
+            }
+            data["interactions"] = interactionsFinal
             data["parameters"] = .object(parameters)
         }
         return .object(data)
