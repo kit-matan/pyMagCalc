@@ -2,12 +2,10 @@ import os
 import io
 import yaml
 import numpy as np
-import spglib
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, Response, FileResponse
 from ase.io import read
-from ase.data import atomic_numbers
 from typing import List, Dict, Any
 import asyncio
 import logging
@@ -176,12 +174,25 @@ def _hydrate_builder(data: Dict[str, Any]) -> 'MagCalcConfigBuilder':
                 "label": a.get("label", "Atom"),
                 "pos": [float(x) for x in a.get("pos", [0, 0, 0])],
                 "spin_S": a.get("spin_S", 0.5),
-                "species": a.get("label", "Atom"),
+                # `species` is only carried when the config actually gives one.
+                # It used to be filled with the per-site LABEL, which made every
+                # site of an explicit cell (Cu1, Cu2, Cu3, Cu4) a DISTINCT
+                # species to the symmetry detector -- the group collapsed to the
+                # identity and no bond rule could propagate. The builder's
+                # detector falls back to ion, then to the label with trailing
+                # digits stripped, which is what the CLI resolves for the same
+                # config.
+                "species": a.get("species") or a.get("element"),
                 "ion": a.get("ion"),
                 "element": a.get("element")
             })
         builder.config["crystal_structure"]["atoms_uc"] = config_atoms
         builder.atoms_uc = config_atoms
+        # Bond rules resolve their `ref_pair` labels through this map; the
+        # explicit branch never built it, so every rule failed with
+        # "Atom 'Cu1' not found in unit cell (keys: [])". `generic_model` builds
+        # exactly this for the same branch.
+        builder._atom_label_to_idx = {a["label"]: i for i, a in enumerate(config_atoms)}
     else:
         for atom in wyckoff_atoms:
             builder.add_wyckoff_atom(
@@ -192,23 +203,26 @@ def _hydrate_builder(data: Dict[str, Any]) -> 'MagCalcConfigBuilder':
                 element=atom.get("element")
             )
 
-    # 3. Detect Symmetry (Robustness Fix)
+    # 3. Symmetry operations, for `interactions.symmetry_rules` propagation.
+    #
+    # Mirror `generic_model._build_from_config` exactly: a declared `space_group`
+    # wins, otherwise detect from the structure. Two ways this used to diverge
+    # from the CLI on the same file:
+    #   * detection was skipped for `atom_mode: explicit`. How the ATOMS were
+    #     given says nothing about whether a bond RULE may be propagated, and
+    #     `lattice_vectors` + `atoms_uc` + `symmetry_rules` is ordinary usage
+    #     (the whole NaCVO manuscript set). Every rule then failed with "No
+    #     symmetry operations loaded" and the visualiser drew ZERO bonds, while
+    #     `magcalc run` on the same file expanded them fine.
+    #   * the detection here keyed species off `a["species"]`, which the explicit
+    #     branch above sets to the per-site LABEL ("Cu1", "Cu2", ...), so every
+    #     site fell through `atomic_numbers.get(sym, 1)` to Z=1 -- distinct
+    #     sublattices merged into one species and the detected group could be too
+    #     high. The builder's own detector keys off species/element/ion and only
+    #     falls back to the label with trailing digits stripped.
     try:
-        if len(builder.atoms_uc) > 0 and atom_mode != "explicit":
-            positions = [a["pos"] for a in builder.atoms_uc]
-            numbers = []
-            for a in builder.atoms_uc:
-                sym = a.get("species", "")
-                if not sym:
-                    match = re.match(r"([A-Z][a-z]?)", a["label"])
-                    sym = match.group(1) if match else "H"
-                numbers.append(atomic_numbers.get(sym, 1))
-
-            cell = (builder.lattice_vectors, positions, numbers)
-            dataset = spglib.get_symmetry_dataset(cell, symprec=1e-3)
-
-            if dataset:
-                builder.set_symmetry_ops(dataset.rotations, dataset.translations)
+        if not builder.space_group_number and builder.atoms_uc:
+            builder.detect_symmetry_from_structure()
     except Exception as e:
         logging.getLogger().warning(f"Warning: Failed to detect symmetry: {e}")
 
@@ -1524,13 +1538,21 @@ async def get_visualizer_data(config: Dict[str, Any]):
         data = config.get("data", {})
         builder, atom_mode = _hydrate_builder(data)
 
-        # 3. Interactions
-        # Copy interactions from input
+        # 3. Interactions.
+        # Reset to the builder's OWN empty shape. Listing a subset here was a
+        # KeyError waiting to happen: `_add_interaction_matrix_entry` indexes
+        # `config["interactions"]["interaction_matrix"]` directly (and a kitaev
+        # rule is converted to one), so an `interaction_matrix` symmetry rule
+        # died with a bare `KeyError('interaction_matrix')` and its bonds --
+        # usually the strongest exchange in the model -- were simply absent from
+        # the visualiser.
         builder.config["interactions"] = {
             "heisenberg": [],
             "dm_interaction": [],
             "single_ion_anisotropy": [],
             "anisotropic_exchange": [],
+            "interaction_matrix": [],
+            "kitaev": [],
             "applied_field": {}
         }
         
@@ -1567,26 +1589,46 @@ async def get_visualizer_data(config: Dict[str, Any]):
                             {"type": e.get("type", k), **e})
             for rule in idict.get("symmetry_rules", []):
                 try:
-                    builder.add_symmetry_interaction(
-                        type=rule.get("type"),
-                        ref_pair=rule.get("ref_pair"),
-                        value=rule.get("value"),
-                        distance=rule.get("distance"),
-                        offset=rule.get("offset"),
-                        # kitaev needs the bond's Cartesian axis; dropping it
-                        # silently meant z.
-                        axis=(rule.get("axis") or rule.get("bond_direction"))
-                    )
+                    # A bare-`distance` heisenberg rule (no ref_pair) is the one
+                    # form `add_symmetry_interaction` refuses -- it belongs to
+                    # `add_interaction_rule` + the distance expanders below.
+                    # Routing it here anyway (as this endpoint alone did) made
+                    # every SW26-style config warn and draw no bonds. The CLI and
+                    # /expand-config both split on exactly this.
+                    if rule.get("type") == "heisenberg" and not rule.get("ref_pair"):
+                        builder.add_interaction_rule(
+                            type="heisenberg",
+                            distance=rule.get("distance"),
+                            value=rule.get("value"),
+                        )
+                    else:
+                        builder.add_symmetry_interaction(
+                            type=rule.get("type"),
+                            ref_pair=rule.get("ref_pair"),
+                            value=rule.get("value"),
+                            distance=rule.get("distance"),
+                            offset=rule.get("offset"),
+                            # kitaev needs the bond's Cartesian axis; dropping it
+                            # silently meant z.
+                            axis=(rule.get("axis") or rule.get("bond_direction"))
+                        )
                 except Exception as e:
                     print(f"Warning: Failed to add symmetry rule {rule}: {e}")
         
-        # 3. Expand Rules (Only in symmetry mode)
-        # We don't need _expand_*_rules anymore if using add_symmetry_interaction,
-        # but for BACKWARDS COMPATIBILITY with rules without ref_pair:
-        if atom_mode == "symmetry":
-            builder._expand_heisenberg_rules()
-            builder._expand_anisotropic_exchange_rules()
-            builder._expand_dm_rules()
+        # 3. Distance-based expansion, for rules WITHOUT a ref_pair (both the
+        # `symmetry_rules` entries routed above and entries placed directly under
+        # `interactions.heisenberg` / `dm_interaction` / ...).
+        #
+        # Same four calls, unconditionally, as `generic_model._build_from_config`
+        # -- see the comment there. Gating them on `atom_mode == "symmetry"`
+        # conflates how the ATOMS were given with whether a bond RULE may be
+        # propagated by distance, and the apps write `atom_mode: explicit`; the
+        # `interaction_matrix` expander was missing from the list outright. Each
+        # is a no-op when there is no distance rule of its type.
+        builder._expand_heisenberg_rules()
+        builder._expand_anisotropic_exchange_rules()
+        builder._expand_dm_rules()
+        builder._expand_interaction_matrix_rules()
 
         # 4. Prepare Response
         # Atoms
