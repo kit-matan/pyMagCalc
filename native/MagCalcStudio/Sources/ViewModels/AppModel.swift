@@ -76,6 +76,10 @@ final class AppModel: ObservableObject {
     // MARK: Derived / transient state
 
     @Published var visualizerData: VisualizerData?
+    /// Why the last preview fetch failed, if it did. The panel shows this
+    /// instead of the empty "add basis atoms" state, which was misleading
+    /// whenever the model had atoms and the request was the thing that failed.
+    @Published var visualizerError: String?
     @Published var neighborShells: [NeighborShell] = []
     @Published var neighborsLoading = false
     @Published var hiddenBondKeys: Set<String> = []
@@ -89,6 +93,7 @@ final class AppModel: ObservableObject {
 
     private var saveTask: Task<Void, Never>?
     private var visualizerTask: Task<Void, Never>?
+    private var lastVisualizerAttempt = Date.distantPast
     private var stopRequested = false
     private static let configKey = "magcalc.config.v1"
 
@@ -164,9 +169,15 @@ final class AppModel: ObservableObject {
                 guard let self else { return }
                 if let api = self.api {
                     let ok = await api.health()
-                    if ok != self.serverReachable {
-                        self.serverReachable = ok
-                        if ok { self.refreshVisualizer() }
+                    if ok != self.serverReachable { self.serverReachable = ok }
+                    // Retry whenever the preview has no data, not only on a
+                    // false->true edge: a fetch lost while the backend was
+                    // restarting (health sampled "up" on both sides of the gap,
+                    // so no edge ever fired) used to strand the panel on
+                    // "No structure yet" until the config was edited by hand.
+                    if ok, self.visualizerData == nil,
+                       Date().timeIntervalSince(self.lastVisualizerAttempt) > 10 {
+                        self.refreshVisualizer()
                     }
                 } else {
                     self.serverReachable = false
@@ -196,13 +207,19 @@ final class AppModel: ObservableObject {
 
     func refreshVisualizer() {
         guard let api, !config.wyckoffAtoms.isEmpty else { return }
+        // Space out the health-poll retries; edits and the toolbar button are
+        // deliberate and always go through.
+        lastVisualizerAttempt = Date()
         let snapshot = config
         Task { [weak self] in
             do {
                 let data = try await api.visualizerData(for: snapshot)
                 self?.visualizerData = data
+                self?.visualizerError = nil
             } catch {
-                // Silent: preview refresh runs on every edit.
+                // No banner (this runs on every edit), but the panel reports it
+                // rather than claiming the model has no atoms.
+                self?.visualizerError = error.localizedDescription
             }
         }
     }
