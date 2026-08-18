@@ -20,9 +20,37 @@ def show_plot_if_possible():
 
     Callers keep their `if show_plot:` guard; this only decides whether showing
     is meaningful right now.
+
+    Two independent reasons to refuse, because the backend check alone proved
+    not to be enough. It only holds if every process that reaches here had its
+    backend set, and a test session is a TREE of processes -- pytest, its xdist
+    workers, and whatever `magcalc run` subprocesses they spawn. One process
+    that missed the setting opens a window and blocks the whole run, and that is
+    invisible until someone is watching the screen. `PYTEST_CURRENT_TEST` is set
+    by pytest and inherited by children, so it identifies the whole tree
+    regardless of backend; `MAGCALC_NO_GUI` is the explicit switch for anything
+    else that must stay headless (CI, a batch queue, a cron job).
+
+    `MAGCALC_TEST_GUI=1` overrides both, mirroring `MAGCALC_SHADOW_GUARD=off`.
     """
     import matplotlib
-    if matplotlib.get_backend().lower().startswith("agg"):
+
+    backend = matplotlib.get_backend()
+    if not os.environ.get("MAGCALC_TEST_GUI"):
+        why = ("MAGCALC_NO_GUI is set" if os.environ.get("MAGCALC_NO_GUI")
+               else "running under pytest" if os.environ.get("PYTEST_CURRENT_TEST")
+               else None)
+        if why is not None:
+            # WARNING, not debug: if this fires with a non-Agg backend it means
+            # something would have opened a window and hung an unattended run,
+            # and the name of the test that did it is the thing worth having.
+            logger.warning(
+                "show_plot suppressed (%s; backend=%s, test=%s); the figure was "
+                "saved rather than shown.", why, backend,
+                os.environ.get("PYTEST_CURRENT_TEST", "-"))
+            return
+
+    if backend.lower().startswith("agg"):
         logger.debug("show_plot requested but the backend is non-interactive; "
                      "the figure was saved rather than shown.")
         return

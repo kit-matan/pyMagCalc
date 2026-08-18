@@ -82,6 +82,24 @@ run `magcalc symmetry <config> [--max-distance Å] [--json]` — it lists the sp
 group, the symmetry-inequivalent bond orbits, and the allowed exchange matrix
 for each (the Sunny `print_symmetry_table` analogue).
 
+**That allowed matrix was wrong on any lattice carrying measurement noise until
+2026-08-17.** `get_bond_constraints` solved `J = R J Rᵀ` symbolically after
+"sanitizing" the Cartesian rotation with `np.round(R, 10)` + `nsimplify` — and
+nsimplify of a 10-decimal float is not `2/3`, it is the exact rational
+`1666666499/2500000000`. Such an R is not orthogonal, so the constraint admits
+far fewer solutions than it should. Measured: perturbing KFe₃J's `a` by **1e-7 Å**
+took its NN bond from **6 free parameters to 1**, reporting every off-diagonal as
+symmetry-forbidden — i.e. "no DM allowed here" — on the config whose whole point
+is its DM term. On a Materials Project NiO primitive cell (cubic to six decimals,
+not exactly) the same giant rationals instead made sympy grind for **over ten
+minutes without returning**. Both are now a 0.2 ms SVD null space, with R snapped
+to the nearest orthogonal matrix first (spglib already accepted the op at
+symprec = 1e-3, so idealizing it assumes nothing new) and coefficients snapped at
+`_SYMMETRY_COEFF_TOL = 1e-5`. The reported basis is now the canonical rref one,
+so free parameters may be *named* differently than before; the space they span is
+the same, and `tests/test_symmetry_cli.py` pins both the unchanged forms and the
+1e-7 stability that used to fail.
+
 Three rules the engine now **enforces with a hard error** (they used to be silent
 failures — a WARNING plus a Hamiltonian quietly missing a term):
 

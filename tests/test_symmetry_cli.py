@@ -15,6 +15,7 @@ import json
 import os
 
 import numpy as np
+import sympy as sp
 import yaml
 from typer.testing import CliRunner
 
@@ -103,3 +104,90 @@ def test_cli_runs_and_json_is_parseable():
     # diagonal allowed form -> off-diagonals are "0"
     m = nn["allowed_matrix"]
     assert m[0][1] == "0" and m[1][2] == "0"
+
+
+# ---------------------------------------------------------------------------
+# Robustness: symmetry is DISCRETE, so the allowed form must not move when the
+# lattice does at the level of measurement noise (2026-08-17).
+# ---------------------------------------------------------------------------
+def _nn_form(cfg, max_distance, da=0.0):
+    """Allowed matrix + free parameters of the shortest bond, `a` shifted by `da`."""
+    import copy
+
+    c = copy.deepcopy(cfg)
+    c["crystal_structure"]["lattice_parameters"]["a"] += da
+    b = MagCalcConfigBuilder.from_config(c)
+    orbits = b.analyze_bond_symmetry(max_distance=max_distance)
+    nn = min(orbits, key=lambda o: o["distance"])
+    con = b.get_bond_constraints(nn)
+    return con["symbolic_matrix"], con["free_parameters"], con["little_group_size"]
+
+
+def test_allowed_form_is_unchanged_by_lattice_noise():
+    """
+    Perturbing `a` by 1e-7 A -- far below any experimental precision, and 4
+    orders below the symprec spglib accepted the group at -- must not change
+    the symmetry-allowed exchange matrix at all.
+
+    It used to change it completely. `get_bond_constraints` "sanitized" the
+    Cartesian rotation with `np.round(R, 10)` + `nsimplify`, which turns a
+    noisy 2/3 into the exact rational 1666666499/2500000000. That R is not
+    orthogonal, so `J = R J R^T` admits far fewer solutions than it should:
+    KFe3J's NN bond went from 6 free parameters to 1, reporting every
+    off-diagonal as symmetry-forbidden -- i.e. "no DM allowed on this bond",
+    silently, on a config whose whole point is its DM term. (On a Materials
+    Project NiO primitive cell the same giant rationals instead made sympy
+    grind for over ten minutes without returning.)
+    """
+    cfg = yaml.safe_load(open(os.path.join(HERE, "..", "examples", "materials",
+                                           "KFe3J", "config_kfe3j.yaml")))
+    m0, free0, lg0 = _nn_form(cfg, 4.0)
+    m1, free1, lg1 = _nn_form(cfg, 4.0, da=1e-7)
+
+    assert lg0 == lg1 == 2
+    assert free0 == free1, f"free parameters moved: {free0} -> {free1}"
+    assert m0 == m1, f"allowed matrix moved under 1e-7 A:\n{m0}\n{m1}"
+    # KFe3J's NN bond carries a DM term (Dy, Dz in the config), so the allowed
+    # form must have off-diagonal freedom -- the collapse this pins against
+    # reported none.
+    assert len(free0) == 6
+    assert m0[0][1] != "0" and m0[0][2] != "0"
+
+
+def test_allowed_form_survives_a_real_cif_lattice():
+    """
+    A rocksalt primitive cell as Materials Project ships it (cubic to six
+    decimals, not exactly) must give the exact centrosymmetric forms, quickly.
+
+    Both nearest-neighbour bonds in rocksalt have an inversion centre at their
+    midpoint, so the allowed matrix is SYMMETRIC: D = 0 on both, which is why
+    NiO's exchange is a two-parameter Heisenberg problem in the first place.
+    """
+    import time
+
+    # mp-aaaabcdd, the Phase-2 NiO run: rhombohedral primitive, cubic to 6 dp
+    b = MagCalcConfigBuilder.from_config({"crystal_structure": {
+        "lattice_parameters": {"a": 2.96018835, "b": 2.96018714, "c": 2.96018743,
+                               "alpha": 59.99999689, "beta": 60.00001040,
+                               "gamma": 60.00000019},
+        "atoms_uc": [{"label": "Ni0", "pos": [0.0, 0.0, 0.0], "spin_S": 1.0}],
+    }})
+    assert b.space_group_number == 225                     # Fm-3m, fcc Ni
+
+    t0 = time.time()
+    orbits = b.analyze_bond_symmetry(max_distance=4.5)
+    forms = [b.get_bond_constraints(o) for o in orbits]
+    assert time.time() - t0 < 30.0, "symmetry analysis should be milliseconds"
+
+    assert len(orbits) == 2
+    assert abs(orbits[0]["distance"] - 2.9602) < 1e-3      # 12 NN, 90 deg
+    assert abs(orbits[1]["distance"] - 4.1863) < 1e-3      # 6 NNN, 180 deg
+    for orb, con in zip(orbits, forms):
+        m = sp.Matrix([[sp.sympify(e) for e in row]
+                       for row in con["symbolic_matrix"]])
+        assert sp.simplify(m - m.T) == sp.zeros(3, 3), (
+            f"d = {orb['distance']:.3f} A: allowed form is not symmetric, so it "
+            f"claims DM is allowed on a centrosymmetric bond:\n"
+            f"{con['symbolic_matrix']}")
+    # the 180-degree bond is uniaxial about the bond: J_par and J_perp only
+    assert len(forms[1]["free_parameters"]) == 2

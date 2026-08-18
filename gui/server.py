@@ -566,10 +566,20 @@ async def trigger_calculation(payload: Dict[str, Any]):
             "        time.sleep(5)\n"
             "run_calculation(sys.argv[1])\n"
         )
+        # The child must be headless, and `matplotlib.use('Agg')` at the top of
+        # THIS module does not make it so -- that binds the server process only.
+        # Without this, a config with `plotting: {show_plot: true}` (seven are
+        # shipped) makes the child call `plt.show()` on the default interactive
+        # macOS backend and block forever waiting for someone to close a native
+        # window. From the UI that looks like a calculation that started and then
+        # hung with no output, and /stop-calculation is the only way out. The
+        # GUI renders the saved PNGs, so a native window is never wanted here.
+        child_env = dict(os.environ, MPLBACKEND="Agg", MAGCALC_NO_GUI="1")
         proc = await asyncio.create_subprocess_exec(
             sys.executable, "-u", "-c", child_script,
             run_config_path,
             cwd=run_dir,
+            env=child_env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )

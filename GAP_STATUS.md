@@ -247,6 +247,28 @@ runnable configs, 54 of them tracked — see the coverage audit below.)
   `plt.show()` sites now go through `plotting.show_plot_if_possible()`, which
   no-ops on a non-interactive backend; the smoke test additionally pins
   `matplotlib.use("Agg")` rather than relying on the environment's accident.
+- **…and the backend check alone was not enough** (2026-08-18). Windows still
+  appeared during gate runs, intermittently. Cause: **`import pyalps` RESETS
+  matplotlib's backend from Agg to the interactive `macosx`**, beating both
+  `$MPLBACKEND` and an earlier `matplotlib.use("Agg", force=True)`. magpipe's
+  `test_alps.py`/`test_thermo.py` import it, so under `-n auto --dist worksteal`
+  only the workers that drew those modules were poisoned — and only the config
+  runs landing in those workers afterwards opened a window, which is why a clean
+  gate proved nothing. `show_plot_if_possible` now also honours **`MAGCALC_NO_GUI`
+  and `PYTEST_CURRENT_TEST`, independently of the backend**: a test session is a
+  TREE of processes and the `show_plot` configs execute in `magcalc run`
+  children, which inherit an environment but not a backend. A `conftest.py` in
+  each test root sets both and restores the backend before every test
+  (`MAGCALC_TEST_GUI=1` opts out); `tests/test_no_gui_guard.py` pins it, and
+  checks pyalps's behaviour in a SUBPROCESS because in-process a second
+  `import pyalps` is a no-op that re-flips nothing.
+- **The GUI spawned calculations that could hang the same way** (2026-08-18).
+  `gui/server.py` forces Agg for ITSELF, but launched its calculation subprocess
+  with no `env=`, so a `show_plot` config blocked forever on a native window —
+  from the UI, a run that starts and then hangs with `/stop-calculation` the only
+  way out. It now passes `MPLBACKEND=Agg` and `MAGCALC_NO_GUI=1` to the child
+  (`tests/test_gui_output_dir.py`). The native app launches this same server, so
+  one fix covers both clients.
 
 ---
 
@@ -776,6 +798,37 @@ plausible-but-wrong spectra that looked fine:
      (`core._check_ewald_spiral_validity`), not a footnote — and Sunny has no
      counterpart to it, because its `check_rotational_symmetry` never sees the
      dipolar term.
+
+- **`magcalc symmetry`'s allowed exchange matrix collapsed on any lattice with
+  measurement noise in it** (2026-08-17, surfaced by `magpipe`'s Phase 4). The
+  constraint `J = R J Rᵀ` is linear in the nine entries of J, i.e. a null space, and
+  `get_bond_constraints` handed it to `sp.solve` after "sanitizing" the Cartesian
+  rotation with `np.round(R_cart, 10)` + `nsimplify`. But `R_cart = A R_frac A⁻¹`
+  inherits the lattice's noise, and nsimplify of a 10-decimal float is not `2/3` — it
+  is `1666666499/2500000000`. That R is **not orthogonal**, so the constraint has far
+  fewer solutions than it should. Measured: perturbing KFe₃J's `a` by **1e-7 Å** took
+  its NN bond from **6 free parameters to 1**, every off-diagonal reported as
+  symmetry-forbidden — "no DM allowed on this bond", on the config whose whole point
+  is its DM term. On a Materials Project NiO primitive cell (cubic to six decimals,
+  not exactly) the same giant rationals instead ran sympy for **> 10 minutes without
+  returning**, which is how it was noticed at all. Now a 0.2 ms SVD null space, with R
+  snapped to the nearest orthogonal matrix first (spglib had already accepted the op
+  at symprec = 1e-3) and coefficients snapped at 1e-5.
+
+  Two lessons:
+
+  1. **Symmetry is discrete, so its answer must not move continuously with the
+     input.** That is a property the code can be tested against directly, with no
+     oracle at all, and it is now the test: perturb the lattice below any
+     experimental precision and require the allowed form to be *identical*. Every
+     previous test used a hand-typed lattice (`a: 6.0`) whose rotations come out
+     exact, so the whole failure mode was outside the suite's reach — a real CIF was
+     needed to reach it, and nothing in the suite used one.
+  2. **"Sanitizing" floats into exact numbers invents information.** Rounding then
+     `nsimplify` looks like it is cleaning the input up; what it actually does is
+     assert 10 digits of exactness the number never had, and then propagate that
+     assertion through exact arithmetic. The tolerance belonged in the *solve*, where
+     it is now explicit, not in a preprocessing step that hides it.
 
 Every one was caught by an **independent oracle or an exact identity**, never by
 inspection. So: validate against Sunny (in-repo) or a textbook analytic result; prefer

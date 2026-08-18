@@ -166,3 +166,26 @@ def test_the_run_config_stays_where_relative_references_resolve(server, tmp_path
     # And the paths inside it are relative to that directory, not absolute.
     assert written["plotting"]["disp_plot_filename"] == os.path.join(
         server.GUI_OUTPUT_SUBDIR, "disp_plot.png")
+
+
+def test_the_gui_spawns_its_calculations_headless():
+    """
+    `matplotlib.use('Agg')` at the top of server.py binds the SERVER process, not
+    the children it spawns -- and the children are what actually run the config.
+    Seven shipped configs set `plotting: {show_plot: true}`, so without an
+    explicit env the child calls `plt.show()` on the interactive macOS backend
+    and blocks forever on a native window. From the UI that is a calculation
+    that starts and then hangs, with /stop-calculation the only way out.
+
+    Asserted on the source rather than by launching a server: the failure is a
+    HANG, so a test that reproduced it would hang too.
+    """
+    import re
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "gui" / "server.py").read_text()
+    spawn = re.search(r"create_subprocess_exec\((.*?)\)\n", src, re.S)
+    assert spawn, "the calculation spawn moved; re-check this guard"
+    assert "env=child_env" in spawn.group(1), (
+        "the GUI spawns calculations without an explicit environment")
+    assert 'MPLBACKEND="Agg"' in src and 'MAGCALC_NO_GUI="1"' in src

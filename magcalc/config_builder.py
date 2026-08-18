@@ -24,6 +24,102 @@ _DIRECTIONAL_RULE_TYPES = frozenset({
     "dm", "dm_manual", "anisotropic_exchange", "interaction_matrix", "kitaev",
 })
 
+
+#: How far an allowed-matrix coefficient may sit from an exact value and still
+#: be snapped to it. Allowed-matrix coefficients come from point-group algebra,
+#: so they are O(1) ratios like 1, 1/2, sqrt(3)/2 -- there is no such thing as a
+#: genuine coefficient of 3e-7. What produces one is lattice noise: a CIF that
+#: is cubic to six decimals gives rotation matrices that are off by ~1e-6, and
+#: those propagate here. `detect_symmetry_from_structure` already accepted the
+#: space group at symprec = 1e-3, so snapping two orders of magnitude tighter
+#: than that adds no assumption it has not already made.
+_SYMMETRY_COEFF_TOL = 1e-5
+
+
+def _rref(A, tol=_SYMMETRY_COEFF_TOL):
+    """
+    Reduced row echelon form with partial pivoting, plus the pivot columns.
+
+    Used to turn an (arbitrary) orthonormal null-space basis into the canonical
+    one in which each basis vector owns a distinct entry of J -- which is what
+    makes "j3" in the reported allowed matrix mean "the (1,0) entry is free".
+    """
+    A = np.array(A, dtype=float, copy=True)
+    m, n = A.shape
+    pivots = []
+    r = 0
+    for c in range(n):
+        if r >= m:
+            break
+        k = r + int(np.argmax(np.abs(A[r:, c])))
+        if abs(A[k, c]) < tol:
+            continue
+        A[[r, k]] = A[[k, r]]
+        A[r] = A[r] / A[r, c]
+        for i in range(m):
+            if i != r and abs(A[i, c]) > 0:
+                A[i] = A[i] - A[i, c] * A[r]
+        pivots.append(c)
+        r += 1
+    A[np.abs(A) < tol] = 0.0
+    return A[:r], pivots
+
+
+def _nearest_orthogonal(R):
+    """
+    The orthogonal matrix closest to `R`, via the polar decomposition.
+
+    A crystallographic point-group operation IS orthogonal in Cartesian
+    coordinates; `A R_frac A^-1` only fails to be so because the lattice A
+    carries measurement noise. A real CIF has plenty -- the Materials Project
+    NiO primitive cell is cubic to 6 decimals, not exactly -- and that noise
+    propagates straight into the allowed exchange matrix, which is then reported
+    with 1.41421377829 where sqrt(2) belongs and with ties that do not quite
+    close. spglib has already decided (within its symprec) that this op is in
+    the group, so idealising it is consistent with that decision, not an extra
+    assumption on top of it.
+    """
+    U, _s, Vt = np.linalg.svd(np.asarray(R, dtype=float))
+    return U @ Vt
+
+
+#: Irrationals a crystallographic rotation matrix actually produces, so that a
+#: tie like 1/sqrt(3) prints as `sqrt(3)/3` rather than `0.57735`.
+_SYMMETRY_CONSTANTS = None
+
+
+def _nice_coefficient(x, tol=_SYMMETRY_COEFF_TOL):
+    """
+    A float coefficient of the allowed-matrix basis, as an exact sympy number
+    when it plainly is one, and as a plain Float otherwise.
+
+    Deliberately narrow: it snaps only to simple rationals and to the handful of
+    surds a point-group rotation can produce. Anything else is left as a float,
+    because a wrong "exact" value here is precisely the failure this replaced.
+    """
+    import sympy as sp
+
+    global _SYMMETRY_CONSTANTS
+    if _SYMMETRY_CONSTANTS is None:
+        _SYMMETRY_CONSTANTS = [sp.sqrt(2), sp.sqrt(3), sp.sqrt(6),
+                               sp.sqrt(2) / 2, sp.sqrt(3) / 2, sp.sqrt(3) / 3,
+                               sp.sqrt(6) / 3, sp.sqrt(2) / 4, sp.sqrt(6) / 4]
+
+    x = float(x)
+    rat = sp.Rational(x).limit_denominator(24)
+    if abs(float(rat) - x) < tol:
+        return rat
+    for const in _SYMMETRY_CONSTANTS:
+        c = float(const)
+        for sign in (1, -1):
+            for mult in (sp.Integer(1), sp.Rational(1, 2), sp.Rational(1, 3),
+                         sp.Rational(3, 2), sp.Integer(2)):
+                cand = sign * float(mult) * c
+                if abs(cand - x) < tol:
+                    return sign * mult * const
+    return sp.Float(x, 12)
+
+
 class MagCalcConfigBuilder:
     """
     Builder class for generating MagCalc configuration YAML files.
@@ -1623,58 +1719,75 @@ class MagCalcConfigBuilder:
                      little_group_ops.append({"op": (R, t), "swap": True})
                      is_bond_symmetric = True
 
-        # 3. Solve for Allowed Matrix J
-        # J is 3x3 matrix. Elements J_ab.
-        # We construct a linear system for the 9 elements.
-        
-        J_vars = sp.Matrix(sp.symbols('j0:9')).reshape(3, 3) # j0..j8
-        # Flattened for solver: [j0, ..., j8]
-        # Constraints: Coeffs * vars = 0
-        
-        constraints = [] # List of equations (expressions that must equal 0)
-        
+        # 3. Solve for the allowed matrix J: the null space of {J - R J R^T = 0}
+        #
+        # The constraint is LINEAR in the nine entries of J, so this is a null
+        # space, and it is computed as one -- numerically, with an SVD.
+        #
+        # It used to be handed to `sp.solve` after "sanitizing" R_cart with
+        # `np.round(R_cart, 10)` + `nsimplify`, and that was wrong twice over.
+        # R_cart = A R_frac A^-1 inherits the lattice's numerical noise, and a
+        # real CIF has plenty: nsimplify of a 10-decimal float is not 2/3, it is
+        # the exact rational 1666666499/2500000000. Such an R is no longer
+        # orthogonal, so `J = R J R^T` over-constrains and the reported allowed
+        # form COLLAPSES -- measured on KFe3J, where perturbing `a` by 1e-7 A
+        # took the NN bond from 6 free parameters to 1 (every off-diagonal
+        # forced to zero, i.e. "symmetry forbids DM here", silently). On a
+        # Materials Project NiO primitive cell the same giant rationals instead
+        # made sympy grind for over ten minutes without finishing.
+        #
+        # Numerically it is a 0.2 ms SVD whose answer does not move at 1e-7, and
+        # the tolerance is explicit rather than implied by float noise.
+        J_vars = sp.Matrix(sp.symbols('j0:9')).reshape(3, 3)  # j0..j8
+
+        # vec(J) is row-major, so J -> R J R^T is kron(R, R), and the transpose
+        # (the `swap` case) is that composed with the permutation vec(J^T).
+        P_T = np.zeros((9, 9))
+        for a in range(3):
+            for c in range(3):
+                P_T[3 * a + c, 3 * c + a] = 1.0
+
+        rows = []
         for item in little_group_ops:
-            R_frac = item["op"][0]
-            swap = item["swap"]
-            
-            # Convert R to Cartesian for spin interactions
-            R_cart = self._lattice_rotation(R_frac)
-            
-            # SANITIZE R_cart to help sympy
-            # 1. Round
-            R_cart_clean = np.round(R_cart, decimals=10)
-            # 2. Sympy nsimplify (handles 0.5 -> 1/2, 1.0 -> 1)
-            R_sym = sp.Matrix(R_cart_clean).applyfunc(sp.nsimplify)
-            
-            # Constraint Eq: J = R J R^T (if no swap)
-            #               J = R J^T R^T (if swap)
-            
-            term1 = J_vars
-            if swap:
-                 term2 = R_sym * J_vars.T * R_sym.T
-            else:
-                 term2 = R_sym * J_vars * R_sym.T
-                 
-            diff = term1 - term2
-            for elem in diff:
-                constraints.append(elem)
-                
-        # Solve
-        # We need to find the basis of the null space of these linear equations
-        # But sympy solve can handle it directly if we pass the system
-        
-        # Collect all equations
-        # Solves for j0..j8 in terms of free parameters
-        sol = sp.solve(constraints, list(J_vars))
-        
-        # Reconstruct matrix from solution
-        J_solved = J_vars.subs(sol)
-        
-        # 4. Extract free parameters and clean up
-        free_symbols = sorted(list(J_solved.free_symbols), key=lambda x: x.name)
-        
-        # Map weird sympy symbols (j0, j5...) to nice names (J1, J2, D...)?
-        # For user display, we want a clean string matrix
+            R_cart = _nearest_orthogonal(self._lattice_rotation(item["op"][0]))
+            K = np.kron(R_cart, R_cart)
+            if item["swap"]:
+                K = K @ P_T
+            rows.append(np.eye(9) - K)
+
+        if rows:
+            M = np.vstack(rows)
+            _u, sv, Vt = np.linalg.svd(M)
+            # Relative tolerance: the constraint rows are O(1) by construction
+            # (R is orthogonal up to lattice noise), so this separates a genuine
+            # constraint from the noise that motivated this rewrite.
+            rank = int(np.sum(sv > 1e-6 * max(1.0, float(sv[0]))))
+            null = Vt[rank:].T                      # (9, p) orthonormal basis
+        else:
+            null = np.eye(9)                        # no ops: nothing constrained
+
+        basis, pivots = _rref(null.T)
+
+        # Each pivot column of the reduced basis is a free entry of J; every
+        # other entry is a fixed linear combination of them. That is the same
+        # presentation the sympy solve produced (free symbols named after the
+        # entries they are), so `symbolic_matrix` reads as it always did.
+        exprs = []
+        for entry in range(9):
+            terms = []
+            for a, col in enumerate(pivots):
+                coeff = basis[a][entry]
+                if abs(coeff) > _SYMMETRY_COEFF_TOL:
+                    terms.append(_nice_coefficient(coeff) * J_vars[col])
+            # NOT nsimplify'd: any coefficient `_nice_coefficient` declined to
+            # recognise stays a Float on purpose, and nsimplify would turn it
+            # back into the sort of exact-looking giant rational this rewrite
+            # exists to get rid of.
+            exprs.append(sp.together(sum(terms)) if terms else sp.Integer(0))
+        J_solved = sp.Matrix(3, 3, exprs)
+
+        free_symbols = sorted(J_solved.free_symbols, key=lambda s: int(s.name[1:]))
+
         return {
             "symbolic_matrix": [[str(e) for e in row] for row in J_solved.tolist()],
             "free_parameters": [str(s) for s in free_symbols],

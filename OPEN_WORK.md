@@ -12,6 +12,19 @@ the peak, so that time is an upper bound; the 2026-08-15 run of the same gate to
 30:22 at 830 passed). **NOT COMMITTED**: the work is in the working tree, on `master`.
 Branch before committing.
 
+> **Superseded numbers, 2026-08-18.** The gate is now **1385 passed, 2 skipped**
+> (13:00, idle machine) — the count grew because `magpipe/tests` joined it, and the
+> skips dropped from 3 to 2 because `test_mp.py`'s live-API guard read
+> `$MP_API_KEY` directly instead of `magpipe.mp.resolve_api_key`, so three tests
+> were dark on any machine keeping its key in the macOS Keychain. The items below
+> are still the pyMagCalc pick-up notes and **nothing here has reopened**; work
+> since is tracked in `DISCOVERY_WORKFLOW_PLAN.md` §8 (magpipe Phases 4–5) and in
+> `GAP_STATUS.md` (the symmetry-constraint fixes, and the no-GUI guard —
+> `import pyalps` resets matplotlib's backend, which is why gate runs still opened
+> windows). Two items are open, both magpipe's, both recorded in the plan: the
+> Luttinger–Tisza ansatz ignores DM/anisotropy, and `SpinModel` has no applied
+> field.
+
 (The one-test accounting note from 2026-08-15 has resolved itself: `--collect-only`
 now reports 832 from inside `pyMagCalc/` and 839 from the workspace root, exactly
 837 + 3 skipped − 1. The cause was as suspected — `test_config_smoke` parametrizes over
