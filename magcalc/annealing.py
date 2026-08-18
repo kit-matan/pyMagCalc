@@ -7,7 +7,13 @@ on frustrated systems, and LSWT expanded about one of those is meaningless -- se
 
 Everything here works on the classical energy in CARTESIAN spin components,
 
-    E(m) = 1/2 m^T H m + b . m + c,      m = [m_0x, m_0y, m_0z, m_1x, ...],  |m_i| = S
+    E(m) = 1/2 m^T H m + b . m + c,      m = [m_0x, m_0y, m_0z, m_1x, ...],  |m_i| = S_i
+
+`S` is a single spin length or one PER SITE. The distinction is not a rescaling:
+on a mixed-spin model the constraint surface is a product of spheres of different
+radii, and the minimising DIRECTIONS depend on the radii. An AFM trimer with
+S = (1, 1, 1/2) closes its moment triangle at 151.0 deg / 104.5 deg, not at the
+120 deg a uniform-length search returns -- see `tests/test_mixed_spin_classical.py`.
 
 which `MagCalc._extract_classical_quadratic` already provides. That form is what
 makes a real Metropolis sampler cheap: a single-site move touches only 3 of the 3N
@@ -42,11 +48,29 @@ def energy(m: np.ndarray, H: np.ndarray, b: np.ndarray, c: float) -> float:
     return float(0.5 * m @ (H @ m) + b @ m + c)
 
 
-def random_spins(n: int, S: float, rng: np.random.Generator) -> np.ndarray:
-    """n random spins of magnitude S, uniform on the sphere, flattened to 3n."""
+def spin_lengths(S, n: int) -> np.ndarray:
+    """`S` as one spin length per site: a scalar broadcasts, a list is checked.
+
+    Everything here constrains |m_i| = S_i, so this is the one place that decides
+    what "the spin length" means. A uniform model gets an array of identical
+    values and is bit-identical to the old scalar path.
+    """
+    arr = np.atleast_1d(np.asarray(S, dtype=float))
+    if arr.size == 1:
+        return np.full(n, float(arr[0]))
+    if arr.size != n:
+        raise ValueError(
+            f"{arr.size} spin lengths for {n} sites; give one S for the whole "
+            "model or exactly one per site")
+    return arr
+
+
+def random_spins(n: int, S, rng: np.random.Generator) -> np.ndarray:
+    """n random spins of magnitude S_i, uniform on their spheres, flattened to 3n."""
+    Sv = spin_lengths(S, n)
     v = rng.normal(size=(n, 3))
     v /= np.linalg.norm(v, axis=1, keepdims=True)
-    return (S * v).ravel()
+    return (Sv[:, None] * v).ravel()
 
 
 def steepest_descent(
@@ -54,7 +78,7 @@ def steepest_descent(
     H: np.ndarray,
     b: np.ndarray,
     c: float,
-    S: float,
+    S,
     n: int,
     max_iter: int = 500,
     tol: float = 1e-10,
@@ -78,6 +102,7 @@ def steepest_descent(
     contract the docstring always claimed -- callers polish with this and trust the
     result to be no worse than what they handed in.
     """
+    Sv = spin_lengths(S, n)
     m = m.copy()
     e_prev = energy(m, H, b, c)
     m_best, e_best = m.copy(), e_prev
@@ -90,7 +115,7 @@ def steepest_descent(
             norm = np.linalg.norm(h_ext)
             if norm < 1e-12:
                 continue
-            new = -S * h_ext / norm
+            new = -Sv[i] * h_ext / norm
             delta = new - m[sl]
             m[sl] = new
             g += H[:, sl] @ delta          # keep the gradient in sync
@@ -107,7 +132,7 @@ def anneal(
     H: np.ndarray,
     b: np.ndarray,
     c: float,
-    S: float,
+    S,
     n: int,
     n_sweeps: int = 2000,
     T_start: Optional[float] = None,
@@ -127,12 +152,15 @@ def anneal(
     at the end of a finite schedule).
     """
     rng = np.random.default_rng(seed)
-    m = random_spins(n, S, rng) if m0 is None else m0.copy()
+    Sv = spin_lengths(S, n)
+    m = random_spins(n, Sv, rng) if m0 is None else m0.copy()
 
     # Energy scale: the typical local field a spin feels. This sets a temperature
     # that is hot enough to melt the structure but not so hot the schedule wastes
     # its whole budget in a paramagnet.
-    scale = float(np.abs(H).sum(axis=1).max() * S + np.abs(b).max())
+    # The LARGEST spin sets the hottest local field, so it sets the schedule --
+    # a temperature chosen from the smallest would never melt the big moments.
+    scale = float(np.abs(H).sum(axis=1).max() * Sv.max() + np.abs(b).max())
     scale = max(scale, 1e-6)
     T0 = float(T_start) if T_start is not None else scale
     T1 = float(T_end) if T_end is not None else scale * 1e-6
@@ -158,15 +186,15 @@ def anneal(
             u = rng.random()
             if u < 0.5:                                    # propose_uniform
                 v = rng.normal(size=3)
-                new = S * v / np.linalg.norm(v)
+                new = Sv[i] * v / np.linalg.norm(v)
             elif u < 0.6:                                  # propose_flip
                 new = -old
             else:                                          # propose_delta
-                v = old + sigma * S * rng.normal(size=3)
+                v = old + sigma * Sv[i] * rng.normal(size=3)
                 nv = np.linalg.norm(v)
                 if nv < 1e-12:
                     continue
-                new = S * v / nv
+                new = Sv[i] * v / nv
 
             delta = new - old
             dE = float(delta @ g[sl] + 0.5 * delta @ (H[sl, sl] @ delta))
@@ -200,7 +228,7 @@ def anneal(
         # minimum Metropolis had already found -- reproducibly, on every seed, so
         # the "N of N runs hit the minimum" consensus that is supposed to certify a
         # ground state agreed unanimously on a local MAXIMUM.
-        m_pol, e_pol = steepest_descent(m_best, H, b, c, S, n)
+        m_pol, e_pol = steepest_descent(m_best, H, b, c, Sv, n)
         if e_pol < e_best:
             m_best, e_best = m_pol, e_pol
 

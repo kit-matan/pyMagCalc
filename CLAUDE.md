@@ -876,6 +876,29 @@ global √(S/2), making every site whose S differed from the reference wrong by 
 — a 60% error on a Cu(½)+Fe(2) model. The Fortran backend still applies the global
 factor, so it now falls back to NumPy for mixed-spin S(Q,ω).
 
+**Mixed spin, the CLASSICAL half** (fixed 2026-08-18). `spin_magnitude` is the
+*reference* S — the first atom's `spin_S`, which is what `S_sym` binds to, with each
+site's ratio already inside H(q). The ground-state search used it as a **length** as
+well, moving on |m_i| = S_ref for every site. That is not a rescaling: the classical
+energy is a quadratic form in free Cartesian components (already right for mixed spins)
+and the lengths enter *only* through that constraint, so a uniform radius changes which
+state minimises whenever the minimising directions depend on the lengths. An AFM trimer
+with S = (1, 1, ½) closes its moment triangle at 151.0°/104.5°, E = −1.125 J; the old
+code returned the 120° state at E = −1.5 J, which is not a state of that Hamiltonian at
+all (evaluated honestly it is −1.0). Worse, `relax_from_current` scored the *correct*
+structure the same wrong way and "relaxed" it downhill — so supplying the right answer
+by hand was rejected too, and the model could not be run at any setting. `S_val`
+(binds `S_sym`) and `S_vec` (the |m_i| = S_i constraint) are now separate everywhere;
+`MagCalc._classical_spin_lengths` is the single place that decides the latter.
+`tests/test_mixed_spin_classical.py` pins it on the closed-triangle law of cosines,
+and pins that a uniform model is bit-identical seed-for-seed.
+
+`thermal_mc` / `sampled_correlations` still **refuse** mixed spins outright
+(`NotImplementedError`) — the sampler assumes one |m_i| throughout. 1/S `corrections`
+and `scga` need nothing: corrections' outputs are per-site quantities of the Bogoliubov
+transform (the moment reduction is ⟨a†_i a_i⟩, which carries no explicit S), verified
+against the decoupled-sublattice identity, and `scga` reads `spin_magnitudes()` directly.
+
 
 Applies to S(Q,ω), powder, and energy-cut intensities (never to energies):
 

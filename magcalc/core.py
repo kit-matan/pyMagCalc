@@ -113,7 +113,12 @@ logger.addHandler(logging.NullHandler())
 
 def _classical_spin_components(x, S, n):
     """Cartesian spin components m (3N,) from angle vector x=[th0,ph0,th1,...].
-    Returns m and the trig factors (reused by the gradient)."""
+    Returns m and the trig factors (reused by the gradient).
+
+    `S` is a scalar or a PER-SITE array of length n; both broadcast against the
+    length-n trig factors, so a mixed-spin model needs no separate code path
+    here. What it does need is for the caller to pass the per-site lengths --
+    see `MagCalc._classical_spin_lengths`."""
     th = x[0::2]
     ph = x[1::2]
     st, ct = np.sin(th), np.cos(th)
@@ -1605,8 +1610,36 @@ class MagCalc:
                 return c
         return None
 
+    def _classical_spin_lengths(self, nspins):
+        """|m_i| for the classical energy: one length PER SITE.
+
+        `self.spin_magnitude` is the REFERENCE spin (the first atom's `spin_S`),
+        which is the right thing to bind `S_sym` to -- `gen_HM` writes site i's
+        Holstein-Primakoff expansion as ratio_i * S_sym, so the ratios are
+        already inside the Hamiltonian. It is the wrong thing to use as a
+        LENGTH: the classical energy is extracted as a quadratic form in free
+        Cartesian components, and the spin lengths enter only through the
+        constraint |m_i| = S_i that the minimiser imposes on top of it.
+
+        Using the reference for every site is a silent, plausible failure on any
+        mixed-spin model whose ground-state DIRECTIONS depend on the lengths. An
+        AFM trimer with S = (1, 1, 1/2) minimises at a closed moment triangle,
+        151.0 deg / 104.5 deg apart, E = -1.125 J; with one length it returns the
+        120 deg state at E = -1.5 J, which is not a state of this Hamiltonian at
+        all. LSWT then uses the true per-site S, finds it is not a minimum, and
+        the ground-state guard rejects the run -- pointing at `num_starts`, which
+        can never fix it. `tests/test_mixed_spin_classical.py` pins the trimer.
+        """
+        try:
+            mags = self.sm.spin_magnitudes()
+        except Exception:
+            mags = None
+        if mags and len(mags) == nspins:
+            return np.asarray([float(m) for m in mags], dtype=float)
+        return np.full(nspins, float(self.spin_magnitude), dtype=float)
+
     def _minimize_anneal(
-        self, H_q, b_q, c_q, S_val, nspins, method="anneal", num_starts=1,
+        self, H_q, b_q, c_q, S_vec, nspins, method="anneal", num_starts=1,
         x0=None, seed=0, n_sweeps=2000, T_start=None, T_end=None,
         polish=True, **_ignored,
     ):
@@ -1634,7 +1667,7 @@ class MagCalc:
 
         m0 = None
         if x0 is not None:
-            m0, *_ = _classical_spin_components(np.asarray(x0, float), S_val, nspins)
+            m0, *_ = _classical_spin_components(np.asarray(x0, float), S_vec, nspins)
 
         n_runs = max(int(num_starts), 1)
         best_x, best_e, hits = None, np.inf, 0
@@ -1650,10 +1683,10 @@ class MagCalc:
             rng = np.random.default_rng((seed or 0) + run)
             if steep_only:
                 start = m0 if (m0 is not None and run == 0) \
-                    else random_spins(nspins, S_val, rng)
-                m, e = steepest_descent(start, H_q, b_q, c_q, S_val, nspins)
+                    else random_spins(nspins, S_vec, rng)
+                m, e = steepest_descent(start, H_q, b_q, c_q, S_vec, nspins)
             else:
-                m, e = anneal(H_q, b_q, c_q, S_val, nspins, n_sweeps=n_sweeps,
+                m, e = anneal(H_q, b_q, c_q, S_vec, nspins, n_sweeps=n_sweeps,
                               T_start=T_start, T_end=T_end,
                               seed=(seed or 0) + run,
                               m0=m0 if run == 0 else None)
@@ -1661,7 +1694,7 @@ class MagCalc:
             x = cartesian_to_angles(m, nspins)
             if polish:
                 res = minimize(_classical_energy_np, x,
-                               args=(H_q, b_q, c_q, S_val, nspins),
+                               args=(H_q, b_q, c_q, S_vec, nspins),
                                jac=_classical_grad_np, method="L-BFGS-B",
                                options={"maxiter": 1000})
                 x, e = res.x, float(res.fun)
@@ -1711,7 +1744,12 @@ class MagCalc:
             return None
         nspins = len(self.sm.atom_pos())
         nspins_ouc = len(self.sm.atom_pos_ouc())
+        # TWO different roles for "S", which coincide only on a uniform model:
+        # `S_val` binds S_sym inside the Hamiltonian expression, `S_vec` is the
+        # constraint |m_i| = S_i the relaxation moves on. See
+        # `_classical_spin_lengths`.
         S_val = float(self.spin_magnitude)
+        S_vec = self._classical_spin_lengths(nspins)
         quad = self._extract_classical_quadratic(params, nspins, nspins_ouc, S_val)
         if quad is None:
             return None
@@ -1741,7 +1779,7 @@ class MagCalc:
             x0[2 * i] = np.arccos(np.clip(z[2], -1.0, 1.0))
             x0[2 * i + 1] = np.arctan2(z[1], z[0])
 
-        e_now = _classical_energy_np(x0, H_q, b_q, c_q, S_val, nspins)
+        e_now = _classical_energy_np(x0, H_q, b_q, c_q, S_vec, nspins)
 
         # Relax from SLIGHTLY PERTURBED copies, not from x0 itself. A maximum or
         # saddle (e.g. a ferromagnetic state with antiferromagnetic exchange) is a
@@ -1755,7 +1793,7 @@ class MagCalc:
         for _ in range(5):
             xp = x0 + rng.normal(0.0, 0.05, size=x0.shape)
             res = minimize(_classical_energy_np, xp,
-                           args=(H_q, b_q, c_q, S_val, nspins),
+                           args=(H_q, b_q, c_q, S_vec, nspins),
                            jac=_classical_grad_np, method="L-BFGS-B",
                            options={"maxiter": 500, "ftol": tol})
             e_best = min(e_best, float(res.fun))
@@ -2792,24 +2830,34 @@ class MagCalc:
         """
         try:
             from scipy.optimize import minimize as _sp_min
+            from .annealing import spin_lengths
             rng = np.random.default_rng(seed)
             B, d = int(num_starts), 3 * n
+            # Per-site lengths, shaped (1, n, 1) so they broadcast against the
+            # (B, n, 3) stack of unit directions. `S * v` with a length-n array
+            # would silently align n against the 3 Cartesian components instead
+            # -- which is why this is spelled out rather than left to broadcast.
+            Sv = spin_lengths(S, n)
+            Sb = Sv[None, :, None]
             v = rng.normal(size=(B, n, 3))
             v /= np.linalg.norm(v, axis=2, keepdims=True)
             lam = float(np.max(np.abs(np.linalg.eigvalsh(H))))
-            lr = 1.0 / (S * S * lam + 1e-12)
+            # Step size from the LARGEST spin: it bounds the curvature, so a
+            # smaller one would overshoot on the big moments.
+            S_max = float(Sv.max())
+            lr = 1.0 / (S_max * S_max * lam + 1e-12)
             beta = 0.9
             mom = np.zeros_like(v)
             for _ in range(max_iter):
-                m = (S * v).reshape(B, d)
-                gn = (S * (m @ H + b)).reshape(B, n, 3)        # dE/dn
+                m = (Sb * v).reshape(B, d)
+                gn = (Sb * (m @ H + b).reshape(B, n, 3))       # dE/dn
                 gtan = gn - np.sum(gn * v, axis=2, keepdims=True) * v  # tangent
                 if np.max(np.abs(gtan)) < tol:
                     break
                 mom = beta * mom + gtan
                 v = v - lr * mom
                 v /= np.linalg.norm(v, axis=2, keepdims=True)
-            m = (S * v).reshape(B, d)
+            m = (Sb * v).reshape(B, d)
             E = 0.5 * np.sum(m * (m @ H), axis=1) + m @ b + c
             order = np.argsort(E)[:min(topk, B)]
             best = None
@@ -2821,7 +2869,7 @@ class MagCalc:
                 x0[0::2] = th
                 x0[1::2] = ph
                 r = _sp_min(_classical_energy_np, x0, jac=_classical_grad_np,
-                            args=(H, b, c, S, n), method="L-BFGS-B")
+                            args=(H, b, c, Sv, n), method="L-BFGS-B")
                 if best is None or r.fun < best.fun:
                     best = r
             return best
@@ -2882,7 +2930,12 @@ class MagCalc:
         # 1. Model sizes
         nspins = len(self.sm.atom_pos())
         nspins_ouc = len(self.sm.atom_pos_ouc())
+        # `S_val` binds S_sym inside the Hamiltonian expression (the per-site
+        # ratios are already baked in there by gen_HM); `S_vec` is the constraint
+        # |m_i| = S_i the search moves on. They coincide only on a uniform model
+        # -- see `_classical_spin_lengths`.
         S_val = self.spin_magnitude
+        S_vec = self._classical_spin_lengths(nspins)
 
         # 2. Energy + gradient for the optimizer. Prefer the analytical NumPy
         # form: the classical energy is a quadratic form in the spin components,
@@ -2905,7 +2958,7 @@ class MagCalc:
                     f"method (e.g. L-BFGS-B) instead."
                 )
             return self._minimize_anneal(
-                *quad, S_val, nspins, method=method, num_starts=num_starts,
+                *quad, S_vec, nspins, method=method, num_starts=num_starts,
                 x0=x0, seed=seed, **kwargs)
 
         if quad is not None:
@@ -2917,13 +2970,13 @@ class MagCalc:
                 logger.info(
                     f"Minimizing via batched projected-gradient ({num_starts} starts, vectorized)..."
                 )
-                res = self._minimize_batched(H_q, b_q, c_q, S_val, nspins, num_starts, seed)
+                res = self._minimize_batched(H_q, b_q, c_q, S_vec, nspins, num_starts, seed)
                 if res is not None:
                     res.global_message = "batched projected-gradient multistart"
                     logger.info(f"Batched minimization complete: E_min={res.fun:.6f}")
                     return res
                 logger.info("Batched minimization unavailable; using scipy multistart.")
-            payload = ("np", H_q, b_q, c_q, S_val, nspins)
+            payload = ("np", H_q, b_q, c_q, S_vec, nspins)
             logger.info("Using analytical NumPy classical energy (quadratic-form extraction).")
         else:
             # Fallback: symbolic angle-based energy + gradient (lambdified per

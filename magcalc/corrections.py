@@ -31,7 +31,6 @@ antiferromagnet: dE = -0.157947 J/site, dS = 0.19657. See tests/test_corrections
 """
 import logging
 from dataclasses import dataclass
-from typing import List, Optional
 
 import numpy as np
 from scipy import linalg as la
@@ -77,7 +76,6 @@ def _colpa(H2: np.ndarray):
 def compute_corrections(
     calc,
     k_mesh=(8, 8, 8),
-    spin_magnitudes: Optional[List[float]] = None,
     tol_imag: float = 1e-3,
 ) -> LSWTCorrections:
     """1/S corrections for a built MagCalc `calc`.
@@ -85,6 +83,16 @@ def compute_corrections(
     k_mesh: Monkhorst-Pack-style grid size per reciprocal axis. Only axes with a real
     (non-flat) reciprocal length are sampled -- a chain samples 1-D, a plane 2-D -- so a
     tuple like (24, 24, 1) is honoured directly and a decoupled axis contributes 1 point.
+
+    MIXED SPINS need nothing here, which is why the `spin_magnitudes` argument this
+    used to accept (and never read) is gone. `S` below is the REFERENCE spin, and it
+    is the right thing to pass to `_build_h_stack`: gen_HM writes site i's
+    Holstein-Primakoff expansion as ratio_i * S_sym, so the per-site lengths are
+    already inside H(q). The two outputs are then per-site quantities of the
+    Bogoliubov transform itself -- the moment reduction is the boson density
+    <a^dag_i a_i>, which carries no explicit S at all. Checked against the
+    decoupled-sublattice identity: an S=1 and an S=1/2 chain in one cell return
+    exactly the union of their separate results.
     """
     from .core import reciprocal_b_matrix
 
