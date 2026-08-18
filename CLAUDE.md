@@ -579,13 +579,42 @@ only add `interactions`/`parameters`/`tasks`. An explicit `crystal_structure` in
 config overrides the mCIF-derived one.
 
 CLI: `magcalc mcif file.mcif [--out frag.yaml] [--spin-s S] [--ion Fe2+]` prints the
-expanded sites, or writes a runnable config fragment.
+expanded sites, or writes a runnable config fragment. **The reverse direction exists as of
+2026-08-18**: `magcalc mcif-out config.yaml [-o out.mcif] [--minimize]` writes the config's
+magnetic structure back out as an mCIF, in P1 magnetic symmetry with every site listed
+explicitly -- which is what FullProf's `mCIF_to_PCR`, VESTA and Bilbao accept, and what
+makes the round trip exact. `--minimize` exports the minimized structure instead of the
+configured one (off by default: a minimisation that can land in a different domain each
+run would make the file non-deterministic).
 
 Transforms (matching Sunny's MCIF.jl): position `r' = R r + T`; moment (an AXIAL vector)
 `m' = det(R) * p * (R m)` -- invariant under spatial inversion, flipped by time reversal.
 Validated against Sunny on TbSb (`tests/data_TbSb.mcif`): identical sites and directions,
 including the R-centring anti-translations that make it a G-type AFM. The reader REFUSES a
 file whose symops map a fixed site to two different moments (as Sunny does).
+
+**Moment components are mu_B on UNIT crystal axes** (`moment_basis='unit_axes'`, the
+default): `m_cart = mx*a^ + my*b^ + mz*c^`. Until 2026-08-18 this reader multiplied them by
+the FULL lattice vectors, which is what **Sunny 0.8.1 also does** -- and it is wrong:
+FullProf's own mCIF export writes the same three numbers it carries as the PCR magnetic
+phase's Rx/Ry/Rz and states `spherical_modulus` = their plain Euclidean norm beside them
+(Ho2BaNiO5: components (-0.1441, 0, -8.9931) in a 7.51 x 5.74 x 22.56 A cell, modulus
+8.99423 -- the other reading gives 203 mu_B, which no Ho3+ ion can carry). The two differ in
+DIRECTION, not only magnitude, whenever the moment has components on axes of unequal length
+(0.92 deg off -c here, against 0.31 deg before), so it changed the magnetic structure LSWT
+was handed. It went unnoticed because TbSb's moment lies along c ALONE, where the two bases
+differ only by a positive scale factor. Pass `moment_basis='lattice_vectors'` to read a file
+written under the old reading.
+
+**Elastic magnetic intensities** live in `magcalc/diffraction.py`: `magnetic_intensity(Q,
+positions, moments, ions=...)` is `|F_perp|^2` summed COHERENTLY over every magnetic site,
+with the same form factors and `perp` projection the S(Q,w) layer uses.
+`incoherent_intensity(..., groups=...)` computes the multi-phase answer `sum_p |F_p|^2` on
+purpose, and `cross_term_fraction` measures how far apart the two are -- because entering
+two inequivalent sublattices as two FullProf *phases* drops the interference between them,
+converges happily, reports a respectable chi^2, and picks the wrong magnetic structure
+(this is what forced an erratum on Cs2Cu3SnF12). Check any multi-phase refinement on the
+reflections where that fraction is LARGE; a small one proves nothing.
 
 ## 5f. Entangled units (dimers / trimers)
 

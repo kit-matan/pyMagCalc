@@ -69,8 +69,19 @@ def test_tbsb_is_a_g_type_afm_along_c():
 
 # ------------------------------------------------------------------ in-plane + Cartesian
 def test_inplane_moment_and_cartesian_conversion():
-    """Hand-checkable: m = 3 along a (a = 4 A), body-centring anti-translation flips it.
-    Cartesian |moment| = 3 * 4 = 12; directions +a and -a."""
+    """Hand-checkable: m = 3 mu_B along a (a = 4 A), body-centring anti-translation
+    flips it. Directions +a and -a; |moment| = 3 mu_B.
+
+    This assertion used to read 12.0 = 3 * a, i.e. the components were multiplied
+    by the FULL lattice vectors. That number was never checked against anything
+    outside this package -- it was the reader's own rule written down twice -- and
+    it is wrong: FullProf's own mCIF export (Ho2BaNiO5, in the FullProf Examples)
+    states `spherical_modulus 8.99423` for components (-0.1441, 0, -8.9931) in a
+    7.51 x 5.74 x 22.56 A cell, which is their plain Euclidean norm and could not
+    be anything else for a Ho3+ ion. So the components are mu_B on UNIT crystal
+    axes, and `moment_basis='lattice_vectors'` is kept only to read files written
+    under the other reading. See tests/test_diffraction.py.
+    """
     d = read_mcif(INPLANE)
     assert len(d["sites"]) == 2
     by_pos = {tuple(np.round(s["pos"], 3)): s for s in d["sites"]}
@@ -78,7 +89,12 @@ def test_inplane_moment_and_cartesian_conversion():
     s1 = by_pos[(0.5, 0.5, 0.5)]
     assert np.allclose(s0["direction"], [1, 0, 0])
     assert np.allclose(s1["direction"], [-1, 0, 0])       # time-reversed image
-    assert np.isclose(np.linalg.norm(s0["moment"]), 12.0)  # 3 * a
+    assert np.isclose(np.linalg.norm(s0["moment"]), 3.0)
+    # the old reading remains available, and reproduces the old number exactly
+    d_old = read_mcif(INPLANE, moment_basis="lattice_vectors")
+    old0 = [s for s in d_old["sites"] if np.allclose(s["pos"], [0, 0, 0], atol=1e-3)][0]
+    assert np.isclose(np.linalg.norm(old0["moment"]), 12.0)   # 3 * a
+    assert np.allclose(old0["direction"], s0["direction"])    # cubic: same direction
 
 
 def test_inconsistent_mcif_is_rejected(tmp_path):

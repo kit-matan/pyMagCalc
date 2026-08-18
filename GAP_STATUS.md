@@ -83,6 +83,7 @@ Tests: `tests/test_hamiltonian_terms.py`.
 | 1 | **SU(N) mode** | ✅ | `calculation.mode: SUN` | Sunny `:SUN` — FeI₂ energy, all 8 bands, AND intensities to 4e-7 |
 | 2 | Fitting sees temperature/domains/cross_section | ✅ | (auto from `calculation:`) | ignoring T biased J by 17% |
 | 3 | Mixed-spin intensity prefactor | ✅ | (per-site √(S_i/2)) | decoupled-sublattice identity (was 60% error) |
+| 3b | Mixed-spin **classical ground state** | ✅ | (per-site \|m_i\| = S_i) | closed-triangle law of cosines: AFM trimer S = (1,1,½) minimises at 151.0°/104.5°, E = −1.125 J, not the 120°/−1.5 J a uniform-length search returns |
 | 4 | Polarized / chiral cross-sections | ✅ | `cross_section` | Sunny (also listed under Gap 1) |
 
 **SU(N) detail** (`magcalc/sun/`, `tests/test_sun.py`): a second LSWT engine (as in
@@ -615,6 +616,12 @@ plausible-but-wrong spectra that looked fine:
 - the S-power filter silently deleting quartic terms;
 - the classical energy optimizing a different Hamiltonian than LSWT diagonalized;
 - a mixed-spin intensity off by 60% (a constant factor, easy to wave through);
+- the classical ground-state search constraining |m_i| = S_ref on a MIXED-spin model,
+  so it minimised a Hamiltonian nobody asked for — and then the energy audit, sharing
+  the same assumption, **rejected the correct structure**, leaving no setting at which
+  the model would run. Note the shape of it: the failure surfaced as an imaginary-mode
+  error pointing at `num_starts`, which can never fix it. A guard that fires for the
+  wrong reason costs more than one that does not fire at all;
 - SU(N) intensities off by exactly ×L (per-site normalization);
 - a **stationary maximum** returning a real, positive spectrum (invisible to the
   imaginary-mode check — only the energy audit catches it);
@@ -690,6 +697,25 @@ plausible-but-wrong spectra that looked fine:
   **a clean constant factor is a bug until proven otherwise, and "it's a
   convention" is not a proof.** Now pinned absolutely by
   `tests/test_absolute_normalization.py`.
+- **the mCIF reader multiplied moment components by the FULL lattice vectors**
+  (`m_cart = m @ A`), so a 3 mu_B moment in a 4 A cell came back as 12 -- and,
+  what actually matters because LSWT consumes only the direction, a moment with
+  components on axes of UNEQUAL length came back pointing somewhere else.
+  Ho2BaNiO5, the example FullProf itself ships: components (-0.1441, 0, -8.9931)
+  in a 7.51 x 5.74 x 22.56 A cell lie 0.92 deg off -c, and this reader had them
+  at 0.31 deg, carrying 203 mu_B -- which no Ho3+ ion can. The components are
+  mu_B on UNIT crystal axes: FullProf writes those same three numbers as the PCR
+  magnetic phase's Rx/Ry/Rz (refined within +/-10 mu_B) and states
+  `spherical_modulus 8.99423` beside them, their plain Euclidean norm.
+  **Sunny 0.8.1 does it the way we did** (`MCIF.jl`: `mu_new = supervecs *
+  mu_new`), which is exactly why the cross-check passed -- and the in-repo
+  validation file, TbSb, has its moment along c ALONE, where the two readings
+  differ by a positive scale factor and therefore not at all in direction. *A
+  file that cannot distinguish two conventions validates neither.* `read_mcif`
+  now takes `moment_basis` (default `unit_axes`, the FullProf/Bilbao reading),
+  the old reading is kept so files written under it stay readable, and
+  `tests/test_diffraction.py` pins the convention against the file FullProf
+  wrote rather than against ourselves.
 
 - **the magnetic field was SILENTLY DROPPED in `mode: SUN`.**
   `SUNModel.from_generic_model` built its on-site terms from sia / sia_matrix /

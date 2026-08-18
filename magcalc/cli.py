@@ -118,6 +118,37 @@ def guard(
     raise typer.Exit(code=gi.status())
 
 
+@app.command(name="mcif-out")
+def mcif_out(
+    config: Annotated[str, typer.Argument(help="Path to the config.yaml")],
+    out: Annotated[str, typer.Option("-o", "--out", help="Output .mcif path")] = None,
+    minimize: Annotated[bool, typer.Option(help="Export the MINIMIZED structure "
+                                                "instead of the configured one")] = False,
+    moment_basis: Annotated[str, typer.Option(help="unit_axes (FullProf/Bilbao) or "
+                                                   "lattice_vectors")] = "unit_axes",
+):
+    """
+    Export a config's magnetic structure as an mCIF (the inverse of `magcalc mcif`).
+
+    The file is written in P1 magnetic symmetry with every site listed explicitly,
+    which is what FullProf's `mCIF_to_PCR`, VESTA and Bilbao accept, and what makes
+    the round trip exact.
+    """
+    import os
+    from magcalc.mcif import config_to_sites, write_mcif
+
+    lattice, sites = config_to_sites(config, minimize=minimize)
+    out = out or os.path.splitext(config)[0] + ".mcif"
+    write_mcif(out, lattice, sites, moment_basis=moment_basis,
+               data_name=os.path.splitext(os.path.basename(config))[0],
+               comment=f"source config: {os.path.basename(config)}"
+                       + ("  (minimized)" if minimize else ""))
+    typer.secho(f"Wrote {len(sites)} magnetic sites to {out}", fg=typer.colors.GREEN)
+    for s in sites:
+        typer.echo(f"  {s['label']:10s} |m| = {s['moment_magnitude']:.3f} mu_B  "
+                   f"dir = {[round(float(x), 4) for x in s['direction']]}")
+
+
 @app.command()
 def mcif(
     filename: Annotated[str, typer.Argument(help="Path to the .mcif file")],

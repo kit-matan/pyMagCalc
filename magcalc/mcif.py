@@ -13,12 +13,16 @@ Two transforms do the work (matching Sunny 0.8.1's MCIF.jl / MSymOp.jl):
                                                          -- hence det(R) -- and flips under
                                                          time reversal -- hence p)
 
-The moment components in an mCIF (`_atom_site_moment.crystalaxis_*`) are coefficients on
-the lattice vectors, so the Cartesian moment is  m_cart = m' @ A  (A rows = lattice
-vectors). LSWT needs only the DIRECTION, so the magnitude/g handling is left to
-`spin_S` downstream.
+The moment components in an mCIF (`_atom_site_moment.crystalaxis_*`) are mu_B along the
+UNIT vectors of the crystal axes, so the Cartesian moment is  m_cart = mx a^ + my b^ +
+mz c^  -- see MOMENT_BASES below, which documents the evidence and the (wrong) reading
+this module used until 2026-08-18. LSWT consumes only the DIRECTION, and `spin_S` sets
+the magnitude downstream, which is why the difference went unnoticed for so long.
 
-Validated against Sunny on TbSb (test/cifs/TbSb_isodistort.mcif): see tests/test_mcif.py.
+`write_mcif` is the inverse, and `config_to_sites` feeds it from a config.
+
+Validated against Sunny on TbSb (test/cifs/TbSb_isodistort.mcif): see tests/test_mcif.py,
+and tests/test_diffraction.py for the moment basis and the round trip.
 """
 import logging
 import re
@@ -145,8 +149,62 @@ def _find_loop(loops, tag):
     return None, None
 
 
+# ------------------------------------------------------------------- moment basis
+#: How `_atom_site_moment.crystalaxis_*` components map to a Cartesian moment.
+#:
+#: 'unit_axes' (default) -- components are mu_B along the UNIT vectors of the
+#:     crystal axes:  m_cart = mx a^ + my b^ + mz c^.  This is what FullProf
+#:     means: its own mCIF export writes the same three numbers it carries as
+#:     the PCR magnetic-phase components Rx/Ry/Rz, and the
+#:     `_atom_site_moment.spherical_modulus` it writes alongside them is their
+#:     plain Euclidean norm (Ho2BaNiO5, FullProf Examples: components
+#:     (-0.1441, 0, -8.9931) in a 7.514 x 5.736 x 22.557 A cell, modulus
+#:     8.99423 -- and Ho3+ cannot carry more than ~10 mu_B).
+#:
+#: 'lattice_vectors' -- components multiply the FULL lattice vectors:
+#:     m_cart = m @ A.  This is what this reader did before 2026-08-18, and
+#:     what Sunny 0.8.1's MCIF.jl does (`mu_new = supervecs * mu_new`).  It
+#:     gives 203 mu_B for that same Ho site, so it cannot be the standard's
+#:     meaning; both codes got away with it because every case either code was
+#:     validated on has its moment along a single axis (TbSb: (0, 0, -0.708)),
+#:     where the two readings differ by a positive scale factor and therefore
+#:     not at all in DIRECTION -- which is all LSWT consumes.
+#:
+#: The two disagree in direction whenever the moment has components on axes of
+#: unequal length: for that Ho site, 0.31 deg from -c instead of 0.92 deg.  Keep
+#: the option, because a file written under the other reading is still readable
+#: with it, and because a monoclinic cell with in-plane moments is exactly where
+#: this matters (see DISCOVERY_WORKFLOW_PLAN.md section 9).
+MOMENT_BASES = ('unit_axes', 'lattice_vectors')
+
+
+def _moment_basis_matrix(A: np.ndarray, basis: str) -> np.ndarray:
+    """Rows of the basis that `crystalaxis` components multiply."""
+    if basis == 'lattice_vectors':
+        return np.asarray(A, dtype=float)
+    if basis == 'unit_axes':
+        A = np.asarray(A, dtype=float)
+        norms = np.linalg.norm(A, axis=1)
+        if np.any(norms < 1e-12):
+            raise ValueError("degenerate lattice vector")
+        return A / norms[:, None]
+    raise ValueError(f"moment_basis must be one of {MOMENT_BASES}, got {basis!r}")
+
+
+def moment_to_cartesian(m, lattice_vectors, basis: str = 'unit_axes') -> np.ndarray:
+    """mCIF crystalaxis components -> Cartesian moment (mu_B)."""
+    return np.asarray(m, dtype=float) @ _moment_basis_matrix(lattice_vectors, basis)
+
+
+def cartesian_to_moment(m_cart, lattice_vectors, basis: str = 'unit_axes') -> np.ndarray:
+    """Cartesian moment (mu_B) -> mCIF crystalaxis components. Inverse of the above."""
+    M = _moment_basis_matrix(lattice_vectors, basis)
+    return np.asarray(m_cart, dtype=float) @ np.linalg.inv(M)
+
+
 # --------------------------------------------------------------------------- public API
-def read_mcif(path: str, tol: float = 1e-4) -> Dict:
+def read_mcif(path: str, tol: float = 1e-4,
+              moment_basis: str = 'unit_axes') -> Dict:
     """Parse an mCIF file. Returns a dict with:
 
         lattice_vectors : (3,3) rows, Angstrom
@@ -215,7 +273,7 @@ def read_mcif(path: str, tol: float = 1e-4) -> Dict:
                 m_new = float(np.linalg.det(R)) * p * (R @ m0)      # axial + time reversal
                 key = tuple(np.round(r_new / tol).astype(int) % int(round(1 / tol)))
                 match = next((k for k in seen if k[0] == key), None)
-                m_cart = m_new @ A
+                m_cart = moment_to_cartesian(m_new, A, moment_basis)
                 if match is None:
                     seen.append((key, len(sites)))
                     d = np.linalg.norm(m_cart)
@@ -256,3 +314,171 @@ def mcif_to_config_fragment(path: str, spin_S: float = 1.0,
         'magnetic_structure': {'type': 'pattern', 'pattern_type': 'generic',
                                'directions': dirs},
     }
+
+
+# --------------------------------------------------------------------------- export
+def _cell_parameters(A: np.ndarray):
+    """(a, b, c, alpha, beta, gamma) in Angstrom/degrees from lattice ROWS."""
+    A = np.asarray(A, dtype=float)
+    a, b, c = (float(np.linalg.norm(r)) for r in A)
+
+    def ang(u, v):
+        return float(np.degrees(np.arccos(np.clip(
+            u @ v / (np.linalg.norm(u) * np.linalg.norm(v)), -1.0, 1.0))))
+
+    return a, b, c, ang(A[1], A[2]), ang(A[0], A[2]), ang(A[0], A[1])
+
+
+def write_mcif(path: str, lattice_vectors, sites, *,
+               data_name: str = 'magcalc-export',
+               moment_basis: str = 'unit_axes',
+               comment: str = None) -> str:
+    """Write a magnetic structure as an mCIF, in P1 magnetic symmetry.
+
+    `sites` is a list of dicts with
+
+        pos     fractional coordinates in the cell described by `lattice_vectors`
+        moment  Cartesian moment in mu_B  (or `direction` + `moment_magnitude`)
+        label   optional; generated as <type><n> when absent
+        type    optional `_atom_site_type_symbol`, e.g. 'Cu2+'
+
+    **P1 on purpose.** Every site is listed explicitly with its own moment and the
+    identity is the only symmetry operation, so the file says exactly what this
+    package believes, and nothing is reconstructed by the reader from a magnetic
+    space group it might expand differently. It round-trips through `read_mcif`
+    exactly, it is what `mCIF_to_PCR` and VESTA accept, and it cannot smuggle in a
+    setting mismatch -- the failure mode that makes magnetic structures hard to move
+    between programs at all. Recording WHICH magnetic space group the structure has
+    is a separate job (the discovery pipeline's spine holds the BNS number); do not
+    overload this file with it.
+
+    Positions and moments are written in CRYSTAL components, so the file is
+    invariant under a rigid rotation of `lattice_vectors`: a reader that rebuilds
+    the cell from (a, b, c, alpha, beta, gamma) in its own standard orientation
+    still recovers the same structure.
+    """
+    A = np.asarray(lattice_vectors, dtype=float)
+    if A.shape != (3, 3):
+        raise ValueError(f"lattice_vectors must be 3x3, got {A.shape}")
+    a, b, c, al, be, ga = _cell_parameters(A)
+
+    rows = []
+    for i, s in enumerate(sites):
+        pos = np.asarray(s['pos'], dtype=float).reshape(3)
+        if s.get('moment') is not None:
+            m_cart = np.asarray(s['moment'], dtype=float).reshape(3)
+        else:
+            d = np.asarray(s['direction'], dtype=float).reshape(3)
+            n = np.linalg.norm(d)
+            if n < 1e-12:
+                raise ValueError(f"site {i} has a zero direction and no moment")
+            m_cart = d / n * float(s.get('moment_magnitude', 1.0))
+        rows.append({
+            'label': s.get('label') or f"{s.get('type', 'M')}{i + 1}",
+            'type': s.get('type') or s.get('ion') or s.get('species') or '?',
+            'pos': pos,
+            'm': cartesian_to_moment(m_cart, A, moment_basis),
+            'mag': float(np.linalg.norm(m_cart)),
+        })
+
+    out = ["# Written by magcalc (magcalc.mcif.write_mcif).",
+           f"# Moment components are mu_B in the '{moment_basis}' basis "
+           "(magcalc.mcif.MOMENT_BASES).",
+           "# Magnetic symmetry is P1: every site is listed explicitly."]
+    if comment:
+        out += ["# " + ln for ln in str(comment).splitlines()]
+    out += ["", f"data_{data_name}", "",
+            f"_cell_length_a    {a:.6f}",
+            f"_cell_length_b    {b:.6f}",
+            f"_cell_length_c    {c:.6f}",
+            f"_cell_angle_alpha {al:.6f}",
+            f"_cell_angle_beta  {be:.6f}",
+            f"_cell_angle_gamma {ga:.6f}",
+            "",
+            '_space_group_magn.name_BNS  "P 1"',
+            '_space_group_magn.number_BNS  "1.1"',
+            "",
+            "loop_",
+            "_space_group_symop_magn_operation.id",
+            "_space_group_symop_magn_operation.xyz",
+            "1 x,y,z,+1",
+            "",
+            "loop_",
+            "_space_group_symop_magn_centering.id",
+            "_space_group_symop_magn_centering.xyz",
+            "1 x,y,z,+1",
+            "",
+            "loop_",
+            "_atom_site_label",
+            "_atom_site_type_symbol",
+            "_atom_site_fract_x",
+            "_atom_site_fract_y",
+            "_atom_site_fract_z",
+            "_atom_site_occupancy"]
+    for r in rows:
+        out.append(f"{r['label']:<10s} {r['type']:<8s} "
+                   f"{r['pos'][0]:10.6f} {r['pos'][1]:10.6f} {r['pos'][2]:10.6f}  1.000000")
+    out += ["",
+            "loop_",
+            "_atom_site_moment.label",
+            "_atom_site_moment.crystalaxis_x",
+            "_atom_site_moment.crystalaxis_y",
+            "_atom_site_moment.crystalaxis_z"]
+    for r in rows:
+        out.append(f"{r['label']:<10s} {r['m'][0]:11.6f} {r['m'][1]:11.6f} "
+                   f"{r['m'][2]:11.6f}   # |m| = {r['mag']:.4f} mu_B")
+    out.append("")
+
+    with open(path, 'w') as f:
+        f.write("\n".join(out))
+    logger.info("Wrote %d magnetic sites to %s", len(rows), path)
+    return path
+
+
+def config_to_sites(config_file: str, minimize: bool = False):
+    """(lattice_vectors, sites) for the magnetic structure a config describes.
+
+    Builds the model the way `magcalc run` does -- so Wyckoff expansion, mCIF
+    import, magnetic supercells and the `magnetic_structure` block all apply --
+    and reads off each site's fractional position, moment direction and moment
+    magnitude (g * S, in mu_B).
+
+    With `minimize=True` the classical ground state is found first and exported
+    instead of the configured ansatz. Off by default: exporting what the config
+    SAYS is the reproducible operation, whereas a minimisation that can land in a
+    different domain run to run would make the exported file non-deterministic.
+    """
+    from magcalc.config_loader import load_spin_model_config
+    from magcalc.generic_model import GenericSpinModel
+
+    config = load_spin_model_config(config_file)
+    model = GenericSpinModel(config)
+    A = np.asarray(model._uc_vectors, dtype=float)
+    frac = np.asarray(model.atom_pos(), dtype=float).reshape(-1, 3) @ np.linalg.inv(A)
+
+    if minimize:
+        res = model.minimize_energy()
+        thetas, phis = res.thetas, res.phis
+    else:
+        thetas, phis = model.generate_magnetic_structure()
+    if thetas is None:
+        raise ValueError(
+            f"{config_file} has no magnetic_structure block, so there is no "
+            "structure to export; add one, or pass minimize=True.")
+
+    spins = list(model.spin_magnitudes()) or [0.5] * len(frac)
+    ions = list(getattr(model, '_ion_list', [])) or [None] * len(frac)
+    atoms = (config.get('crystal_structure', {}) or {}).get('atoms_uc') or []
+
+    sites = []
+    for i in range(len(frac)):
+        th, ph = float(thetas[i]), float(phis[i])
+        d = np.array([np.sin(th) * np.cos(ph), np.sin(th) * np.sin(ph), np.cos(th)])
+        atom = atoms[i] if i < len(atoms) else {}
+        g = atom.get('g', 2.0)
+        g = float(g) if isinstance(g, (int, float)) else 2.0   # tensor g: use 2 for |m|
+        sites.append({'label': atom.get('label') or f"M{i + 1}",
+                      'type': (ions[i] if i < len(ions) else None) or '?',
+                      'pos': frac[i], 'direction': d,
+                      'moment_magnitude': g * float(spins[i])})
+    return A, sites
