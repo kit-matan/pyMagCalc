@@ -33,6 +33,16 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+class SharedSiteError(ValueError):
+    """Two chemically distinct species occupy one crystallographic site.
+
+    A solid solution, not a broken file. Raised separately from the
+    moment-inconsistency error because the two say opposite things about whose
+    fault it is, and the caller may reasonably want to skip one and
+    investigate the other.
+    """
+
+
 # --------------------------------------------------------------------------- CIF parsing
 def _lattice_from_params(a, b, c, alpha, beta, gamma) -> np.ndarray:
     """Lattice vectors as ROWS (Angstrom), standard crystallographic setting."""
@@ -137,9 +147,27 @@ def _split_cif_row(s: str) -> List[str]:
     return [t for t in re.findall(r"'[^']*'|\"[^\"]*\"|\S+", s)]
 
 
+#: Every dash a deposited CIF has been seen to use where ASCII '-' was meant.
+_DASHES = {ord(c): '-' for c in '\u2212\u2013\u2014\u2010\u2011\u2012'}
+
+
 def _cif_float(v: str) -> float:
-    """Parse a CIF number, dropping any (uncertainty) suffix."""
-    return float(re.sub(r'\(.*?\)', '', v.strip().strip('"\'')))
+    """Parse a CIF number, dropping any (uncertainty) suffix.
+
+    The suffix is stripped from the opening bracket to the END of the token,
+    not to a closing bracket, because deposited files do not always have one:
+    MAGNDATA 1.400 (TbAg) carries a moment of `8.95(5` with the bracket never
+    closed. Requiring the `)` made that entry unreadable, and the uncertainty
+    is discarded either way -- so the lenient form loses no information and
+    reads one more real file.
+    """
+    v = v.strip().strip('"\'')
+    # U+2212 MINUS SIGN, U+2013 EN DASH and U+2010 HYPHEN all appear in place of
+    # ASCII '-' in deposited coordinates -- MAGNDATA 0.419 has
+    # `O2 O 0.0744(8) \u22120.0318(7) 0.6247(5)`. float() rejects every one of
+    # them, and the sign is the whole point of the character.
+    v = v.translate(_DASHES)
+    return float(re.sub(r'\(.*$', '', v))
 
 
 def _find_loop(loops, tag):
@@ -214,7 +242,12 @@ def read_mcif(path: str, tol: float = 1e-4,
     Every magnetic-atom orbit is expanded by the magnetic space group. Non-magnetic
     atoms (no listed moment) are omitted -- LSWT only needs the magnetic sublattice.
     """
-    with open(path) as f:
+    # errors='replace': deposited files are not all UTF-8. Eleven of MAGNDATA's
+    # 2414 carry Mac OS Roman bytes -- 0xd0, an en dash -- in a CITATION page
+    # range ('408\xd0417'), and a strict read threw the whole structure away
+    # over a character in a bibliography. Nothing in the crystallography is
+    # non-ASCII, so replacement cannot corrupt a number.
+    with open(path, encoding='utf-8', errors='replace') as f:
         scalars, loops = _read_cif_loops(f.read())
 
     A = _lattice_from_params(
@@ -243,6 +276,13 @@ def read_mcif(path: str, tol: float = 1e-4,
     zi = hpos.index('_atom_site_fract_z')
     pos_by_label = {r[li]: np.array([_cif_float(r[xi]), _cif_float(r[yi]),
                                      _cif_float(r[zi])]) for r in rpos}
+    # Rows can be SHORT of the header: MAGNDATA 1.858 declares
+    # `_atom_site_occupancy` and then omits the value on several Ga rows. The
+    # occupancy is only used to describe a shared site in an error message, so
+    # a missing one defaults rather than aborting the read.
+    oi = hpos.index('_atom_site_occupancy') if '_atom_site_occupancy' in hpos else None
+    occ_by_label = {r[li]: (_cif_float(r[oi]) if oi is not None and oi < len(r) else 1.0)
+                    for r in rpos}
 
     # moments (by label)
     hm, rm = _find_loop(loops, '_atom_site_moment.label')
@@ -261,7 +301,6 @@ def read_mcif(path: str, tol: float = 1e-4,
     mz = _mi('_atom_site_moment.crystalaxis_z', '_atom_site_moment_crystalaxis_z')
 
     sites = []
-    seen = []
     for r in rm:
         label = r[mli]
         m0 = np.array([_cif_float(r[mx]), _cif_float(r[my]), _cif_float(r[mz])])
@@ -271,22 +310,56 @@ def read_mcif(path: str, tol: float = 1e-4,
                 R, T, p = _compose(s1, s2)
                 r_new = (R @ r0 + T) % 1.0
                 m_new = float(np.linalg.det(R)) * p * (R @ m0)      # axial + time reversal
-                key = tuple(np.round(r_new / tol).astype(int) % int(round(1 / tol)))
-                match = next((k for k in seen if k[0] == key), None)
+                # Match on DISTANCE, periodic, not on a quantised bucket. The
+                # bucket key `round(r/tol) % (1/tol)` splits two images of one
+                # site whenever the coordinate sits on a bucket boundary: for
+                # MAGNDATA 1.14, Ho at z = 0.10125 gives 1012.5, and round-half-
+                # to-even sends 1012.5 to 1012 while 1012.5+1e-9 goes to 1013.
+                # The duplicate then survives expansion, and a write/read round
+                # trip -- where the second read happens to merge it -- silently
+                # loses four of the twenty-eight sites.
+                match = None
+                if sites:
+                    prev_pos = np.array([s['pos'] for s in sites])
+                    d = (r_new - prev_pos + 0.5) % 1.0 - 0.5
+                    hits = np.nonzero(np.max(np.abs(d), axis=1) <= tol)[0]
+                    if len(hits):
+                        match = int(hits[0])
                 m_cart = moment_to_cartesian(m_new, A, moment_basis)
                 if match is None:
-                    seen.append((key, len(sites)))
                     d = np.linalg.norm(m_cart)
                     sites.append({
                         'label': label, 'pos': r_new, 'moment': m_cart,
                         'direction': (m_cart / d) if d > 1e-9 else np.zeros(3)})
                 else:
-                    prev = sites[match[1]]['moment']
+                    prev_label = sites[match]['label']
+                    if prev_label != label:
+                        # Not two images of one site -- two SPECIES on one site.
+                        # NdMn(0.8)Fe(0.2)O3 (MAGNDATA 0.659) lists Mn1 and Fe1
+                        # at (0,0,1/2) with occupancies 0.8 and 0.2, and calling
+                        # that "internally inconsistent" blamed the file for
+                        # being a solid solution. 22 of MAGNDATA's 2414 are.
+                        raise SharedSiteError(
+                            f"{prev_label} (occ {occ_by_label.get(prev_label, 1.0):g}) and "
+                            f"{label} (occ {occ_by_label.get(label, 1.0):g}) share the site at "
+                            f"{np.round(r_new, 5)}. A chemically disordered magnetic site is "
+                            "not modelled here: LSWT needs one spin per site, and which "
+                            "species carries it is exactly what the occupancies do not say.")
+                    prev = sites[match]['moment']
                     if np.linalg.norm(prev) > 1e-9 and \
                             np.linalg.norm(m_cart - prev) > 1e-3 * max(np.linalg.norm(prev), 1):
+                        # Same label, same position: the two images differ by an
+                        # operation that STABILISES the site, so the deposited
+                        # moment is not invariant under its own site symmetry.
+                        # Saying that is worth more than "internally
+                        # inconsistent" -- it names the field to go and look at,
+                        # and it is a statement about the deposit, not the reader.
                         raise ValueError(
-                            f"mCIF internally inconsistent at {label} {r_new}: two symmetry "
-                            f"images give different moments ({prev} vs {m_cart}).")
+                            f"the moment on {label} is not invariant under its own magnetic "
+                            f"stabiliser: at {np.round(r_new, 5)} the listed symmetry maps "
+                            f"{np.round(prev, 4)} to {np.round(m_cart, 4)} (mu_B, Cartesian). "
+                            "Check the moment against this site's `_atom_site_moment.symmform` "
+                            "in the file.")
     return {'lattice_vectors': A, 'sites': sites}
 
 
@@ -363,6 +436,7 @@ def write_mcif(path: str, lattice_vectors, sites, *,
     a, b, c, al, be, ga = _cell_parameters(A)
 
     rows = []
+    seen_labels: dict[str, int] = {}
     for i, s in enumerate(sites):
         pos = np.asarray(s['pos'], dtype=float).reshape(3)
         if s.get('moment') is not None:
@@ -373,9 +447,19 @@ def write_mcif(path: str, lattice_vectors, sites, *,
             if n < 1e-12:
                 raise ValueError(f"site {i} has a zero direction and no moment")
             m_cart = d / n * float(s.get('moment_magnitude', 1.0))
+
+        base_label = s.get('label') or f"{s.get('type', 'M')}{i + 1}"
+        cnt = seen_labels.get(base_label, 0)
+        seen_labels[base_label] = cnt + 1
+        label = f"{base_label}{cnt}" if cnt > 0 else base_label
+
+        species = s.get('type') or s.get('ion') or s.get('species')
+        if not species or species == '?':
+            species = re.sub(r'[^A-Za-z]', '', base_label) or 'M'
+
         rows.append({
-            'label': s.get('label') or f"{s.get('type', 'M')}{i + 1}",
-            'type': s.get('type') or s.get('ion') or s.get('species') or '?',
+            'label': label,
+            'type': species,
             'pos': pos,
             'm': cartesian_to_moment(m_cart, A, moment_basis),
             'mag': float(np.linalg.norm(m_cart)),

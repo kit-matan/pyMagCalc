@@ -98,8 +98,13 @@ def test_inplane_moment_and_cartesian_conversion():
 
 
 def test_inconsistent_mcif_is_rejected(tmp_path):
-    """A magnetic symop set that maps a fixed site to two different moments is
-    unphysical; the reader must refuse rather than pick one silently."""
+    """A moment that is not invariant under its own site symmetry is unphysical.
+
+    The reader must refuse rather than pick one of the two images silently. The
+    message names the STABILISER, because that is the field to go and look at:
+    eight MAGNDATA deposits fail exactly this way, and "internally inconsistent"
+    did not say where to look or whose problem it was.
+    """
     p = tmp_path / "bad.mcif"
     p.write_text(
         "_cell_length_a 4.0\n_cell_length_b 4.0\n_cell_length_c 4.0\n"
@@ -113,7 +118,7 @@ def test_inconsistent_mcif_is_rejected(tmp_path):
         "loop_\n_atom_site_moment.label\n_atom_site_moment.crystalaxis_x\n"
         "_atom_site_moment.crystalaxis_y\n_atom_site_moment.crystalaxis_z\n"
         "Fe1 3.0 0.0 0.0\n")   # in-plane moment on a site fixed by a 4-fold -> inconsistent
-    with pytest.raises(ValueError, match="internally inconsistent"):
+    with pytest.raises(ValueError, match="not invariant under its own magnetic stabiliser"):
         read_mcif(str(p))
 
 
@@ -132,3 +137,79 @@ def test_runner_from_mcif_end_to_end():
     cfg = os.path.join(HERE, "..", "examples", "materials", "mcif",
                        "config_afm_inplane.yaml")
     run_calculation(cfg)          # must not raise
+
+
+def test_a_cif_uncertainty_with_no_closing_bracket_is_still_a_number():
+    """Deposited files do not always close the bracket, and one of them is real.
+
+    MAGNDATA 1.400 (TbAg) carries its Tb moment as `8.95(5`, never closed.
+    Requiring the `)` made that published entry unreadable; the uncertainty is
+    discarded either way, so stripping from the bracket to the end of the token
+    loses nothing and reads one more real file.
+    """
+    from magcalc.mcif import _cif_float
+
+    assert _cif_float("8.95(5") == 8.95
+    assert _cif_float("8.95(5)") == 8.95
+    assert _cif_float(" 7.6637(4) ") == 7.6637
+    assert _cif_float('"3.25(12)"') == 3.25
+    assert _cif_float("-0.5(1)") == -0.5
+    assert _cif_float("5.0") == 5.0
+
+
+def test_two_species_on_one_site_is_a_solid_solution_not_a_broken_file(tmp_path):
+    """NdMn(0.8)Fe(0.2)O3 is the real case: MAGNDATA 0.659, and 21 more like it.
+
+    Mn1 and Fe1 sit at the same coordinates with occupancies 0.8 and 0.2. Calling
+    that "internally inconsistent" blamed the deposit for being a solid solution;
+    it is a structure this reader does not model, which is a different statement
+    and a different exception, so a caller can skip one and investigate the other.
+    """
+    from magcalc.mcif import SharedSiteError
+
+    p = tmp_path / "alloy.mcif"
+    p.write_text(
+        "_cell_length_a 4.0\n_cell_length_b 4.0\n_cell_length_c 4.0\n"
+        "_cell_angle_alpha 90\n_cell_angle_beta 90\n_cell_angle_gamma 90\n"
+        "loop_\n_space_group_symop_magn_operation.id\n"
+        "_space_group_symop_magn_operation.xyz\n1 x,y,z,+1\n"
+        "loop_\n_space_group_symop_magn_centering.id\n"
+        "_space_group_symop_magn_centering.xyz\n1 x,y,z,+1\n"
+        "loop_\n_atom_site_label\n_atom_site_fract_x\n_atom_site_fract_y\n"
+        "_atom_site_fract_z\n_atom_site_occupancy\n"
+        "Mn1 0.0 0.0 0.5 0.8\nFe1 0.0 0.0 0.5 0.2\n"
+        "loop_\n_atom_site_moment.label\n_atom_site_moment.crystalaxis_x\n"
+        "_atom_site_moment.crystalaxis_y\n_atom_site_moment.crystalaxis_z\n"
+        "Mn1 0.0 0.0 3.0\nFe1 0.0 0.0 1.0\n")
+
+    with pytest.raises(SharedSiteError, match=r"Mn1 \(occ 0.8\) and Fe1 \(occ 0.2\) share"):
+        read_mcif(str(p))
+    assert issubclass(SharedSiteError, ValueError)
+
+
+def test_two_images_of_one_site_are_matched_by_distance_not_by_a_grid_bucket(tmp_path):
+    """A coordinate on a bucket boundary split one site into two, and lost four.
+
+    The old key was `round(r/tol) % (1/tol)`. MAGNDATA 1.14 has Ho at
+    z = 0.10125, so z/tol = 1012.5 exactly: round-half-to-even sends it to 1012
+    while the same image computed a floating hair higher goes to 1013. The
+    duplicate then survived expansion, and a write/read round trip -- where the
+    second read happened to merge it -- silently lost four of twenty-eight sites.
+    """
+    p = tmp_path / "boundary.mcif"
+    p.write_text(
+        "_cell_length_a 4.0\n_cell_length_b 4.0\n_cell_length_c 8.0\n"
+        "_cell_angle_alpha 90\n_cell_angle_beta 90\n_cell_angle_gamma 90\n"
+        "loop_\n_space_group_symop_magn_operation.id\n"
+        "_space_group_symop_magn_operation.xyz\n"
+        "1 x,y,z,+1\n2 -x,-y,z,+1\n"
+        "loop_\n_space_group_symop_magn_centering.id\n"
+        "_space_group_symop_magn_centering.xyz\n1 x,y,z,+1\n"
+        "loop_\n_atom_site_label\n_atom_site_fract_x\n_atom_site_fract_y\n"
+        "_atom_site_fract_z\n_atom_site_occupancy\nHo1 0.0 0.0 0.10125 1.0\n"
+        "loop_\n_atom_site_moment.label\n_atom_site_moment.crystalaxis_x\n"
+        "_atom_site_moment.crystalaxis_y\n_atom_site_moment.crystalaxis_z\n"
+        "Ho1 0.0 0.0 9.0\n")
+
+    # (0,0,z) is fixed by -x,-y,z, so there is exactly ONE site, not two
+    assert len(read_mcif(str(p))["sites"]) == 1
