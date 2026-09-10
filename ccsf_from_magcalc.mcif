@@ -1,0 +1,52 @@
+# Written by magcalc (magcalc.mcif.write_mcif).
+# Moment components are mu_B in the 'unit_axes' basis (magcalc.mcif.MOMENT_BASES).
+# Magnetic symmetry is P1: every site is listed explicitly.
+# source config: config_ccsf_symmetry.yaml
+
+data_config_ccsf_symmetry
+
+_cell_length_a    7.888730
+_cell_length_b    7.085970
+_cell_length_c    12.305110
+_cell_angle_alpha 90.000000
+_cell_angle_beta  121.724560
+_cell_angle_gamma 90.000000
+
+_space_group_magn.name_BNS  "P 1"
+_space_group_magn.number_BNS  "1.1"
+
+loop_
+_space_group_symop_magn_operation.id
+_space_group_symop_magn_operation.xyz
+1 x,y,z,+1
+
+loop_
+_space_group_symop_magn_centering.id
+_space_group_symop_magn_centering.xyz
+1 x,y,z,+1
+
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+_atom_site_occupancy
+Cu10       Cu2+       0.000000   0.000000   0.500000  1.000000
+Cu11       Cu2+       0.000000   0.500000   0.000000  1.000000
+Cu20       Cu2+       0.011290   0.270450   0.257610  1.000000
+Cu21       Cu2+       0.988710   0.729550   0.742390  1.000000
+Cu22       Cu2+       0.988710   0.770450   0.242390  1.000000
+Cu23       Cu2+       0.011290   0.229550   0.757610  1.000000
+
+loop_
+_atom_site_moment.label
+_atom_site_moment.crystalaxis_x
+_atom_site_moment.crystalaxis_y
+_atom_site_moment.crystalaxis_z
+Cu10          0.063942    0.961654   -0.235196   # |m| = 1.0000 mu_B
+Cu11         -0.063961    0.962196    0.233234   # |m| = 1.0000 mu_B
+Cu20          0.002381   -0.506881    0.863266   # |m| = 1.0000 mu_B
+Cu21          0.002374   -0.506877    0.863264   # |m| = 1.0000 mu_B
+Cu22         -0.002364   -0.508622   -0.862230   # |m| = 1.0000 mu_B
+Cu23         -0.002357   -0.508627   -0.862224   # |m| = 1.0000 mu_B
