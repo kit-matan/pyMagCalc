@@ -162,3 +162,47 @@ def test_antiferromagnet_peaks_at_the_ordering_wavevector():
         assert sq[2] > sq[1] > sq[0], f"kT={kT}: not peaked at the zone boundary: {sq}"
         contrast.append(sq[2] / sq[0])
     assert contrast[1] > contrast[0], "AFM correlations must sharpen on cooling"
+
+
+def test_runner_static_sqw_task_actually_runs(tmp_path, caplog):
+    """`tasks: {static_sqw: true}` END TO END, through the runner.
+
+    The two tests above call `static_intensities` directly, which is why they could
+    not see that the runner's own branch passed an undefined name and raised
+    NameError on every run -- inside `except Exception: logger.exception(...)`, so
+    the task was silently absent from every calculation that asked for it while
+    being documented (TUTORIAL 4g) and marked validated (GAP_STATUS #19).
+
+    "Does not raise" is NOT the assertion here, for the same reason: the runner
+    swallows a task's exception. The success line has to be there, and the failure
+    line must not be.
+    """
+    import logging
+
+    import yaml
+
+    from magcalc.runner import run_calculation
+
+    cfg = {"crystal_structure": {
+               "lattice_vectors": LAT,
+               "atoms_uc": [{"label": "A", "pos": [0.0, 0, 0], "spin_S": 1.0},
+                            {"label": "B", "pos": [0.5, 0, 0], "spin_S": 1.0}]},
+           "interactions": {"heisenberg": [{"pair": p, "rij_offset": o, "value": 1.0}
+                                           for p, o in NN]},
+           "parameters": {}, "parameter_order": [],
+           "magnetic_structure": {"type": "pattern", "pattern_type": "generic",
+                                  "directions": [[0, 0, 1], [0, 0, -1]]},
+           "calculation": {"cache_mode": "none", "on_imaginary": "off"},
+           "tasks": {"minimization": False, "static_sqw": True},
+           "q_path": {"Gamma": [0.0, 0, 0], "ZB": [0.5, 0, 0],
+                      "path": ["Gamma", "ZB"], "points_per_segment": 4},
+           "plotting": {"save_plot": False, "show_plot": False,
+                        "plot_structure": False},
+           "output": {"save_data": False}}
+    p = tmp_path / "static_sqw.yaml"
+    p.write_text(yaml.safe_dump(cfg))
+    with caplog.at_level(logging.INFO, logger="magcalc.runner"):
+        run_calculation(str(p))
+    text = caplog.text
+    assert "static_sqw failed" not in text, text
+    assert "Static S(q): 4 q-points" in text, text

@@ -189,6 +189,63 @@ def _disorder_opts(block):
             "periodic": tuple((block or {}).get("periodic", (True, True, True)))}
 
 
+def resolve_S_and_params(final_config, python_model_rel=None):
+    """(S_val, params_val) exactly as `run_calculation` derives them from a config.
+
+    Extracted so that the OTHER consumers of a config's numeric Hamiltonian -- the
+    mCIF export's `--minimize`, first -- cannot drift from what a run uses. S comes
+    from `parameters.S`, else the first atom's `spin_S`; the parameter vector follows
+    `parameter_order`, else `hamiltonian_params`, else dictionary order.
+    """
+    parameters_dict = final_config.get('parameters')
+    if parameters_dict is None:
+        parameters_dict = final_config.get('model_params', {})
+
+    # Try to get S from parameters, otherwise check first atom's spin_S
+    if 'S' in parameters_dict:
+        S_val = float(parameters_dict['S'])
+    else:
+        # Fallback to first atom's spin
+        try:
+            atoms = final_config.get('crystal_structure', {}).get('atoms_uc', [])
+            if atoms:
+                S_val = float(atoms[0].get('spin_S', 1.0))
+            else:
+                S_val = 1.0
+
+        except (ValueError, TypeError, IndexError):
+            S_val = 1.0
+
+    if S_val <= 0:
+        logger.error(f"Invalid spin magnitude S={S_val}. S must be positive.")
+        raise ValueError(f"Spin magnitude must be positive (S={S_val}). Please check your configuration.")
+
+    params_val = []
+    param_order = final_config.get('parameter_order')
+
+    if 'hamiltonian_params' in final_config:
+        params_val = final_config['hamiltonian_params']
+    elif param_order:
+        try:
+            params_val = []
+            for k in param_order:
+                val = parameters_dict[k]
+                if isinstance(val, (list, tuple, np.ndarray)):
+                    params_val.append([float(x) for x in val])
+                else:
+                    params_val.append(float(val))
+        except KeyError as e:
+            logger.error(f"Parameter in order list not found in parameters dict: {e}")
+            raise e
+    else:
+        temp_params = {k: v for k, v in parameters_dict.items() if k != 'S'}
+        params_val = list(temp_params.values())
+        if python_model_rel:
+            logger.warning("No 'parameter_order' specified for legacy python model. Using dictionary order (excluding 'S'). This may be incorrect.")
+
+    return S_val, params_val
+
+
 def run_calculation(config_file: str):
     """
     Main execution logic for running a MagCalc calculation.
@@ -300,51 +357,7 @@ def run_calculation(config_file: str):
     cross_section = calc_config.get('cross_section', 'perp')
     
     # Parameters Logic
-    parameters_dict = final_config.get('parameters')
-    if parameters_dict is None:
-        parameters_dict = final_config.get('model_params', {})
-    
-    # Try to get S from parameters, otherwise check first atom's spin_S
-    if 'S' in parameters_dict:
-        S_val = float(parameters_dict['S'])
-    else:
-        # Fallback to first atom's spin
-        try:
-            atoms = final_config.get('crystal_structure', {}).get('atoms_uc', [])
-            if atoms:
-                S_val = float(atoms[0].get('spin_S', 1.0))
-            else:
-                S_val = 1.0
-
-        except (ValueError, TypeError, IndexError):
-            S_val = 1.0
-    
-    if S_val <= 0:
-        logger.error(f"Invalid spin magnitude S={S_val}. S must be positive.")
-        raise ValueError(f"Spin magnitude must be positive (S={S_val}). Please check your configuration.")
-    
-    params_val = []
-    param_order = final_config.get('parameter_order')
-    
-    if 'hamiltonian_params' in final_config:
-        params_val = final_config['hamiltonian_params']
-    elif param_order:
-        try:
-            params_val = []
-            for k in param_order:
-                val = parameters_dict[k]
-                if isinstance(val, (list, tuple, np.ndarray)):
-                    params_val.append([float(x) for x in val])
-                else:
-                    params_val.append(float(val))
-        except KeyError as e:
-            logger.error(f"Parameter in order list not found in parameters dict: {e}")
-            raise e
-    else:
-        temp_params = {k: v for k, v in parameters_dict.items() if k != 'S'}
-        params_val = list(temp_params.values())
-        if python_model_rel:
-            logger.warning("No 'parameter_order' specified for legacy python model. Using dictionary order (excluding 'S'). This may be incorrect.")
+    S_val, params_val = resolve_S_and_params(final_config, python_model_rel)
 
     logger.info(f"Model Parameters: {params_val}, S={S_val}")
 
@@ -1122,7 +1135,7 @@ def run_calculation(config_file: str):
             q_rlu = q_vectors if q_vectors is not None else \
                 generate_q_path_from_config(final_config)
             q_cart = np.asarray(q_rlu, float) @ B
-            sq = static_intensities(calc, q_cart, temperature=temperature,
+            sq = static_intensities(calculator, q_cart, temperature=temperature,
                                     domains=domains, cross_section=cross_section)
             if sq is not None:
                 logger.info(f"Static S(q): {len(sq)} q-points, "

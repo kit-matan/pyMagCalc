@@ -184,6 +184,71 @@ def test_general_polarization_chiral_term_matches_sunny():
     assert chiral == pytest.approx(np.array(SUNNY_GENERAL_P["chiral"]), abs=2e-6)
 
 
+def _rotate(directions, axis_from, axis_to):
+    """`directions` rigidly rotated by the rotation taking `axis_from` to `axis_to`.
+
+    A Heisenberg chain is invariant under a global spin rotation, so a rotated helix
+    is the same ground state with its chiral vector pointing somewhere else -- which
+    is the only way to build a structure whose chirality is neither along q nor
+    across it.
+    """
+    u = np.asarray(axis_from, float) / np.linalg.norm(axis_from)
+    v = np.asarray(axis_to, float) / np.linalg.norm(axis_to)
+    w = np.cross(u, v)
+    sin_t = np.linalg.norm(w)
+    if sin_t < 1e-14:
+        return [list(np.asarray(d, float)) for d in directions]
+    k = w / sin_t
+    cos_t = float(u @ v)
+    K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+    R = np.eye(3) + sin_t * K + (1 - cos_t) * (K @ K)      # Rodrigues
+    return [list(R @ np.asarray(d, float)) for d in directions]
+
+
+# A helix whose rotation axis is tilted 45 degrees from k: its chiral vector has a
+# component both along q and across it, so the two candidate chiral formulas differ.
+TILTED = _rotate(SCREW, [1, 0, 0], [1, 0, 1])
+
+
+@pytest.mark.parametrize("tag", ["screw", "cycloid", "tilted"])
+def test_chiral_term_only_sees_the_longitudinal_polarization(tag):
+    """EXACT identity, no oracle: the chiral term is (P.qhat) times its P || q value.
+
+    Neutrons see only M_perp, so i M_perp x M_perp* is parallel to q and a
+    polarization component across q carries no chirality at all. Contracting the
+    UNPROJECTED correlation tensor with P breaks this -- and the Sunny reference
+    above cannot see the difference, because on the proper SCREW that generated it
+    the chiral vector is already along q, where both expressions agree. The tilted
+    helix is here for exactly that reason.
+    """
+    calc = _model({"screw": SCREW, "cycloid": CYCLOID, "tilted": TILTED}[tag])
+    qs = _q(HS)
+    P = np.array(GEN_P, float) / np.linalg.norm(GEN_P)
+    _, c_long = _sorted(calc, qs, "chiral")               # P || q, pinned to Sunny
+    _, sfp = _sorted(calc, qs, {"polarization": P, "channel": "sf+"})
+    _, sfm = _sorted(calc, qs, {"polarization": P, "channel": "sf-"})
+    # q runs along x here, so P.qhat is P[0].
+    assert 0.5 * (sfm - sfp) == pytest.approx(P[0] * c_long, abs=1e-9)
+
+
+def test_a_cycloid_has_no_chirality_across_q():
+    """The case the screw could not test: a cycloid's chiral vector is along its
+    rotation axis, PERPENDICULAR to q, so the chiral term vanishes for every
+    polarization axis -- not only for P || q (which test_polarized.py pins).
+
+    With the chiral term taken from the unprojected tensor this failed outright:
+    P = z found a chirality of order the intensity itself, i.e. SF+ and SF- for a
+    cycloid differed in a geometry where they cannot.
+    """
+    calc = _model(CYCLOID)
+    qs = _q(HS)
+    for P in ([0, 0, 1], [0, 1, 0], [0, 0.6, 0.8], GEN_P):
+        _, sfp = _sorted(calc, qs, {"polarization": P, "channel": "sf+"})
+        _, sfm = _sorted(calc, qs, {"polarization": P, "channel": "sf-"})
+        assert 0.5 * (sfm - sfp) == pytest.approx(np.zeros_like(sfp), abs=1e-9), \
+            f"cycloid shows chirality with P={P}"
+
+
 NEEL_HS = [[0.13, 0, 0], [0.31, 0, 0], [0.45, 0, 0]]
 NEEL_LAT = [[6.0, 0, 0], [0, 9.0, 0], [0, 0, 9.0]]
 

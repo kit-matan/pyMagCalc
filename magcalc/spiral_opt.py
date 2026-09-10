@@ -104,8 +104,35 @@ def _build_bond_arrays(model: GenericSpinModel, p_num):
     return J_full, offsets, ouc_map
 
 
-def _parse_sia(model: GenericSpinModel, p_num):
-    """Numeric single-ion anisotropy entries: list of (site_indices, D, axis)."""
+def _onsite_quadratic(model: GenericSpinModel, p_num, n):
+    """The cell's ON-SITE energy as (H_on, b_on): E = 1/2 m^T H m + b^T m, or None.
+
+    Delegates to `thermal_mc.onsite_quadratic`, which reads the terms from the
+    MODEL'S OWN assembly (`_compute_sia_terms`, folding in `_compute_sia_matrix_terms`
+    and `_compute_stevens_terms`) and raises for a Stevens rank k >= 4 that no
+    quadratic form can hold.
+
+    THIS USED TO BE A HAND-ROLLED PARSER over `type: 'sia'` entries only, so
+    `sia_matrix`, `anisotropy_matrix` and `stevens` -- rank 2 included, i.e. exactly
+    representable here -- reached the spiral energy as NOTHING. The optimizer then
+    minimised an exchange-only energy, committed the resulting single-k structure to
+    the model, and LSWT expanded about it: a ground state chosen without the
+    anisotropy that selects it. Same defect, same cause and same shape as the one
+    `build_supercell` had until 2026-08-15 (see `onsite_quadratic`'s docstring) --
+    a bond table does not carry on-site terms, and every test here was bond-only.
+    It also picks up the RCS `anisotropy_renormalization`, which the hand parser
+    ignored, so the spiral energy can no longer disagree with what LSWT diagonalizes.
+    """
+    from .thermal_mc import onsite_quadratic
+    return onsite_quadratic(model, p_num, int(n))
+
+
+def _parse_sia_legacy(model: GenericSpinModel, p_num):
+    """Numeric axial single-ion anisotropy entries: list of (site_indices, D, axis).
+
+    Kept only as the reference for what the spiral energy used to see; nothing calls
+    it. `_onsite_quadratic` is the term that is actually minimised.
+    """
     param_map = model._resolve_param_map(p_num)
     try:
         atom_labels = [a.get('label') for a in
@@ -202,12 +229,13 @@ def _reg(v):
 class _SpiralEnergy:
     """Callable classical spiral energy over x = [k(3), (axis angles), spin angles]."""
 
-    def __init__(self, J_full, offsets, ouc_map, sia_entries, H_vec, S_val,
+    def __init__(self, J_full, offsets, ouc_map, onsite, H_vec, S_val,
                  axis, optimize_axis):
         self.J_full = J_full            # (N, N_ouc, 3, 3)
         self.offsets = offsets          # (N_ouc, 3)
         self.ouc_map = ouc_map          # (N_ouc,)
-        self.sia = sia_entries
+        # (H_on, b_on) over the 3N Cartesian moment components, or None.
+        self.H_on, self.b_on = onsite if onsite is not None else (None, None)
         self.H_vec = H_vec
         self.S = float(S_val)
         self.axis0 = axis
@@ -262,9 +290,9 @@ class _SpiralEnergy:
         Rs = np.einsum('jab,jb->ja', R, s_ouc)         # rotated neighbor spins
         E = 0.5 * self.S**2 * np.einsum('ia,ijab,jb->', spins, self.J_full, Rs)
 
-        for idx, D_sia, ax in self.sia:
-            proj = spins[idx] @ ax
-            E += self.S**2 * float(np.sum(D_sia * proj**2))
+        if self.H_on is not None:
+            m = self.S * spins.ravel()
+            E += 0.5 * float(m @ (self.H_on @ m)) + float(self.b_on @ m)
 
         if self.H_vec is not None:
             E += GAMMA * MU_B * self.S * float(np.sum(spins @ self.H_vec))
@@ -398,6 +426,45 @@ def nice_k_string(k, max_den=12, tol=1e-4):
     return "[" + ", ".join(parts) + "]"
 
 
+def _warn_if_onsite_breaks_the_spiral(onsite, axis, n_sites, tol=1e-8):
+    """Warn when the on-site energy is not invariant under rotation about `axis`.
+
+    A single-k spiral gives every cell the same spins rotated about `axis`, so a
+    per-site energy is well defined ONLY if it is invariant under that rotation --
+    otherwise the "energy per cell" is the energy of the cell the ansatz happens to
+    reference (cell 0), and the number depends on the phase, not on the state. Sunny
+    asserts the same invariance for the bond matrices in its own SpiralEnergy, and
+    `GenericSpinModel._check_rotational_symmetry` checks it for the LSWT single-k
+    path -- but only for `type: 'sia'` entries, so the same easy axis written as
+    `sia_matrix` or `stevens` reaches this energy unchecked. Warn rather than raise:
+    the on-site term was being dropped outright until now, and an easy axis parallel
+    to the spiral axis (the usual case) satisfies this exactly.
+    """
+    if onsite is None:
+        return
+    H_on, _b_on = onsite
+    a = np.asarray(axis, dtype=float)
+    R = np.eye(3) if la.norm(a) < 1e-12 else _rot_about(a / la.norm(a), 0.01)
+    bad = []
+    for i in range(int(n_sites)):
+        blk = H_on[3 * i:3 * i + 3, 3 * i:3 * i + 3]
+        if np.max(np.abs(R.T @ blk @ R - blk)) > tol * max(1.0, np.abs(blk).max()):
+            bad.append(i)
+    if bad:
+        logger.warning(
+            "spiral optimization: the on-site anisotropy on site(s) %s is NOT "
+            "invariant under rotation about the spiral axis %s, so the spiral "
+            "energy is the energy of the REFERENCE cell rather than a property of "
+            "the state. Align the anisotropy with the axis, or minimise with "
+            "`method: anneal` on a magnetic supercell instead.",
+            bad, np.round(a, 6).tolist())
+
+
+def _rot_about(n, theta):
+    K = _skew(n)
+    return np.eye(3) + np.sin(theta) * K + (1.0 - np.cos(theta)) * (K @ K)
+
+
 def optimize_spiral(model: GenericSpinModel, p_num, min_cfg: Dict[str, Any],
                     S_val: float = 1.0) -> SpiralOptResult:
     """Minimize the classical spiral energy over (k, spin directions[, axis]).
@@ -415,11 +482,12 @@ def optimize_spiral(model: GenericSpinModel, p_num, min_cfg: Dict[str, Any],
     optimize_axis = bool(min_cfg.get('optimize_axis', False))
 
     J_full, offsets, ouc_map = _build_bond_arrays(model, p_num)
-    sia_entries = _parse_sia(model, p_num)
-    H_vec = _resolve_field(model, p_num)
     N = J_full.shape[0]
+    onsite = _onsite_quadratic(model, p_num, N)
+    _warn_if_onsite_breaks_the_spiral(onsite, axis, N)
+    H_vec = _resolve_field(model, p_num)
 
-    energy = _SpiralEnergy(J_full, offsets, ouc_map, sia_entries, H_vec, S_val,
+    energy = _SpiralEnergy(J_full, offsets, ouc_map, onsite, H_vec, S_val,
                            axis, optimize_axis)
 
     # --- Initial k: config k_init > lt_guess > structure k > random ---

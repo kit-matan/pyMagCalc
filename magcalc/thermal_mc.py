@@ -132,8 +132,9 @@ def onsite_quadratic(model, params, n):
         quad = 0.5 * (mv @ (H_on @ mv)) + b_on @ mv + c
         if abs(quad - float(Ef(*mv))) > 1e-8 * scale:
             raise NotImplementedError(
-                "the real-space classical samplers (thermal_mc, wang_landau, "
-                "static_correlations, sampled_correlations) evaluate "
+                "the real-space classical energies (thermal_mc, wang_landau, "
+                "static_correlations, sampled_correlations and the spiral "
+                "optimizer) evaluate "
                 "E = 1/2 m^T H m + b^T m, and this model's on-site anisotropy is "
                 "NOT quadratic in the spin components — a Stevens term of rank "
                 "k >= 4 (quartic/sextic). It cannot be carried by this energy "

@@ -923,6 +923,11 @@ the guard re-arms.
 # (a) SCGA — paramagnetic diffuse S(q) above T_N (self-consistent Gaussian)
 tasks: {scga: true}
 scga: {temperature: 1.5, mesh_density: 20, cross_section: perp}   # temperature = kT (meV)
+# Only the single-λ theory is implemented, i.e. all sites in ONE symmetry class
+# (Bravais, kagome, pyrochlore, ...). A model whose sublattices are inequivalent —
+# unequal spin magnitudes will do it — now RAISES, naming the per-site sum-rule
+# violation; until 2026-09-10 it silently returned a number that satisfied the total
+# constraint and no per-sublattice one (+262% / −42% on a mixed-spin chain).
 
 # (b) Thermal Monte-Carlo — <E>, C, magnetization, susceptibility vs T (parallel tempering)
 tasks: {thermal_mc: true}

@@ -233,6 +233,30 @@ def test_mcif_write_read_round_trip(tmp_path):
         assert np.isclose(I1, I2, rtol=1e-6), hkl
 
 
+def test_write_mcif_labels_are_unique(tmp_path):
+    """The writer must not emit a file its own reader rejects.
+
+    P1 export lists one moment per label, so two sites sharing a label read back as
+    ONE site listed twice -- and read_mcif reports that as a moment which is not
+    invariant under its own magnetic stabiliser, i.e. it blames the symmetry for a
+    labelling accident. Appending the duplicate count was not enough: Cu1, Cu1, Cu11
+    produced Cu1, Cu11, Cu11 and collided again.
+    """
+    A = np.eye(3) * 5.0
+    sites = [{'label': 'Cu1', 'type': 'Cu2+', 'pos': [0, 0, 0], 'moment': [1, 0, 0]},
+             {'label': 'Cu1', 'type': 'Cu2+', 'pos': [0.5, 0, 0], 'moment': [-1, 0, 0]},
+             {'label': 'Cu11', 'type': 'Cu2+', 'pos': [0, 0.5, 0], 'moment': [0, 1, 0]}]
+    path = str(tmp_path / "dup.mcif")
+    write_mcif(path, A, sites)
+
+    data = read_mcif(path)                       # must not raise
+    labels = [s['label'] for s in data['sites']]
+    assert len(labels) == len(sites) == len(set(labels)), labels
+    for s_in, s_out in zip(sites, data['sites']):
+        assert np.allclose(s_out['pos'], s_in['pos'], atol=1e-6)
+        assert np.allclose(s_out['moment'], s_in['moment'], atol=1e-6)
+
+
 def test_reading_tbsb_is_unchanged_by_the_basis_fix():
     """The Sunny-validated file is immune to the convention change, and that is WHY
     the bug survived: TbSb's moment is (0, 0, -0.708), along c alone, so the two
@@ -265,6 +289,57 @@ def test_intensity_ratio_report_normalizes_and_reports_the_cross_term():
     present = [r for r in rows if r['hkl'] == [1, 0, 0]][0]
     assert present['cross_fraction'] == pytest.approx(0.5)   # the phases are opposite
     assert present['d'] == pytest.approx(8.0)
+
+
+def test_mcif_out_minimize_uses_the_full_hamiltonian(tmp_path):
+    """`--minimize` must minimise the model, anisotropy included.
+
+    Two defects in one flag. It raised TypeError on every config
+    (`GenericSpinModel.minimize_energy(p_num)` called with no argument), so it had
+    never run at all; and the minimizer it called assembles its energy from the
+    BOND table plus a global g = 2 Zeeman, so `sia` / `sia_matrix` / `stevens` and
+    per-site g-tensors are absent from it.
+
+    The model here is an AFM chain whose easy axis is x, written as `sia_matrix`,
+    and SEEDED along z -- where the exchange alone is exactly degenerate. Getting z
+    back is the signature of an energy that cannot see the anisotropy; the ground
+    state is along x.
+    """
+    from magcalc.mcif import config_to_sites
+
+    cfg = tmp_path / "easyaxis.yaml"
+    cfg.write_text(
+        "crystal_structure:\n"
+        "  lattice_vectors: [[3.0, 0, 0], [0, 9.0, 0], [0, 0, 9.0]]\n"
+        "  atoms_uc:\n"
+        "  - {label: A, pos: [0.0, 0, 0], spin_S: 1.0, ion: Cu2+}\n"
+        "  - {label: B, pos: [0.5, 0, 0], spin_S: 1.0, ion: Cu2+}\n"
+        "parameters: {J: 1.0}\n"
+        "parameter_order: [J]\n"
+        "interactions:\n"
+        "  heisenberg:\n"
+        "  - {pair: [A, B], rij_offset: [0, 0, 0], value: J}\n"
+        "  - {pair: [B, A], rij_offset: [0, 0, 0], value: J}\n"
+        "  - {pair: [B, A], rij_offset: [1, 0, 0], value: J}\n"
+        "  - {pair: [A, B], rij_offset: [-1, 0, 0], value: J}\n"
+        "  sia_matrix:\n"
+        "  - {atom: A, matrix: [[-3.0, 0, 0], [0, 0, 0], [0, 0, 0]]}\n"
+        "  - {atom: B, matrix: [[-3.0, 0, 0], [0, 0, 0], [0, 0, 0]]}\n"
+        "magnetic_structure:\n"
+        "  enabled: true\n"
+        "  type: pattern\n"
+        "  pattern_type: generic\n"
+        "  directions: [[0, 0, 1], [0, 0, -1]]\n"
+        "tasks: {}\n"
+        "calculation: {cache_mode: none}\n")
+
+    _lat, sites = config_to_sites(str(cfg), minimize=True)
+    assert len(sites) == 2
+    dirs = np.array([s['direction'] for s in sites])
+    # collinear along the EASY AXIS x, antiparallel
+    assert abs(abs(dirs[0][0]) - 1.0) < 1e-4, dirs
+    assert abs(abs(dirs[1][0]) - 1.0) < 1e-4, dirs
+    assert np.dot(dirs[0], dirs[1]) == pytest.approx(-1.0, abs=1e-4)
 
 
 def test_config_to_mcif_round_trip(tmp_path):

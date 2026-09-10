@@ -28,6 +28,21 @@ Only the single-λ theory (all sites one symmetry class) is implemented — it c
 Bravais lattices and the symmetric frustrated lattices (kagome, pyrochlore, ...) SCGA
 is used for; a genuinely inequivalent-sublattice model raises rather than silently
 using one λ.
+
+HOW THE REFUSAL IS DECIDED. Not from the symmetry labelling but from the sum rule
+itself: with one λ only the TOTAL constraint (1/N_q) Σ_q Tr (λ+J(q))⁻¹ = β Σ_i S_i²
+is imposed, while the theory Sunny solves imposes it per sublattice,
+
+    (1/N_q) Σ_q Tr₃ [(λ_i + J(q))⁻¹]_{ii} = β S_i²   for every site i.
+
+Sites related by symmetry satisfy each of those automatically once the total does
+(measured deviation ~1e-16 on the kagome AFM), so checking the per-site residuals
+tests the physics rather than the labelling, and it costs one extra pass over the
+λ-mesh. The check exists because it was not there: a mixed-spin chain (S = 1 and
+S = 5/2) returned an S(q) whose two sublattice sum rules were off by +262% and
+−42% with a total residual of 3e-16 -- no warning, no clue in the output.
+`find_lagrange_multiplier_multi`, Sunny's multi-λ branch, is what would actually
+compute this case, and is not implemented here.
 """
 import logging
 from dataclasses import dataclass
@@ -129,12 +144,46 @@ def _wraps(cache):
     return w if w.any() else np.array([True, True, True])
 
 
-def solve_lambda(model, params, kT, nq=12, mesh=None):
+#: Per-sublattice sum-rule residual above which the single-λ theory is refused.
+#: Symmetry-equivalent sites land at ~1e-16 (kagome AFM), so this is loose by ten
+#: orders of magnitude and still catches an inequivalent sublattice, which is off by
+#: order unity. See the module docstring.
+SUBLATTICE_SUM_RULE_TOL: float = 1e-6
+
+
+def sublattice_sum_rule_residuals(model, params, kT, lam, cache, mesh):
+    """Relative per-site sum-rule residuals of the single-λ solution.
+
+        r_i = [ (1/N_q) Σ_q Tr₃ ((λ+J(q))⁻¹)_{ii} ] / (β S_i²) − 1
+
+    Zero for every site iff the one λ enforces every sublattice constraint, which is
+    the condition under which the single-λ theory is the theory. Returns an (N,) array.
+    """
+    N = cache["N"]
+    eye = np.eye(3 * N)
+    acc = np.zeros(N)
+    for q in mesh:
+        A = fourier_exchange_matrix(model, params, q, cache)
+        Cinv = np.linalg.inv(lam * eye + A)
+        for i in range(N):
+            acc[i] += float(np.real(np.trace(Cinv[3 * i:3 * i + 3, 3 * i:3 * i + 3])))
+    acc /= len(mesh)
+    target = np.asarray(cache["spins"], float) ** 2 / float(kT)
+    return acc / target - 1.0
+
+
+def solve_lambda(model, params, kT, nq=12, mesh=None,
+                 sublattice_tol=SUBLATTICE_SUM_RULE_TOL):
     """Find the single Lagrange multiplier λ from the spin sum rule.
 
     Returns (lam, lam_min, residual, Js) with Js the cached J(q) eigenvalues.
     The sum rule Σ_q Tr(λ+J(q))^{-1} = β Σ_i S_i² N_q is monotically decreasing in
     λ on (−min eig, ∞), so a scalar root find is robust.
+
+    Raises when the resulting λ does not satisfy the PER-SUBLATTICE sum rules to
+    `sublattice_tol` -- i.e. when the model needs the multi-λ theory that is not
+    implemented here. Pass `sublattice_tol=float('inf')` to compute the single-λ
+    answer anyway, knowing it violates the constraint it is derived from.
     """
     cache = _exchange_cache(model, params)
     lat = np.asarray(model.unit_cell(), float)
@@ -165,6 +214,31 @@ def solve_lambda(model, params, kT, nq=12, mesh=None):
                 "spin magnitudes (target lambda would exceed lambda_min + 1e12).")
     lam = optimize.brentq(g, lo, hi, xtol=1e-14, rtol=1e-14, maxiter=200)
     residual = abs(g(lam)) / target
+    if cache["N"] > 1 and np.isfinite(sublattice_tol):
+        r = sublattice_sum_rule_residuals(model, params, kT, lam, cache, mesh)
+        if np.max(np.abs(r)) > sublattice_tol:
+            worst = int(np.argmax(np.abs(r)))
+            per_site = ", ".join(f"site {i} (S={s_i:g}): {100 * r_i:+.3g}%"
+                                 for i, (s_i, r_i)
+                                 in enumerate(zip(cache["spins"], r)))
+            raise ValueError(
+                f"SCGA: this model needs a Lagrange multiplier PER SUBLATTICE, and "
+                f"only the single-lambda theory is implemented. One lambda = "
+                f"{lam:.6g} meV satisfies the total spin sum rule (residual "
+                f"{residual:.1e}) but violates the per-site constraints by up to "
+                f"{100 * abs(r[worst]):.3g}% -- {per_site}. The sites are not one "
+                f"symmetry class (unequal spin magnitudes will do it, as will "
+                f"inequivalent local environments), so a single lambda over- and "
+                f"under-constrains different sublattices and the S(q) it gives is "
+                f"not the SCGA of this model. Sunny 0.8.1's multi-lambda branch "
+                f"(find_lagrange_multiplier_multi) is the theory for it, and is not "
+                f"implemented here -- so for THIS model there is no SCGA answer to "
+                f"get from magcalc, and the thing to do is either reduce the model "
+                f"to one symmetry class (equal spins, equivalent environments) or "
+                f"use Sunny. (From the Python API only, and knowing it violates the "
+                f"constraint it is derived from, solve_lambda(..., "
+                f"sublattice_tol=float('inf')) returns the single-lambda number "
+                f"anyway; there is deliberately no config key for it.)")
     return lam, lam_min, residual, cache, mesh
 
 

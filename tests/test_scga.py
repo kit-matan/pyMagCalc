@@ -117,3 +117,70 @@ def test_kagome_matches_sunny():
         I = scga.scga_intensities(m, [1.0], q, kT, cross_section="perp", lam=lam,
                                   mesh=mesh)[0]
         assert abs(I - sv) < 1e-4, f"q=({h},{k}): {I} vs Sunny {sv}"
+
+
+# ---------------------------------------------------------------------------
+# The single-λ theory's limit of validity
+# ---------------------------------------------------------------------------
+
+def _mixed_spin_chain(S_a=1.0, S_b=2.5, J=1.0):
+    """Two-site chain with UNEQUAL spins: two genuinely inequivalent sublattices."""
+    cfg = {"crystal_structure": {
+               "lattice_vectors": [[3., 0, 0], [0, 9., 0], [0, 0, 9.]],
+               "atoms_uc": [{"label": "A", "pos": [0., 0, 0], "spin_S": S_a},
+                            {"label": "B", "pos": [0.5, 0, 0], "spin_S": S_b}]},
+           "interactions": {"heisenberg": [
+               {"pair": ["A", "B"], "rij_offset": [0, 0, 0], "value": J},
+               {"pair": ["B", "A"], "rij_offset": [0, 0, 0], "value": J},
+               {"pair": ["B", "A"], "rij_offset": [1, 0, 0], "value": J},
+               {"pair": ["A", "B"], "rij_offset": [-1, 0, 0], "value": J}]},
+           "parameters": {}, "parameter_order": [],
+           "magnetic_structure": {"type": "pattern", "pattern_type": "ferromagnetic",
+                                  "direction": [0, 0, 1]}}
+    return GenericSpinModel(cfg)
+
+
+def test_inequivalent_sublattices_are_refused():
+    """One λ cannot satisfy two sublattice sum rules, and SCGA must say so.
+
+    GAP_STATUS #9 claimed this was refused; nothing refused it. A mixed-spin chain
+    (S = 1 and S = 5/2) returned an S(q) whose TOTAL sum-rule residual was 3e-16 --
+    a perfect-looking solve -- while the two PER-SITE constraints were violated by
+    +262% and -42%. Nothing in the output hinted at it, and every other test in this
+    file is a single symmetry class, where the total constraint implies each one.
+    """
+    m = _mixed_spin_chain()
+    with pytest.raises(ValueError, match="PER SUBLATTICE"):
+        scga.compute_scga(m, [], np.array([[0.1, 0, 0], [0.5, 0, 0]]), kT=2.0, nq=12)
+
+
+def test_the_refusal_reports_the_actual_violation():
+    """The measured residuals, so the message is evidence and not a category label."""
+    m = _mixed_spin_chain()
+    with pytest.raises(ValueError) as exc:
+        scga.solve_lambda(m, [], 2.0, nq=12)
+    msg = str(exc.value)
+    assert "site 0 (S=1)" in msg and "site 1 (S=2.5)" in msg, msg
+    assert "+262" in msg and "-42" in msg, msg
+
+    # and the residuals themselves, which is what the guard is reading
+    lam, _lam_min, _res, cache, mesh = scga.solve_lambda(
+        m, [], 2.0, nq=12, sublattice_tol=float("inf"))
+    r = scga.sublattice_sum_rule_residuals(m, [], 2.0, lam, cache, mesh)
+    assert r == pytest.approx([2.625, -0.42], abs=1e-6)
+
+
+def test_one_symmetry_class_satisfies_every_sublattice_rule_exactly():
+    """The guard cannot fire on the models the theory IS valid for.
+
+    Kagome: three sites, one symmetry class, so the single λ that solves the total
+    sum rule solves each site's automatically -- to ~1e-16, ten orders of magnitude
+    inside the 1e-6 tolerance. This is why the residual is a better criterion than
+    the symmetry labelling: it tests the physics the theory needs.
+    """
+    m, _lv = _kagome()
+    kT = 1.5
+    lam, _lam_min, _res, cache, mesh = scga.solve_lambda(m, [1.0], kT, nq=12)
+    r = scga.sublattice_sum_rule_residuals(m, [1.0], kT, lam, cache, mesh)
+    assert np.max(np.abs(r)) < 1e-12, r
+    assert np.max(np.abs(r)) < scga.SUBLATTICE_SUM_RULE_TOL

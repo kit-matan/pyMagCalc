@@ -195,9 +195,22 @@ def contract_cross_section(
         #     NSF(P) = P . Mperp . P
         #     SF(P)  = Tr Mperp - NSF(P)  -/+ chiral(P)
         # with Mperp the q-projected correlation tensor and
-        # chiral(P) = i eps_abc P_c S^ab. For P || q this is exactly the existing
-        # 'sf+'/'sf-' (NSF vanishes because Mperp is perpendicular to q), which is
-        # the reduction the tests pin.
+        # chiral(P) = i eps_abc P_c Mperp^ab. For P || q this is exactly the
+        # existing 'sf+'/'sf-' (NSF vanishes because Mperp is perpendicular to q),
+        # which is the reduction the tests pin.
+        #
+        # THE CHIRAL TERM IS BUILT FROM Mperp, NOT FROM THE RAW TENSOR. Neutrons
+        # see only M_perp, so the chiral vector i M_perp x M_perp* is parallel to
+        # q by construction and the term reduces to (P.qhat) * chiral(qhat): only
+        # the LONGITUDINAL component of the polarization carries chirality, which
+        # is the textbook Blume-Maleev statement. Contracting the unprojected
+        # S^ab with P instead adds i P.(M_perp x M_par* + M_par x M_perp*), which
+        # is a spurious chirality wherever P has a component across q -- it made
+        # SF+ and SF- differ for a CYCLOID measured with P perpendicular to q,
+        # where the true chiral term vanishes identically, and it can even flip
+        # the sign of the term. The pinned Sunny reference for a general P could
+        # not see it: on the proper SCREW that generated it the chiral vector is
+        # already parallel to q, where the two expressions agree exactly.
         P = prm["P"]
         q_norm_sq = float(np.dot(q_vector, q_vector))
         if q_norm_sq < Q_ZERO_THRESHOLD:
@@ -213,7 +226,7 @@ def contract_cross_section(
         sf = total - nsf
         if prm["channel"] == "sf":
             return sf, True
-        chiral = 1j * np.einsum("abc,c,abm->m", _EPS_TENSOR, P, spin_corr)
+        chiral = 1j * np.einsum("abc,c,abm->m", _EPS_TENSOR, P, m_perp)
         sign = -1.0 if prm["channel"] in ("sf+", "sfplus") else +1.0
         return sf + sign * chiral, True
 

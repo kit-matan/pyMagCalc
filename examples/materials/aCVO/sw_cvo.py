@@ -576,7 +576,7 @@ if __name__ == "__main__":
                 
         else:
              logger.info(
-                f"Non-zero H_field ({H_field_val_from_config}) detected, but spin model does not support structure updates "
+                f"Non-zero H_field ({H_mag_check}) detected, but spin model does not support structure updates "
                 "(missing 'set_magnetic_structure'). Skipping minimization."
             )
     else:

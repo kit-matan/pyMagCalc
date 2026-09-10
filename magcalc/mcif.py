@@ -436,7 +436,13 @@ def write_mcif(path: str, lattice_vectors, sites, *,
     a, b, c, al, be, ga = _cell_parameters(A)
 
     rows = []
-    seen_labels: dict[str, int] = {}
+    # Labels must come out UNIQUE: the file is P1 with one moment per label, and
+    # read_mcif treats a repeated label as one site listed twice -- which it then
+    # reports as a moment that is not invariant under its own stabiliser, blaming a
+    # symmetry inconsistency that does not exist. Suffixing the n-th duplicate with
+    # n is not enough on its own: sites labelled Cu1, Cu1, Cu11 gave Cu1, Cu11,
+    # Cu11. So each candidate is checked against what has already been emitted.
+    used: set[str] = set()
     for i, s in enumerate(sites):
         pos = np.asarray(s['pos'], dtype=float).reshape(3)
         if s.get('moment') is not None:
@@ -449,9 +455,11 @@ def write_mcif(path: str, lattice_vectors, sites, *,
             m_cart = d / n * float(s.get('moment_magnitude', 1.0))
 
         base_label = s.get('label') or f"{s.get('type', 'M')}{i + 1}"
-        cnt = seen_labels.get(base_label, 0)
-        seen_labels[base_label] = cnt + 1
-        label = f"{base_label}{cnt}" if cnt > 0 else base_label
+        label, dup = base_label, 0
+        while label in used:
+            dup += 1
+            label = f"{base_label}_{dup}"
+        used.add(label)
 
         species = s.get('type') or s.get('ion') or s.get('species')
         if not species or species == '?':
@@ -519,6 +527,69 @@ def write_mcif(path: str, lattice_vectors, sites, *,
     return path
 
 
+def _minimized_angles(config, model):
+    """Classical ground-state angles for `model`, via the SAME minimizer a run uses.
+
+    `MagCalc.minimize_energy`, not `GenericSpinModel.minimize_energy`. Three
+    reasons, all of them defects this replaced:
+
+      * `GenericSpinModel.minimize_energy(p_num)` takes a required argument that
+        was not being passed, so `magcalc mcif-out --minimize` raised TypeError on
+        every config -- the flag had never run;
+      * it returns None unless the config carries `minimization: {enabled: true}`,
+        which an export has no reason to set, and the caller then read `.thetas`
+        off None;
+      * its energy is `_classical_energy_func`, assembled from the BOND table plus
+        a global g = 2 Zeeman, so single-ion anisotropy (`sia`, `sia_matrix`,
+        `stevens`) and per-site g-tensors are simply absent from it. Exporting a
+        structure minimised without the anisotropy that selects it is the silent
+        kind of wrong: the file looks like a magnetic structure and is one, just
+        not this model's.
+
+    `MagCalc.minimize_energy` minimises the model's own Hamiltonian
+    (`_extract_classical_quadratic`, with a symbolic fallback), which carries all of
+    it. `minimization` settings in the config are honoured when present.
+    """
+    import magcalc as mc
+    from magcalc.runner import resolve_S_and_params
+
+    # The model's config, not the raw one: `run_calculation` resolves S from
+    # `spin_model.config` (line `final_config = spin_model.config`), i.e. AFTER the
+    # Wyckoff/symmetry expansion has written `atoms_uc`. Resolving from the raw
+    # config instead makes a `wyckoff_atoms` model fall back to S = 1 -- 2.5 for an
+    # Fe3+ site becomes 1.0 -- so the export would minimise a different model than
+    # a run of the same file.
+    S_val, params_val = resolve_S_and_params(getattr(model, 'config', config))
+    calc = mc.MagCalc(spin_model_module=model, spin_magnitude=S_val,
+                      hamiltonian_params=params_val, cache_mode="none",
+                      cache_file_base="mcif_out_min", initialize=False)
+
+    x0 = None
+    try:
+        th0, ph0 = model.generate_magnetic_structure()
+        if th0 is not None and ph0 is not None:
+            x0 = np.empty(2 * len(th0))
+            x0[0::2], x0[1::2] = th0, ph0
+    except Exception:
+        logger.debug("no configured structure to seed the minimizer with", exc_info=True)
+
+    mcfg = config.get('minimization') or {}
+    res = calc.minimize_energy(
+        method=mcfg.get('method', 'TNC'), x0=x0,
+        num_starts=int(mcfg.get('num_starts', 8)),
+        n_workers=int(mcfg.get('n_workers', 1)))
+    if res is None or getattr(res, 'x', None) is None:
+        raise ValueError(
+            "minimization produced no structure to export"
+            + (f": {getattr(res, 'message', '')}" if res is not None else ""))
+    if not res.success:
+        logger.warning("mcif-out --minimize: the minimizer did not fully converge "
+                       "(%s); exporting its best structure.",
+                       getattr(res, 'message', ''))
+    logger.info("mcif-out --minimize: classical energy %.6f meV", float(res.fun))
+    return res.x[0::2], res.x[1::2]
+
+
 def config_to_sites(config_file: str, minimize: bool = False):
     """(lattice_vectors, sites) for the magnetic structure a config describes.
 
@@ -541,8 +612,7 @@ def config_to_sites(config_file: str, minimize: bool = False):
     frac = np.asarray(model.atom_pos(), dtype=float).reshape(-1, 3) @ np.linalg.inv(A)
 
     if minimize:
-        res = model.minimize_energy()
-        thetas, phis = res.thetas, res.phis
+        thetas, phis = _minimized_angles(config, model)
     else:
         thetas, phis = model.generate_magnetic_structure()
     if thetas is None:

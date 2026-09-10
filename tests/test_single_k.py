@@ -315,6 +315,53 @@ def test_optimizer_fm_returns_k_zero():
     assert abs(res.energy_per_site - (-1.0)) < 1e-8
 
 
+# On-site anisotropy, three spellings of one Hamiltonian.
+_D_EASY = -5.0
+_SIA_AXIAL = [{'type': 'sia', 'atoms': ['A'], 'value': _D_EASY, 'axis': [0, 0, 1]}]
+_SIA_MATRIX = [{'type': 'sia_matrix', 'atom': 'A',
+                'matrix': [[0, 0, 0], [0, 0, 0], [0, 0, _D_EASY]]}]
+
+
+@pytest.mark.parametrize("spelling", ["sia", "sia_matrix"])
+def test_optimizer_sees_onsite_anisotropy_however_it_is_spelled(spelling):
+    """The spiral energy must include the on-site term, and by the same amount
+    whichever of its equivalent spellings the config uses.
+
+    `D S_z^2` written as `sia` and as `sia_matrix` are the SAME Hamiltonian, so the
+    optimizer owes them the same energy -- an identity that needs no reference. It
+    did not hold: the spiral energy was assembled from a hand-rolled parser over
+    `type: 'sia'` entries plus the BOND table, and a bond table carries no on-site
+    term, so `sia_matrix` (and `stevens`, k = 2 included) reached it as nothing.
+    The optimizer then minimised an exchange-only energy and committed the
+    resulting structure for LSWT to expand about.
+
+    Here the anisotropy is strong enough to beat the J1-J2 spiral outright: the
+    ground state is collinear along z at J1 + J2 + D = -4, not the spiral's
+    -2.0625. Ignoring the term is therefore visible in `energy_per_site`, which is
+    the point -- the two spellings agreeing on the WRONG number would prove nothing.
+    """
+    J1, J2 = -1.0, 2.0
+    extra = {'sia': _SIA_AXIAL, 'sia_matrix': _SIA_MATRIX}[spelling]
+    cfg = chain_config(J1, J2, k=(0.1, 0, 0), interactions_extra=extra)
+    sm = GenericSpinModel(copy.deepcopy(cfg))
+    res = optimize_spiral(sm, [J1, J2], {'num_starts': 3}, S_val=1.0)
+    assert res.energy_per_site == pytest.approx(J1 + J2 + _D_EASY, abs=1e-8)
+    # and it is genuinely below the exchange-only spiral, so the term is not just
+    # present but decisive
+    assert res.energy_per_site < -2.0625 - 1e-6
+
+
+def test_optimizer_refuses_a_stevens_term_it_cannot_represent():
+    """A Stevens term of rank k >= 4 is quartic in the spin components, so the
+    spiral energy E = 1/2 m^T H m + b^T m cannot hold it. Refuse, rather than
+    minimise a model with the term silently dropped."""
+    extra = [{'type': 'stevens', 'atom': 'A', 'k': 4, 'q': 0, 'value': -1.0}]
+    cfg = chain_config(-1.0, 2.0, k=(0.1, 0, 0), interactions_extra=extra)
+    sm = GenericSpinModel(copy.deepcopy(cfg))
+    with pytest.raises(NotImplementedError, match="NOT quadratic"):
+        optimize_spiral(sm, [-1.0, 2.0], {'num_starts': 1}, S_val=1.0)
+
+
 def triangular_config():
     """Triangular-lattice AFM (NN J=1): ground state is the 120-degree spiral
     with k = [1/3, 1/3, 0]."""
