@@ -904,6 +904,20 @@ unreferenced branch in a legacy example script, covered by `ruff --select F821`)
 | 6 | `write_mcif` emitted colliding labels (`Cu1, Cu1, Cu11` → `Cu1, Cu11, Cu11`), and `read_mcif` then rejected the file blaming a magnetic stabiliser — a writer producing files its own reader refuses | It was KNOWN, and `magpipe/tests/test_magndata.py` used it as the FIXTURE for "an unreadable entry is reported". A fixture that depends on a bug disappears with the bug and takes its check along; that test now hand-writes the colliding file | `tests/test_diffraction.py::test_write_mcif_labels_are_unique` |
 | 7 | `NameError` in a log message in `examples/materials/aCVO/sw_cvo.py` (legacy standalone script) | Unreferenced branch; found by `ruff --select F821` | `ruff --select F821` |
 
+### Per-site g-tensors with parameter entries, 2026-10-13
+
+Found while modelling α-Cu₂V₂O₇ with a symmetry-related off-diagonal g_ac (the 16 Cu sites need ±g_ac). The g-tensor
+resolver built its parameter map from the parameter NAMES (`_resolve_param_map(self.parameter_order)`), so every
+name in a `g:` entry resolved to its own string. Each test below FAILED against the old code.
+
+| Defect | What hid it | Pinned by |
+|--------|-------------|-----------|
+| Bare names became free sympy symbols never tied to the parameter (wrong bands); `-g` raised (unary minus on a str); `-1*g` silently became `''` (str repetition) and then "could not parse ''"; in the classical-energy path the unbound symbol reached the minimizer (L-BFGS-B: "cannot determine truth value of Relational"; `anneal`: "quadratic form could not be extracted", i.e. annealing was refused for every parameterised g). Fix: `_resolve_g_tensors(param_map)` takes the caller's map (symbols on the LSWT path, numbers on the classical path); without one it uses the configured numeric values | Every g-tensor test used NUMERIC entries, although the docstring advertised "numbers, parameter names, or expressions" | `tests/test_hamiltonian_terms.py::test_gtensor_parameter_entries_match_numeric` and `::test_gtensor_parameter_entries_in_classical_energy` (bare names, arithmetic, negated name) |
+| `scga._g_tensors` caught EVERY resolver exception and fell back to g = 2·I, so a parameterised g-tensor was silently ignored in SCGA. Now only a model without the resolver falls back | `except Exception` around the call | `tests/test_hamiltonian_terms.py::test_scga_g_tensors_resolve_parameters` |
+
+Check on the α-CVO model (16 sites, H = 14 T ∥ c, g_ac = 0.20 as named parameters): `anneal` now runs and reaches
+E = −41.307948 meV in 6/8 runs, identical to the numeric-g L-BFGS-B result (best energy hit by 1–3 of 40 starts).
+
 **The pattern across #1, #4 and #5.** All three are the SAME failure of coverage: a
 function validated directly while the PATH that reaches it was never executed. #1's
 runner branch, #4's CLI flag, #5's on-site term. `tests/test_corrections.py`'s

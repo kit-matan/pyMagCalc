@@ -2222,8 +2222,10 @@ class GenericSpinModel:
         # present, the field couples as mu_B * B . g_i . S_i (SpinW `addg`,
         # Sunny `Moment(g=...)`), so g_xy != g_z and per-sublattice local frames
         # (rare-earth pyrochlores) are expressible. Without them the legacy
-        # global isotropic gamma*mu_B*H.S is used unchanged.
-        g_tensors = self._resolve_g_tensors()
+        # global isotropic gamma*mu_B*H.S is used unchanged. The g entries are
+        # resolved against THIS call's param_map (symbols on the LSWT path, numbers
+        # on the classical-energy path), so a parameterised tensor is one Hamiltonian.
+        g_tensors = self._resolve_g_tensors(param_map)
 
         # Resolve the field VECTOR once, from whichever form is available. Doing
         # this in one place matters: the classical-energy path (used by the
@@ -2267,8 +2269,20 @@ class GenericSpinModel:
 
         return HM
 
-    def _resolve_g_tensors(self):
+    def _resolve_g_tensors(self, param_map=None):
         """Per-site 3x3 g-tensors from `crystal_structure.atoms_uc[i].g`, or None.
+
+        `param_map` maps parameter names to the values in use -- sympy symbols on the
+        LSWT path, numbers on the classical-energy path. Without it, the numeric values
+        configured under `parameters` are used (SCGA and other numeric consumers).
+
+        REGRESSION (2026-10-13): the map used to be `_resolve_param_map(
+        self.parameter_order)`, i.e. built from the parameter NAMES, so every name
+        resolved to its own string. A bare name became a free symbol never tied to
+        the parameter (wrong bands), '-g' raised (unary minus on a str), '-1*g'
+        silently became '' (str repetition), and in the classical energy the unbound
+        symbol reached the minimizer ("cannot determine truth value of Relational").
+        Pinned by tests/test_hamiltonian_terms.py::test_gtensor_parameter_entries_*.
 
         Returns None when NO atom declares a `g` (the legacy global isotropic
         Zeeman then applies unchanged). Otherwise every site gets a tensor;
@@ -2289,7 +2303,9 @@ class GenericSpinModel:
         if not any(isinstance(a, dict) and a.get('g') is not None for a in atoms):
             return None
 
-        param_map = self._resolve_param_map(self.parameter_order or [])
+        if param_map is None:
+            cfg_params = self.config.get('parameters', self.config.get('model_params', {})) or {}
+            param_map = {k: v for k, v in cfg_params.items() if k != 'S'}
         N_uc = len(self.atom_pos())
         tensors = []
         for i in range(N_uc):

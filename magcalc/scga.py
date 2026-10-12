@@ -108,11 +108,14 @@ def _exchange_cache(model, params):
 
 
 def _g_tensors(model, N):
-    """Per-site 3×3 g-tensors (default 2·I), for the magnetic-moment prefactor."""
-    try:
-        gt = model._resolve_g_tensors()
-    except Exception:
-        gt = None
+    """Per-site 3×3 g-tensors (default 2·I), for the magnetic-moment prefactor.
+
+    Only a model without the resolver (a legacy python_model_file) falls back to 2·I;
+    a declared g-tensor that cannot be resolved must raise. The old bare `except
+    Exception` turned every resolver failure -- including parameterised g entries,
+    broken until 2026-10-13 -- into a silent g = 2 (tests: test_scga_g_tensors_*)."""
+    resolver = getattr(model, "_resolve_g_tensors", None)
+    gt = resolver() if resolver is not None else None
     if gt is None:
         return [2.0 * np.eye(3) for _ in range(N)]
     return [np.array([[float(g[a, b]) for b in range(3)] for a in range(3)]) for g in gt]

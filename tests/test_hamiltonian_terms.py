@@ -198,6 +198,71 @@ def test_scalar_field_uses_configured_direction_not_z():
     assert abs(energy_for([0.0, 0.0, 1.0]) - energy_for([1.0, 0.0, 0.0])) > 1e-6
 
 
+def _param_g_chain(g_entry, params):
+    """Neel chain in field whose per-site g-tensor entries are config parameters /
+    expressions; `params` are extra named parameters placed before the field."""
+    cfg = with_field(neel_chain(atoms_extra=[{"g": copy.deepcopy(g_entry)}] * 2))
+    cfg["parameters"] = dict(params, **cfg["parameters"])
+    cfg["parameter_order"] = list(params) + cfg["parameter_order"]
+    return cfg
+
+
+# Equal to the numeric tensor diag(1.8, 4.32, 1.8) with an off-diagonal 0.25 x-z
+# element, written three ways: bare names, arithmetic, and a negated name.
+G_NUM = [[1.8, 0, 0.25], [0, 4.32, 0], [0.25, 0, 1.8]]
+G_PARAM_FORMS = [
+    ([["gxx", 0, "gxz"], [0, "gyy", 0], ["gxz", 0, "gxx"]], {"gxx": 1.8, "gyy": 4.32, "gxz": 0.25}),
+    ([["2*gxx - 1.8", 0, "gxz/2"], [0, "gyy", 0], ["gxz/2", 0, "gxx"]], {"gxx": 1.8, "gyy": 4.32, "gxz": 0.5}),
+    ([["gxx", 0, "-gm"], [0, "gyy", 0], ["-gm", 0, "gxx"]], {"gxx": 1.8, "gyy": 4.32, "gm": -0.25}),
+]
+
+
+@pytest.mark.parametrize("g_entry,params", G_PARAM_FORMS)
+def test_gtensor_parameter_entries_match_numeric(g_entry, params):
+    """REGRESSION (2026-10-13): g entries were resolved against the parameter NAMES
+    (`_resolve_param_map(self.parameter_order)`), so a name mapped to its own string.
+    A bare name survived the symbolic path by accident, but arithmetic did not:
+    '-gm' raised (unary minus on a str) and '-1*gm' silently became ''. The bands of
+    a parameterised tensor must equal those of the same tensor written numerically."""
+    ref = bands(with_field(neel_chain(atoms_extra=[{"g": G_NUM}] * 2)), tag="g_num")
+    got = bands(_param_g_chain(g_entry, params), tag="g_par")
+    assert np.allclose(ref, got, atol=1e-10)
+
+
+@pytest.mark.parametrize("g_entry,params", G_PARAM_FORMS)
+def test_gtensor_parameter_entries_in_classical_energy(g_entry, params):
+    """REGRESSION (2026-10-13): in the classical-energy path (numeric parameters, what
+    the minimizer optimizes) a parameterised g entry stayed an unbound symbol, so with
+    a field the energy was a sympy expression and L-BFGS-B died with 'cannot determine
+    truth value of Relational'. It must be the same number as for the numeric tensor."""
+    import sympy as sp
+
+    def energy(cfg, pv):
+        m = GenericSpinModel(cfg)
+        n, n_ouc = len(m.atom_pos()), len(m.atom_pos_ouc())
+        Sxyz = []
+        for j in range(n_ouc):
+            th = 0.3 if (j % n) == 0 else np.pi - 0.9   # canted: net moment along x and z
+            Sxyz.append([S_VAL * np.sin(th), 0.0, S_VAL * np.cos(th)])
+        e = sp.N(m.Hamiltonian(Sxyz, pv))
+        assert not getattr(e, "free_symbols", set()), f"classical energy is symbolic: {e}"
+        return float(e)
+
+    ref = energy(with_field(neel_chain(atoms_extra=[{"g": G_NUM}] * 2)), [3.0, 0.0, 0.0, 1.0])
+    got = energy(_param_g_chain(g_entry, params), list(params.values()) + [3.0, 0.0, 0.0, 1.0])
+    assert abs(ref - got) < 1e-10
+
+
+def test_scga_g_tensors_resolve_parameters():
+    """REGRESSION (2026-10-13): scga._g_tensors swallowed the resolver's failure and
+    fell back to g = 2*I, so a parameterised g-tensor was silently ignored there."""
+    from magcalc.scga import _g_tensors
+    g_entry, params = G_PARAM_FORMS[2]
+    m = GenericSpinModel(_param_g_chain(g_entry, params))
+    for g in _g_tensors(m, 2):
+        assert np.allclose(g, np.array(G_NUM), atol=1e-12)
+
+
 def test_gtensor_bad_spec_raises():
     with pytest.raises(Exception):
         bands(with_field(neel_chain(atoms_extra=[{"g": {"g_par": 1.8}}] * 2)),
