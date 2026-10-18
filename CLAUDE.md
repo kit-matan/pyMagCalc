@@ -727,9 +727,19 @@ Reference: `magcalc/sun/entangled.py`, `tests/test_entangled_units.py`.
 
 `pytest` runs the FAST suite (**697 of 876 collected tests**): the `slow`
 marker (pytest.ini) holds the deep validations (ED oracles, convergence sweeps,
-integration runs). The last full gate was **882 passed, 1 skipped** (`pytest -m ""`
-from the workspace root, 2026-08-17, **12 min**, 883 collected there since it also
-picks up `fMagCalc/tests`).
+integration runs). The last full gate was **1704 passed, 1 failed, 3 skipped**
+(`MAGCALC_NO_GUI=1 pytest -m "" -rs` from the workspace root, 2026-10-18, **16 min 23 s**,
+1708 collected there since it also picks up `fMagCalc/tests` and `magpipe/tests`; run on
+7e2dfd9, the symmetry-propagation fix, on an idle machine, no crashed xdist worker). The
+failure is not in this repo: `magpipe/tests/test_excite.py::
+test_a_single_k_ansatz_flags_a_dm_that_breaks_its_spiral_axis` puts `D = (1, 0, 0)` on the
+NN bond of a one-site P4/mmm chain, whose midpoint is an inversion centre, and the engine
+now refuses that (the same test passes on e5cacd3, the commit before) -- see the GAP_STATUS
+entry for 2026-10-18; it needs a fixture whose bond admits a DM, not a weaker check. The
+three skips: the `seekpath` pair (below), `magpipe/tests/test_alps.py:187` (ALPS is
+installed), and `magpipe/tests/test_magref.py:568`, an in-test skip since magpipe `7bad01b`
+(2026-08-20) taken whenever `pb_ho.pcr` refuses to freeze -- a skip-on-exception, not a
+named dependency, so by this file's own rule a hole, and magpipe's to close.
 
 Both pytest.ini files carry `-n auto --dist worksteal` (pytest-xdist), which is the
 whole of that 33 min -> 12 min; the fast suite went 6 m 07 s -> 4 m 37 s. **Nothing was

@@ -948,6 +948,25 @@ noise passes, a 1 % transverse component is still refused). And the distance-rul
 drops the orbit; a `SymmetryConflictError` is re-raised through them, the rest of that swallow is unchanged and
 is the same silent-drop shape as above. All 47 shipped configs with bond rules still build.
 
+Full gate on 7e2dfd9 (`MAGCALC_NO_GUI=1 pytest -m "" -rs` from the workspace root, 2026-10-18, idle machine):
+**1704 passed, 1 failed, 3 skipped, 1708 collected, 16 min 23 s**, no crashed xdist worker. The failure is this check
+doing its job one repo over: `magpipe/tests/test_excite.py::test_a_single_k_ansatz_flags_a_dm_that_breaks_its_spiral_axis`
+sets `D = (1, 0, 0)` on both orbits of a one-site 3 x 12 x 12 A chain fixture — P4/mmm, 16 operations, and the NN
+midpoint is an inversion centre, so Moriya forbids every DM component there. Before, `add_symmetry_interaction` kept
+the value silently and magpipe's planner reached its single-k branch; now `add_symmetry_interaction` raises
+`SymmetryConflictError` ("the value (D1x, D1y, D1z) is not invariant under the bond's own site symmetry, which forbids
+its components x, y, z ..."), `plan()` catches it as "no Luttinger-Tisza ansatz" and seeds k = 0, and the test's
+`p.k is not None` fails. The same test passes against e5cacd3. Resolve it in magpipe (a fixture whose bond admits a
+DM, or an assertion on the refusal), not by weakening the check. One thing the gate measured about the fix itself:
+through the config route the typed exception does not survive — `GenericSpinModel`'s `symmetry_rules` loop
+(`generic_model.py:550`, pre-existing) catches every `Exception` and re-raises a plain `ValueError("Failed to expand
+symmetry rule {rule}: ...")`, so a caller's `except SymmetryConflictError` sees nothing; only a direct
+`add_symmetry_interaction` call gets the subclass. The three skips, by name: `pyMagCalc/tests/test_cell_utils.py:146` (`seekpath` absent — the structural
+pair), `magpipe/tests/test_alps.py:187` (ALPS is installed — the structural fallback), and
+`magpipe/tests/test_magref.py:568` (an in-test skip since magpipe `7bad01b`, 2026-08-20: `pb_ho.pcr` refuses
+`freeze_all_except_moments(2)`, so the data-file-name guard is never exercised — a skip-on-exception, which this
+repo's rules call a hole; it is magpipe's to close).
+
 Key conventions worth knowing before touching the engine:
 - pyMagCalc stores `HMat(q) = g · H2(q)` with H2 Hermitian, g = diag(I,−I); eigenvalues
   are the ±ω pairs. (The name `_build_TwogH2_matrix` is just a name.)
