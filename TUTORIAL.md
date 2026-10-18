@@ -183,15 +183,23 @@ interactions:
     - {type: dm, ref_pair: [Fe0, Fe1], offset: [0, 0, 0], value: [0, Dy, Dz]}
 ```
 
-> **Three hard errors to know about** (each used to be a silent failure — a
-> warning plus a Hamiltonian quietly missing a term):
+> **Four hard errors to know about** (each used to be a silent failure — a
+> warning plus a Hamiltonian quietly missing a term, or carrying a wrong one):
 > **(a)** a bare `distance` on a non-scalar rule raises; **(b)** a rule that
 > matches no bond raises, instead of expanding to nothing; **(c)** an ambiguous
 > `ref_pair` — several images of the same length for a directional rule, or a
 > `distance` window spanning two orbits — raises and names the candidates, so pin
-> it with `offset: [u, v, w]`. That last one bit a real config: two screw-related
+> it with `offset: [u, v, w]`. That one bit a real config: two screw-related
 > bonds differed by one ULP, and which one won the `<` comparison flipped the sign
-> of a DM component for the whole orbit.
+> of a DM component for the whole orbit. **(d)** a value the bond's own site
+> symmetry forbids raises (Moriya's rules: a 2-fold axis perpendicular to the
+> bond through its midpoint forbids the D component along it, an inversion centre
+> forbids all three; for a tensor, the little group fixes which blocks are
+> symmetric or antisymmetric). Until 2026-10-18 the engine kept whichever
+> operation reached each bond first, so a forbidden component came out with
+> order-dependent signs and a bond table that was not even invariant under the
+> lattice's centring translations. The error names the operation, the component
+> and the allowed value (e.g. `value: Dx,Dy,0`).
 
 Run `magcalc symmetry <config> [--max-distance Å]` to see the bond orbits and the
 symmetry-**allowed** exchange matrix for each — the fast way to choose `ref_pair`

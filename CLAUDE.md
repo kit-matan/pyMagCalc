@@ -135,6 +135,44 @@ failures — a WARNING plus a Hamiltonian quietly missing a term):
    Identical bond count, plausible spectrum, different Hamiltonian — caught only
    by diffing the bond table against an independent model.
 
+4. **A value the bond's own site symmetry forbids raises** (`SymmetryConflictError`,
+   a `ValueError`, 2026-10-18). Several space-group operations reach each bond of
+   an orbit, and they agree on its value only if the value is invariant under the
+   bond's little group -- the operations mapping the bond onto itself (D -> D,
+   J -> J) or onto its reverse (D -> -D, J -> J^T). That is exactly Moriya's
+   rules: a 2-fold axis perpendicular to the bond through its midpoint, or a
+   mirror plane containing it, forbids the D component along it; an inversion
+   centre forbids all three. Until 2026-10-18 the engine kept whichever
+   operation reached each bond FIRST, so a forbidden component came out with a
+   sign set by spglib's enumeration order. Measured on alpha-Cu2V2O7 (Fdd2,
+   `examples/materials/aCVO`): the J2 bond Cu0-Cu13 (3.97512 A) has the 2-fold
+   axis along c through its midpoint, so D_z is forbidden there -- yet a
+   `Dx,Dy,Dz` rule gave D_z = +-1 on all 8 J2 bonds, disagreeing with a hand
+   propagation on 8 of 16 directed entries and NOT invariant under the
+   F-centring translations (32 of 48 translated entries differed). The minimized
+   ground state then broke translation symmetry (spins on centring-related sites
+   differed by up to 0.12). Right bond count, plausible spectrum, Hamiltonian of
+   lower symmetry than the crystal: nothing downstream can notice.
+
+   The propagation now runs in two passes -- record what EVERY operation does
+   to the reference bond, check that operations landing on the same directed
+   bond agree, then emit in the old first-hit order -- so an allowed value
+   produces a bit-identical table (the aCVO J1 table, 32 entries of
+   `(+-Dx, +-Dy, +-Dz)`, is pinned to a hand-written Fdd2 propagation in
+   `tests/test_symmetry_propagation_consistency.py`) and a forbidden one is
+   refused with the operation, the component and the fix named (`value: Dx,Dy,0`
+   for J2). It is the general little-group condition, not a DM special case: an
+   `interaction_matrix` on J2 must have a SYMMETRIC xy block and ANTISYMMETRIC
+   xz/yz blocks, and the test pins both directions. The check is numeric, on
+   random samples of a symbolic value (so a forbidden `Dz` is caught whatever
+   number it is later given), at 1e-8 of the largest entry on an exact lattice,
+   widened to 100x the lattice's own noise (the non-orthogonality of the
+   Cartesian operations) so a CIF that is cubic to six decimals is not reported
+   as a conflict. The escape hatch for a deliberately sub-symmetric model is the
+   explicit bond list, as before; `magcalc symmetry <config>` prints the allowed
+   form of every orbit, including ties between components that no zeroing
+   expresses.
+
 Cell-image searches are sized from the target distance everywhere (Heisenberg,
 DM, matrix, anisotropic, and the `ref_pair` reference-bond lookup), so
 2nd-neighbour bonds and bonds reaching past one cell image are found. Passing an

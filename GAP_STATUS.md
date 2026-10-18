@@ -925,6 +925,29 @@ runner branch, #4's CLI flag, #5's on-site term. `tests/test_corrections.py`'s
 swallows a task's exception, so "does not raise" asserts nothing about the task. The
 new runner test asserts on the success line and the ABSENCE of the failure line.
 
+### Symmetry propagation of a forbidden component, 2026-10-18
+
+Found while mapping the DM canting pattern of α-Cu₂V₂O₇ (Fdd2, `examples/materials/aCVO`). `add_symmetry_interaction`
+propagates a `ref_pair` value over the space group, D' = det(R)·R·D, J' = R J Rᵀ, and kept the FIRST operation
+that reached each bond. Several operations reach every bond of an orbit, and they agree on its value only if the
+value is invariant under the bond's little group (bond-preserving: D → D; bond-reversing: D → −D, J → Jᵀ) — which
+is exactly Moriya's rules. When they disagree, the first-hit rule picked the sign of the forbidden component by
+spglib's enumeration order, bond by bond.
+
+| Defect | What hid it | Pinned by |
+|--------|-------------|-----------|
+| The J2 bond Cu0–Cu13 (3.97512 Å) has the 2-fold axis along c through its midpoint, so D_z is forbidden; a `Dx,Dy,Dz` rule still gave D_z = ±1 on all 8 J2 bonds, with signs disagreeing with a hand propagation on 8 of 16 directed entries and **not invariant under the F-centring translations** (32 of 48 translated entries differed). The minimized ground state then broke translation symmetry (spins on centring-related sites differed by up to 0.12). Fix: two passes — record what EVERY operation does to the reference bond, refuse (`SymmetryConflictError`, a `ValueError`) if operations landing on the same directed bond disagree, then emit in the old first-hit order, so an allowed value's table is bit-identical | Right bond count, plausible spectrum; every shipped rule puts a symmetry-allowed value on its bond (aCVO's J1 is `Dx,0,0`), so no config and no test ever propagated a forbidden one — the `ref_pair`/`steepest_descent`/on-site-anisotropy shape again: the property was never false in the suite | `tests/test_symmetry_propagation_consistency.py`, 17 tests. Oracle: the 16 Fdd2 operations written out by hand (cosets × F-centring), not spglib's list — it finds the J2 D_z conflict itself, and the engine's J1, J3 and in-plane-J2 tables must equal it entry for entry, be antisymmetric and be centring-invariant. The shipped aCVO model (32 DM + 32 anisotropic + 80 Heisenberg entries) is pinned to the same hand table. A full `interaction_matrix` on J2 pins the general little-group condition (symmetric xy block allowed, symmetric xz forbidden) |
+
+Two things to know before relying on it. The check is numeric, on random samples of a symbolic value (a forbidden
+`Dz` is caught whatever number Dz is later given), at 1e-8 of the largest entry on an exact lattice — and it is
+widened to 100× the lattice's own noise, the non-orthogonality of the Cartesian operations, because on a CIF that
+is cubic to six decimals every value propagates slightly differently through different operations and a fixed
+tight tolerance would call measurement noise a symmetry conflict (pinned on P23 with c = a(1+1e-6): the
+noise passes, a 1 % transverse component is still refused). And the distance-rule expanders (`_expand_dm_rules`,
+`_expand_interaction_matrix_rules`) swallow propagation errors into a logged error plus a "loop breaker" that
+drops the orbit; a `SymmetryConflictError` is re-raised through them, the rest of that swallow is unchanged and
+is the same silent-drop shape as above. All 47 shipped configs with bond rules still build.
+
 Key conventions worth knowing before touching the engine:
 - pyMagCalc stores `HMat(q) = g · H2(q)` with H2 Hermitian, g = diag(I,−I); eigenvalues
   are the ±ω pairs. (The name `_build_TwogH2_matrix` is just a name.)
