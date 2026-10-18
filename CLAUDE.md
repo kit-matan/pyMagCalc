@@ -67,6 +67,19 @@ Rules expand to **both bond directions** automatically (required by
 pyMagCalc's `H = (1/2) Σ_ordered`); never list reverse bonds by hand alongside
 rules.
 
+A rule `value` may be ONE string -- `0,Dy,Dz`, `[0, Dy, Dz]`, `(0, Dy, Dz)`, or
+`[[..], [..], [..]]` for a matrix -- which is the natural way to paste the
+allowed form `magcalc symmetry` prints. Only a bracket pair around the WHOLE
+value is removed and only top-level commas split it, so `sqrt(3)*D1x/3` and
+`atan2(Dy, Dx)` survive intact; an unbalanced bracket, or an empty component
+(`0,,Dz`, which used to slide Dz onto the y axis), raises. Until 2026-10-18 every
+bracket in the string was deleted first, so `D1x,sqrt(3)*D1x/3,D1z` -- the
+allowed DM on KFe3J's kagome NN bond, and the shape of one on any hexagonal
+bond -- carried a free symbol `sqrt3` that nothing binds, and the dispersion came
+out all-NaN with no error. A YAML list never reached that parser, and explicit
+`pair:` entries go through `parse_expr`; both were always right.
+`tests/test_rule_value_parsing.py`.
+
 `kitaev` is also available as an explicit bond list under `interactions.kitaev`
 (`{pair, rij_offset, value: K, axis}`; `bond_direction` is an accepted alias for
 `axis`). Both routes raise on an unresolvable `value` and on an `axis` outside

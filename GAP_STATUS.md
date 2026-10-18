@@ -925,6 +925,16 @@ runner branch, #4's CLI flag, #5's on-site term. `tests/test_corrections.py`'s
 swallows a task's exception, so "does not raise" asserts nothing about the task. The
 new runner test asserts on the success line and the ABSENCE of the failure line.
 
+### Rule-value string parser, 2026-10-18
+
+Found while making magpipe emit the allowed forms `magcalc symmetry` prints. A rule `value` written as one string
+(`D1x,sqrt(3)*D1x/3,D1z`) was parsed by deleting every `[`, `]`, `(` and `)` and then splitting on every comma.
+`_split_rule_value` now strips one outer pair and splits only at bracket depth 0.
+
+| Defect | What hid it | Pinned by |
+|--------|-------------|-----------|
+| `sqrt(3)*D1x/3` became `sqrt3*D1x/3`, an unbound symbol. On KFe3J's kagome NN bond with in-plane moments every band came out NaN, no error; the decimal spelling `0.5773502691896258*D1x` gives finite bands, and now both give the same ones. With the symmetry-conflict check (branch `claude/cool-gagarin-59fa30`) the same value, which is the allowed one, was refused as a conflict, by an error that tells the user to paste that form. Also: `(J1+J2)/2, 0, 0` lost its grouping, `atan2(Dy, Dx)` split in two, `0,,Dz` silently became (0, Dz, 0), and a 3×3 string flattened to a 9-vector and died on a shape error | Every shipped rule writes a string value with bare names (`0,Dy,Dz`), or uses a YAML list, which never reaches the parser; explicit `pair:` entries go through `parse_expr` and were always right | `tests/test_rule_value_parsing.py`. Premise from geometry, not the engine: the bond's little group is a mirror that reverses it, so the in-plane D is ⊥ the bond, D_y/D_x = −r_x/r_y = √3/3, and the CLI's allowed matrix agrees. Oracle: the exact, bracketed, decimal and YAML-list spellings give the identical 36-entry table; for `anisotropic_exchange` and `interaction_matrix` (the CLI's full allowed matrix pasted as one string) string = list. 8 of its tests fail on the old parser |
+
 Key conventions worth knowing before touching the engine:
 - pyMagCalc stores `HMat(q) = g · H2(q)` with H2 Hermitian, g = diag(I,−I); eigenvalues
   are the ±ω pairs. (The name `_build_TwogH2_matrix` is just a name.)

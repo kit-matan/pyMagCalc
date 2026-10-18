@@ -24,6 +24,76 @@ _DIRECTIONAL_RULE_TYPES = frozenset({
     "dm", "dm_manual", "anisotropic_exchange", "interaction_matrix", "kitaev",
 })
 
+_CLOSE_BRACKET = {"[": "]", "(": ")"}
+
+
+def _bracket_partner(s, start):
+    """Index of the bracket closing the one at `s[start]`, in a balanced `s`."""
+    depth = 0
+    for i in range(start, len(s)):
+        if s[i] in _CLOSE_BRACKET:
+            depth += 1
+        elif s[i] in ")]":
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+def _split_rule_value(value):
+    """
+    A string rule `value` as its list of component strings ("0,-Dy,Dz",
+    "[0, -Dy, Dz]", "(0, -Dy, Dz)"; a "[[..], [..], [..]]" string gives rows), or
+    `value` unchanged when it holds a single expression.
+
+    Only ONE bracket pair enclosing the whole value is removed, and only commas at
+    bracket depth 0 split it, so every component reaches sympify intact. Until
+    2026-10-18 every `[`, `]`, `(` and `)` in the string was deleted before
+    splitting on every comma: `sqrt(3)*D1x/3` became `sqrt3*D1x/3`, a new free
+    symbol `sqrt3` -- and that is exactly the form `magcalc symmetry` prints for
+    the allowed DM on any hexagonal bond (KFe3J's kagome NN bond: (D1x,
+    sqrt(3)*D1x/3, D1z)). Nothing binds `sqrt3`, so the bond table carried an
+    unbound symbol and the dispersion came out all-NaN; `(J1+J2)/2, 0, 0` lost its
+    grouping and `atan2(Dy, Dx)` split in two.
+    """
+    s = value.strip()
+    stack = []
+    for c in s:
+        if c in _CLOSE_BRACKET:
+            stack.append(_CLOSE_BRACKET[c])
+        elif c in ")]" and (not stack or stack.pop() != c):
+            stack.append(None)
+            break
+    if stack:
+        raise ValueError(f"unbalanced brackets in rule value {value!r}")
+
+    inner = s
+    if s[:1] in _CLOSE_BRACKET and _bracket_partner(s, 0) == len(s) - 1:
+        inner = s[1:-1]
+
+    parts, depth, start = [], 0, 0
+    for i, c in enumerate(inner):
+        if c in _CLOSE_BRACKET:
+            depth += 1
+        elif c in ")]":
+            depth -= 1
+        elif c == "," and depth == 0:
+            parts.append(inner[start:i].strip())
+            start = i + 1
+    parts.append(inner[start:].strip())
+    if len(parts) == 1:
+        return value                # one expression, e.g. "J1" or "(J1+J2)/2"
+    if parts[-1] == "":
+        parts.pop()                 # a trailing comma
+    if any(p == "" for p in parts):
+        # Dropping it would shift every later component one axis over.
+        raise ValueError(f"empty component in rule value {value!r}")
+
+    rows = [p.startswith("[") and _bracket_partner(p, 0) == len(p) - 1 for p in parts]
+    if all(rows):
+        return [_split_rule_value(p) for p in parts]
+    return parts
+
 
 #: How far an allowed-matrix coefficient may sit from an exact value and still
 #: be snapped to it. Allowed-matrix coefficients come from point-group algebra,
@@ -509,12 +579,10 @@ class MagCalcConfigBuilder:
         
         # Check if value is symbolic (contains strings)
         if isinstance(value, str):
-            # Parse CSV string if needed (e.g. "0,-Dy,Dz" or "[0, -Dy, 0]")
-            # Remove brackets and parentheses
-            cleaned_val = value.replace('[', '').replace(']', '').replace('(', '').replace(')', '')
-            if ',' in cleaned_val:
-                value = [v.strip() for v in cleaned_val.split(',') if v.strip()]
-            
+            # Parse CSV string if needed (e.g. "0,-Dy,Dz" or "[0, -Dy, 0]"),
+            # keeping brackets inside components: sqrt(3)*D1x/3 stays intact.
+            value = _split_rule_value(value)
+
             # Auto-pad 2D vectors to 3D if likely intended (e.g. "0, -Dy" -> "0, -Dy, 0")
             # Only if it looks like a vector (list of length 2)
             if isinstance(value, list) and len(value) == 2:
