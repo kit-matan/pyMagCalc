@@ -148,6 +148,44 @@ failures — a WARNING plus a Hamiltonian quietly missing a term):
    Identical bond count, plausible spectrum, different Hamiltonian — caught only
    by diffing the bond table against an independent model.
 
+4. **A value the bond's own site symmetry forbids raises** (`SymmetryConflictError`,
+   a `ValueError`, 2026-10-18). Several space-group operations reach each bond of
+   an orbit, and they agree on its value only if the value is invariant under the
+   bond's little group -- the operations mapping the bond onto itself (D -> D,
+   J -> J) or onto its reverse (D -> -D, J -> J^T). That is exactly Moriya's
+   rules: a 2-fold axis perpendicular to the bond through its midpoint, or a
+   mirror plane containing it, forbids the D component along it; an inversion
+   centre forbids all three. Until 2026-10-18 the engine kept whichever
+   operation reached each bond FIRST, so a forbidden component came out with a
+   sign set by spglib's enumeration order. Measured on alpha-Cu2V2O7 (Fdd2,
+   `examples/materials/aCVO`): the J2 bond Cu0-Cu13 (3.97512 A) has the 2-fold
+   axis along c through its midpoint, so D_z is forbidden there -- yet a
+   `Dx,Dy,Dz` rule gave D_z = +-1 on all 8 J2 bonds, disagreeing with a hand
+   propagation on 8 of 16 directed entries and NOT invariant under the
+   F-centring translations (32 of 48 translated entries differed). The minimized
+   ground state then broke translation symmetry (spins on centring-related sites
+   differed by up to 0.12). Right bond count, plausible spectrum, Hamiltonian of
+   lower symmetry than the crystal: nothing downstream can notice.
+
+   The propagation now runs in two passes -- record what EVERY operation does
+   to the reference bond, check that operations landing on the same directed
+   bond agree, then emit in the old first-hit order -- so an allowed value
+   produces a bit-identical table (the aCVO J1 table, 32 entries of
+   `(+-Dx, +-Dy, +-Dz)`, is pinned to a hand-written Fdd2 propagation in
+   `tests/test_symmetry_propagation_consistency.py`) and a forbidden one is
+   refused with the operation, the component and the fix named (`value: Dx,Dy,0`
+   for J2). It is the general little-group condition, not a DM special case: an
+   `interaction_matrix` on J2 must have a SYMMETRIC xy block and ANTISYMMETRIC
+   xz/yz blocks, and the test pins both directions. The check is numeric, on
+   random samples of a symbolic value (so a forbidden `Dz` is caught whatever
+   number it is later given), at 1e-8 of the largest entry on an exact lattice,
+   widened to 100x the lattice's own noise (the non-orthogonality of the
+   Cartesian operations) so a CIF that is cubic to six decimals is not reported
+   as a conflict. The escape hatch for a deliberately sub-symmetric model is the
+   explicit bond list, as before; `magcalc symmetry <config>` prints the allowed
+   form of every orbit, including ties between components that no zeroing
+   expresses.
+
 Cell-image searches are sized from the target distance everywhere (Heisenberg,
 DM, matrix, anisotropic, and the `ref_pair` reference-bond lookup), so
 2nd-neighbour bonds and bonds reaching past one cell image are found. Passing an
@@ -702,9 +740,19 @@ Reference: `magcalc/sun/entangled.py`, `tests/test_entangled_units.py`.
 
 `pytest` runs the FAST suite (**697 of 876 collected tests**): the `slow`
 marker (pytest.ini) holds the deep validations (ED oracles, convergence sweeps,
-integration runs). The last full gate was **882 passed, 1 skipped** (`pytest -m ""`
-from the workspace root, 2026-08-17, **12 min**, 883 collected there since it also
-picks up `fMagCalc/tests`).
+integration runs). The last full gate was **1704 passed, 1 failed, 3 skipped**
+(`MAGCALC_NO_GUI=1 pytest -m "" -rs` from the workspace root, 2026-10-18, **16 min 23 s**,
+1708 collected there since it also picks up `fMagCalc/tests` and `magpipe/tests`; run on
+7e2dfd9, the symmetry-propagation fix, on an idle machine, no crashed xdist worker). The
+failure is not in this repo: `magpipe/tests/test_excite.py::
+test_a_single_k_ansatz_flags_a_dm_that_breaks_its_spiral_axis` puts `D = (1, 0, 0)` on the
+NN bond of a one-site P4/mmm chain, whose midpoint is an inversion centre, and the engine
+now refuses that (the same test passes on e5cacd3, the commit before) -- see the GAP_STATUS
+entry for 2026-10-18; it needs a fixture whose bond admits a DM, not a weaker check. The
+three skips: the `seekpath` pair (below), `magpipe/tests/test_alps.py:187` (ALPS is
+installed), and `magpipe/tests/test_magref.py:568`, an in-test skip since magpipe `7bad01b`
+(2026-08-20) taken whenever `pb_ho.pcr` refuses to freeze -- a skip-on-exception, not a
+named dependency, so by this file's own rule a hole, and magpipe's to close.
 
 Both pytest.ini files carry `-n auto --dist worksteal` (pytest-xdist), which is the
 whole of that 33 min -> 12 min; the fast suite went 6 m 07 s -> 4 m 37 s. **Nothing was

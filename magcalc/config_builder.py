@@ -106,6 +106,149 @@ def _split_rule_value(value):
 _SYMMETRY_COEFF_TOL = 1e-5
 
 
+#: Relative tolerance of the propagation-consistency check in
+#: `add_symmetry_interaction` on an exactly specified lattice (relative to the
+#: largest entry of the value). It is widened to `_PROPAGATION_NOISE_FACTOR`
+#: times the lattice's own noise -- the non-orthogonality of the Cartesian
+#: symmetry operations, ~1e-6 for a Materials Project cell that is cubic to six
+#: decimals -- so measurement noise is never reported as a symmetry conflict,
+#: while on an exact lattice a forbidden component is caught down to 1e-8.
+_PROPAGATION_TOL = 1e-8
+_PROPAGATION_NOISE_FACTOR = 100.0
+
+
+class SymmetryConflictError(ValueError):
+    """A `symmetry_rules` value that the reference bond's own site symmetry forbids.
+
+    Raised by `MagCalcConfigBuilder.add_symmetry_interaction` when the space-group
+    operations reaching one bond propagate different values to it -- a DM component
+    forbidden by Moriya's rules, a symmetric off-diagonal the bond's 2-fold axis
+    excludes, and so on. No consistent bond table exists for such a value, so none
+    is built; the message names the component and the operation that excludes it.
+    """
+
+
+def _op_to_string(R, t):
+    """A space-group operation as its Jones-faithful symbol, e.g. '-x,-y+1/2,z+1/4'."""
+    from fractions import Fraction
+
+    out = []
+    for row, tr in zip(np.asarray(R), np.asarray(t, dtype=float)):
+        s = ""
+        for c, name in zip(row, "xyz"):
+            c = int(round(float(c)))
+            if c == 0:
+                continue
+            sign = "-" if c < 0 else ("+" if s else "")
+            s += sign + (name if abs(c) == 1 else f"{abs(c)}{name}")
+        fr = Fraction(float(tr)).limit_denominator(24)
+        if fr != 0:
+            s += ("+" if fr > 0 and s else "") + str(fr)
+        out.append(s or "0")
+    return ",".join(out)
+
+
+def _chop_expr(x, tol=1e-10):
+    """A propagated sympy expression with its float noise removed, for display only:
+    `1.0*Dx + 5.4e-33*Dy - 1.2e-16*Dz` reads as `Dx`."""
+    import sympy as sp
+
+    if not isinstance(x, sp.Basic):
+        return x
+    repl = {}
+    for f in x.atoms(sp.Float):
+        if abs(f) < tol:
+            repl[f] = sp.Integer(0)
+        elif abs(f - round(f)) < tol:
+            repl[f] = sp.Integer(int(round(f)))
+    return x.xreplace(repl) if repl else x
+
+
+def _fmt_rule_value(v):
+    """One rule value (3-vector or 3x3; numeric or sympy) for an error message."""
+    def one(x):
+        if isinstance(x, (int, float, np.integer, np.floating)) and not isinstance(x, bool):
+            return f"{float(x):.6g}"
+        return str(_chop_expr(x))
+
+    v = list(v) if isinstance(v, (list, tuple, np.ndarray)) else [v]
+    if v and isinstance(v[0], (list, tuple, np.ndarray)):
+        return "[" + ", ".join("[" + ", ".join(one(x) for x in row) + "]" for row in v) + "]"
+    return "(" + ", ".join(one(x) for x in v) + ")"
+
+
+def _propagate_numeric(rule_type, R_cart, det_R, V):
+    """
+    (forward, reverse) numeric values of one bond rule under a Cartesian operation.
+
+    `forward` is what the operation carries the reference value to; `reverse` is
+    the same bond read the other way (D_ji = -D_ij, J_ji = J_ij^T, a diagonal is
+    its own reverse). These are the exact expressions the emitted table has
+    always used, so a symmetry-allowed value propagates bit-identically.
+    """
+    V = np.asarray(V, dtype=float)
+    if rule_type == "dm":
+        # DM Vector: D' = det(R) * R * D (Axial vector)
+        fwd = det_R * (R_cart @ V)
+        return fwd, -np.array(fwd)
+    if rule_type == "anisotropic_exchange":
+        # diagonal tensor J' = R J R^T, diagonal kept
+        J_prime = R_cart @ np.diag(V) @ R_cart.T
+        fwd = np.diag(J_prime)
+        return fwd, fwd
+    if rule_type == "interaction_matrix":
+        # Full 3x3 interaction tensor J' = R J R^T
+        J_prime = R_cart @ V @ R_cart.T
+        return J_prime, J_prime.T
+    raise ValueError(f"no numeric propagation for rule type {rule_type!r}")
+
+
+def _propagate_symbolic(rule_type, R_cart, det_R, V):
+    """Sympy twin of `_propagate_numeric` (lists of expressions, as emitted)."""
+    import sympy as sp
+
+    R_sym = sp.Matrix(R_cart)
+    if rule_type == "dm":
+        val_p = det_R * R_sym * V
+        fwd = [val_p[0], val_p[1], val_p[2]]
+        return fwd, [-v for v in fwd]
+    if rule_type == "anisotropic_exchange":
+        J_prime = R_sym * sp.diag(*V) * R_sym.T
+        fwd = [J_prime[0, 0], J_prime[1, 1], J_prime[2, 2]]
+        return fwd, fwd
+    if rule_type == "interaction_matrix":
+        J_prime = R_sym * sp.Matrix(V) * R_sym.T
+        return J_prime.tolist(), J_prime.T.tolist()
+    raise ValueError(f"no symbolic propagation for rule type {rule_type!r}")
+
+
+def _rule_value_samples(val_vec, is_symbolic, n_points=2, seed=20261018):
+    """
+    Numeric evaluations of a rule's reference value, for the consistency check.
+
+    A numeric value is its own single sample. A symbolic one is evaluated at
+    `n_points` random points of its free parameters (fixed seed), so the check
+    sees the structure of the value rather than any particular number: a
+    forbidden `Dz` is caught whether Dz is later 1 meV or 1e-3.
+    """
+    if not is_symbolic:
+        return [np.asarray(val_vec, dtype=float)]
+    import sympy as sp
+
+    def as_array(M):
+        arr = np.array(sp.Matrix(M).evalf().tolist(), dtype=float)
+        if arr.ndim == 2 and arr.shape[1] == 1:
+            arr = arr[:, 0]
+        return arr
+
+    syms = sorted(val_vec.free_symbols, key=str)
+    if not syms:
+        return [as_array(val_vec)]
+    rng = np.random.default_rng(seed)
+    pts = rng.uniform(0.5, 1.5, size=(n_points, len(syms)))
+    return [as_array(val_vec.subs(dict(zip(syms, pt)))) for pt in pts]
+
+
 def _rref(A, tol=_SYMMETRY_COEFF_TOL):
     """
     Reduced row echelon form with partial pivoting, plus the pivot columns.
@@ -573,10 +716,6 @@ class MagCalcConfigBuilder:
             value = mat
             type = "interaction_matrix"
 
-        # 2. Apply Symmetry to find Orbit
-        # We transform the bond vector and the bond center
-        added_bonds_keys = set()
-        
         # Check if value is symbolic (contains strings)
         if isinstance(value, str):
             # Parse CSV string if needed (e.g. "0,-Dy,Dz" or "[0, -Dy, 0]"),
@@ -612,8 +751,52 @@ class MagCalcConfigBuilder:
         else:
             val_vec = np.array(value, dtype=float)
         
-        # RESTART LOOP with zip
-        for R, t in zip(self.symmetry_ops['rotations'], self.symmetry_ops['translations']):
+        # 2. Apply Symmetry to find Orbit -- in two passes.
+        #
+        # Pass 1 records what EVERY operation does to the reference bond: the
+        # directed bond it lands on and the value it carries there. Pass 2 checks
+        # that operations landing on the same bond agree. Only then is the table
+        # emitted, in operation order, keeping the first operation's value for
+        # each bond exactly as before -- so a value the symmetry allows produces
+        # a bit-identical table, and one it forbids produces an error instead of
+        # a Hamiltonian of lower symmetry than the crystal.
+        #
+        # Until 2026-10-18 there was no pass 2. The first operation to reach a
+        # bond won, and when the bond's own site symmetry forbids part of the
+        # value (Moriya's rules for a DM vector) the operations reaching it
+        # disagree on the sign of that part, so the winner depended on spglib's
+        # enumeration order. Measured on alpha-Cu2V2O7 (Fdd2, the J2 bond, whose
+        # midpoint lies on the 2-fold axis along c): a D_z on that bond is
+        # forbidden, yet the engine placed D_z = +-1 on all 8 bonds with signs
+        # that differed from a hand propagation on 8 of 16 directed entries and
+        # were NOT invariant under the F-centring translations (32 of 48
+        # translated entries differed) -- a bond table with lower symmetry than
+        # the lattice, whose ground state then broke translation symmetry (spins
+        # on centring-related sites differed by up to 0.12). Nothing downstream
+        # can notice: the bond count is right and the spectrum is plausible.
+        user_type = str(type)
+        rot_ops = self.symmetry_ops['rotations']
+        trans_ops = self.symmetry_ops['translations']
+        ref_key = (self.atoms_uc[idx_i]['label'], self.atoms_uc[idx_j]['label'],
+                   tuple(int(v) for v in best_offset))
+
+        # Numeric evaluations of the reference value for the check. A symbolic
+        # value is sampled at random points of its parameters, so the check is
+        # on the STRUCTURE of the value (a forbidden `Dz` is caught whatever
+        # number Dz is later given), and the transform is linear, so sampling
+        # before propagating equals propagating before sampling.
+        samples = None
+        if type != "heisenberg":
+            try:
+                samples = _rule_value_samples(val_vec, is_symbolic)
+            except (TypeError, ValueError) as e:  # pragma: no cover - exotic value
+                logger.warning(
+                    f"Cannot evaluate the '{type}' rule value {value!r} for {ref_pair} "
+                    f"numerically ({e}); skipping the symmetry-consistency check.")
+
+        hits = []
+        lattice_noise = 0.0
+        for gi, (R, t) in enumerate(zip(rot_ops, trans_ops)):
              # 1. Map Start Atom
              p_i_mapped = R @ pos_i + t
              p_i_wrapped = self._wrap_pos(p_i_mapped)
@@ -643,8 +826,6 @@ class MagCalcConfigBuilder:
              off_k = np.round(p_i_mapped - pos_k_uc).astype(int)
              off_l = np.round(p_end_prime - pos_l_uc).astype(int)
              offset_final = off_l - off_k
-             
-
 
              d_final_vec = (pos_l_uc + offset_final - pos_k_uc) @ self.lattice_vectors
              d_final = np.linalg.norm(d_final_vec)
@@ -653,107 +834,27 @@ class MagCalcConfigBuilder:
                  # We log a warning so the user can correct their input.
                  logger.warning(f"Symmetry propagation distance mismatch: {atom_k['label']}->{atom_l['label']} dist={d_final:.4f} (target {final_dist:.4f})")
                  continue
-             
+
              # 6. Transform Value
-             if type == "dm":
-                 # DM Vector: D' = det(R) * R * D (Axial vector)
+             if type == "heisenberg":
+                 # Scalar: value doesn't change with rotation
+                 fwd, rev = value, value
+                 fwd_chk = rev_chk = None
+             elif type in ("dm", "anisotropic_exchange", "interaction_matrix"):
+                 # DM vector: D' = det(R) R D (axial vector); tensors: J' = R J R^T.
                  R_cart = self._lattice_rotation(R)
                  det_R = float(np.linalg.det(R))
-                 
                  if is_symbolic:
-                     import sympy as sp
-                     R_cart_sym = sp.Matrix(R_cart)
-                     val_p = det_R * R_cart_sym * val_vec
-                     val_p_list = [val_p[0], val_p[1], val_p[2]]
+                     fwd, rev = _propagate_symbolic(type, R_cart, det_R, val_vec)
                  else:
-                     val_p = det_R * (R_cart @ val_vec)
-                     val_p_list = val_p.tolist()
-                 
-                 # Key tuple for uniqueness: (label_k, label_l, offset_final)
-                 bond_key = (atom_k['label'], atom_l['label'], tuple(offset_final))
-                 rev_bond_key = (atom_l['label'], atom_k['label'], tuple(-offset_final))
-                 
-                 if bond_key not in added_bonds_keys and rev_bond_key not in added_bonds_keys:
-                     # Add k->l entry
-                     self._add_dm_entry(atom_k['label'], atom_l['label'], offset_final, val_p_list, final_dist, original_value=value)
-                     added_bonds_keys.add(bond_key)
-                     added_bonds_keys.add(rev_bond_key)
-                     
-                     # Add l->k entry (Reverse)
-                     if is_symbolic:
-                         val_p_inv = [-v for v in val_p_list]
-                     else:
-                         val_p_inv = (-np.array(val_p_list)).tolist()
-                         
-                     self._add_dm_entry(atom_l['label'], atom_k['label'], -offset_final, val_p_inv, final_dist, original_value=value)
-
-             elif type == "heisenberg":
-                 # Scalar: value doesn't change with rotation
-                 bond_key = (atom_k['label'], atom_l['label'], tuple(offset_final))
-                 rev_bond_key = (atom_l['label'], atom_k['label'], tuple(-offset_final))
-                 if bond_key not in added_bonds_keys and rev_bond_key not in added_bonds_keys:
-                     self._add_heisenberg_entry(atom_k['label'], atom_l['label'], offset_final, value, final_dist)
-                     added_bonds_keys.add(bond_key)
-                     added_bonds_keys.add(rev_bond_key)
-                     self._add_heisenberg_entry(atom_l['label'], atom_k['label'], -offset_final, value, final_dist)
-
-             elif type == "anisotropic_exchange":
-                 # diagonal tensor J' = R J R^T
-                 R_cart = self._lattice_rotation(R)
-                 
-                 # Construct diagonal matrix
-                 if is_symbolic:
-                     import sympy as sp
-                     J_diag = sp.diag(*val_vec)
-                     R_cart_sym = sp.Matrix(R_cart)
-                     J_prime = R_cart_sym * J_diag * R_cart_sym.T
-                     # Resulting diagonal? Usually for these models we keep it simple
-                     # But let's extract the diagonal if it's diagonal or just store the matrix if supported.
-                     # Config schema for anisotropic_exchange usually expects list [vxx, vyy, vzz] or full matrix.
-                     # For now, let's extract the diagonal as a list.
-                     val_p_list = [J_prime[0,0], J_prime[1,1], J_prime[2,2]]
-                 else:
-                     J_diag = np.diag(val_vec)
-                     J_prime = R_cart @ J_diag @ R_cart.T
-                     val_p_list = np.diag(J_prime).tolist()
-                 
-                 bond_key = (atom_k['label'], atom_l['label'], tuple(offset_final))
-                 rev_bond_key = (atom_l['label'], atom_k['label'], tuple(-offset_final))
-                 if bond_key not in added_bonds_keys and rev_bond_key not in added_bonds_keys:
-                     self._add_anisotropic_entry(atom_k['label'], atom_l['label'], offset_final, val_p_list, final_dist, original_value=value)
-                     added_bonds_keys.add(bond_key)
-                     added_bonds_keys.add(rev_bond_key)
-                     # Symmetric
-                     self._add_anisotropic_entry(atom_l['label'], atom_k['label'], -offset_final, val_p_list, final_dist, original_value=value)
-                 
-             elif type == "interaction_matrix":
-                 # Full 3x3 interaction tensor J' = R J R^T
-                 R_cart = self._lattice_rotation(R)
-                 
-                 if is_symbolic:
-                     import sympy as sp
-                     R_cart_sym = sp.Matrix(R_cart)
-                     J_mat = sp.Matrix(val_vec) # Assuming val is passed as list of lists
-                     J_prime = R_cart_sym * J_mat * R_cart_sym.T
-                     val_p_list = J_prime.tolist()
-                     val_p_list_T = J_prime.T.tolist()
-                 else:
-                     J_mat = val_vec # Already numeric float array 
-                     J_prime = R_cart @ J_mat @ R_cart.T
-                     val_p_list = J_prime.tolist()
-                     val_p_list_T = J_prime.T.tolist()
-                 
-                 bond_key = (atom_k['label'], atom_l['label'], tuple(offset_final))
-                 rev_bond_key = (atom_l['label'], atom_k['label'], tuple(-offset_final))
-                 
-                 if bond_key not in added_bonds_keys and rev_bond_key not in added_bonds_keys:
-                     self._add_interaction_matrix_entry(atom_k['label'], atom_l['label'], offset_final, val_p_list, final_dist, original_value=value)
-                     added_bonds_keys.add(bond_key)
-                     added_bonds_keys.add(rev_bond_key)
-                     
-                     # Reverse bond: J_ji = J_ij^T
-                     self._add_interaction_matrix_entry(atom_l['label'], atom_k['label'], -offset_final, val_p_list_T, final_dist, original_value=value)
-
+                     fwd, rev = _propagate_numeric(type, R_cart, det_R, val_vec)
+                 fwd_chk = rev_chk = None
+                 if samples is not None:
+                     pairs = [_propagate_numeric(type, R_cart, det_R, s) for s in samples]
+                     fwd_chk = [p[0] for p in pairs]
+                     rev_chk = [p[1] for p in pairs]
+                     lattice_noise = max(lattice_noise, float(np.abs(
+                         R_cart @ R_cart.T - np.eye(3)).max()))
              else:
                  # No branch matched, so this op contributes no bond -- and if NO op
                  # ever matches, the rule expands to nothing and the term is simply
@@ -766,6 +867,191 @@ class MagCalcConfigBuilder:
                      f"interaction would be silently dropped. Supported: "
                      f"heisenberg, dm, anisotropic_exchange, interaction_matrix, "
                      f"kitaev.")
+
+             key = (atom_k['label'], atom_l['label'], tuple(int(v) for v in offset_final))
+             rkey = (atom_l['label'], atom_k['label'], tuple(-int(v) for v in offset_final))
+             hits.append({
+                 "op": gi, "R": R, "t": t,
+                 "k": atom_k['label'], "l": atom_l['label'], "off": offset_final,
+                 "key": key, "rkey": rkey,
+                 "fwd": fwd, "rev": rev, "fwd_chk": fwd_chk, "rev_chk": rev_chk,
+             })
+
+        # Pass 2: every operation reaching a bond must agree on its value.
+        if samples is not None:
+            self._check_propagation_consistency(
+                user_type, type, ref_pair, ref_key, value, hits, samples,
+                lattice_noise, final_dist)
+
+        # Pass 3: emit, first operation to reach each bond wins (as before).
+        added_bonds_keys = set()
+        for h in hits:
+             key, rkey = h["key"], h["rkey"]
+             if key in added_bonds_keys or rkey in added_bonds_keys:
+                 continue
+             k, l, offset_final = h["k"], h["l"], h["off"]
+             fwd, rev = h["fwd"], h["rev"]
+             if type != "heisenberg" and not is_symbolic:
+                 fwd, rev = fwd.tolist(), rev.tolist()
+
+             if type == "dm":
+                 # Add k->l entry, then l->k (reverse, D_ji = -D_ij)
+                 self._add_dm_entry(k, l, offset_final, fwd, final_dist, original_value=value)
+                 added_bonds_keys.add(key)
+                 added_bonds_keys.add(rkey)
+                 self._add_dm_entry(l, k, -offset_final, rev, final_dist, original_value=value)
+
+             elif type == "heisenberg":
+                 self._add_heisenberg_entry(k, l, offset_final, fwd, final_dist)
+                 added_bonds_keys.add(key)
+                 added_bonds_keys.add(rkey)
+                 self._add_heisenberg_entry(l, k, -offset_final, rev, final_dist)
+
+             elif type == "anisotropic_exchange":
+                 # Config schema for anisotropic_exchange expects the diagonal
+                 # [vxx, vyy, vzz]; the reverse bond carries the same diagonal.
+                 self._add_anisotropic_entry(k, l, offset_final, fwd, final_dist, original_value=value)
+                 added_bonds_keys.add(key)
+                 added_bonds_keys.add(rkey)
+                 self._add_anisotropic_entry(l, k, -offset_final, rev, final_dist, original_value=value)
+
+             elif type == "interaction_matrix":
+                 # Reverse bond: J_ji = J_ij^T
+                 self._add_interaction_matrix_entry(k, l, offset_final, fwd, final_dist, original_value=value)
+                 added_bonds_keys.add(key)
+                 added_bonds_keys.add(rkey)
+                 self._add_interaction_matrix_entry(l, k, -offset_final, rev, final_dist, original_value=value)
+
+    def _check_propagation_consistency(self, user_type, rule_type, ref_pair, ref_key,
+                                       value, hits, samples, lattice_noise, final_dist):
+        """
+        Refuse a rule value that the reference bond's own site symmetry forbids.
+
+        Two operations g1, g2 that carry the reference bond onto the same directed
+        bond differ by g2^-1 g1, an element of the bond's little group (an operation
+        mapping the bond onto itself or onto its reverse). They agree on the value
+        iff the value is invariant under that element -- D -> det(R) R D = D for a
+        bond-preserving operation, = -D for a bond-reversing one; J -> R J R^T = J
+        or J^T. So "all operations reaching each bond agree" is exactly "the value
+        has the symmetry of its bond", and a disagreement anywhere in the orbit is a
+        disagreement at the reference bond, which is where it is reported.
+
+        The comparison is numeric, on `samples` (the value at random points of its
+        parameters for a symbolic value, the value itself otherwise), relative to the
+        largest entry. Its tolerance is `_PROPAGATION_TOL` on an exact lattice and
+        is widened to `_PROPAGATION_NOISE_FACTOR` times the lattice's own noise --
+        the non-orthogonality of the Cartesian operations -- so a CIF that is cubic
+        to six decimals is not reported as a symmetry conflict (its operations
+        disagree at the 1e-6 level on EVERY value, allowed or not), while a genuinely
+        forbidden component disagrees by twice its size and is caught.
+        """
+        scale = max(float(np.abs(s).max()) for s in samples)
+        if scale == 0.0 or rule_type == "heisenberg":
+            return
+        tol = max(_PROPAGATION_TOL, _PROPAGATION_NOISE_FACTOR * lattice_noise) * scale
+
+        def mismatch(a, b):
+            """Boolean mask of the entries on which two sample sets differ."""
+            return np.any([np.abs(x - y) > tol for x, y in zip(a, b)], axis=0)
+
+        first = {}       # directed key -> check samples of the first op to reach it
+        conflicting = set()
+        for h in hits:
+            for key, chk in ((h["key"], h["fwd_chk"]), (h["rkey"], h["rev_chk"])):
+                if key not in first:
+                    first[key] = chk
+                elif key not in conflicting and mismatch(first[key], chk).any():
+                    conflicting.add(key)
+        if not conflicting:
+            return
+
+        # Explain it at the reference bond, against the rule's own value: the
+        # first operation (in spglib order) that carries the value back onto the
+        # reference bond as something else.
+        culprit = None
+        union = None     # entries some little-group operation disagrees on
+        for h in hits:
+            for key, flag, chk, shown in ((h["key"], False, h["fwd_chk"], h["fwd"]),
+                                          (h["rkey"], True, h["rev_chk"], h["rev"])):
+                if key == ref_key:
+                    mask = mismatch(samples, chk)
+                    if mask.any():
+                        if culprit is None:
+                            culprit = (h, flag, shown, mask)
+                        union = mask if union is None else (union | mask)
+        if culprit is None:  # pragma: no cover - cannot happen for a group
+            key = sorted(conflicting)[0]
+            raise SymmetryConflictError(
+                f"Symmetry rule '{user_type}' for ref_pair {list(ref_pair)}: the "
+                f"operations reaching bond {key[0]}->{key[1]} {list(key[2])} propagate "
+                f"different values to it, so the value {_fmt_rule_value(value)} is not "
+                f"compatible with the bond's site symmetry.")
+
+        h, reversed_bond, shown, mask = culprit
+        is_vector = np.ndim(mask) == 1
+
+        def named(m):
+            if is_vector:
+                names = [n for n, flag in zip("xyz", m) if flag]
+                word = "component" + ("s " if len(names) > 1 else " ")
+            else:
+                names = [f"{'xyz'[a]}{'xyz'[b]}" for a in range(3) for b in range(3) if m[a, b]]
+                word = "entr" + ("ies " if len(names) > 1 else "y ")
+            return names, word + ", ".join(names)
+
+        names, comp = named(mask)
+        _all_names, comp_all = named(union)
+        if is_vector:
+            rule_part = ", ".join(str(v) for v, m in zip(list(value), mask) if m)
+        else:
+            rule_part = ", ".join(str(np.array(value, dtype=object)[a, b])
+                                  for a in range(3) for b in range(3) if mask[a, b])
+        reverse_law = {"dm": "D_ji = -D_ij", "anisotropic_exchange": "J_ji = J_ij",
+                       "interaction_matrix": "J_ji = J_ij^T"}[rule_type]
+        if reversed_bond:
+            how = (f"maps the reference bond {ref_key[0]}->{ref_key[1]} {list(ref_key[2])} "
+                   f"onto its own reverse, so with {reverse_law} it carries the value "
+                   f"back onto the reference bond as")
+        else:
+            how = (f"maps the reference bond {ref_key[0]}->{ref_key[1]} {list(ref_key[2])} "
+                   f"onto itself and carries the value back onto it as")
+        if rule_type == "dm":
+            why = ("Moriya's rules forbid that component here: a 2-fold axis "
+                   "perpendicular to the bond through its midpoint, or a mirror plane "
+                   "containing the bond, excludes the D component along it; an "
+                   "inversion centre at the midpoint excludes all three.")
+        else:
+            why = "The bond's little group excludes that part of the tensor."
+        fix = "Set the forbidden part to 0 in `value`"
+        if is_vector and user_type != "kitaev":
+            zeroed = ["0" if m else (f"{v:g}" if isinstance(v, (int, float)) else str(v))
+                      for v, m in zip(list(value), union)]
+            if any(isinstance(v, (int, float)) for v in value):
+                fix += f" (e.g. `value: [{', '.join(zeroed)}]`)"
+            else:
+                fix += f" (e.g. `value: {','.join(zeroed)}`)"
+        target = {"dm": "dm_interaction", "anisotropic_exchange": "anisotropic_exchange",
+                  "interaction_matrix": "interaction_matrix"}[rule_type]
+        n_directed = len(first)
+        raise SymmetryConflictError(
+            f"Symmetry rule '{user_type}' for ref_pair {list(ref_pair)} (offset "
+            f"{list(ref_key[2])}, d = {final_dist:.5f} A): the value "
+            f"{_fmt_rule_value(value)} is not invariant under the bond's own site "
+            f"symmetry, which forbids its {comp_all}. "
+            f"Operation {_op_to_string(h['R'], h['t'])} (op {h['op'] + 1} of "
+            f"{len(self.symmetry_ops['rotations'])}) {how} {_fmt_rule_value(shown)}: "
+            f"{comp} differ{'s' if len(names) == 1 else ''} from the rule's "
+            f"{rule_part}. {why} No single value can be propagated consistently: the "
+            f"operations disagree on {len(conflicting)} of the {n_directed} directed "
+            f"bonds in this orbit, and keeping whichever operation reached each bond "
+            f"first (what this engine did before 2026-10-18) gives a bond table that "
+            f"is not invariant under the lattice's own (centring) translations, i.e. "
+            f"a Hamiltonian of lower symmetry than the crystal. {fix}; when the "
+            f"constraint ties components instead of zeroing one (a forbidden direction "
+            f"off the Cartesian axes), use the allowed form `magcalc symmetry <config>` "
+            f"prints; or list the bonds explicitly under `interactions.{target}` if "
+            f"the lower symmetry is intended."
+        )
 
 
     def _add_dm_entry(self, lbl_i, lbl_j, offset, val, distance=None, original_value=None):
@@ -1575,6 +1861,8 @@ class MagCalcConfigBuilder:
                 try:
                     self.add_symmetry_interaction("interaction_matrix", (ref_i, ref_j), value, 
                                                  distance=target_dist, offset=list(ref_off))
+                except SymmetryConflictError:
+                    raise
                 except Exception as e:
                     logger.error(f"Error propagating Matrix interaction: {e}")
                 
@@ -1657,6 +1945,10 @@ class MagCalcConfigBuilder:
                 try:
                     self.add_symmetry_interaction("dm", (ref_i, ref_j), value, 
                                                  distance=target_dist, offset=list(ref_off))
+                except SymmetryConflictError:
+                    # A value the bond's symmetry forbids has no consistent table;
+                    # swallowing it here would drop the orbit in silence.
+                    raise
                 except Exception as e:
                     logger.error(f"Error propagating DM interaction for {ref_i}->{ref_j}: {e}")
                 

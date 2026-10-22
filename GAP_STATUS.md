@@ -925,6 +925,48 @@ runner branch, #4's CLI flag, #5's on-site term. `tests/test_corrections.py`'s
 swallows a task's exception, so "does not raise" asserts nothing about the task. The
 new runner test asserts on the success line and the ABSENCE of the failure line.
 
+### Symmetry propagation of a forbidden component, 2026-10-18
+
+Found while mapping the DM canting pattern of α-Cu₂V₂O₇ (Fdd2, `examples/materials/aCVO`). `add_symmetry_interaction`
+propagates a `ref_pair` value over the space group, D' = det(R)·R·D, J' = R J Rᵀ, and kept the FIRST operation
+that reached each bond. Several operations reach every bond of an orbit, and they agree on its value only if the
+value is invariant under the bond's little group (bond-preserving: D → D; bond-reversing: D → −D, J → Jᵀ) — which
+is exactly Moriya's rules. When they disagree, the first-hit rule picked the sign of the forbidden component by
+spglib's enumeration order, bond by bond.
+
+| Defect | What hid it | Pinned by |
+|--------|-------------|-----------|
+| The J2 bond Cu0–Cu13 (3.97512 Å) has the 2-fold axis along c through its midpoint, so D_z is forbidden; a `Dx,Dy,Dz` rule still gave D_z = ±1 on all 8 J2 bonds, with signs disagreeing with a hand propagation on 8 of 16 directed entries and **not invariant under the F-centring translations** (32 of 48 translated entries differed). The minimized ground state then broke translation symmetry (spins on centring-related sites differed by up to 0.12). Fix: two passes — record what EVERY operation does to the reference bond, refuse (`SymmetryConflictError`, a `ValueError`) if operations landing on the same directed bond disagree, then emit in the old first-hit order, so an allowed value's table is bit-identical | Right bond count, plausible spectrum; every shipped rule puts a symmetry-allowed value on its bond (aCVO's J1 is `Dx,0,0`), so no config and no test ever propagated a forbidden one — the `ref_pair`/`steepest_descent`/on-site-anisotropy shape again: the property was never false in the suite | `tests/test_symmetry_propagation_consistency.py`, 17 tests. Oracle: the 16 Fdd2 operations written out by hand (cosets × F-centring), not spglib's list — it finds the J2 D_z conflict itself, and the engine's J1, J3 and in-plane-J2 tables must equal it entry for entry, be antisymmetric and be centring-invariant. The shipped aCVO model (32 DM + 32 anisotropic + 80 Heisenberg entries) is pinned to the same hand table. A full `interaction_matrix` on J2 pins the general little-group condition (symmetric xy block allowed, symmetric xz forbidden) |
+
+Two things to know before relying on it. The check is numeric, on random samples of a symbolic value (a forbidden
+`Dz` is caught whatever number Dz is later given), at 1e-8 of the largest entry on an exact lattice — and it is
+widened to 100× the lattice's own noise, the non-orthogonality of the Cartesian operations, because on a CIF that
+is cubic to six decimals every value propagates slightly differently through different operations and a fixed
+tight tolerance would call measurement noise a symmetry conflict (pinned on P23 with c = a(1+1e-6): the
+noise passes, a 1 % transverse component is still refused). And the distance-rule expanders (`_expand_dm_rules`,
+`_expand_interaction_matrix_rules`) swallow propagation errors into a logged error plus a "loop breaker" that
+drops the orbit; a `SymmetryConflictError` is re-raised through them, the rest of that swallow is unchanged and
+is the same silent-drop shape as above. All 47 shipped configs with bond rules still build.
+
+Full gate on 7e2dfd9 (`MAGCALC_NO_GUI=1 pytest -m "" -rs` from the workspace root, 2026-10-18, idle machine):
+**1704 passed, 1 failed, 3 skipped, 1708 collected, 16 min 23 s**, no crashed xdist worker. The failure is this check
+doing its job one repo over: `magpipe/tests/test_excite.py::test_a_single_k_ansatz_flags_a_dm_that_breaks_its_spiral_axis`
+sets `D = (1, 0, 0)` on both orbits of a one-site 3 x 12 x 12 A chain fixture — P4/mmm, 16 operations, and the NN
+midpoint is an inversion centre, so Moriya forbids every DM component there. Before, `add_symmetry_interaction` kept
+the value silently and magpipe's planner reached its single-k branch; now `add_symmetry_interaction` raises
+`SymmetryConflictError` ("the value (D1x, D1y, D1z) is not invariant under the bond's own site symmetry, which forbids
+its components x, y, z ..."), `plan()` catches it as "no Luttinger-Tisza ansatz" and seeds k = 0, and the test's
+`p.k is not None` fails. The same test passes against e5cacd3. Resolve it in magpipe (a fixture whose bond admits a
+DM, or an assertion on the refusal), not by weakening the check. One thing the gate measured about the fix itself:
+through the config route the typed exception does not survive — `GenericSpinModel`'s `symmetry_rules` loop
+(`generic_model.py:550`, pre-existing) catches every `Exception` and re-raises a plain `ValueError("Failed to expand
+symmetry rule {rule}: ...")`, so a caller's `except SymmetryConflictError` sees nothing; only a direct
+`add_symmetry_interaction` call gets the subclass. The three skips, by name: `pyMagCalc/tests/test_cell_utils.py:146` (`seekpath` absent — the structural
+pair), `magpipe/tests/test_alps.py:187` (ALPS is installed — the structural fallback), and
+`magpipe/tests/test_magref.py:568` (an in-test skip since magpipe `7bad01b`, 2026-08-20: `pb_ho.pcr` refuses
+`freeze_all_except_moments(2)`, so the data-file-name guard is never exercised — a skip-on-exception, which this
+repo's rules call a hole; it is magpipe's to close).
+
 ### Rule-value string parser, 2026-10-18
 
 Found while making magpipe emit the allowed forms `magcalc symmetry` prints. A rule `value` written as one string
@@ -933,7 +975,7 @@ Found while making magpipe emit the allowed forms `magcalc symmetry` prints. A r
 
 | Defect | What hid it | Pinned by |
 |--------|-------------|-----------|
-| `sqrt(3)*D1x/3` became `sqrt3*D1x/3`, an unbound symbol. On KFe3J's kagome NN bond with in-plane moments every band came out NaN, no error; the decimal spelling `0.5773502691896258*D1x` gives finite bands, and now both give the same ones. With the symmetry-conflict check (branch `claude/cool-gagarin-59fa30`) the same value, which is the allowed one, was refused as a conflict, by an error that tells the user to paste that form. Also: `(J1+J2)/2, 0, 0` lost its grouping, `atan2(Dy, Dx)` split in two, `0,,Dz` silently became (0, Dz, 0), and a 3×3 string flattened to a 9-vector and died on a shape error | Every shipped rule writes a string value with bare names (`0,Dy,Dz`), or uses a YAML list, which never reaches the parser; explicit `pair:` entries go through `parse_expr` and were always right | `tests/test_rule_value_parsing.py`. Premise from geometry, not the engine: the bond's little group is a mirror that reverses it, so the in-plane D is ⊥ the bond, D_y/D_x = −r_x/r_y = √3/3, and the CLI's allowed matrix agrees. Oracle: the exact, bracketed, decimal and YAML-list spellings give the identical 36-entry table; for `anisotropic_exchange` and `interaction_matrix` (the CLI's full allowed matrix pasted as one string) string = list. 8 of its tests fail on the old parser |
+| `sqrt(3)*D1x/3` became `sqrt3*D1x/3`, an unbound symbol. On KFe3J's kagome NN bond with in-plane moments every band came out NaN, no error; the decimal spelling `0.5773502691896258*D1x` gives finite bands, and now both give the same ones. With the symmetry-conflict check above (branch `claude/cool-gagarin-59fa30` before the merge) the same value, which is the allowed one, was refused as a conflict, by an error that tells the user to paste that form. Also: `(J1+J2)/2, 0, 0` lost its grouping, `atan2(Dy, Dx)` split in two, `0,,Dz` silently became (0, Dz, 0), and a 3×3 string flattened to a 9-vector and died on a shape error | Every shipped rule writes a string value with bare names (`0,Dy,Dz`), or uses a YAML list, which never reaches the parser; explicit `pair:` entries go through `parse_expr` and were always right | `tests/test_rule_value_parsing.py`. Premise from geometry, not the engine: the bond's little group is a mirror that reverses it, so the in-plane D is ⊥ the bond, D_y/D_x = −r_x/r_y = √3/3, and the CLI's allowed matrix agrees. Oracle: the exact, bracketed, decimal and YAML-list spellings give the identical 36-entry table; for `anisotropic_exchange` and `interaction_matrix` (the CLI's full allowed matrix pasted as one string) string = list. 8 of its tests fail on the old parser |
 
 Key conventions worth knowing before touching the engine:
 - pyMagCalc stores `HMat(q) = g · H2(q)` with H2 Hermitian, g = diag(I,−I); eigenvalues
