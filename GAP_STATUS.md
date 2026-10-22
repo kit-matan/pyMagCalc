@@ -20,9 +20,9 @@ the shadow guard's installation. This file records what is *done and how it was
 validated*; what is still open is deliberately not here — it is `OPEN_WORK.md`, the
 "what to do next" companion.
 
-Test suite: **837 passed, 3 skipped** on the last full gate (`pytest -m ""` from the
-workspace root, 2026-08-16, 46 min under load). 832 tests collect from inside
-`pyMagCalc/`, of which 654 are the fast default suite. The merge gate is
+Test suite: **1735 passed, 2 skipped** on the last full gate (`pytest -m ""` from the
+workspace root, 2026-10-22, 14 min 34 s, idle machine). 986 tests collect from inside
+`pyMagCalc/`, of which 807 are the fast default suite. The merge gate is
 `pytest -m ""`; plain `pytest` is not. Every feature has a test pinned to an
 **independent reference** (Sunny, or an exact analytic identity), never a
 self-generated golden number.
@@ -966,6 +966,15 @@ pair), `magpipe/tests/test_alps.py:187` (ALPS is installed — the structural fa
 `magpipe/tests/test_magref.py:568` (an in-test skip since magpipe `7bad01b`, 2026-08-20: `pb_ho.pcr` refuses
 `freeze_all_except_moments(2)`, so the data-file-name guard is never exercised — a skip-on-exception, which this
 repo's rules call a hole; it is magpipe's to close).
+
+**Resolved 2026-10-22.** magpipe `4e4bce5` moved that test to a two-site zigzag chain (Pmma) whose second-neighbour
+bond admits exactly D ∥ y, and fixed the emitter defect the check exposed: it wrote all three DM components as fit
+parameters even where the allowed form pins one to zero, so every magpipe DM on a constrained bond would have been
+refused. magpipe `283f694` closed the `test_magref.py:568` skip. Full gate on master f0bbe3d (this fix merged with
+the rule-value parser fix a87c8a8 below, magpipe at 283f694), 2026-10-22, idle machine: **1735 passed, 2 skipped,
+0 failed, 1737 collected, 14 min 34 s**, no crashed xdist worker. The two skips are the structural `seekpath` and
+ALPS ones. The merge is also what makes `sqrt(3)*D1x/3`, the allowed kagome DM, pass this check: before the
+parser fix it reached the check as an unbound `sqrt3` and was refused as a conflict.
 
 ### Rule-value string parser, 2026-10-18
 
