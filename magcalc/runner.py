@@ -345,6 +345,12 @@ def run_calculation(config_file: str):
     # Compute backend: 'numpy' (default) or 'fortran' (external fMagCalc, with
     # automatic fallback to NumPy if unavailable). Applies to S(Q,w) and powder.
     backend = calc_config.get('backend', 'numpy')
+    # Compiled kernels for the beyond-LSWT loops: 'numpy' (default) or 'rust'
+    # (external rsMagCalc, same warn-and-fall-back contract as the backend).
+    # Logged right after the engine line, for the same reason it exists.
+    from magcalc import kernels as _kernels
+    kernels = _kernels.resolve(calc_config.get('kernels', 'numpy'))
+    logger.info(_kernels.describe(kernels))
 
     # Sample environment / measurement model, applied to S(Q,w), powder and
     # energy-cut intensities:

@@ -37,6 +37,8 @@ skip both and get your interactive backend back. Do not set it for a gate run.
 """
 import os
 
+import pytest
+
 if not os.environ.get("MAGCALC_TEST_GUI"):
     os.environ["MPLBACKEND"] = "Agg"
     try:
@@ -88,3 +90,20 @@ def pytest_runtest_setup(item):
         return
     if not matplotlib.get_backend().lower().startswith("agg"):
         matplotlib.use("Agg", force=True)
+
+
+@pytest.fixture(params=["numpy", "rust"])
+def kernels(request):
+    """Run a test under both kernel sets (`calculation.kernels`).
+
+    The optional Rust kernels (rsMagCalc) are pinned to the NumPy path and to the
+    same oracles, by running the oracle tests twice. The 'rust' case skips with a
+    NAMED reason when the package is not built -- the one kind of skip the gate
+    accepts (an optional dependency), and `pytest -rs` shows it by name.
+    """
+    if request.param == "rust":
+        from magcalc import kernels as _kernels
+
+        if _kernels.rust_module() is None:
+            pytest.skip("rsmagcalc not installed (optional Rust kernels)")
+    return request.param

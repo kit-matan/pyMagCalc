@@ -576,6 +576,63 @@ powder = calc.calculate_powder_average(q_mags, num_samples=200, backend="fortran
 
 ---
 
+
+## 4c2. Rust Kernels for the Beyond-LSWT Loops (rsMagCalc)
+
+[rsMagCalc](https://github.com/kit-matan/rsMagCalc) is a second optional compiled
+companion, for a different set of loops than fMagCalc: the ones that are
+Python-bound per site or per q in the classical and SU(N) **samplers**
+(`thermal_mc`, `sampled_correlations`, `sun_sampled_correlations`), SU(N) LSWT
+assembly, KPM and SCGA. It is written in Rust and loaded through PyO3. It is
+**not** a port of pyMagCalc, and it does not touch the dipole LSWT path, which
+stays with fMagCalc. The plan, the order the kernels arrive in, and the oracle
+each is pinned to: `RUST_KERNELS_PLAN.md` at the workspace root.
+
+The contract is fMagCalc's. pyMagCalc never *requires* it: a `kernels: rust`
+request with the package missing (or built without its compiled core) logs a
+WARNING and runs the NumPy implementation, so runs always complete.
+
+### Installing rsMagCalc
+
+You need a Rust toolchain (`rustup`) and maturin:
+
+```bash
+pip install maturin
+pip install /path/to/rsMagCalc          # builds the extension during install
+# or, for development inside the checkout (editable, like pyMagCalc itself):
+cd /path/to/rsMagCalc && pip install -e . --no-build-isolation
+```
+
+(`maturin develop --release` is equivalent but only works inside a virtualenv or
+conda environment; the pip form works on a bare pyenv interpreter too.)
+
+Verify the compiled core is present (must print `pyo3`, not `None`):
+
+```bash
+python -c "import rsmagcalc; print(rsmagcalc.backend, rsmagcalc.describe())"
+magcalc where                             # also reports it, as "rsmagcalc: available (...)"
+```
+
+### Selecting it
+
+```yaml
+calculation:
+  kernels: rust           # numpy (default) | rust
+```
+
+The run log names what actually ran, right after the engine line:
+
+```
+magcalc engine: /path/to/pyMagCalc/magcalc (git 1123234836)
+kernels: rust (rsmagcalc 0.1.0, git 3f2a1c9e0d4b, release)
+```
+
+A line reading `kernels: numpy` after a `kernels: rust` request means the package
+was not found; the WARNING above it says why. The random samplers are
+deterministic for a given `seed` under either kernel set, but the two do **not**
+share a random stream: a `kernels: rust` run with the same seed is a different,
+equally valid sample.
+
 ## 4d. Spiral (Rotating-Frame) Structures
 
 pyMagCalc supports incommensurate magnetic orders via a **rotating-frame**

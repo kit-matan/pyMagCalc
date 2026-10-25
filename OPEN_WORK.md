@@ -1,5 +1,24 @@
 # Open work — pick-up notes
 
+> **Open as of 2026-10-25: the Rust kernels, K1–K5.** `RUST_KERNELS_PLAN.md` at the
+> workspace root scopes six compiled kernels (rsMagCalc, PyO3) for the loops that are
+> Python-bound per site or per q — classical Metropolis + Landau–Lifshitz (K1),
+> CP^(N−1) sampler (K2), SU(N) LSWT (K3), KPM (K4), SCGA (K5), mixed-spin dipole
+> S(Q,ω) (K6, optional) — each with its injection point, the oracle tests it must pass
+> under both kernel sets, and its acceptance. **M0 is done**: `rsMagCalc/` builds with
+> maturin, `calculation.kernels` (`magcalc/kernels.py`) selects it with the fMagCalc
+> warn-and-fall-back contract, the run log names the build after the engine line,
+> `magcalc where` reports it, and the `kernels` fixture in `tests/conftest.py` runs a
+> test under both. Pick up at K1: the plan's §3 names the functions and the tests.
+> Gate on this tree with rsmagcalc installed (2026-10-26, workspace root,
+> `MAGCALC_NO_GUI=1 pytest -rs`): **1753 passed, 2 skipped, 13 min 58 s** — the
+> previous 1735 plus the 18 M0 tests, the same two structural skips. NOT COMMITTED
+> in pyMagCalc; rsMagCalc is its own repo at `ba1d9f8`.
+> Two facts found while scoping, not yet acted on: `sun/dynamics.metropolis_sweep`
+> recomputes the FULL energy twice per site (O(L²) per sweep), and the 7-minute
+> `test_classical_absolute_normalization` floor is the per-spin Python loop in
+> `thermal_mc._sweep`, not the integrator (whose matvecs are already BLAS).
+
 Last updated **2026-08-16**. The 2026-08-13 session's work (items 1–10, A–E) is on
 `master` at `f848853`; the 2026-08-15 session closed **every remaining open item —
 5, 7, 11, 12, 13, 14 and C** — and opened one new one (15, found inside item 12), which

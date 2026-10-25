@@ -85,6 +85,9 @@ def where():
     from magcalc.provenance import describe, importable_roots
 
     typer.echo(describe(verbose=True))
+    from magcalc.kernels import availability as _kernels_availability
+
+    typer.echo(_kernels_availability())
     if importable_roots()[1:]:
         typer.secho(
             "Shadowing risk: remove or rename the extra copies above.",
