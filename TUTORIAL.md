@@ -633,6 +633,33 @@ deterministic for a given `seed` under either kernel set, but the two do **not**
 share a random stream: a `kernels: rust` run with the same seed is a different,
 equally valid sample.
 
+### What the kernels cover (K1, 2026-10-26)
+
+`kernels: rust` currently accelerates the **classical samplers**: the Metropolis
+sweep (uniform and `propose: flip`) behind `thermal_mc`, `static_correlations` and
+the thermalization of `sampled_correlations`; the whole replica-exchange loop of
+`thermal_mc` (replicas swept in parallel); the Wang–Landau move loop; the
+Landau–Lifshitz integrators (`rk4`, `midpoint`) and the Langevin thermostat; and
+the trajectory loop of `sampled_correlations`, run in parallel over trajectories.
+The FFT and the neutron contraction stay in NumPy. Measured on the
+128-trajectory ferromagnet of `tests/test_classical_absolute_normalization.py`:
+169 s of Python became 3.3 s (see `GAP_STATUS.md`, "Rust kernels K1").
+
+Two blocks take an `n_workers` for the Rust thread pool (default: every core):
+
+```yaml
+thermal_mc:           {temperatures: [0.5, 1, 2], supercell: [8, 8, 1], n_workers: 4}
+sampled_correlations: {temperature: 0.5, supercell: [16, 1, 1], n_traj: 64, n_workers: 4}
+```
+
+Under `kernels: numpy` both keys are ignored (the NumPy loops are serial). If a
+kernel raises at run time, the exception is logged and that call is redone in
+NumPy -- the run completes either way, and the log says which code produced
+what. The same functions take `kernels="rust"` from Python
+(`parallel_tempering`, `static_correlations`, `wang_landau`, `evolve`,
+`langevin_thermalize`, `sampled_correlations`), and `magcalc.kernels.make_rng(seed,
+"rust")` returns the Rust random stream that `_sweep` and `langevin_step` run on.
+
 ## 4d. Spiral (Rotating-Frame) Structures
 
 pyMagCalc supports incommensurate magnetic orders via a **rotating-frame**
@@ -998,6 +1025,8 @@ scga: {temperature: 1.5, mesh_density: 20, cross_section: perp}   # temperature 
 tasks: {thermal_mc: true}
 thermal_mc: {temperatures: [0.2, 0.5, 1, 2, 4], supercell: [6, 6, 1],
              n_sweeps: 4000, n_equil: 1500}
+calculation: {kernels: rust}        # optional Rust kernels for (b), (c), static_correlations
+                                    # and wang_landau -- section 4c2; falls back to NumPy
 
 # (c) SampledCorrelations — classical-dynamics S(q,ω) (full thermal lineshape)
 tasks: {sampled_correlations: true}

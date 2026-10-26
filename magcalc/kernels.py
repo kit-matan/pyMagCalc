@@ -27,7 +27,8 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 __all__ = ["KERNELS", "resolve", "describe", "rust_module", "availability",
-           "reset_cache"]
+           "reset_cache", "make_rng", "is_rust_rng", "kernel_of_rng", "rust_for",
+           "fell_back"]
 
 KERNELS = ("numpy", "rust")
 
@@ -97,3 +98,54 @@ def availability() -> str:
         return ("  rsmagcalc:   not installed (optional Rust kernels; "
                 "`calculation: {kernels: rust}` would fall back to NumPy)")
     return f"  rsmagcalc:   available {mod.describe()}"
+
+
+# --------------------------------------------------------------------------
+# Helpers the kernel call sites share
+# --------------------------------------------------------------------------
+
+def rust_for(kernel):
+    """The rsmagcalc module when `kernel` is "rust" and it is importable, else None.
+
+    A call site does `rs = rust_for(kernels)` and, if it gets a module, tries the
+    kernel inside `try/except Exception` and falls back to NumPy on failure,
+    logging the exception through `fell_back` -- the fMagCalc pattern
+    (`core._calculate_dispersion_fortran`).
+    """
+    if kernel != "rust":
+        return None
+    return rust_module()
+
+
+def fell_back(what):
+    """Log a kernel failure at the point of falling back to NumPy. Called inside
+    an `except` block, so the traceback is attached."""
+    logger.exception("rsmagcalc %s failed; falling back to the NumPy implementation.",
+                     what)
+
+
+def make_rng(seed, kernel="numpy"):
+    """The random stream for `kernel`: `numpy.random.default_rng(seed)`, or
+    `rsmagcalc.Rng(seed)` for the Rust sweep/Langevin kernels, which continue
+    one stream across calls exactly as the NumPy loops do with a Generator.
+
+    The two streams differ (RUST_KERNELS_PLAN.md, RNG): a `kernels: rust` run
+    with the same seed is a different, equally valid sample. Falls back to NumPy
+    with the usual warning when "rust" is requested but unavailable.
+    """
+    import numpy as np
+
+    if resolve(kernel) == "rust":
+        return rust_module().Rng(int(seed))
+    return np.random.default_rng(seed)
+
+
+def is_rust_rng(rng):
+    """Is `rng` an `rsmagcalc.Rng`? Decides which `_sweep` / `langevin_step`
+    runs, so that a loop written against the Generator API keeps working."""
+    mod = rust_module()
+    return mod is not None and isinstance(rng, mod.Rng)
+
+
+def kernel_of_rng(rng):
+    return "rust" if is_rust_rng(rng) else "numpy"

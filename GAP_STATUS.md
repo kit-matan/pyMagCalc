@@ -976,6 +976,55 @@ the rule-value parser fix a87c8a8 below, magpipe at 283f694), 2026-10-22, idle m
 ALPS ones. The merge is also what makes `sqrt(3)*D1x/3`, the allowed kagome DM, pass this check: before the
 parser fix it reached the check as an unbound `sqrt3` and was refused as a conflict.
 
+### Rust kernels K1, 2026-10-26 — the classical samplers behind `kernels: rust`
+
+M1 of `RUST_KERNELS_PLAN.md`. rsMagCalc `d53b90b` (`src/classical.rs`) carries the Metropolis sweep (uniform and
+`propose: flip`), the whole replica-exchange loop (rayon over replicas), the Wang–Landau move loop, the rk4 and
+implicit-midpoint integrators, the Heun Langevin step and the trajectory loop of `sampled_correlations` (rayon over
+trajectories; trajectory i owns the PCG64 stream (seed, i), so chunking and thread count change nothing). pyMagCalc
+selects it per call (`kernels.rust_for` + `fell_back`: a kernel that raises is logged and the NumPy loop answers —
+pinned by `tests/test_kernels_classical.py`, which also drives each of the four classical tasks from a config under
+`kernels: rust`). The NumPy path is untouched and is the parity reference.
+
+**Pinned to.** `evolve` against `classical_dynamics.evolve` from the same m0, 50 rk4 and 50 midpoint steps: 2e-16
+(tolerance 1e-12); the single-move dE of the sweep against E(after) − E(before): 1e-12 (`rsMagCalc/tests/
+test_classical_parity.py`). Every K1 oracle in the plan runs under both kernel sets through the `kernels` fixture:
+`test_thermal_mc`, `test_classical_absolute_normalization`, `test_integrators`, `test_classical_window`,
+`test_classical_to_quantum`, `test_static_correlations`, `test_wang_landau`, `test_disorder`, and S02/S05 in
+`test_sunny_tutorials` (the flip proposal stays Ising from a polarized start under both).
+
+**Timing, the plan's acceptance.** The 128-trajectory case of `test_low_T_ferromagnet_matches_the_lswt_absolute_intensity`
+(gapped FM chain, L = 32, kT = 0.005, 3000 sweeps, 4096 rk4 steps, 5 q), the same `sampled_correlations` call under
+each kernel set, this machine (M1 Pro, 10 cores; OneDrive and VS Code were active, no other pytest), 2026-10-26:
+
+| kernels | 128 trajectories | command |
+|---|---|---|
+| numpy | **168.8 s** | `MAGCALC_NO_GUI=1 python -I <scratch>/time_k1.py numpy` (the test's call, `n_traj=128, therm_sweeps=3000`) |
+| rust | **3.3 s, 3.4 s** (two runs) | same script with `rust`; rayon over all cores |
+
+51×. (`CLAUDE.md` used to quote "~7 min" for this test; that figure was a contended-machine one — 183 s was measured
+again inside the gate the same day.) The test itself under `rust` now runs 512 trajectories × 30 000 sweeps in 18 s.
+
+**What the second random stream exposed, and the trap it is.** Two low-T tests failed under `rust` on the first full
+run, and both were the tests, not the kernel — found by comparing the ENSEMBLES rather than the spectra: 3000 uniform
+sweeps at kT = 0.005 leave ⟨E − E0⟩ = 0.1830 ± 0.0027 (NumPy, 128 states) and 0.1795 ± 0.0009 (Rust, 1024 states)
+against equipartition N·kT = 0.160 — the same 12 % excess under both samplers, so the thermalization is incomplete
+and identical. At that setting the converged classical/LSWT ratio is **1.077** (1024 Rust trajectories), and the
+"1.015, per q 0.96–1.07" the test's docstring records for 128 NumPy trajectories at seed 1 was a 2σ draw (Rust seeds
+1–4: means 1.083, 0.993, 1.049, 1.012). Thermalized — 30 000 sweeps bring ⟨E − E0⟩ to 0.160 — the ratio is **0.95,
+per q 0.92–1.00**, inside the test's 6 % / 15 % with margin. Likewise the c2q q-independence test's 6-trajectory
+spread is 0.29 at NumPy seed 1 but 0.92 at seed 2 (Rust: 0.90, 1.17; at 384 trajectories 0.22, 0.15). The `rust`
+parametrizations now use the thermalized, high-statistics settings; the `numpy` ones keep the historical, marginal
+settings because the thermalized run would be ~30 min of Python — and that asymmetry is written into each test.
+Gate floor: the `numpy` parametrizations of this test (~3 min) and of S05 (~3.5 min) are now the slowest tests;
+the plan's "below 1 min" needs the NumPy oracle dropped from the gate, which is not on offer.
+
+**Gate on this tree** (pyMagCalc branch `feature/rust-kernels-k1`, rsMagCalc `8293723` installed, magpipe `283f694`),
+`MAGCALC_NO_GUI=1 python -m pytest -m "" -rs` from the workspace root, 2026-10-26: **1850 passed, 2 skipped, 0 failed,
+20 min 24 s** — the previous 1753 plus 61 `rust` parametrizations and 36 rsMagCalc parity tests; the two skips are
+the structural `seekpath` and ALPS ones. Not an idle machine (OneDrive, VS Code and one stray Python process were
+busy), so the time is an upper bound; no xdist worker crashed.
+
 ### Rule-value string parser, 2026-10-18
 
 Found while making magpipe emit the allowed forms `magcalc symmetry` prints. A rule `value` written as one string

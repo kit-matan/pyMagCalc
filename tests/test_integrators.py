@@ -24,6 +24,7 @@ import pytest
 from magcalc.classical_dynamics import (energy, evolve, implicit_midpoint_step,
                                         langevin_step, langevin_thermalize,
                                         local_field, suggest_timestep)
+from magcalc.kernels import make_rng
 
 
 def _L(x):
@@ -49,7 +50,7 @@ def _random_state(N, S, seed):
 # --------------------------------------------------------------------------
 # Langevin thermostat
 # --------------------------------------------------------------------------
-def test_damping_relaxes_toward_the_energy_minimum():
+def test_damping_relaxes_toward_the_energy_minimum(kernels):
     """REGRESSION, and the reason this test exists first.
 
     `local_field` returns the energy GRADIENT G = dE/dS, not the physical field
@@ -64,7 +65,7 @@ def test_damping_relaxes_toward_the_energy_minimum():
     N, S, h = 50, 1.0, 0.8
     H, b = _free_spins(N, h)
     m = _random_state(N, S, seed=5)
-    rng = np.random.default_rng(0)
+    rng = make_rng(0, kernels)          # the rng type selects the Langevin kernel
     start = m[:, 2].mean()
     # relaxation rate ~ lambda * h = 0.4, so a few 1/e times is a few tens of time units
     for _ in range(3000):
@@ -74,14 +75,14 @@ def test_damping_relaxes_toward_the_energy_minimum():
 
 
 @pytest.mark.parametrize("kT", [0.4, 1.0])
-def test_free_spins_sample_the_langevin_function(kT):
+def test_free_spins_sample_the_langevin_function(kT, kernels):
     """The thermostat's stationary distribution must be Boltzmann: <S^z>/S = L(hS/kT)
     exactly, for the same model `test_thermal_mc.py` pins the Metropolis sampler to.
     Two independent samplers, one closed-form answer."""
     N, S, h = 400, 1.0, 0.8
     H, b = _free_spins(N, h)
     m = _random_state(N, S, seed=1)
-    rng = np.random.default_rng(2)
+    rng = make_rng(2, kernels)
     dt = 0.02
     for _ in range(3000):
         m = langevin_step(H, b, m, dt, S, kT, 0.5, rng)
@@ -92,7 +93,7 @@ def test_free_spins_sample_the_langevin_function(kT):
     assert np.mean(acc) / S == pytest.approx(_L(h * S / kT), abs=0.01)
 
 
-def test_thermalize_is_independent_of_the_starting_state():
+def test_thermalize_is_independent_of_the_starting_state(kernels):
     """Two very different starts must reach the same equilibrium magnetization --
     otherwise the run is measuring the initial condition, not the temperature."""
     N, S, h, kT = 300, 1.0, 0.8, 0.7
@@ -103,8 +104,9 @@ def test_thermalize_is_independent_of_the_starting_state():
     def equilibrium(start, seed):
         """TIME-average after equilibrating: a single snapshot of N = 300 spins has a
         statistical spread of ~0.05, which is larger than the effect being tested."""
-        m = langevin_thermalize(H, b, S, start, kT, 0.02, 3000, damping=0.5, seed=seed)
-        rng = np.random.default_rng(seed + 100)
+        m = langevin_thermalize(H, b, S, start, kT, 0.02, 3000, damping=0.5, seed=seed,
+                                kernels=kernels)
+        rng = make_rng(seed + 100, kernels)
         acc = []
         for _ in range(3000):
             m = langevin_step(H, b, m, 0.02, S, kT, 0.5, rng)
@@ -118,14 +120,14 @@ def test_thermalize_is_independent_of_the_starting_state():
 
 @pytest.mark.slow
 @pytest.mark.parametrize("damping", [0.1, 0.5, 2.0])
-def test_equilibrium_does_not_depend_on_the_damping(damping):
+def test_equilibrium_does_not_depend_on_the_damping(damping, kernels):
     """Damping sets how FAST equilibrium is reached, never where it is. A
     damping-dependent answer means the fluctuation-dissipation balance is wrong --
     which is the one way to get a thermostat subtly, consistently wrong."""
     N, S, h, kT = 400, 1.0, 0.8, 1.0
     H, b = _free_spins(N, h)
     m = _random_state(N, S, seed=7)
-    rng = np.random.default_rng(11)
+    rng = make_rng(11, kernels)
     for _ in range(6000):
         m = langevin_step(H, b, m, 0.01, S, kT, damping, rng)
     acc = []
@@ -144,7 +146,7 @@ def _random_hamiltonian(N, seed, scale=0.3):
     return scale * 0.5 * (A + A.T), np.zeros(3 * N)
 
 
-def test_midpoint_conserves_energy_far_better_than_rk4():
+def test_midpoint_conserves_energy_far_better_than_rk4(kernels):
     """Symplectic vs not: over a long trajectory RK4's energy error accumulates while
     the midpoint rule's stays bounded. Measured here: ~8e-5 vs ~1e-12."""
     N, S = 8, 1.0
@@ -153,7 +155,8 @@ def test_midpoint_conserves_energy_far_better_than_rk4():
     dt = 3 * suggest_timestep(H, b, m0, S)
 
     def drift(integrator):
-        traj = evolve(H, b, S, m0, dt, 4000, record_every=100, integrator=integrator)
+        traj = evolve(H, b, S, m0, dt, 4000, record_every=100, integrator=integrator,
+                      kernels=kernels)
         E = np.array([energy(H, b, x) for x in traj])
         return float(np.abs(E - E[0]).max())
 
@@ -175,7 +178,7 @@ def test_midpoint_conserves_spin_length_without_renormalizing():
     assert np.linalg.norm(m, axis=1) == pytest.approx(np.full(N, S), abs=1e-9)
 
 
-def test_midpoint_and_rk4_agree_at_short_time():
+def test_midpoint_and_rk4_agree_at_short_time(kernels):
     """Both integrate the same equation, so over a few steps they must agree to the
     order of the scheme -- a check that 'conserves energy' is not being achieved by
     integrating the wrong dynamics."""
@@ -183,16 +186,17 @@ def test_midpoint_and_rk4_agree_at_short_time():
     H, b = _random_hamiltonian(N, seed=12)
     m0 = _random_state(N, S, seed=13)
     dt = 0.1 * suggest_timestep(H, b, m0, S)
-    a = evolve(H, b, S, m0, dt, 20, integrator="rk4")[-1]
-    c = evolve(H, b, S, m0, dt, 20, integrator="midpoint")[-1]
+    a = evolve(H, b, S, m0, dt, 20, integrator="rk4", kernels=kernels)[-1]
+    c = evolve(H, b, S, m0, dt, 20, integrator="midpoint", kernels=kernels)[-1]
     assert c == pytest.approx(a, abs=1e-6)
 
 
-def test_unknown_integrator_raises():
+def test_unknown_integrator_raises(kernels):
     N, S = 3, 1.0
     H, b = _random_hamiltonian(N, seed=1)
     with pytest.raises(ValueError, match="rk4.*midpoint"):
-        evolve(H, b, S, _random_state(N, S, 1), 0.01, 2, integrator="verlet")
+        evolve(H, b, S, _random_state(N, S, 1), 0.01, 2, integrator="verlet",
+               kernels=kernels)
 
 
 # --------------------------------------------------------------------------
@@ -208,13 +212,14 @@ def test_suggest_timestep_scales_inversely_with_the_local_field():
     assert dt2 == pytest.approx(0.5 * dt1, rel=1e-12)
 
 
-def test_suggested_timestep_actually_conserves_energy():
+def test_suggested_timestep_actually_conserves_energy(kernels):
     """The point of the suggestion is that a run at that step is stable."""
     N, S = 8, 1.0
     H, b = _random_hamiltonian(N, seed=31)
     m0 = _random_state(N, S, seed=32)
     dt = suggest_timestep(H, b, m0, S)
-    traj = evolve(H, b, S, m0, dt, 2000, record_every=200, integrator="rk4")
+    traj = evolve(H, b, S, m0, dt, 2000, record_every=200, integrator="rk4",
+                  kernels=kernels)
     E = np.array([energy(H, b, x) for x in traj])
     assert np.abs(E - E[0]).max() < 1e-6 * max(1.0, abs(E[0]))
 

@@ -27,9 +27,12 @@ Validated (tests/test_classical_dynamics.py) against exact/independent results:
     validated spin-wave engine.
 """
 import logging
+import os
 from dataclasses import dataclass
 
 import numpy as np
+
+from . import kernels as _kernels
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +126,19 @@ def langevin_step(H, b, m, dt, S, kT, damping, rng):
     This is a THERMOSTAT (Sunny's `Langevin`), an alternative to Metropolis for
     preparing thermal states. Measurement trajectories should still be run
     undamped/deterministic; damping distorts the lineshape.
+
+    `rng` decides the implementation, as for `thermal_mc._sweep`: a NumPy
+    Generator runs the step here; an `rsmagcalc.Rng` (`kernels.make_rng(seed,
+    "rust")`) runs the Rust kernel (K1, same Heun scheme and sign). A kernel
+    failure is logged and the step is redone here.
     """
+    if _kernels.is_rust_rng(rng):
+        try:
+            return _kernels.rust_module().langevin(H, b, S, m, float(dt), float(kT),
+                                                   float(damping), 1, rng)
+        except Exception:
+            _kernels.fell_back("langevin")
+            rng = np.random.default_rng(rng.next_u64())
     lam = float(damping)
     beta = 1.0 / float(kT)
     # <xi_a(t) xi_b(t')> = 2 lambda kT delta_ab delta(t-t') / S  (FDT)
@@ -143,25 +158,54 @@ def langevin_step(H, b, m, dt, S, kT, damping, rng):
     return out
 
 
-def langevin_thermalize(H, b, S, m, kT, dt, n_steps, damping=0.1, seed=0):
-    """Run the Langevin thermostat for `n_steps`, returning the final configuration."""
-    rng = np.random.default_rng(seed)
+def langevin_thermalize(H, b, S, m, kT, dt, n_steps, damping=0.1, seed=0,
+                        kernels="numpy"):
+    """Run the Langevin thermostat for `n_steps`, returning the final configuration.
+
+    `kernels="rust"` runs all `n_steps` in one rsMagCalc call (K1); a failure
+    falls back to the per-step loop on a NumPy stream."""
+    rng = _kernels.make_rng(seed, kernels)
+    rs = _kernels.rust_for(_kernels.kernel_of_rng(rng))
+    if rs is not None:
+        try:
+            return rs.langevin(H, b, S, m, float(dt), float(kT), float(damping),
+                               int(n_steps), rng)
+        except Exception:
+            _kernels.fell_back("langevin")
+            rng = np.random.default_rng(rng.next_u64())
     for _ in range(int(n_steps)):
         m = langevin_step(H, b, m, dt, S, kT, damping, rng)
     return m
 
 
-def evolve(H, b, S, m0, dt, n_steps, record_every=1, integrator="rk4"):
+def evolve(H, b, S, m0, dt, n_steps, record_every=1, integrator="rk4",
+           kernels="numpy"):
     """Deterministic LL trajectory. Returns (n_rec, N, 3) recorded configurations.
 
     `integrator`: "rk4" (default, historical) or "midpoint" (implicit midpoint --
     symplectic, bounded energy error over long runs).
+
+    `kernels="rust"` runs the same two schemes in rsMagCalc (K1), pinned to this
+    function at 1e-12 (`rsMagCalc/tests/test_classical_parity.py`); a kernel
+    failure is logged and the NumPy loop runs.
     """
     step_fn = {"rk4": llg_rk4_step,
                "midpoint": implicit_midpoint_step}.get(str(integrator).lower())
     if step_fn is None:
         raise ValueError(
             f"integrator must be 'rk4' or 'midpoint', got {integrator!r}.")
+    rs = _kernels.rust_for(_kernels.resolve(kernels))
+    if rs is not None:
+        try:
+            traj, n_bad = rs.evolve(H, b, S, m0, float(dt), int(n_steps),
+                                    int(record_every), str(integrator).lower())
+            if n_bad:
+                logger.warning(
+                    f"implicit midpoint did not converge in 50 iterations on "
+                    f"{n_bad} of {int(n_steps)} steps; reduce dt.")
+            return traj
+        except Exception:
+            _kernels.fell_back("evolve")
     m = m0.copy()
     rec = []
     for step in range(n_steps):
@@ -428,7 +472,8 @@ def sampled_correlations(model, params, q_cart, kT, supercell=(6, 1, 1),
                          record_every=1, cross_section="perp", seed=0,
                          classical_to_quantum=True, disorder=None,
                          periodic=(True, True, True), window="rectangular",
-                         subtract_elastic=False, on_elastic_leakage="warn"):
+                         subtract_elastic=False, on_elastic_leakage="warn",
+                         kernels="numpy", n_workers=None):
     """Thermalize by Metropolis then evolve LL dynamics; average S(q,ω) over `n_traj`
     independent thermal starts. Returns a DynamicsResult.
 
@@ -446,7 +491,13 @@ def sampled_correlations(model, params, q_cart, kT, supercell=(6, 1, 1),
     the elastic delta first. Use them TOGETHER on an ordered magnet -- see
     `lag_window` for the measurement behind that, and for why the default stays
     `rectangular`. Asking for one without the other where it is dangerous is
-    reported by `check_elastic_leakage` (`on_elastic_leakage`)."""
+    reported by `check_elastic_leakage` (`on_elastic_leakage`).
+
+    `kernels="rust"` thermalizes and evolves the trajectories in rsMagCalc (K1),
+    `n_workers` of them at a time in parallel (None = all cores); the FFT and
+    cross-section contraction (`dynamical_structure_factor`, where the sum-rule
+    pinning lives) stay here. A kernel failure is logged and every trajectory is
+    then produced by the NumPy loop."""
     from .thermal_mc import build_supercell, _sweep, n_chemical_cells
 
     check_elastic_leakage(window, subtract_elastic, classical_to_quantum, kT,
@@ -457,24 +508,45 @@ def sampled_correlations(model, params, q_cart, kT, supercell=(6, 1, 1),
     H, b, N, S, pos = build_supercell(model, params, supercell, disorder=disorder,
                                       periodic=periodic)
     n_cells = n_chemical_cells(model, supercell)
-    rng = np.random.default_rng(seed)
     beta = 1.0 / kT
 
-    energies = None
-    acc = None
-    for it in range(n_traj):
-        m = rng.standard_normal((N, 3))
-        m *= S / np.linalg.norm(m, axis=1, keepdims=True)
-        g = H @ m.ravel() + b
-        for _ in range(therm_sweeps):
-            _sweep(m, g, H, b, beta, S, rng)
-        traj = evolve(H, b, S, m, dt, n_steps, record_every)
+    def _accumulate(traj, acc):
         e, sqw = dynamical_structure_factor(traj, pos, q_cart, dt * record_every,
                                             cross_section, n_cells=n_cells,
                                             window=window,
                                             subtract_elastic=subtract_elastic)
-        acc = sqw if acc is None else acc + sqw
-        energies = e
+        return e, (sqw if acc is None else acc + sqw)
+
+    energies = None
+    acc = None
+    rs = _kernels.rust_for(_kernels.resolve(kernels))
+    if rs is not None:
+        try:
+            # Chunks of trajectories, so the recorded (n_chunk, n_rec, N, 3) block
+            # stays small; trajectory i is the stream (seed, i) whatever the chunk.
+            chunk = max(1, int(n_workers) if n_workers else (os.cpu_count() or 1))
+            acc_r, e_r = None, None
+            for start in range(0, int(n_traj), chunk):
+                n_here = min(chunk, int(n_traj) - start)
+                block, _bad = rs.sampled_trajectories(
+                    H, b, S, float(kT), start, n_here, int(therm_sweeps), float(dt),
+                    int(n_steps), int(record_every), "rk4", int(seed), n_workers)
+                for traj in block:
+                    e_r, acc_r = _accumulate(traj, acc_r)
+            energies, acc = e_r, acc_r
+        except Exception:
+            _kernels.fell_back("sampled_trajectories")
+            energies, acc = None, None
+    if acc is None:
+        rng = np.random.default_rng(seed)
+        for it in range(n_traj):
+            m = rng.standard_normal((N, 3))
+            m *= S / np.linalg.norm(m, axis=1, keepdims=True)
+            g = H @ m.ravel() + b
+            for _ in range(therm_sweeps):
+                _sweep(m, g, H, b, beta, S, rng)
+            traj = evolve(H, b, S, m, dt, n_steps, record_every)
+            energies, acc = _accumulate(traj, acc)
     sqw = acc / n_traj
     if classical_to_quantum:
         sqw = sqw * classical_to_quantum_factor(energies, kT)[:, None]

@@ -29,6 +29,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from . import kernels as _kernels
 from .annealing import energy as _cell_energy
 from .constants import GAMMA_ELECTRON as GAMMA, MU_B
 from .sun.entangled import _pair_matrix
@@ -324,7 +325,20 @@ def _sweep(m, g, H, b, beta, S, rng, propose="uniform"):
                              state this keeps every spin on +/-n forever, i.e. it makes
                              the sampler ISING. That is the only way to reproduce
                              Sunny's 2-D Ising tutorial with a continuous-spin engine.
+
+    `rng` decides which implementation runs: a NumPy Generator -> this loop; an
+    `rsmagcalc.Rng` (from `kernels.make_rng(seed, "rust")`) -> the Rust kernel
+    (K1), in place on the same `m` and `g`. If the kernel raises, the exception
+    is logged and the sweep is redone here with a Generator seeded from the Rust
+    stream, so the caller's loop never notices.
     """
+    if _kernels.is_rust_rng(rng):
+        try:
+            return _kernels.rust_module().sweep(m, g, H, b, float(beta), S, rng,
+                                                propose)
+        except Exception:
+            _kernels.fell_back("sweep")
+            rng = np.random.default_rng(rng.next_u64())
     N = m.shape[0]
     acc = 0
     order = rng.permutation(N)
@@ -348,12 +362,32 @@ def _sweep(m, g, H, b, beta, S, rng, propose="uniform"):
 
 def parallel_tempering(H, b, N, S, temperatures, n_sweeps=4000, n_equil=1500,
                        swap_every=1, seed=0, measure_every=1,
-                       propose="uniform", init=None):
+                       propose="uniform", init=None, kernels="numpy",
+                       n_workers=None):
     """Replica-exchange Metropolis over the temperature ladder. Returns a
-    ThermalResult with per-temperature thermodynamic averages."""
+    ThermalResult with per-temperature thermodynamic averages.
+
+    `kernels="rust"` runs the whole sweep/swap/measure loop in rsMagCalc (K1),
+    replicas in parallel over `n_workers` threads (None = all cores); a kernel
+    failure is logged and the NumPy loop below runs instead. The two do not share
+    a random stream (`kernels.make_rng`)."""
     temps = np.asarray(sorted(temperatures), float)
     R = len(temps)
     betas = 1.0 / temps
+
+    rs = _kernels.rust_for(_kernels.resolve(kernels))
+    if rs is not None:
+        try:
+            out = rs.parallel_tempering(
+                H, b, S, temps, int(n_sweeps), int(n_equil),
+                swap_every=int(swap_every or 0), measure_every=int(measure_every),
+                propose=propose, init=init, seed=int(seed), n_workers=n_workers)
+            return _thermal_result(temps, N, S, out["sumE"], out["sumE2"],
+                                   out["sumM"], out["sumM2"], out["n_meas"],
+                                   out["accept_rate"])
+        except Exception:
+            _kernels.fell_back("parallel_tempering")
+
     rng = np.random.default_rng(seed)
 
     m = np.zeros((R, N, 3))
@@ -405,6 +439,13 @@ def parallel_tempering(H, b, N, S, temperatures, n_sweeps=4000, n_equil=1500,
                 sumM2[r] += Mvec @ Mvec
             nmeas += 1
 
+    return _thermal_result(temps, N, S, sumE, sumE2, sumM, sumM2, nmeas,
+                           acc_tot / max(acc_cnt, 1))
+
+
+def _thermal_result(temps, N, S, sumE, sumE2, sumM, sumM2, nmeas, accept_rate):
+    """The per-temperature averages from the raw accumulators -- shared by the
+    NumPy loop and the Rust kernel, so the estimators cannot drift apart."""
     E_avg = sumE / nmeas
     E2_avg = sumE2 / nmeas
     C = (E2_avg - E_avg**2) / (N * temps**2)
@@ -416,19 +457,21 @@ def parallel_tempering(H, b, N, S, temperatures, n_sweeps=4000, n_equil=1500,
         temperatures=temps, energy=E_avg / N, heat_capacity=C,
         magnetization=Mmag / (N * S), susceptibility=chi,
         mag_vector=Mvec_avg / (N * S), n_spins=N,
-        accept_rate=acc_tot / max(acc_cnt, 1))
+        accept_rate=float(accept_rate))
 
 
 def run_thermal_mc(model, params, temperatures, supercell=(4, 4, 1),
                    disorder=None, periodic=(True, True, True),
                    propose="uniform", init=None, swap_every=1,
-                   n_sweeps=4000, n_equil=1500, seed=0):
+                   n_sweeps=4000, n_equil=1500, seed=0, kernels="numpy",
+                   n_workers=None):
     """Convenience: build the supercell and run parallel tempering."""
     H, b, N, S, _pos = build_supercell(model, params, supercell,
                                        disorder=disorder, periodic=periodic)
     return parallel_tempering(H, b, N, S, temperatures, propose=propose, init=init,
                               swap_every=swap_every, n_sweeps=n_sweeps,
-                              n_equil=n_equil, seed=seed)
+                              n_equil=n_equil, seed=seed, kernels=kernels,
+                              n_workers=n_workers)
 
 @dataclass
 class StaticResult:
@@ -443,7 +486,7 @@ class StaticResult:
 def static_correlations(model, params, q_cart, kT, supercell=(6, 6, 1),
                         n_samples=200, n_equil=2000, sample_every=10,
                         cross_section="perp", seed=0, disorder=None,
-                        periodic=(True, True, True)):
+                        periodic=(True, True, True), kernels="numpy"):
     """Classical INSTANTANEOUS S(q) from Metropolis samples (Sunny's
     `SampledCorrelationsStatic`).
 
@@ -465,13 +508,16 @@ def static_correlations(model, params, q_cart, kT, supercell=(6, 6, 1),
     T_N, where LSWT has nothing to say. It is also exactly the frequency integral of
     `classical_dynamics.sampled_correlations` (two-sided, uncorrected) -- the sum
     rule that fixes both absolute scales at once.
+
+    `kernels="rust"` runs each sweep in rsMagCalc (K1) on a Rust random stream;
+    the measurement loop stays here.
     """
     from .classical_dynamics import _contract
 
     H, b, N, S, pos = build_supercell(model, params, supercell, disorder=disorder,
                                       periodic=periodic)
     qs = np.asarray(q_cart, float).reshape(-1, 3)
-    rng = np.random.default_rng(seed)
+    rng = _kernels.make_rng(seed, kernels)
     beta = 1.0 / float(kT)
 
     m = rng.standard_normal((N, 3))
@@ -530,7 +576,8 @@ class WangLandauResult:
 
 
 def wang_landau(H, b, N, S, e_min, e_max, n_bins=100, f_init=1.0, f_final=1e-6,
-                flatness=0.8, sweeps_per_check=200, max_sweeps=4_000_000, seed=0):
+                flatness=0.8, sweeps_per_check=200, max_sweeps=4_000_000, seed=0,
+                kernels="numpy"):
     """Density of states g(E) by flat-histogram (Wang-Landau) sampling.
 
     A random walk in CONFIGURATION space that accepts a move with probability
@@ -544,8 +591,11 @@ def wang_landau(H, b, N, S, e_min, e_max, n_bins=100, f_init=1.0, f_final=1e-6,
 
     NB these are CONTINUOUS classical spins, so g(E) is a density and the bin width
     enters as a constant offset in ln g; it cancels in every thermodynamic average.
+
+    `kernels="rust"` runs the move loop (everything after the start configuration
+    is found) in rsMagCalc (K1); a kernel failure falls back to the loop below.
     """
-    rng = np.random.default_rng(seed)
+    rng = _kernels.make_rng(seed, kernels)
     e_min, e_max = float(e_min), float(e_max)
     if not e_max > e_min:
         raise ValueError(f"need e_max > e_min, got [{e_min}, {e_max}].")
@@ -581,6 +631,23 @@ def wang_landau(H, b, N, S, e_min, e_max, n_bins=100, f_init=1.0, f_final=1e-6,
         raise RuntimeError(
             f"could not find a configuration with energy in [{e_min}, {e_max}]; "
             f"widen the window (see wang_landau_window).")
+
+    rs = _kernels.rust_for(_kernels.kernel_of_rng(rng))
+    if rs is not None:
+        try:
+            log_g, visits, f, n_ref, _swept = rs.wang_landau(
+                H, b, S, m, e_min, e_max, int(n_bins), float(f_init),
+                float(f_final), float(flatness), int(sweeps_per_check),
+                int(max_sweeps), seed=rng.next_u64())
+            occ = visits > 0
+            if occ.any():
+                log_g = log_g - log_g[occ].min()
+            return WangLandauResult(energies=centres, log_g=log_g,
+                                    histogram=visits, n_spins=N, f_final=float(f),
+                                    n_refinements=int(n_ref))
+        except Exception:
+            _kernels.fell_back("wang_landau")
+            rng = np.random.default_rng(rng.next_u64())
 
     f = float(f_init)
     n_ref, swept = 0, 0

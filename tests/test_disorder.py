@@ -105,7 +105,7 @@ def test_open_boundaries_drop_exactly_the_wrapping_bonds():
     assert _n_bonds(Hx, Nx) == 4 * 3 + 16
 
 
-def test_open_boundary_raises_the_energy_per_spin():
+def test_open_boundary_raises_the_energy_per_spin(kernels):
     """Fewer bonds per spin means less binding: an open system must sit HIGHER in
     energy per spin than the periodic one at the same temperature."""
     m = _square_lattice()
@@ -113,12 +113,12 @@ def test_open_boundary_raises_the_energy_per_spin():
     for per in ((True, True, True), (False, False, True)):
         H, b, N, S, _ = build_supercell(m, [], (6, 6, 1), periodic=per)
         r = parallel_tempering(H, b, N, S, np.array([0.3]), n_sweeps=3000,
-                               n_equil=1000, seed=2)
+                               n_equil=1000, seed=2, kernels=kernels)
         out.append(r.energy[0])
     assert out[1] > out[0]
 
 
-def test_dilution_raises_the_energy_per_spin_monotonically():
+def test_dilution_raises_the_energy_per_spin_monotonically(kernels):
     """Physics, not plumbing: removing spins removes bonds from the survivors, so
     |E|/spin must fall monotonically with concentration."""
     m = _square_lattice()
@@ -127,14 +127,14 @@ def test_dilution_raises_the_energy_per_spin_monotonically():
         d = None if x == 0 else {"vacancy_concentration": x, "seed": 1}
         H, b, N, S, _ = build_supercell(m, [], (6, 6, 1), disorder=d)
         r = parallel_tempering(H, b, N, S, np.array([0.3]), n_sweeps=3000,
-                               n_equil=1000, seed=2)
+                               n_equil=1000, seed=2, kernels=kernels)
         if prev is not None:
             assert r.energy[0] > prev
         prev = r.energy[0]
 
 
 @pytest.mark.slow
-def test_results_are_self_averaging_across_disorder_seeds():
+def test_results_are_self_averaging_across_disorder_seeds(kernels):
     """A single realization is not an answer. Different seeds at the same
     concentration must agree within the sample-to-sample spread -- if they do not, the
     supercell is too small and the number quoted is one realization, not the
@@ -146,7 +146,7 @@ def test_results_are_self_averaging_across_disorder_seeds():
             m, [], (10, 10, 1),
             disorder={"vacancy_concentration": 0.15, "seed": seed})
         r = parallel_tempering(H, b, N, S, np.array([0.3]), n_sweeps=4000,
-                               n_equil=1500, seed=3)
+                               n_equil=1500, seed=3, kernels=kernels)
         vals.append(r.energy[0])
     vals = np.array(vals)
     assert vals.std() / abs(vals.mean()) < 0.05, f"seed spread {vals.std():.4f}"

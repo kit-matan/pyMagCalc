@@ -51,10 +51,10 @@ from test_classical_absolute_normalization import (B_MAT, SUN_LAT,  # noqa: E402
 DT, N_T, L = 0.02, 512, 10
 
 
-def _traj(kT=0.6, seed=0):
+def _traj(kT=0.6, seed=0, kernels="numpy"):
     model = _model(1)
-    H, b, S, pos, m = _thermalized(model, L, kT=kT, seed=seed)
-    return cd.evolve(H, b, S, m, DT, N_T), pos
+    H, b, S, pos, m = _thermalized(model, L, kT=kT, seed=seed, kernels=kernels)
+    return cd.evolve(H, b, S, m, DT, N_T, kernels=kernels), pos
 
 
 def _sqw(traj, pos, qs, window, two_sided=True, cross_section="trace"):
@@ -69,7 +69,7 @@ QS = np.array([[h, 0, 0] for h in (0.1, 0.3, 0.5)]) @ B_MAT
 # --------------------------------------------------------------------------
 # 1. The identity the whole change reduces to
 # --------------------------------------------------------------------------
-def test_cosine_window_is_exactly_a_quarter_half_quarter_smoothing():
+def test_cosine_window_is_exactly_a_quarter_half_quarter_smoothing(kernels):
     """The load-bearing test: windowing == convolving with [1/4, 1/2, 1/4].
 
     Not an approximation and not a fitted constant -- it is cos^2 written in
@@ -77,7 +77,7 @@ def test_cosine_window_is_exactly_a_quarter_half_quarter_smoothing():
     other property below a consequence rather than an observation. Measured: 1.1e-16
     on a spectrum of scale ~1.9.
     """
-    traj, pos = _traj()
+    traj, pos = _traj(kernels=kernels)
     _e, raw = _sqw(traj, pos, QS, "rectangular")
     e, win = _sqw(traj, pos, QS, "cosine")
     hann = 0.25 * np.roll(raw, 1, axis=0) + 0.5 * raw + 0.25 * np.roll(raw, -1, axis=0)
@@ -101,7 +101,7 @@ def test_the_window_is_symmetric_in_the_lag_and_unity_at_zero_lag():
 # --------------------------------------------------------------------------
 # 2. What the identity guarantees
 # --------------------------------------------------------------------------
-def test_the_window_preserves_the_frequency_integral_exactly():
+def test_the_window_preserves_the_frequency_integral_exactly(kernels):
     """[1/4, 1/2, 1/4] sums to 1, so the w-integral -- hence every sum rule item 4
     pins -- is unchanged to machine precision.
 
@@ -109,7 +109,7 @@ def test_the_window_preserves_the_frequency_integral_exactly():
     explanation of why `test_classical_absolute_normalization.py` is blind to this
     change and had to be given a separate oracle.
     """
-    traj, pos = _traj()
+    traj, pos = _traj(kernels=kernels)
     e, raw = _sqw(traj, pos, QS, "rectangular")
     _e, win = _sqw(traj, pos, QS, "cosine")
     dE = e[1] - e[0]
@@ -129,11 +129,11 @@ def test_the_window_cannot_manufacture_negative_intensity():
     assert win.min() >= 0.0
 
 
-def test_rectangular_reproduces_the_unwindowed_transform():
+def test_rectangular_reproduces_the_unwindowed_transform(kernels):
     """`window: rectangular` must be a no-op, so the pre-2026-08-15 behaviour stays
     reachable exactly -- computed here from the raw FFT rather than from a recorded
     number."""
-    traj, pos = _traj()
+    traj, pos = _traj(kernels=kernels)
     e, got = _sqw(traj, pos, QS, "rectangular", cross_section="trace")
     phase = np.exp(-1j * (QS @ pos.T))
     Sqt = np.einsum("qr,tra->tqa", phase, traj)
@@ -223,7 +223,7 @@ def test_the_shipped_defaults_are_the_unwindowed_ones():
 
 
 @pytest.mark.slow
-def test_the_cosine_window_needs_subtract_elastic_on_an_ordered_magnet():
+def test_the_cosine_window_needs_subtract_elastic_on_an_ordered_magnet(kernels):
     """The trap, as a number, and the fix for it in the same test.
 
     Without `subtract_elastic` the windowed spectrum puts an enormous spike in the
@@ -241,7 +241,7 @@ def test_the_cosine_window_needs_subtract_elastic_on_an_ordered_magnet():
             r = cd.sampled_correlations(model, params, qs, kT, supercell=(Lc, 1, 1),
                                         dt=0.02, n_steps=2048, n_traj=4,
                                         therm_sweeps=1500, seed=1, window=window,
-                                        subtract_elastic=sub)
+                                        subtract_elastic=sub, kernels=kernels)
             got[(window, sub)] = (float(r.sqw[1, 0]),
                                   float(r.sqw[:, 0].sum() * (r.energies[1]
                                                              - r.energies[0])))
@@ -323,7 +323,7 @@ def test_the_report_mode_is_the_usual_three():
         _check("cosine", False, mode="error")
 
 
-def test_both_samplers_run_the_check_from_their_own_settings(caplog):
+def test_both_samplers_run_the_check_from_their_own_settings(caplog, kernels):
     """End to end, so the wiring is pinned and not just the predicate: each sampler
     must derive dw from ITS OWN time grid (dt * record_every, ceil(n_steps /
     record_every)) and its own kT."""
@@ -333,7 +333,7 @@ def test_both_samplers_run_the_check_from_their_own_settings(caplog):
 
     qs = np.array([[0.15, 0, 0]]) @ B_MAT
     kw = dict(supercell=(4, 1, 1), dt=0.02, n_steps=64, n_traj=1, therm_sweeps=10,
-              seed=1)
+              seed=1, kernels=kernels)
     with caplog.at_level(logging.WARNING, logger="magcalc.classical_dynamics"):
         cd.sampled_correlations(_model(1), [], qs, 0.005, window="cosine", **kw)
         assert "subtract_elastic" in caplog.text

@@ -107,7 +107,7 @@ def _free_model(S):
                                         (2.0, "perp", 8.0 / 3),
                                         (1.0, "trace", 1.0),
                                         (2.0, "trace", 4.0)])
-def test_free_spins_give_the_exact_sum_rule(S, cs, exact):
+def test_free_spins_give_the_exact_sum_rule(S, cs, exact, kernels):
     """N uncorrelated spins of length S: <S^a(q) S^b(q)*> = N (S^2/3) delta_ab at
     EVERY q, so the per-cell S(q) is (S^2/3) Tr P = 2S^2/3 for `perp` and S^2 for
     `trace` on this ONE-SITE cell, independent of q and of temperature. This fixes
@@ -115,26 +115,28 @@ def test_free_spins_give_the_exact_sum_rule(S, cs, exact):
     m, B = _free_model(S)
     q = np.array([[0.13, 0.2, 0], [0.31, 0, 0], [0.5, 0.5, 0]]) @ B
     r = static_correlations(m, [], q, kT=1.0, supercell=(6, 6, 1), n_samples=400,
-                            n_equil=300, sample_every=2, cross_section=cs, seed=3)
+                            n_equil=300, sample_every=2, cross_section=cs, seed=3,
+                            kernels=kernels)
     assert r.sq == pytest.approx(exact, rel=0.12)
     # and it must be FLAT in q, not merely right on average
     assert (r.sq.max() - r.sq.min()) / r.sq.mean() < 0.15
 
 
-def test_free_spins_are_temperature_independent():
+def test_free_spins_are_temperature_independent(kernels):
     """The free-spin sum rule has no temperature in it. A T-dependence here would
     mean the sampler, not the estimator, is wrong."""
     m, B = _free_model(1.0)
     q = np.array([[0.13, 0.2, 0], [0.31, 0, 0]]) @ B
     vals = [static_correlations(m, [], q, kT=kT, supercell=(6, 6, 1), n_samples=300,
-                                n_equil=300, sample_every=2, seed=5).sq.mean()
+                                n_equil=300, sample_every=2, seed=5,
+                                kernels=kernels).sq.mean()
             for kT in (0.25, 4.0)]
     assert vals[0] == pytest.approx(vals[1], rel=0.12)
     assert vals[0] == pytest.approx(2.0 / 3, rel=0.12)
 
 
 @pytest.mark.slow
-def test_antiferromagnet_peaks_at_the_ordering_wavevector():
+def test_antiferromagnet_peaks_at_the_ordering_wavevector(kernels):
     """Physics, not plumbing: a Neel chain's instantaneous S(q) must peak at the
     zone boundary h = 1/2 (its ordering vector) and be suppressed at h = 0, and the
     contrast must grow as the temperature falls."""
@@ -158,7 +160,7 @@ def test_antiferromagnet_peaks_at_the_ordering_wavevector():
     for kT in (2.0, 0.25):
         sq = static_correlations(m, [], q, kT=kT, supercell=(24, 1, 1),
                                  n_samples=600, n_equil=3000, sample_every=5,
-                                 cross_section="trace", seed=11).sq
+                                 cross_section="trace", seed=11, kernels=kernels).sq
         assert sq[2] > sq[1] > sq[0], f"kT={kT}: not peaked at the zone boundary: {sq}"
         contrast.append(sq[2] / sq[0])
     assert contrast[1] > contrast[0], "AFM correlations must sharpen on cooling"

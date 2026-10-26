@@ -107,33 +107,33 @@ def _run(kT, c2q, **kw):
     return cd.sampled_correlations(m, [], q, kT, classical_to_quantum=c2q, **opts)
 
 
-def test_flag_is_plumbed_and_is_exactly_the_factor():
+def test_flag_is_plumbed_and_is_exactly_the_factor(kernels):
     """Cheap plumbing check: the corrected result must be the raw one times the
     factor, element for element -- nothing else may change."""
     kT = 0.4
-    raw = _run(kT, False, n_steps=256, n_traj=2, therm_sweeps=300)
-    cor = _run(kT, True, n_steps=256, n_traj=2, therm_sweeps=300)
+    raw = _run(kT, False, n_steps=256, n_traj=2, therm_sweeps=300, kernels=kernels)
+    cor = _run(kT, True, n_steps=256, n_traj=2, therm_sweeps=300, kernels=kernels)
     assert raw.classical_to_quantum is False and cor.classical_to_quantum is True
     f = classical_to_quantum_factor(raw.energies, kT)[:, None]
     assert cor.sqw == pytest.approx(raw.sqw * f, rel=1e-12)
 
 
-def test_high_temperature_is_a_no_op_where_hw_is_small():
+def test_high_temperature_is_a_no_op_where_hw_is_small(kernels):
     """kT >> hw is the classical limit, where the correction must do essentially
     nothing. Stated over the part of the grid where that actually holds: the FFT
     energy axis runs to pi/dt = 157 meV here, so "hw << kT" is a statement about the
     low-energy slice, not about the whole spectrum (at the zone top w/kT = 0.39 and
     the factor is a perfectly legitimate 1.22)."""
     kT = 400.0
-    raw = _run(kT, False, n_steps=256, n_traj=2, therm_sweeps=300)
-    cor = _run(kT, True, n_steps=256, n_traj=2, therm_sweeps=300)
+    raw = _run(kT, False, n_steps=256, n_traj=2, therm_sweeps=300, kernels=kernels)
+    cor = _run(kT, True, n_steps=256, n_traj=2, therm_sweeps=300, kernels=kernels)
     lo = raw.energies < 0.02 * kT
     assert lo.sum() > 5
     assert cor.sqw[lo] == pytest.approx(raw.sqw[lo], rel=0.011)
 
 
 @pytest.mark.slow
-def test_low_T_ferromagnet_weight_becomes_q_independent():
+def test_low_T_ferromagnet_weight_becomes_q_independent(kernels):
     """The physical check, and the one that would catch the factor applied upside
     down.
 
@@ -160,8 +160,14 @@ def test_low_T_ferromagnet_weight_becomes_q_independent():
         tot = res.sqw.sum(axis=0) * dE
         return (tot.max() - tot.min()) / tot.mean()
 
-    raw_spread = spread(_run(kT, False))
-    cor_spread = spread(_run(kT, True))
+    # 6 trajectories give ~40 % per-q scatter in the weight (a trajectory conserves
+    # each mode's exponentially distributed thermal energy), so the 0.29 spread the
+    # NumPy stream measures at seed 1 is a kind draw; the Rust stream gave 0.90 at
+    # the same count (0.52 and 0.38 at 48; 0.22 and 0.15 at 384, for two seeds).
+    # Under `rust` the run is cheap, so it averages 384 trajectories.
+    n_traj = 6 if kernels == "numpy" else 384
+    raw_spread = spread(_run(kT, False, n_traj=n_traj, kernels=kernels))
+    cor_spread = spread(_run(kT, True, n_traj=n_traj, kernels=kernels))
     assert raw_spread > 1.5, f"raw classical weight should track 1/w(q): {raw_spread}"
     assert cor_spread < 0.5, f"corrected weight should be ~flat in q: {cor_spread}"
     assert cor_spread < 0.3 * raw_spread

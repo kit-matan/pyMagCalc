@@ -24,7 +24,7 @@ def _Lp(x):
     return 1.0 / x**2 - 1.0 / np.sinh(x)**2
 
 
-def test_noninteracting_spins_follow_langevin():
+def test_noninteracting_spins_follow_langevin(kernels):
     """N free spins in a field: magnetization is the Langevin function, exactly."""
     S, Bz = 1.0, 12.0
     cfg = {"crystal_structure": {"lattice_vectors": [[1., 0, 0], [0, 1, 0], [0, 0, 1]],
@@ -38,7 +38,8 @@ def test_noninteracting_spins_follow_langevin():
     assert abs(np.linalg.norm(b[:3]) - GAMMA * MU_B * Bz) < 1e-9
     bmag = np.linalg.norm(b[:3])
     temps = np.array([2.0, 5.0, 12.0])
-    res = parallel_tempering(H, b, N, S, temps, n_sweeps=8000, n_equil=2500, seed=1)
+    res = parallel_tempering(H, b, N, S, temps, n_sweeps=8000, n_equil=2500, seed=1,
+                             kernels=kernels)
     for i, T in enumerate(res.temperatures):
         x = bmag * S / T
         assert abs(res.mag_vector[i, 2] - (-_L(x))) < 0.02, f"kT={T}"
@@ -57,13 +58,14 @@ def _dimer_model(S=1.0, J=1.0):
 
 
 @pytest.mark.slow
-def test_classical_dimer_energy_and_heat_capacity():
+def test_classical_dimer_energy_and_heat_capacity(kernels):
     """Isolated classical Heisenberg dimers vs the exact <E>(T) and C(T)."""
     S, J = 1.0, 1.0
     m = _dimer_model(S, J)
     H, b, N, S, _pos = build_supercell(m, [J], supercell=(3, 3, 1))
     temps = np.array([0.5, 0.9, 1.5, 3.0])
-    res = parallel_tempering(H, b, N, S, temps, n_sweeps=12000, n_equil=4000, seed=3)
+    res = parallel_tempering(H, b, N, S, temps, n_sweeps=12000, n_equil=4000, seed=3,
+                             kernels=kernels)
     for i, T in enumerate(res.temperatures):
         a = J * S**2 / T
         E_exact = -J * S**2 * _L(a) / 2.0                 # per spin (2 spins/dimer)
@@ -73,16 +75,16 @@ def test_classical_dimer_energy_and_heat_capacity():
 
 
 @pytest.mark.slow
-def test_parallel_tempering_matches_independent_metropolis():
+def test_parallel_tempering_matches_independent_metropolis(kernels):
     """PT (with swaps) and independent single-T Metropolis (no swaps) must agree on
     <E>(T) within statistics — swaps change sampling efficiency, not the distribution."""
     m = _dimer_model()
     H, b, N, S, _pos = build_supercell(m, [1.0], supercell=(3, 3, 1))
     temps = np.array([0.4, 0.8, 1.6, 3.2])
     pt = parallel_tempering(H, b, N, S, temps, n_sweeps=9000, n_equil=3000,
-                            swap_every=1, seed=5)
+                            swap_every=1, seed=5, kernels=kernels)
     ind = parallel_tempering(H, b, N, S, temps, n_sweeps=9000, n_equil=3000,
-                             swap_every=0, seed=6)
+                             swap_every=0, seed=6, kernels=kernels)
     assert np.max(np.abs(pt.energy - ind.energy)) < 0.01
 
 
@@ -220,7 +222,7 @@ def test_rcs_renormalization_reaches_the_sampler():
 
 
 @pytest.mark.slow
-def test_single_spin_anisotropy_thermodynamics_vs_exact_partition_function():
+def test_single_spin_anisotropy_thermodynamics_vs_exact_partition_function(kernels):
     """<E>(T) and <m_z>(T) of a spin with an EASY-AXIS D and a field, exactly.
 
     Bond-free, so the sampler's answer is the single-spin quadrature above, and the
@@ -234,7 +236,8 @@ def test_single_spin_anisotropy_thermodynamics_vs_exact_partition_function():
     bz = float(b[2])
     assert abs(bz - GAMMA * MU_B * Bz) < 1e-9
     temps = np.array([0.5, 1.0, 3.0])
-    res = parallel_tempering(H, b, N, S, temps, n_sweeps=9000, n_equil=3000, seed=2)
+    res = parallel_tempering(H, b, N, S, temps, n_sweeps=9000, n_equil=3000, seed=2,
+                             kernels=kernels)
     for i, T in enumerate(res.temperatures):
         E_exact, mz_exact = _exact_single_spin(D, S, bz, T)
         assert abs(res.energy[i] - E_exact) < 0.02, f"E kT={T}"

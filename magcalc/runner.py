@@ -1116,7 +1116,7 @@ def run_calculation(config_file: str):
                 n_bins=int(wd.get('n_bins', 100)),
                 f_final=float(wd.get('f_final', 1e-6)),
                 flatness=float(wd.get('flatness', 0.8)),
-                seed=int(wd.get('seed', 0)))
+                seed=int(wd.get('seed', 0)), kernels=kernels)
             temps = np.asarray(wd.get('temperatures', [0.25, 0.5, 1.0, 2.0, 4.0]),
                                dtype=float)
             E_of_T, C_of_T = res.thermodynamics(temps)
@@ -1172,7 +1172,7 @@ def run_calculation(config_file: str):
                     n_equil=int(sd.get('n_equil', 2000)),
                     sample_every=int(sd.get('sample_every', 10)),
                     cross_section=sd.get('cross_section', cross_section),
-                    seed=int(sd.get('seed', 0)),
+                    seed=int(sd.get('seed', 0)), kernels=kernels,
                     **_disorder_opts(sd))
                 logger.info(
                     f"Static correlations (kT={kT} meV, {res.n_spins} spins, "
@@ -1348,6 +1348,7 @@ def run_calculation(config_file: str):
                     propose=tm.get('propose', 'uniform'),
                     init=tm.get('init'),
                     swap_every=int(tm.get('swap_every', 1)),
+                    kernels=kernels, n_workers=tm.get('n_workers'),
                     **_disorder_opts(tm))
                 logger.info(
                     f"Thermal MC ({res.n_spins} spins, accept {res.accept_rate:.2f}): "
@@ -1456,6 +1457,7 @@ def run_calculation(config_file: str):
                     window=sd.get('window', 'rectangular'),
                     subtract_elastic=bool(sd.get('subtract_elastic', False)),
                     on_elastic_leakage=sd.get('on_elastic_leakage', 'warn'),
+                    kernels=kernels, n_workers=sd.get('n_workers'),
                     **_disorder_opts(sd))
                 logger.info(
                     f"SampledCorrelations (kT={kT} meV): S(q,w) {res.sqw.shape} "

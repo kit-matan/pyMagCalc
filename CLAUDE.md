@@ -755,11 +755,12 @@ installed).
 Both pytest.ini files carry `-n auto --dist worksteal` (pytest-xdist), which is the
 whole of that 33 min -> 12 min; the fast suite went 6 m 07 s -> 4 m 37 s. **Nothing was
 deselected or weakened to get it** -- same 882/1. Use **`-n0`** when you need `-s`, pdb,
-or a live per-test name. The remaining floor is a single test:
-`test_classical_absolute_normalization`'s 128-trajectory LL average is ~7 min of serial
-Python, so the gate cannot go below it until `sampled_correlations` parallelizes its
-trajectory loop (it is a plain `for it in range(n_traj)`), and its cost is the
-statistical tolerance the test asserts -- do not trim `n_traj` to save time.
+or a live per-test name. The floor is the `numpy` parametrization of two tests:
+`test_classical_absolute_normalization`'s 128-trajectory LL average (~3 min of serial
+Python; it was quoted as ~7 min on a contended machine) and S05's Onsager comparison.
+Under `kernels: rust` (K1, 2026-10-26) the same 128 trajectories take 3 s, and the
+`rust` parametrization runs a properly thermalized 512-trajectory version in 18 s;
+the `numpy` one stays as the fallback's oracle, and its `n_traj` is not to be trimmed.
 
 Rules:
 

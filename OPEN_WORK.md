@@ -9,7 +9,16 @@
 > maturin, `calculation.kernels` (`magcalc/kernels.py`) selects it with the fMagCalc
 > warn-and-fall-back contract, the run log names the build after the engine line,
 > `magcalc where` reports it, and the `kernels` fixture in `tests/conftest.py` runs a
-> test under both. Pick up at K1: the plan's §3 names the functions and the tests.
+> test under both. **M1 (K1) is done, 2026-10-26**: the classical Metropolis sweep,
+> parallel tempering, Wang–Landau, the LL integrators, the Langevin thermostat and
+> the trajectory loop of `sampled_correlations` run in rsMagCalc (`d53b90b`+) behind
+> `kernels: rust`, every oracle test in the plan's K1 list runs under both kernel
+> sets, and the 128-trajectory case runs in 3 s instead of 169 s (`GAP_STATUS.md`, "Rust
+> kernels K1", which also records what the second random stream exposed about the
+> low-T tests' own statistics).
+> Gate on that branch, 2026-10-26: **1850 passed, 2 skipped, 20 min 24 s** (not idle). Not
+> committed in pyMagCalc. Pick up at K2 (`sun/dynamics`): the plan's §3 names the
+> functions and the tests.
 > Gate on this tree with rsmagcalc installed (2026-10-26, workspace root,
 > `MAGCALC_NO_GUI=1 pytest -rs`): **1753 passed, 2 skipped, 13 min 58 s** — the
 > previous 1735 plus the 18 M0 tests, the same two structural skips. NOT COMMITTED

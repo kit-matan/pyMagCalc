@@ -38,11 +38,12 @@ def _dimer():
     return H, np.zeros(6), 2
 
 
-def _run(f_final=1e-5, seed=1, n_bins=40):
+def _run(f_final=1e-5, seed=1, n_bins=40, kernels="numpy"):
     H, b, N = _dimer()
     a = J * S * S
     return wang_landau(H, b, N, S, -a * 1.001, a * 1.001, n_bins=n_bins,
-                       f_final=f_final, sweeps_per_check=400, seed=seed)
+                       f_final=f_final, sweeps_per_check=400, seed=seed,
+                       kernels=kernels)
 
 
 def test_window_estimate_brackets_the_exact_energy_range():
@@ -55,10 +56,10 @@ def test_window_estimate_brackets_the_exact_energy_range():
     assert lo == pytest.approx(-a, abs=0.15) and hi == pytest.approx(a, abs=0.15)
 
 
-def test_density_of_states_of_a_dimer_is_flat():
+def test_density_of_states_of_a_dimer_is_flat(kernels):
     """THE closed-form check: g(E) is constant for a classical dimer, so ln g must be
     flat. A wrong acceptance rule or a mis-binned energy tilts it immediately."""
-    res = _run()
+    res = _run(kernels=kernels)
     occ = res.histogram > 0
     lg = res.log_g[occ]
     assert occ.sum() > 30, "most bins should be visited"
@@ -70,19 +71,19 @@ def test_density_of_states_of_a_dimer_is_flat():
 
 
 @pytest.mark.parametrize("kT", [0.4, 0.8, 1.5, 3.0])
-def test_thermodynamics_from_g_matches_the_exact_dimer(kT):
+def test_thermodynamics_from_g_matches_the_exact_dimer(kT, kernels):
     """One g(E), every temperature: <E>(T) = -J S^2 L(beta J S^2) exactly -- the same
     closed form the Metropolis sampler is pinned to in test_thermal_mc.py."""
-    res = _run()
+    res = _run(kernels=kernels)
     E, _C = res.thermodynamics([kT])
     a = J * S * S
     assert E[0] == pytest.approx(-a * _L(a / kT) / 2.0, abs=0.01)
 
 
-def test_one_run_covers_every_temperature():
+def test_one_run_covers_every_temperature(kernels):
     """The whole point of Wang-Landau. Reconstructing a T sweep must need no further
     sampling, and must agree with the exact curve across it."""
-    res = _run()
+    res = _run(kernels=kernels)
     temps = np.array([0.3, 0.5, 0.9, 1.4, 2.2, 4.0])
     E, C = res.thermodynamics(temps)
     a = J * S * S
@@ -91,40 +92,41 @@ def test_one_run_covers_every_temperature():
     assert np.all(C > 0), "heat capacity must be positive"
 
 
-def test_refinement_actually_ran():
+def test_refinement_actually_ran(kernels):
     """f must have been reduced many times; a run that never flattens would return a
     meaningless g(E) without complaining."""
-    res = _run()
+    res = _run(kernels=kernels)
     assert res.n_refinements >= 8
     assert res.f_final <= 1e-5
 
 
-def test_bad_window_is_refused():
+def test_bad_window_is_refused(kernels):
     H, b, N = _dimer()
     with pytest.raises(ValueError, match="e_max > e_min"):
-        wang_landau(H, b, N, S, 1.0, -1.0)
+        wang_landau(H, b, N, S, 1.0, -1.0, kernels=kernels)
     with pytest.raises(RuntimeError, match="widen the window"):
-        wang_landau(H, b, N, S, 50.0, 60.0, n_bins=10, f_final=0.5)
+        wang_landau(H, b, N, S, 50.0, 60.0, n_bins=10, f_final=0.5, kernels=kernels)
 
 
 @pytest.mark.slow
-def test_agrees_with_parallel_tempering_on_the_same_model():
+def test_agrees_with_parallel_tempering_on_the_same_model(kernels):
     """Two independent samplers, one model. Wang-Landau walks in energy space with a
     g(E)-dependent acceptance; parallel tempering walks in configuration space at
     fixed temperatures. They must land on the same <E>(T)."""
     H, b, N = _dimer()
     temps = np.array([0.5, 1.0, 2.0])
-    pt = parallel_tempering(H, b, N, S, temps, n_sweeps=20000, n_equil=5000, seed=5)
-    wl_E, _ = _run(f_final=1e-6, seed=7).thermodynamics(temps)
+    pt = parallel_tempering(H, b, N, S, temps, n_sweeps=20000, n_equil=5000, seed=5,
+                            kernels=kernels)
+    wl_E, _ = _run(f_final=1e-6, seed=7, kernels=kernels).thermodynamics(temps)
     assert wl_E == pytest.approx(pt.energy, abs=0.02)
 
 
 @pytest.mark.slow
-def test_finer_convergence_flattens_g_further():
+def test_finer_convergence_flattens_g_further(kernels):
     """A smaller final modification factor must reduce the residual error in ln g --
     if it does not, the run is converging to something other than the true g(E)."""
-    coarse = _run(f_final=1e-3, seed=3)
-    fine = _run(f_final=1e-6, seed=3)
+    coarse = _run(f_final=1e-3, seed=3, kernels=kernels)
+    fine = _run(f_final=1e-6, seed=3, kernels=kernels)
 
     def spread(res):
         lg = res.log_g[res.histogram > 0]

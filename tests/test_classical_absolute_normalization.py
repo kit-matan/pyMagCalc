@@ -47,6 +47,7 @@ import magcalc as mc
 from magcalc import classical_dynamics as cd
 from magcalc.generic_model import GenericSpinModel
 from magcalc.numerical import static_intensities
+from magcalc.kernels import make_rng
 from magcalc.thermal_mc import build_supercell, _sweep, static_correlations
 
 LAT = [[4.0, 0, 0], [0, 9.0, 0], [0, 0, 9.0]]
@@ -86,9 +87,9 @@ def _model(n_atoms=1, J=-1.0, S=1.0, field=None):
     return GenericSpinModel(copy.deepcopy(cfg))
 
 
-def _thermalized(model, L, kT, seed=0, n_sweeps=2000):
+def _thermalized(model, L, kT, seed=0, n_sweeps=2000, kernels="numpy"):
     H, b, N, S, pos = build_supercell(model, [], (L, 1, 1))
-    rng = np.random.default_rng(seed)
+    rng = make_rng(seed, kernels)       # the rng type selects the sweep kernel
     m = rng.standard_normal((N, 3))
     m *= S / np.linalg.norm(m, axis=1, keepdims=True)
     g = H @ m.ravel() + b
@@ -112,7 +113,7 @@ def _equal_time(traj, pos, qs, cross_section, n_cells):
 # --------------------------------------------------------------------------
 @pytest.mark.parametrize("n_atoms", [1, 2])
 @pytest.mark.parametrize("cross_section", ["trace", "perp"])
-def test_two_sided_integral_is_the_equal_time_correlator(n_atoms, cross_section):
+def test_two_sided_integral_is_the_equal_time_correlator(n_atoms, cross_section, kernels):
     """int dw S(q,w) == <S(q)* S(q)>/n_cells, at every q, to machine precision.
 
     This is the DEFINITION of S(q,w), so it needs no oracle and no fitted constant,
@@ -122,9 +123,9 @@ def test_two_sided_integral_is_the_equal_time_correlator(n_atoms, cross_section)
     """
     L, dt, n_t = 10, 0.02, 512
     model = _model(n_atoms)
-    H, b, S, pos, m = _thermalized(model, L, kT=0.6)
+    H, b, S, pos, m = _thermalized(model, L, kT=0.6, kernels=kernels)
     qs = np.array([[h, 0, 0] for h in (0.1, 0.3, 0.5)]) @ B_MAT
-    traj = cd.evolve(H, b, S, m, dt, n_t)
+    traj = cd.evolve(H, b, S, m, dt, n_t, kernels=kernels)
 
     e, sqw = cd.dynamical_structure_factor(traj, pos, qs, dt, cross_section,
                                            n_cells=L, two_sided=True)
@@ -133,7 +134,7 @@ def test_two_sided_integral_is_the_equal_time_correlator(n_atoms, cross_section)
                                      rel=1e-12)
 
 
-def test_free_spins_give_the_per_cell_sum_rule():
+def test_free_spins_give_the_per_cell_sum_rule(kernels):
     """N uncorrelated spins of length S on a TWO-site cell: <S^a(q) S^b(q)*> =
     N (S^2/3) delta_ab at every q, so the per-CELL S(q) is n_atoms * 2S^2/3 in
     `perp` and n_atoms * S^2 in `trace` -- twice the per-site value the estimator
@@ -148,22 +149,22 @@ def test_free_spins_give_the_per_cell_sum_rule():
     for cs, per_site in (("perp", 2 * S ** 2 / 3), ("trace", S ** 2)):
         r = static_correlations(model, [], q, kT=1.0, supercell=(6, 6, 1),
                                 n_samples=400, n_equil=300, sample_every=2,
-                                cross_section=cs, seed=3)
+                                cross_section=cs, seed=3, kernels=kernels)
         assert r.sq == pytest.approx(2 * per_site, rel=0.12)
         assert (r.sq.max() - r.sq.min()) / r.sq.mean() < 0.15   # flat in q, not just right on average
 
 
-def test_scale_is_independent_of_the_fft_grid():
+def test_scale_is_independent_of_the_fft_grid(kernels):
     """Refining the time step must not move the intensity. It used to move it
     PROPORTIONALLY: the un-normalized FFT made S(q,w) go as 1/dt, so 0.02 vs 0.005
     differed by exactly 4. Same physical trajectory length, two samplings of it.
     """
     L, model = 12, _model(1)
-    H, b, S, pos, m = _thermalized(model, L, kT=0.6)
+    H, b, S, pos, m = _thermalized(model, L, kT=0.6, kernels=kernels)
     qs = np.array([[h, 0, 0] for h in (0.15, 0.35)]) @ B_MAT
     out = []
     for dt, n_t in ((0.02, 1024), (0.005, 4096)):        # both span t = 20.48
-        traj = cd.evolve(H, b, S, m.copy(), dt, n_t)
+        traj = cd.evolve(H, b, S, m.copy(), dt, n_t, kernels=kernels)
         e, sqw = cd.dynamical_structure_factor(traj, pos, qs, dt, "trace",
                                                n_cells=L, two_sided=True)
         out.append(sqw.sum(axis=0) * (e[1] - e[0]))
@@ -183,7 +184,7 @@ def test_n_cells_has_no_default():
         cd.dynamical_structure_factor(traj, pos, q, 0.02, "trace", n_cells=0)
 
 
-def test_the_two_classical_estimators_agree():
+def test_the_two_classical_estimators_agree(kernels):
     """The instantaneous estimator and the frequency integral of the dynamical one
     are the same quantity computed two ways -- different sampler, different code
     path, same normalization. Reconciling the scale means these agree; before the
@@ -193,24 +194,27 @@ def test_the_two_classical_estimators_agree():
     qs = np.array([[h, 0, 0] for h in (0.2, 0.4)]) @ B_MAT
     stat = static_correlations(model, [], qs, kT=kT, supercell=(L, 1, 1),
                                n_samples=600, n_equil=2000, sample_every=4,
-                               cross_section="trace", seed=5).sq
+                               cross_section="trace", seed=5, kernels=kernels).sq
 
+    # 16 trajectories, not 8: with 8 the q = 0.4 estimate scatters by ~10 %, the
+    # tolerance itself, and a different random stream (the Rust kernels, 2026-10-26)
+    # missed it by 1e-5. With 64 trajectories the two kernels agree to 0.5 %.
     acc = None
-    for seed in range(8):
-        H, b, S, pos, m = _thermalized(model, L, kT, seed=seed)
-        traj = cd.evolve(H, b, S, m, 0.02, 1024)
+    for seed in range(16):
+        H, b, S, pos, m = _thermalized(model, L, kT, seed=seed, kernels=kernels)
+        traj = cd.evolve(H, b, S, m, 0.02, 1024, kernels=kernels)
         e, sqw = cd.dynamical_structure_factor(traj, pos, qs, 0.02, "trace",
                                                n_cells=L, two_sided=True)
         tot = sqw.sum(axis=0) * (e[1] - e[0])
         acc = tot if acc is None else acc + tot
-    assert acc / 8 == pytest.approx(stat, rel=0.10)
+    assert acc / 16 == pytest.approx(stat, rel=0.10)
 
 
 # --------------------------------------------------------------------------
 # 2. The reconciliation with LSWT / Sunny
 # --------------------------------------------------------------------------
 @pytest.mark.slow
-def test_low_T_ferromagnet_matches_the_lswt_absolute_intensity():
+def test_low_T_ferromagnet_matches_the_lswt_absolute_intensity(kernels):
     """The item's actual question: is the corrected classical S(q,w) on the SAME
     absolute scale as LSWT? Yes, to ~2 %.
 
@@ -241,9 +245,24 @@ def test_low_T_ferromagnet_matches_the_lswt_absolute_intensity():
     lswt = np.real(res_l.intensities).sum(axis=1)
     assert lswt == pytest.approx(0.5, abs=1e-9)     # S/2: perp keeps one transverse channel
 
+    # TWO settings, and the Rust one is the real check (measured 2026-10-26 while
+    # wiring the K1 kernels, whose stream at seed 1 failed the historical setting):
+    #  * 3000 uniform sweeps at kT = 0.005 leave the ensemble 12 % ABOVE equipartition
+    #    (<E - E0> = 0.180 against N kT = 0.160, identically under NumPy and Rust;
+    #    30 000 sweeps give 0.160), and 128 trajectories carry ~9 % per-q scatter
+    #    (each mode's thermal energy is exponentially distributed and a trajectory
+    #    conserves it). At that setting the converged ratio is 1.077 (1024 Rust
+    #    trajectories) and the NumPy pass at seed 1 (mean 1.015) is a kind draw.
+    #  * Thermalized (30 000 sweeps) and averaged over 512 trajectories the ratio is
+    #    0.95, per q 0.92-1.00: the finite-T classical residue, inside the
+    #    tolerances below with margin. That costs seconds under `rust`.
+    # The NumPy parametrization keeps the historical, marginal setting because the
+    # thermalized one would be ~30 min of Python; its 128 trajectories are not to
+    # be trimmed further.
+    n_traj, therm = (128, 3000) if kernels == "numpy" else (512, 30000)
     res = cd.sampled_correlations(model, params, qs, kT, supercell=(L, 1, 1),
-                                  dt=0.02, n_steps=4096, n_traj=128,
-                                  therm_sweeps=3000, seed=1)
+                                  dt=0.02, n_steps=4096, n_traj=n_traj,
+                                  therm_sweeps=therm, seed=1, kernels=kernels)
     e, dE = res.energies, res.energies[1] - res.energies[0]
     got = np.empty(len(hs))
     for i in range(len(hs)):
