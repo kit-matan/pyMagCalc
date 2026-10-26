@@ -35,7 +35,7 @@ NN = [(["A", "B"], [0, 0, 0]), (["B", "A"], [0, 0, 0]),
 HS = (0.13, 0.31, 0.5)
 
 
-def _model(S, interactions):
+def _model(S, interactions, kernels="numpy"):
     atoms = [{"label": "A", "pos": [0.0, 0, 0], "spin_S": S},
              {"label": "B", "pos": [0.5, 0, 0], "spin_S": S}]
     cfg = {"crystal_structure": {"lattice_vectors": LAT, "atoms_uc": atoms},
@@ -44,7 +44,8 @@ def _model(S, interactions):
            "magnetic_structure": {"type": "pattern", "pattern_type": "generic",
                                   "directions": [[0, 0, 1], [0, 0, -1]]},
            "calculation": {"mode": "SUN"}, "tasks": {}}
-    return SUNModel.from_generic_model(GenericSpinModel(copy.deepcopy(cfg)), params=[])
+    return SUNModel.from_generic_model(GenericSpinModel(copy.deepcopy(cfg)), params=[],
+                                       kernels=kernels)
 
 
 def _bands(mdl):
@@ -107,7 +108,7 @@ def test_decomposition_rejects_a_non_hermitian_operator():
 # Internal identity: the general path must reproduce the dedicated one
 # --------------------------------------------------------------------------
 @pytest.mark.parametrize("S", [1.0, 1.5])
-def test_biquadratic_via_the_general_path_matches_the_dedicated_one(S):
+def test_biquadratic_via_the_general_path_matches_the_dedicated_one(S, kernels):
     """THE load-bearing check. `poly: [0, J, B]` is J(Si.Sj) + B(Si.Sj)^2, which is
     exactly what `heisenberg` + `biquadratic` build by a completely different route
     (9 hardcoded S^a S^b products vs a Schmidt decomposition). Energies and every
@@ -115,10 +116,11 @@ def test_biquadratic_via_the_general_path_matches_the_dedicated_one(S):
     J, B = 1.0, -0.4
     dedicated = _model(S, {
         "heisenberg": [{"pair": p, "rij_offset": o, "value": J} for p, o in NN],
-        "biquadratic": [{"pair": p, "rij_offset": o, "value": B} for p, o in NN]})
+        "biquadratic": [{"pair": p, "rij_offset": o, "value": B} for p, o in NN]},
+        kernels)
     general = _model(S, {
         "pair_operator": [{"pair": p, "rij_offset": o, "poly": [0.0, J, B]}
-                          for p, o in NN]})
+                          for p, o in NN]}, kernels)
     assert general.energy_per_site() == pytest.approx(dedicated.energy_per_site(),
                                                       abs=1e-12)
     assert _bands(general) == pytest.approx(_bands(dedicated), abs=1e-10)
@@ -133,15 +135,16 @@ def test_operator_registry_is_deduplicated():
     assert mdl.n_ops <= 24
 
 
-def test_explicit_matrix_and_poly_agree():
+def test_explicit_matrix_and_poly_agree(kernels):
     """The two config spellings of the same operator must give the same model."""
     S = 1.0
     d = dot_product_operator(S, S)
     mat = (1.0 * d - 0.4 * (d @ d)).real.tolist()
     a = _model(S, {"pair_operator": [{"pair": p, "rij_offset": o,
-                                      "poly": [0.0, 1.0, -0.4]} for p, o in NN]})
+                                      "poly": [0.0, 1.0, -0.4]} for p, o in NN]},
+               kernels)
     b = _model(S, {"pair_operator": [{"pair": p, "rij_offset": o, "matrix": mat}
-                                     for p, o in NN]})
+                                     for p, o in NN]}, kernels)
     assert _bands(b) == pytest.approx(_bands(a), abs=1e-10)
 
 
@@ -171,7 +174,7 @@ SUNNY_PAIR_OP = {
 
 
 @pytest.mark.parametrize("key", sorted(SUNNY_PAIR_OP))
-def test_cubic_polynomial_coupling_matches_sunny(key):
+def test_cubic_polynomial_coupling_matches_sunny(key, kernels):
     """A coupling with no dedicated path on either side: c1(Si.Sj) + c2(Si.Sj)^2 +
     c3(Si.Sj)^3. All three coefficient sets keep the Neel state a genuine energy
     minimum -- Sunny refuses to compute the ones that do not, which is how the
@@ -179,7 +182,8 @@ def test_cubic_polynomial_coupling_matches_sunny(key):
     S, c1, c2, c3 = key
     ref = SUNNY_PAIR_OP[key]
     mdl = _model(S, {"pair_operator": [{"pair": p, "rij_offset": o,
-                                        "poly": [0.0, c1, c2, c3]} for p, o in NN]})
+                                        "poly": [0.0, c1, c2, c3]} for p, o in NN]},
+                 kernels)
     assert mdl.energy_per_site() == pytest.approx(ref["E"], abs=1e-9)
     assert _bands(mdl) == pytest.approx(np.array(ref["bands"]), abs=2e-6)
 

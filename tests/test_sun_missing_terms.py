@@ -52,12 +52,13 @@ def _qs():
     return [np.array([h, 0, 0]) @ B for h in HS]
 
 
-def _model(cfg):
-    return SUNModel.from_generic_model(GenericSpinModel(copy.deepcopy(cfg)), params=[])
+def _model(cfg, kernels="numpy"):
+    return SUNModel.from_generic_model(GenericSpinModel(copy.deepcopy(cfg)), params=[],
+                                       kernels=kernels)
 
 
-def _bands(cfg):
-    mdl = _model(cfg)
+def _bands(cfg, kernels="numpy"):
+    mdl = _model(cfg, kernels)
     return np.sort(np.array([np.sort(np.real(mdl.dispersion(q)))
                              for q in _qs()]), axis=1)
 
@@ -93,33 +94,33 @@ SUNNY_BIQUAD = {
 
 
 @pytest.mark.parametrize("key", sorted(SUNNY_BIQUAD))
-def test_sun_biquadratic_matches_sunny(key):
+def test_sun_biquadratic_matches_sunny(key, kernels):
     """(S_i.S_j)^2 expanded as sum_ab (S_i^a S_i^b)(S_j^a S_j^b): every band AND
     the classical energy, for S = 1 and S = 3/2, at both signs of B."""
     two_s, B = key
     E_ref, bands_ref = SUNNY_BIQUAD[key]
     cfg = _cfg(S=two_s / 2.0, B=B)
-    mdl = _model(cfg)
+    mdl = _model(cfg, kernels)
     assert mdl.energy_per_site() == pytest.approx(E_ref, abs=1e-9)
     got = np.sort(np.array([np.sort(np.real(mdl.dispersion(q)))
                             for q in _qs()]), axis=1)
     assert got == pytest.approx(np.array(bands_ref), abs=1e-6)
 
 
-def test_biquadratic_is_exactly_a_heisenberg_shift_at_spin_half():
+def test_biquadratic_is_exactly_a_heisenberg_shift_at_spin_half(kernels):
     """Operator identity: for S = 1/2, (S_i.S_j)^2 = 3/16 - (1/2) S_i.S_j, so a
     biquadratic B is indistinguishable from J -> J - B/2. Fails loudly on any
     factor, sign or normalization slip, and needs no oracle at all."""
-    with_biq = _bands(_cfg(S=0.5, J=1.0, B=0.6))
-    equivalent = _bands(_cfg(S=0.5, J=1.0 - 0.3, B=None))
+    with_biq = _bands(_cfg(S=0.5, J=1.0, B=0.6), kernels)
+    equivalent = _bands(_cfg(S=0.5, J=1.0 - 0.3, B=None), kernels)
     assert with_biq == pytest.approx(equivalent, abs=1e-12)
 
 
-def test_biquadratic_actually_changes_the_spectrum():
+def test_biquadratic_actually_changes_the_spectrum(kernels):
     """The original bug, stated directly: adding the term must not be a no-op.
     (It was: max|dE| was exactly 0.0.)"""
-    plain = _bands(_cfg(S=1.0))
-    biq = _bands(_cfg(S=1.0, B=-0.4))
+    plain = _bands(_cfg(S=1.0), kernels)
+    biq = _bands(_cfg(S=1.0, B=-0.4), kernels)
     assert np.abs(biq - plain).max() > 0.1
 
 
@@ -130,7 +131,7 @@ def test_plain_sun_model_keeps_three_operators():
     assert _model(_cfg(S=1.0, B=-0.4)).n_ops == 12
 
 
-def test_sun_biquadratic_intensities_match_sunny():
+def test_sun_biquadratic_intensities_match_sunny(kernels):
     """Not just the energies: the one-magnon weights too, against Sunny `:SUN`
     with `ssf_perp(sys; apply_g=false)` at q = 0.13, 0.31, 0.45. Compared as the
     per-q TOTAL, because both magnons are degenerate here and the two codes split
@@ -140,7 +141,7 @@ def test_sun_biquadratic_intensities_match_sunny():
           for h in (0.13, 0.31, 0.45)]
     sunny_total = np.array([0.2070900, 0.5294730, 0.8540800])
     for B in (None, -0.4):
-        mdl = _model(_cfg(S=1.0, B=B))
+        mdl = _model(_cfg(S=1.0, B=B), kernels)
         got = np.array([np.real(mdl.structure_factor(q, cross_section="perp")[1]).sum()
                         for q in qs])
         assert got == pytest.approx(sunny_total, abs=1e-5), f"B={B}: {got}"
@@ -168,14 +169,14 @@ def test_sun_refuses_ewald_dipole_dipole():
         _model(_cfg(S=1.0, extra_inter=EWALD))
 
 
-def test_sun_accepts_truncated_dipole_dipole():
+def test_sun_accepts_truncated_dipole_dipole(kernels):
     """`truncated` expands into ordinary bond matrices upstream, which this engine
     DOES read -- so it must not be swept up by the guard, and it must matter."""
     cfg = _cfg(S=1.0, extra_inter={"dipole_dipole": {"method": "truncated",
                                                      "cutoff": 12.0}})
     for a in cfg["crystal_structure"]["atoms_uc"]:
         a["g"] = 2.0
-    assert np.abs(_bands(cfg) - _bands(_cfg(S=1.0))).max() > 1e-6
+    assert np.abs(_bands(cfg, kernels) - _bands(_cfg(S=1.0), kernels)).max() > 1e-6
 
 
 def _entangled_cfg(**kw):

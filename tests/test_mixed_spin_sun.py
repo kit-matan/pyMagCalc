@@ -56,7 +56,7 @@ def _cfg(spins, couple_ab):
             "calculation": {"mode": "SUN"}, "tasks": {}}
 
 
-def _single(S, J, tag):
+def _single(S, J, tag, kernels="numpy"):
     """One AFM chain on its own, in the same cell geometry."""
     atoms = [{"label": "A0", "pos": [0.0, 0.0, 0.0], "spin_S": S},
              {"label": "A1", "pos": [0.5, 0.0, 0.0], "spin_S": S}]
@@ -69,11 +69,13 @@ def _single(S, J, tag):
            "magnetic_structure": {"type": "pattern", "pattern_type": "generic",
                                   "directions": [[0, 0, 1], [0, 0, -1]]},
            "calculation": {"mode": "SUN"}, "tasks": {}}
-    return SUNModel.from_generic_model(GenericSpinModel(copy.deepcopy(cfg)), params=[])
+    return SUNModel.from_generic_model(GenericSpinModel(copy.deepcopy(cfg)), params=[],
+                                       kernels=kernels)
 
 
-def _build(cfg):
-    return SUNModel.from_generic_model(GenericSpinModel(copy.deepcopy(cfg)), params=[])
+def _build(cfg, kernels="numpy"):
+    return SUNModel.from_generic_model(GenericSpinModel(copy.deepcopy(cfg)), params=[],
+                                       kernels=kernels)
 
 
 def _qs():
@@ -127,12 +129,12 @@ def _merge_sqw(a, b, tol=1e-6):
 
 
 @pytest.mark.parametrize("spins", [(1.0, 1.0), (0.5, 1.0), (1.0, 1.5), (0.5, 1.5)])
-def test_decoupled_sublattices_are_the_union_of_two_independent_problems(spins):
+def test_decoupled_sublattices_are_the_union_of_two_independent_problems(spins, kernels):
     """The load-bearing identity. Equal spins exercised the old code path too; the
     unequal ones are what #24a adds."""
-    both = _build(_cfg(spins, couple_ab=False))
-    a = _single(spins[0], 1.0, "a")
-    b = _single(spins[1], 0.7, "b")
+    both = _build(_cfg(spins, couple_ab=False), kernels)
+    a = _single(spins[0], 1.0, "a", kernels)
+    b = _single(spins[1], 0.7, "b", kernels)
 
     assert both.energy_per_site() == pytest.approx(
         0.5 * (a.energy_per_site() + b.energy_per_site()), abs=1e-10)
@@ -143,40 +145,40 @@ def test_decoupled_sublattices_are_the_union_of_two_independent_problems(spins):
 
 
 @pytest.mark.parametrize("spins", [(1.0, 1.0), (0.5, 1.5)])
-def test_decoupled_sublattice_intensities_also_add(spins):
+def test_decoupled_sublattice_intensities_also_add(spins, kernels):
     """Energies alone would not catch a per-site normalization slip -- the mixed-spin
     prefactor bug in the dipole engine was exactly that, and it was a 60% error."""
-    both = _build(_cfg(spins, couple_ab=False))
-    a = _single(spins[0], 1.0, "a")
-    b = _single(spins[1], 0.7, "b")
+    both = _build(_cfg(spins, couple_ab=False), kernels)
+    a = _single(spins[0], 1.0, "a", kernels)
+    b = _single(spins[1], 0.7, "b", kernels)
     got = _sqw(both)
     want = _merge_sqw(_sqw(a), _sqw(b))
     assert [len(g) for g in got] == [len(g) for g in want]
     assert np.array(got) == pytest.approx(np.array(want), abs=1e-8)
 
 
-def test_mixed_spin_model_builds_and_has_per_site_boson_counts():
+def test_mixed_spin_model_builds_and_has_per_site_boson_counts(kernels):
     """S = 1/2 gives 1 boson, S = 1 gives 2, S = 3/2 gives 3 -- the whole point."""
-    mdl = _build(_cfg((0.5, 1.5), couple_ab=False))
+    mdl = _build(_cfg((0.5, 1.5), couple_ab=False), kernels)
     assert sorted(mdl.Ns) == [2, 2, 4, 4]
     assert sorted(mdl.Ms) == [1, 1, 3, 3]
     assert mdl.D == sum(mdl.Ms)
     assert len(_bands(mdl)[0]) == mdl.D
 
 
-def test_coupled_mixed_spin_chain_is_not_just_the_decoupled_answer():
+def test_coupled_mixed_spin_chain_is_not_just_the_decoupled_answer(kernels):
     """Guards the guard: if the interchain bond were silently dropped, the identity
     test above would pass for the wrong reason."""
-    dec = _bands(_build(_cfg((0.5, 1.5), couple_ab=False)))
-    cou = _bands(_build(_cfg((0.5, 1.5), couple_ab=True)))
+    dec = _bands(_build(_cfg((0.5, 1.5), couple_ab=False), kernels))
+    cou = _bands(_build(_cfg((0.5, 1.5), couple_ab=True), kernels))
     assert np.abs(cou - dec).max() > 1e-3
 
 
-def test_uniform_spin_models_are_bit_identical_to_before():
+def test_uniform_spin_models_are_bit_identical_to_before(kernels):
     """The refactor must be inert where it does not apply: a uniform-S model must
     give exactly what the uniform-N code gave (these values come from the
     Sunny-pinned Neel chain in test_sun_missing_terms.py)."""
-    mdl = _single(1.0, 1.0, "u")
+    mdl = _single(1.0, 1.0, "u", kernels)
     assert mdl.energy_per_site() == pytest.approx(-1.0, abs=1e-12)
     b = _bands(mdl)
     assert b[0] == pytest.approx([0.7942958, 0.7942958, 4.0, 4.0], abs=1e-6)

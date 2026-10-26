@@ -12,6 +12,9 @@ golden number:
     disorder + KPM half of that tutorial live in
     tests/test_s09_disorder_kpm.py.
 
+`config_supercell.yaml` is also run here in SU(N) mode, under both kernel sets,
+against the same closed form folded into the sqrt3 x sqrt3 cell.
+
 The other three ported configs are pinned in their own suites and are only
 schema-checked here:
   * S01 CoRh2O4  -- Neel energy -2 J s^2 (verified in the tutorial README);
@@ -110,6 +113,45 @@ def test_S09_triangular_120_matches_analytic_max_and_is_gapless_at_K():
     w_max_analytic = 3 * 1.0 * 0.5 * np.sqrt(9 / 8)     # = 1.59099
     assert abs(w[:-1].max() - w_max_analytic) < 5e-3, f"{w[:-1].max()} vs {w_max_analytic}"
     assert w[-1] < 1e-3, f"not gapless at K: {w[-1]}"    # Goldstone at K
+
+def test_S09_supercell_in_SUN_mode_is_the_exact_120_degree_spectrum(kernels):
+    """S09's SU(N) half, through the runner's own SU(N) calculator and the shipped
+    `config_supercell.yaml`: the CP^(N-1) search must land on the exact 120-degree
+    energy -0.375 meV/site, and the three folded bands at a chemical q must be the
+    closed form {w(q-k), w(q), w(q+k)}, w = 3 J S sqrt[(1-g)(1+2g)], under both
+    kernel sets (rsMagCalc K3 carries the H(q) build and the eigenvalues). K is
+    the ordering wavevector, so a Goldstone zero must sit there exactly.
+
+    The q are off the 1/3 grid: a q on it folds onto Gamma of the supercell, where
+    the exact zero is legitimate but the oracle formula's sqrt is at its kink."""
+    from magcalc.sun.adapter import SUNCalculator
+    cfg = _load("S09b")
+    m = GenericSpinModel(cfg)
+    pv = [cfg["parameters"][k] for k in cfg["parameter_order"]]
+    calc = SUNCalculator(m, cfg, pv, kernels=kernels)
+    assert calc.model.kernels == kernels
+    assert abs(calc.model.energy_per_site() + 0.375) < 1e-10
+
+    L = _lattice_from_params(cfg["crystal_structure"]["lattice_parameters"])
+    B = 2 * np.pi * np.linalg.inv(L).T
+    k120 = np.array([1 / 3, 1 / 3, 0.0])
+
+    def w_exact(q_rlu):
+        q = np.asarray(q_rlu, float) @ B
+        g = (np.cos(q @ L[0]) + np.cos(q @ L[1]) + np.cos(q @ (L[0] + L[1]))) / 3
+        return 1.5 * np.sqrt(max((1 - g) * (1 + 2 * g), 0.0))
+
+    qs = np.array([[0.2, 0.1, 0], [0.37, -0.11, 0], [0.13, 0.29, 0], [0.44, 0.07, 0]])
+    got = np.sort(np.real(calc.calculate_dispersion(qs @ B).energies), axis=1)
+    for q, row in zip(qs, got):
+        ref = np.sort([w_exact(q - k120), w_exact(q), w_exact(q + k120)])
+        assert np.allclose(row, ref, atol=1e-9), f"q={q}: {row} vs {ref}"
+    at_k = np.real(calc.calculate_dispersion([k120 @ B]).energies[0])
+    assert at_k.min() < 1e-6, f"no Goldstone zero at K: {at_k}"
+    # and the guard verdicts the SU(N) path runs agree at those q
+    rep = calc.model.assert_stable(qs @ B)
+    assert rep["stable"] and rep["n_checked"] == len(qs)
+
 
 # ---------------------------------------------------------------------------
 # S01: pinned to Sunny 0.8.1, band by band. The README claimed this was

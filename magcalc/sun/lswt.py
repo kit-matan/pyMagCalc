@@ -38,6 +38,7 @@ from itertools import product as _product
 import numpy as np
 
 from ..constants import GAMMA_ELECTRON as _GAMMA, MU_B as _MU_B
+from ..kernels import fell_back, rust_for, rust_module
 from .operators import (coherent_from_direction, local_basis, spin_matrices,
                         stevens_matrices)
 
@@ -134,8 +135,16 @@ class SUNModel:
         onsite: Optional[Sequence[Tuple[int, np.ndarray]]] = None,
         operators: Optional[Sequence[Sequence[np.ndarray]]] = None,
         moment_terms: Optional[Sequence[Sequence[Tuple[np.ndarray, Sequence[int]]]]] = None,
+        kernels: str = "numpy",
+        n_workers: Optional[int] = None,
     ):
         """
+        `kernels` selects the compiled LSWT kernels (`calculation.kernels`: "numpy"
+        or "rust", rsMagCalc K3) for `hamiltonian`, `dispersion`, `_bogoliubov`,
+        `structure_factor` and the stability guard; every call falls back to NumPy
+        on failure, logging it. `n_workers` sizes the kernel's thread pool over q
+        (None = every core); ignored under "numpy".
+
         By default each site carries the 3 dipole operators `spin_matrices(S)` and a bond's
         matrix `J` couples them (S_i^a J_ab S_j^b) -- ordinary SU(N).
 
@@ -190,15 +199,19 @@ class SUNModel:
         else:
             self.moment_terms = [[(np.asarray(d, float), tuple(int(x) for x in idx))
                                   for (d, idx) in ml] for ml in moment_terms]
+        self.kernels = str(kernels)
+        self.n_workers = None if n_workers is None else int(n_workers)
         self._prepare()
 
     # ---------------------------------------------------------------- setup
     @classmethod
-    def from_directions(cls, spins, directions, bonds, onsite=None, operators=None):
+    def from_directions(cls, spins, directions, bonds, onsite=None, operators=None,
+                        kernels="numpy", n_workers=None):
         """Reference state = the spin coherent state pointing along `directions` -- the
         SU(N) state that corresponds to the classical dipole."""
         Z = [coherent_from_direction(s, d) for s, d in zip(spins, directions)]
-        return cls(spins, Z, bonds, onsite, operators=operators)
+        return cls(spins, Z, bonds, onsite, operators=operators, kernels=kernels,
+                   n_workers=n_workers)
 
     def _prepare(self):
         """Rotate every local operator into the |Z> basis and cache the pieces."""
@@ -207,6 +220,9 @@ class SUNModel:
         # bonds, both of which this rebuilds -- and `apply_bond_disorder` /
         # `minimize_energy` end here, so this is where a stale one would come from.
         self._h2_scale_ref = None
+        # The packed copy of these tables held by the compiled kernels (`_rust`)
+        # is rebuilt on the next call for the same reason.
+        self._rs = None
         # Per-site (ragged) rather than one rectangular array: M_i varies with S_i.
         self.s0 = np.zeros((L, nop), dtype=complex)        # <Z|O^p|Z>
         self.t = [np.zeros((nop, m), dtype=complex) for m in self.Ms]   # <0|O^p|m>
@@ -250,9 +266,114 @@ class SUNModel:
             E += float(np.real(Z.conj() @ A @ Z))
         return E
 
+    # ------------------------------------------------------ compiled kernels
+    #
+    # rsMagCalc K3 (`calculation: {kernels: rust}`) carries the per-q hot path of
+    # this class: the H(q) assembly (a Python loop over bonds x n_ops^2 with an
+    # `np.outer` per term, 47 ms/q on FeI2's 152-bond cell and 620 ms/q at S09's
+    # L = 30), the Colpa diagonalization, the one-magnon correlation tensors, the
+    # general eigenvalues `dispersion` / `max_imaginary` reduce, and the shifted
+    # Cholesky of the stability guard -- each over a BATCH of q, in parallel. The
+    # contract is fMagCalc's: a kernel that raises is logged (`kernels.fell_back`)
+    # and the NumPy code below answers; the NumPy code is also the parity
+    # reference (rsMagCalc/tests/test_sun_lswt_parity.py, H(q) to 1e-13, energies
+    # and intensities to 1e-10) and every oracle test runs under both through the
+    # `kernels` fixture. The cross-section contraction and the form factor stay
+    # here so that every engine shares ONE `contract_cross_section`.
+    def _rust(self):
+        """The rsmagcalc `SunModel` packed from this reference state, or None.
+
+        Rebuilt after every `_prepare` (which rebuilds the tables it packs) and
+        when the bond / on-site / operator lists are replaced (the `(id, len)` key
+        `sun.dynamics._fast` uses), so a relaxation, a disorder draw or a test
+        that swaps `model.bonds` never runs a stale Hamiltonian.
+        """
+        rs = rust_for(getattr(self, "kernels", "numpy"))
+        if rs is None:
+            return None
+        key = tuple((id(x), len(x)) for x in (self.bonds, self.onsite, self.ops))
+        cache = getattr(self, "_rs", None)
+        if cache is not None and cache[0] == key:
+            return cache[1]
+        try:
+            packed = rs.SunModel(self.Ms, self.s0, self.t, self.tb, self.Q, self.QA,
+                                 self.bonds, self.moment_terms,
+                                 n_cells=getattr(self, "n_cells", 1))
+        except Exception:
+            fell_back("SunModel packing")
+            packed = None
+        self._rs = (key, packed)
+        return packed
+
+    def __getstate__(self):
+        """Copy / pickle without the packed kernel model (a compiled object that
+        does not pickle); it is rebuilt from the tables on first use."""
+        state = self.__dict__.copy()
+        state["_rs"] = None
+        return state
+
+    @staticmethod
+    def _is_not_positive_definite(exc) -> bool:
+        """Did the kernel refuse the Cholesky? That is the NumPy path's
+        `LinAlgError`, not a kernel failure to fall back from."""
+        mod = rust_module()
+        return mod is not None and isinstance(exc, mod.NotPositiveDefinite)
+
+    _NOT_PD_MSG = ("SU(N) H(q) is not positive definite: the reference state is not a "
+                   "minimum (imaginary magnons). Minimise first.")
+
+    @staticmethod
+    def _qs(qs_cart) -> np.ndarray:
+        return np.asarray(qs_cart, dtype=float).reshape(-1, 3)
+
+    def hamiltonians(self, qs_cart) -> np.ndarray:
+        """g H2(q) for every q in `qs_cart`: (nq, 2D, 2D)."""
+        qs = self._qs(qs_cart)
+        rs = self._rust()
+        if rs is not None:
+            try:
+                return rs.hamiltonians(qs, n_workers=self.n_workers)
+            except Exception:
+                fell_back("sun hamiltonians")
+        if not len(qs):
+            return np.zeros((0, 2 * self.D, 2 * self.D), dtype=complex)
+        return np.array([self._hamiltonian_numpy(q) for q in qs])
+
+    def eigenvalues(self, qs_cart) -> np.ndarray:
+        """All 2D eigenvalues of g H2(q) per q, unsorted and complex: (nq, 2D).
+        What `dispersion`, `max_imaginary` and the adapters' `stability_report`
+        reduce -- the general eigenproblem, deliberately: unlike the Colpa route it
+        answers about a NON-minimum too, which is what the imaginary-mode guard
+        needs to see."""
+        qs = self._qs(qs_cart)
+        rs = self._rust()
+        if rs is not None:
+            try:
+                return rs.eigenvalues(qs, n_workers=self.n_workers)
+            except Exception:
+                fell_back("sun eigenvalues")
+        if not len(qs):
+            return np.zeros((0, 2 * self.D), dtype=complex)
+        return np.array([np.linalg.eigvals(self.hamiltonian(q)) for q in qs])
+
+    def dispersion_batch(self, qs_cart) -> np.ndarray:
+        """`dispersion` over a batch: (nq, D), ascending per q."""
+        ev = self.eigenvalues(qs_cart)
+        return np.sort(np.real(ev), axis=1)[:, self.D:]
+
     # ---------------------------------------------------------------- H(q)
     def hamiltonian(self, q_cart: np.ndarray) -> np.ndarray:
         """g * H2(q), shape (2D, 2D) with D = sum_i M_i. +/- omega pairs."""
+        rs = self._rust()
+        if rs is not None:
+            try:
+                return rs.hamiltonians(self._qs(q_cart), n_workers=self.n_workers)[0]
+            except Exception:
+                fell_back("sun hamiltonian")
+        return self._hamiltonian_numpy(q_cart)
+
+    def _hamiltonian_numpy(self, q_cart: np.ndarray) -> np.ndarray:
+        """The NumPy assembly -- the kernel's parity reference."""
         L, offs = self.L, self.offs
         D = self.D
         H11 = np.zeros((D, D), dtype=complex)
@@ -296,11 +417,11 @@ class SUNModel:
 
     def dispersion(self, q_cart: np.ndarray) -> np.ndarray:
         """The D = sum_i M_i positive magnon energies at q (ascending)."""
-        ev = np.linalg.eigvals(self.hamiltonian(q_cart))
+        ev = self.eigenvalues(q_cart)[0]
         return np.sort(np.real(ev))[self.D:]
 
     def max_imaginary(self, q_cart: np.ndarray) -> float:
-        ev = np.linalg.eigvals(self.hamiltonian(q_cart))
+        ev = self.eigenvalues(q_cart)[0]
         return float(np.max(np.abs(np.imag(ev))))
 
     # -------------------------------------------------- the H2 >= 0 stability check
@@ -410,6 +531,15 @@ class SUNModel:
 
         the last of which is Sunny's own tutorial setting, and is genuinely unstable.
         """
+        if hmat is None and h2 is None:
+            rs = self._rust()
+            if rs is not None:
+                try:
+                    shift = float(rel_tol) * self._reference_h2_scale()
+                    return bool(rs.stable(self._qs(q_cart), shift,
+                                          n_workers=self.n_workers)[0])
+                except Exception:
+                    fell_back("sun is_stable_at")
         # `h2_matrix` hands back a fresh array, so the shift goes in place -- at
         # 2D = 1800 an avoidable copy of H2 is 50 MB, and this runs at every q. A
         # caller-supplied `h2` is copied, since it is not ours to modify.
@@ -479,11 +609,22 @@ class SUNModel:
             raise ValueError(f"on_failure must be 'error', 'warn' or 'off', "
                              f"got {on_failure!r}.")
         qs = np.asarray(qs_cart, float).reshape(-1, 3)
-        bad = []
-        for iq, q in enumerate(qs):
-            hm = None if hmats is None else hmats[iq]
-            if not self.is_stable_at(q, rel_tol=rel_tol, hmat=hm):
-                bad.append(iq)
+        bad = None
+        if hmats is None and len(qs):
+            rs = self._rust()
+            if rs is not None:
+                try:
+                    shift = float(rel_tol) * self._reference_h2_scale()
+                    mask = rs.stable(qs, shift, n_workers=self.n_workers)
+                    bad = [int(k) for k in np.flatnonzero(~np.asarray(mask, bool))]
+                except Exception:
+                    fell_back("sun assert_stable")
+        if bad is None:
+            bad = []
+            for iq, q in enumerate(qs):
+                hm = None if hmats is None else hmats[iq]
+                if not self.is_stable_at(q, rel_tol=rel_tol, hmat=hm):
+                    bad.append(iq)
         report = {"stable": not bad, "n_checked": len(qs), "n_unstable": len(bad),
                   "q_worst": None, "min_eig": 0.0, "rel_tol": float(rel_tol)}
         if not bad:
@@ -577,7 +718,8 @@ class SUNModel:
                 np.array(new_pos))
 
     @classmethod
-    def from_generic_model(cls, model, params=None, directions=None, supercell=None):
+    def from_generic_model(cls, model, params=None, directions=None, supercell=None,
+                           kernels="numpy", n_workers=None):
         """Build an SU(N) model from a pyMagCalc `GenericSpinModel`.
 
         This reuses the whole existing front end -- CIF/Wyckoff structure, space-group
@@ -821,7 +963,8 @@ class SUNModel:
                 operators.append(ops_i)
 
         mdl = cls.from_directions(spins, directions, bonds, onsite,
-                                  operators=operators)
+                                  operators=operators, kernels=kernels,
+                                  n_workers=n_workers)
         mdl.pos = _np.asarray(positions, dtype=float)
         mdl.n_cells = len(spins) // L if supercell is not None else 1
         return mdl
@@ -953,6 +1096,15 @@ class SUNModel:
     def _bogoliubov(self, q_cart):
         """Colpa diagonalisation of H(q). Returns (omega, T) with Psi = T Phi,
         Psi = (b, b^dag), Phi = (beta, beta^dag), and omega the L*M positive energies."""
+        rs = self._rust()
+        if rs is not None:
+            try:
+                w, T = rs.bogoliubov(self._qs(q_cart), n_workers=self.n_workers)
+                return w[0], T[0]
+            except Exception as exc:
+                if self._is_not_positive_definite(exc):
+                    raise np.linalg.LinAlgError(self._NOT_PD_MSG) from exc
+                fell_back("sun bogoliubov")
         D = self.D
         g = np.diag([1.0] * D + [-1.0] * D)
         H2 = g @ self.hamiltonian(q_cart)        # hamiltonian() returns g*H2
@@ -961,9 +1113,7 @@ class SUNModel:
         try:
             C = np.linalg.cholesky(H2).conj().T   # H2 = C^dag C
         except np.linalg.LinAlgError as exc:
-            raise np.linalg.LinAlgError(
-                "SU(N) H(q) is not positive definite: the reference state is not a "
-                "minimum (imaginary magnons). Minimise first.") from exc
+            raise np.linalg.LinAlgError(self._NOT_PD_MSG) from exc
 
         W = C @ g @ C.conj().T
         W = 0.5 * (W + W.conj().T)
@@ -978,6 +1128,10 @@ class SUNModel:
 
     def structure_factor(self, q_cart, ion=None, cross_section="perp"):
         """(omega, intensity) per magnon band at q.
+
+        One q of `structure_factor_batch`; the one-magnon amplitudes are
+        `one_magnon_correlations` (NumPy or the rsMagCalc kernel), the contraction
+        and the form factor are applied here for both.
 
         The one-magnon matrix element. Keeping only the LINEAR part of the spin operator,
 
@@ -1003,8 +1157,49 @@ class SUNModel:
         Because the observables here are the FULL N x N spin operators, the multipolar
         (single-ion) bands carry weight -- which is exactly what dipole LSWT cannot do.
         """
+        w, inten = self.structure_factor_batch(self._qs(q_cart), ion=ion,
+                                               cross_section=cross_section)
+        return w[0], inten[0]
+
+    def structure_factor_batch(self, qs_cart, ion=None, cross_section="perp"):
+        """`structure_factor` over a batch of q: (omega (nq, D), intensity (nq, D))."""
         from ..numerical import contract_cross_section
 
+        qs = self._qs(qs_cart)
+        w, corr = self.one_magnon_correlations(qs)
+        inten_all = np.zeros_like(w)
+        for k, q in enumerate(qs):
+            inten, clamp = contract_cross_section(corr[k], q, cross_section)
+            inten = np.real(inten)
+            if clamp:
+                inten[inten < 0] = 0.0
+            if ion:
+                from ..form_factors import get_form_factor
+                inten = inten * get_form_factor(ion, float(np.linalg.norm(q))) ** 2
+            inten_all[k] = inten
+        return w, inten_all
+
+    def one_magnon_correlations(self, qs_cart):
+        """(omega (nq, D), S^{ab}_nu (nq, 3, 3, D)): the per-band one-magnon
+        correlation tensors conj(M^a_nu) M^b_nu / n_cells, before any cross-section
+        contraction. Raises `numpy.linalg.LinAlgError` when H2(q) is not positive
+        definite at some q, under either kernel set."""
+        qs = self._qs(qs_cart)
+        rs = self._rust()
+        if rs is not None:
+            try:
+                return rs.correlations(qs, n_workers=self.n_workers)
+            except Exception as exc:
+                if self._is_not_positive_definite(exc):
+                    raise np.linalg.LinAlgError(self._NOT_PD_MSG) from exc
+                fell_back("sun one_magnon_correlations")
+        if not len(qs):
+            return np.zeros((0, self.D)), np.zeros((0, 3, 3, self.D), dtype=complex)
+        out = [self._one_magnon_correlations_numpy(q) for q in qs]
+        return np.array([o[0] for o in out]), np.array([o[1] for o in out])
+
+    def _one_magnon_correlations_numpy(self, q_cart):
+        """The NumPy one-magnon amplitudes at one q -- the kernel's parity reference."""
         D = self.D
         w, T = self._bogoliubov(q_cart)
 
@@ -1025,16 +1220,7 @@ class SUNModel:
         # replica count; on a multi-atom chemical cell it silently suppressed the
         # intensity by the atom count.)
         spin_corr = np.einsum("am,bm->abm", M.conj(), M) / getattr(self, "n_cells", 1)
-
-        inten, clamp = contract_cross_section(spin_corr, q_cart, cross_section)
-        inten = np.real(inten)
-        if clamp:
-            inten[inten < 0] = 0.0
-
-        if ion:
-            from ..form_factors import get_form_factor
-            inten = inten * get_form_factor(ion, float(np.linalg.norm(q_cart))) ** 2
-        return w, inten
+        return w, spin_corr
 
 def apply_bond_disorder(model, sigma, seed=0, kind="relative"):
     """Randomize the exchange on every bond of `model`, in place (Gap 4 #16b).

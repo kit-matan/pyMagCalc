@@ -41,10 +41,15 @@ def _supercell_from_config(cfg) -> Optional[list]:
 class SUNCalculator:
     """Quacks like MagCalc for the runner's dispersion / S(Q,w) / guard calls."""
 
-    def __init__(self, spin_model, config, hamiltonian_params=None):
+    def __init__(self, spin_model, config, hamiltonian_params=None, kernels="numpy"):
         self.sm = spin_model
         self.config = config
         self.hamiltonian_params = list(hamiltonian_params or [])
+        # `calculation.kernels` as the runner resolved it (rsMagCalc K3 carries the
+        # per-q hot path of SUNModel), and `calculation.n_workers` for its pool.
+        self.kernels = str(kernels)
+        calc_cfg = config.get("calculation", {}) or {}
+        self.n_workers = calc_cfg.get("n_workers")
 
         supercell = _supercell_from_config(config)
         min_cfg = config.get("minimization", {}) or {}
@@ -82,7 +87,8 @@ class SUNCalculator:
 
         self.model = SUNModel.from_generic_model(
             spin_model, params=self.hamiltonian_params,
-            directions=directions, supercell=supercell)
+            directions=directions, supercell=supercell,
+            kernels=self.kernels, n_workers=self.n_workers)
 
         minimize = bool((config.get("tasks", {}) or {}).get("minimization", False))
         if minimize or seeded:
@@ -147,7 +153,7 @@ class SUNCalculator:
     # -- the runner's calls -------------------------------------------------
     def calculate_dispersion(self, q_vectors, backend="numpy", satellites=None, **_):
         qs = np.asarray(q_vectors, dtype=float).reshape(-1, 3)
-        e = np.array([self.model.dispersion(q) for q in qs])
+        e = self.model.dispersion_batch(qs)
         return DispersionResult(q_vectors=qs, energies=e)
 
     def calculate_sqw(self, q_vectors, backend="numpy", satellites=None,
@@ -161,13 +167,10 @@ class SUNCalculator:
         ion = ions[0] if ions else None
 
         def _one(q_list):
-            E, I = [], []
-            for q in q_list:
-                w, inten = self.model.structure_factor(q, ion=ion,
-                                                       cross_section=cross_section)
-                E.append(w)
-                I.append(inten)
-            return np.array(E), np.array(I)
+            # One batch (rayon over q under `kernels: rust`), the same per-q
+            # contraction and form factor under both kernel sets.
+            return self.model.structure_factor_batch(q_list, ion=ion,
+                                                     cross_section=cross_section)
 
         # Twin/domain averaging: identical to the dipole engine's, because a domain
         # rotated by R is equivalent to probing at R^T q -- nothing about that is
@@ -195,11 +198,9 @@ class SUNCalculator:
             if len(extra) > 128:
                 extra = extra[np.linspace(0, len(extra) - 1, 128).astype(int)]
             qs = np.vstack([qs, extra])
-        worst = band = 0.0
-        for q in qs:
-            ev = np.linalg.eigvals(self.model.hamiltonian(q))
-            worst = max(worst, float(np.max(np.abs(np.imag(ev)))))
-            band = max(band, float(np.max(np.abs(np.real(ev)))))
+        ev = self.model.eigenvalues(qs)
+        worst = float(np.max(np.abs(np.imag(ev)))) if ev.size else 0.0
+        band = float(np.max(np.abs(np.real(ev)))) if ev.size else 0.0
         return {"max_imag": worst, "band_scale": band,
                 "relative": worst / band if band > 1e-12 else 0.0}
 
@@ -217,7 +218,7 @@ class SUNCalculator:
 
     def update_hamiltonian_params(self, p):
         self.hamiltonian_params = list(p)
-        self.__init__(self.sm, self.config, p)
+        self.__init__(self.sm, self.config, p, kernels=self.kernels)
 
 
 def _n_sites(sm, supercell):

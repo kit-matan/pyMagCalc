@@ -40,11 +40,11 @@ def _dimer_pieces(J=1.0):
     return S1, S2, A, Z
 
 
-def test_isolated_dimer_is_a_flat_triplon_at_J():
+def test_isolated_dimer_is_a_flat_triplon_at_J(kernels):
     J = 1.7
     S1, S2, A, Z = _dimer_pieces(J)
     Stot = [S1[a] + S2[a] for a in range(3)]
-    m = SUNModel(spins=[1.5], coherent_states=[Z], bonds=[], onsite=[(0, A)],
+    m = SUNModel(spins=[1.5], coherent_states=[Z], kernels=kernels, bonds=[], onsite=[(0, A)],
                  operators=[S1 + S2])
     m.pos = np.zeros((1, 3))
     for q in ([0, 0, 0], [0.4, 0, 0], [1.3, 0.7, 0]):
@@ -54,7 +54,7 @@ def test_isolated_dimer_is_a_flat_triplon_at_J():
     assert np.allclose([Z.conj() @ Stot[a] @ Z for a in range(3)], 0, atol=1e-12)
 
 
-def test_coupled_dimer_triplon_matches_bond_operator_dispersion():
+def test_coupled_dimer_triplon_matches_bond_operator_dispersion(kernels):
     """Direct construction: omega(k) = sqrt(J^2 - J J' cos k)."""
     J, Jp = 1.0, 0.3
     S1, S2, A, Z = _dimer_pieces(J)
@@ -62,20 +62,20 @@ def test_coupled_dimer_triplon_matches_bond_operator_dispersion():
     for a in range(3):
         C[3 + a, a] = Jp                            # S2(i).S1(j) at +a
     bonds = [(0, 0, np.array([1., 0, 0]), C), (0, 0, np.array([-1., 0, 0]), C.T)]
-    m = SUNModel(spins=[1.5], coherent_states=[Z], bonds=bonds, onsite=[(0, A)],
+    m = SUNModel(spins=[1.5], coherent_states=[Z], kernels=kernels, bonds=bonds, onsite=[(0, A)],
                  operators=[S1 + S2])
     for qr in np.linspace(0, 0.5, 11):
         w = np.max(np.real(m.dispersion(np.array([2 * np.pi * qr, 0, 0]))))
         assert abs(w - np.sqrt(J**2 - J * Jp * np.cos(2 * np.pi * qr))) < 1e-9
 
 
-def test_config_runner_path_reproduces_the_analytic_triplon():
+def test_config_runner_path_reproduces_the_analytic_triplon(kernels):
     """Through GenericSpinModel + build_entangled_model, from the shipped example config."""
     cfg = yaml.safe_load(open(CFG))
     J, Jp = cfg["parameters"]["J"], cfg["parameters"]["Jp"]
     m = GenericSpinModel(cfg)
     pv = [cfg["parameters"][k] for k in cfg["parameter_order"]]
-    sm = build_entangled_model(m, pv, units=[[0, 1]])
+    sm = build_entangled_model(m, pv, units=[[0, 1]], kernels=kernels)
     assert sm.L == 1 and sm.N == 4 and len(sm.bonds) == 2
     a = cfg["crystal_structure"]["lattice_vectors"][0][0]        # chain lattice const
     for qr in (0.0, 0.15, 0.3, 0.5):
@@ -83,13 +83,13 @@ def test_config_runner_path_reproduces_the_analytic_triplon():
         assert abs(w - np.sqrt(J**2 - J * Jp * np.cos(2 * np.pi * qr))) < 1e-8
 
 
-def test_dimer_structure_factor_selection_rule():
+def test_dimer_structure_factor_selection_rule(kernels):
     """Isolated dimer: intensity vanishes at q=0 and follows (1 - cos(q.d))."""
     J = 1.0
     S1, S2, A, Z = _dimer_pieces(J)
     d = 1.2
     dA, dB = np.array([-d / 2, 0, 0]), np.array([d / 2, 0, 0])
-    m = SUNModel(spins=[1.5], coherent_states=[Z], bonds=[], onsite=[(0, A)],
+    m = SUNModel(spins=[1.5], coherent_states=[Z], kernels=kernels, bonds=[], onsite=[(0, A)],
                  operators=[S1 + S2],
                  moment_terms=[[(dA, (0, 1, 2)), (dB, (3, 4, 5))]])
     m.pos = np.zeros((1, 3))
@@ -105,7 +105,7 @@ def test_dimer_structure_factor_selection_rule():
     assert np.allclose(ratios, ratios[0], rtol=1e-6), ratios
 
 
-def test_Cu5SbO6_reproduces_the_paper_dimer_expansion():
+def test_Cu5SbO6_reproduces_the_paper_dimer_expansion(kernels):
     """The shipped Cu5SbO6 example (Piyakulworawat et al., PRR 8, 013247 (2026)) must
     reproduce the paper's J1-J2-J4 dimer expansion: the triplon dispersion is the
     full bond-operator resummation of Eq. (A11), and the structure factor obeys the
@@ -115,7 +115,7 @@ def test_Cu5SbO6_reproduces_the_paper_dimer_expansion():
     J1, J2, J4 = cfg["parameters"]["J1"], cfg["parameters"]["J2"], cfg["parameters"]["J4"]
     m = GenericSpinModel(cfg)
     pv = [cfg["parameters"][k] for k in cfg["parameter_order"]]
-    sm = build_entangled_model(m, pv, units=[[0, 1]])
+    sm = build_entangled_model(m, pv, units=[[0, 1]], kernels=kernels)
     L = np.array(cfg["crystal_structure"]["lattice_vectors"], float)
     B = 2 * np.pi * np.linalg.inv(L).T
 
@@ -141,7 +141,7 @@ def test_Cu5SbO6_reproduces_the_paper_dimer_expansion():
     assert np.sum(I0) < 1e-9
 
 
-def test_Rb2Cu3SnF12_dimer_DM_and_field_mechanism():
+def test_Rb2Cu3SnF12_dimer_DM_and_field_mechanism(kernels):
     """The Rb2Cu3SnF12 pinwheel-dimer example (Matan et al., Nat. Phys. 6, 865 (2010)):
     out-of-plane DM splits the triplet into Stot^z = 0 (raised) and the degenerate
     Stot^z = +/-1 branch, and a c-axis field Zeeman-splits the +/-1 doublet while the
@@ -156,7 +156,7 @@ def test_Rb2Cu3SnF12_dimer_DM_and_field_mechanism():
         cfg["parameters"]["H_mag"] = float(B)
         m = GenericSpinModel(cfg)
         pv = [cfg["parameters"][k] for k in cfg["parameter_order"]]
-        sm = build_entangled_model(m, pv, units=[[0, 1]])
+        sm = build_entangled_model(m, pv, units=[[0, 1]], kernels=kernels)
         return np.sort(np.real(sm.dispersion(np.zeros(3))))
 
     # zero field: Stot^z=+/-1 (degenerate) below Stot^z=0.
@@ -172,7 +172,7 @@ def test_Rb2Cu3SnF12_dimer_DM_and_field_mechanism():
     assert abs(gB[1] - g0[-1]) < 1e-6                    # middle (Sz=0) unchanged by field
 
 
-def test_Rb2Cu3SnF12_triplet_polarizations():
+def test_Rb2Cu3SnF12_triplet_polarizations(kernels):
     """Ehlers et al., PRB 89, 024414 (2014): the Stot^z = +/-1 doublet is polarized
     IN-PLANE and the Stot^z = 0 singlet OUT-OF-PLANE. The entangled structure factor
     must reproduce this: the +/-1 modes carry only S_xx/S_yy, the 0 mode only S_zz."""
@@ -184,7 +184,7 @@ def test_Rb2Cu3SnF12_triplet_polarizations():
     A = J1 * sum(S1[a] @ S2[a] for a in range(3)) + Dz * (S1[0] @ S2[1] - S1[1] @ S2[0])
     Z = np.linalg.eigh(A)[1][:, 0]
     d = 1.0
-    m = SUNModel(spins=[1.5], coherent_states=[Z], bonds=[], onsite=[(0, A)],
+    m = SUNModel(spins=[1.5], coherent_states=[Z], kernels=kernels, bonds=[], onsite=[(0, A)],
                  operators=[S1 + S2],
                  moment_terms=[[(np.array([-d / 2, 0, 0]), (0, 1, 2)),
                                 (np.array([d / 2, 0, 0]), (3, 4, 5))]])
@@ -200,7 +200,7 @@ def test_Rb2Cu3SnF12_triplet_polarizations():
     assert Izz[2] > 1e-3 and Izz[0] < 1e-9 and Izz[1] < 1e-9     # 0 out-of-plane, +/-1 not
 
 
-def test_cross_boundary_dimer_via_per_member_offset():
+def test_cross_boundary_dimer_via_per_member_offset(kernels):
     """A unit whose two spins STRADDLE the cell boundary (bond B -> A at offset +a) is
     specified as `[B, [A, [1,0,0]]]`. It must give the same isolated-dimer flat triplon
     at omega = J as a within-cell dimer -- real dimer coverings (e.g. the Rb2Cu3SnF12
@@ -217,7 +217,7 @@ def test_cross_boundary_dimer_via_per_member_offset():
         "magnetic_structure": {"type": "pattern", "pattern_type": "ferromagnetic",
                                "direction": [0, 0, 1]}}
     m = GenericSpinModel(cfg)
-    sm = build_entangled_model(m, [], units=[[1, [0, [1, 0, 0]]]])   # B + A(+a): straddling
+    sm = build_entangled_model(m, [], units=[[1, [0, [1, 0, 0]]]], kernels=kernels)   # B + A(+a): straddling
     ev = np.linalg.eigvalsh(sm.onsite[0][1])
     assert abs((ev[-1] - ev[0]) - J) < 1e-9                          # intra bond found across cell
     L = np.array(cfg["crystal_structure"]["lattice_vectors"], float)
@@ -291,12 +291,12 @@ def _isolated_dimer_cfg(S, J, D, H=0.0):
     return cfg, lat
 
 
-def _entangled_gamma_levels(cfg, lat, params):
+def _entangled_gamma_levels(cfg, lat, params, kernels="numpy"):
     from magcalc.sun.entangled import EntangledCalculator
     model = GenericSpinModel(cfg)
     th, ph = model.generate_magnetic_structure()
     model.set_magnetic_structure(th, ph)
-    calc = EntangledCalculator(model, cfg, params)
+    calc = EntangledCalculator(model, cfg, params, kernels=kernels)
     B = 2 * np.pi * np.linalg.inv(np.array(lat, float)).T
     return np.sort(np.real(calc.calculate_dispersion([np.array([0.0, 0, 0]) @ B])
                            .energies)[0])
@@ -308,16 +308,16 @@ def _entangled_gamma_levels(cfg, lat, params):
     (1.0, 4.0, -1.5, 3.0),      # anisotropy competing with a field
     (1.5, 3.0, -0.8, 0.0),      # S=3/2 -> N=16, 15 excitations
 ])
-def test_entangled_on_site_anisotropy_matches_exact_diagonalization(S, J, D, H):
+def test_entangled_on_site_anisotropy_matches_exact_diagonalization(S, J, D, H, kernels):
     cfg, lat = _isolated_dimer_cfg(S, J, D, H)
     params = [H, 0.0, 0.0, 1.0] if H else []
-    got = _entangled_gamma_levels(cfg, lat, params)
+    got = _entangled_gamma_levels(cfg, lat, params, kernels)
     want = _ed_dimer_levels(S, J, D, H)
     assert len(got) == len(want)
     assert got == pytest.approx(want, abs=1e-9)
 
 
-def test_sia_matrix_and_sia_agree_on_the_same_anisotropy():
+def test_sia_matrix_and_sia_agree_on_the_same_anisotropy(kernels):
     """`sia` with D along z and `sia_matrix` carrying diag(0,0,D) are the same operator,
     so the two code paths must land on the same spectrum -- an internal identity that
     catches one path being wired up and the other not."""
@@ -326,5 +326,5 @@ def test_sia_matrix_and_sia_agree_on_the_same_anisotropy():
     del cfg_b["interactions"]["single_ion_anisotropy"]
     cfg_b["interactions"]["sia_matrix"] = [
         {"matrix": [[0, 0, 0], [0, 0, 0], [0, 0, -1.5]], "atoms": ["A", "B"]}]
-    assert _entangled_gamma_levels(cfg_b, lat, []) == pytest.approx(
-        _entangled_gamma_levels(cfg_a, lat, []), abs=1e-9)
+    assert _entangled_gamma_levels(cfg_b, lat, [], kernels) == pytest.approx(
+        _entangled_gamma_levels(cfg_a, lat, [], kernels), abs=1e-9)

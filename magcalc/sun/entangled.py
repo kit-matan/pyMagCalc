@@ -159,8 +159,13 @@ def _pair_matrix(Jex, DM, Kex, i, j) -> np.ndarray:
 
 
 def build_entangled_model(model, params: Optional[Sequence[float]] = None,
-                          units: Optional[Sequence[Sequence[int]]] = None) -> SUNModel:
+                          units: Optional[Sequence[Sequence[int]]] = None,
+                          kernels: str = "numpy", n_workers: Optional[int] = None) -> SUNModel:
     """Build an entangled-unit `SUNModel` from a `GenericSpinModel`.
+
+    `kernels` / `n_workers` select the compiled LSWT kernels for the returned model
+    (`SUNModel.__init__`); the entangled engine IS a `SUNModel`, so it gets K3's
+    H(q), Colpa and one-magnon kernels with no code of its own.
 
     `units` is a list of units, each a list of CHEMICAL-cell site indices (0-based, in the
     order of `crystal_structure.atoms_uc`). Every magnetic site must appear in exactly one
@@ -287,7 +292,8 @@ def build_entangled_model(model, params: Optional[Sequence[float]] = None,
 
     onsite = [(u, A_intra[u]) for u in range(U)]
     sm = SUNModel(spins=[1.0] * U, coherent_states=coherent, bonds=bonds, onsite=onsite,
-                  operators=unit_ops, moment_terms=unit_moment_terms)
+                  operators=unit_ops, moment_terms=unit_moment_terms, kernels=kernels,
+                  n_workers=n_workers)
     sm.pos = np.array(unit_centroid)          # cartesian, for the structure factor phase
     return sm
 
@@ -323,7 +329,7 @@ class EntangledCalculator:
     """Quacks like MagCalc/SUNCalculator for the runner, backed by an entangled-unit
     SUNModel. `calculation: {mode: entangled}` + `units:` selects it."""
 
-    def __init__(self, spin_model, config, hamiltonian_params=None):
+    def __init__(self, spin_model, config, hamiltonian_params=None, kernels="numpy"):
         from ..numerical import DispersionResult, SqwResult, thermal_bose_prefactor
         self._DispersionResult = DispersionResult
         self._SqwResult = SqwResult
@@ -332,8 +338,12 @@ class EntangledCalculator:
         self.sm = spin_model
         self.config = config
         self.hamiltonian_params = list(hamiltonian_params or [])
+        self.kernels = str(kernels)
+        calc_cfg0 = config.get("calculation", {}) or {}
+        self.n_workers = calc_cfg0.get("n_workers")
         self._units = _resolve_units(config, spin_model)
-        self.model = build_entangled_model(spin_model, self.hamiltonian_params, self._units)
+        self.model = build_entangled_model(spin_model, self.hamiltonian_params, self._units,
+                                           kernels=self.kernels, n_workers=self.n_workers)
         self.nspins = self.model.L
         self.spin_magnitude = 1.0
         # Optional high-order dimer series (linked-cluster + Dlog-Pade) for the
@@ -362,7 +372,7 @@ class EntangledCalculator:
             e = np.array([dsm.dispersion(q, self.series_order, self.series_resum)[0]
                           for q in qs])
         else:
-            e = np.array([self.model.dispersion(q) for q in qs])
+            e = self.model.dispersion_batch(qs)
         return self._DispersionResult(q_vectors=qs, energies=e)
 
     def calculate_sqw(self, q_vectors, backend="numpy", satellites=None,
@@ -375,13 +385,8 @@ class EntangledCalculator:
             ion = None
 
         def _one(q_list):
-            E, I = [], []
-            for q in q_list:
-                w, inten = self.model.structure_factor(q, ion=ion,
-                                                       cross_section=cross_section)
-                E.append(w)
-                I.append(inten)
-            return np.array(E), np.array(I)
+            return self.model.structure_factor_batch(q_list, ion=ion,
+                                                     cross_section=cross_section)
 
         # See SUNCalculator.calculate_sqw -- the same shared domain average.
         averaged = sqw_domain_average(_one, list(qs), domains, cross_section)
@@ -407,11 +412,9 @@ class EntangledCalculator:
             if len(extra) > 128:
                 extra = extra[np.linspace(0, len(extra) - 1, 128).astype(int)]
             qs = np.vstack([qs, extra])
-        worst = band = 0.0
-        for q in qs:
-            ev = np.linalg.eigvals(self.model.hamiltonian(q))
-            worst = max(worst, float(np.max(np.abs(np.imag(ev)))))
-            band = max(band, float(np.max(np.abs(np.real(ev)))))
+        ev = self.model.eigenvalues(qs)
+        worst = float(np.max(np.abs(np.imag(ev)))) if ev.size else 0.0
+        band = float(np.max(np.abs(np.real(ev)))) if ev.size else 0.0
         return {"max_imag": worst, "band_scale": band,
                 "relative": worst / band if band > 1e-12 else 0.0}
 
@@ -427,4 +430,4 @@ class EntangledCalculator:
 
     def update_hamiltonian_params(self, p):
         self.hamiltonian_params = list(p)
-        self.__init__(self.sm, self.config, p)
+        self.__init__(self.sm, self.config, p, kernels=self.kernels)

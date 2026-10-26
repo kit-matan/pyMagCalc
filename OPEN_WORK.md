@@ -24,8 +24,15 @@
 > `CpnModel`) behind `kernels: rust`, ragged per-site tables so mixed spin goes
 > through the kernel; every oracle test in the plan's K2 list runs under both kernel
 > sets (`GAP_STATUS.md`, "Rust kernels K2", with the timings). Gate on that tree,
-> 2026-10-26: **1913 passed, 2 skipped, 20 min 21 s**. Pick up at K3 (SU(N) H(q)
-> assembly, Colpa, intensities): the plan's §3 names the functions and the tests.
+> 2026-10-26: **1913 passed, 2 skipped, 20 min 21 s**. **M3 (K3) is implemented,
+> 2026-10-26**: the SU(N) H(q) build, the Colpa diagonalization, the one-magnon
+> intensities, the general eigenvalues and the H₂ ⪰ 0 guard (identical shifted
+> Cholesky) run in rsMagCalc (`d5e581d`, `SunModel`, Accelerate LAPACK) behind
+> `kernels: rust`, for `mode: SUN` and `mode: entangled`; every K3 oracle runs under
+> both kernel sets, FeI2 matches NumPy to 5e-15 (`GAP_STATUS.md`, "Rust kernels K3").
+> NOT COMMITTED. Still open: the full gate and the idle-machine timings (the K3
+> numbers so far were taken at load average ~190 from a stale K1 process). Then K4
+> (KPM) builds on `SunModel.hamiltonians`.
 > Gate on this tree with rsmagcalc installed (2026-10-26, workspace root,
 > `MAGCALC_NO_GUI=1 pytest -rs`): **1753 passed, 2 skipped, 13 min 58 s** — the
 > previous 1735 plus the 18 M0 tests, the same two structural skips. NOT COMMITTED

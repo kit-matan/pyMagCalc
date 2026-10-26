@@ -40,7 +40,7 @@ def _chain_cfg(S=0.5, J=1.0):
     }
 
 
-def test_sun_intensities_match_sunny_on_the_afm_chain():
+def test_sun_intensities_match_sunny_on_the_afm_chain(kernels):
     """Gate 1b — INTENSITIES (the original Gate 1 only compared dispersions, which hid
     a real bug): at generic q in a 2-atom cell, the S=1/2 AFM chain's one-magnon
     intensities must match Sunny 0.8.1 (ssf_perp, apply_g=false) absolutely. Before
@@ -54,7 +54,7 @@ def test_sun_intensities_match_sunny_on_the_afm_chain():
     m = GenericSpinModel(cfg)
     th, ph = m.generate_magnetic_structure()
     m.set_magnetic_structure(th, ph)
-    sm = SUNModel.from_generic_model(m, [])
+    sm = SUNModel.from_generic_model(m, [], kernels=kernels)
     sunny = {(0.9, 0.3, 0.2): 0.656891, (1.7, 0.0, 0.4): 4.050179}   # Sunny 0.8.1
     for q, i_sunny in sunny.items():
         w, I = sm.structure_factor(np.array(q), cross_section="perp")
@@ -62,7 +62,7 @@ def test_sun_intensities_match_sunny_on_the_afm_chain():
             f"q={q}: {I.sum()} vs Sunny {i_sunny}"
 
 
-def test_gate1_sun_powder_equals_dipole_powder():
+def test_gate1_sun_powder_equals_dipole_powder(kernels):
     """S=1/2 AFM chain: the new SU(N) powder path must match the validated dipole
     powder path (identical sphere sampling + averaging conventions)."""
     cfg = _chain_cfg()
@@ -76,7 +76,7 @@ def test_gate1_sun_powder_equals_dipole_powder():
     m2 = GenericSpinModel(cfg)
     th, ph = m2.generate_magnetic_structure()
     m2.set_magnetic_structure(th, ph)
-    sun_calc = SUNCalculator(m2, {"calculation": {}}, [])
+    sun_calc = SUNCalculator(m2, {"calculation": {}}, [], kernels=kernels)
     sun = sun_calc.calculate_powder_average(Q_MAGS, num_samples=N_SAMP)
 
     d_sorted = np.sort(dip.energies, axis=1)
@@ -87,7 +87,7 @@ def test_gate1_sun_powder_equals_dipole_powder():
                        rtol=1e-6), "powder intensities differ"
 
 
-def _dimer_calculator():
+def _dimer_calculator(kernels="numpy"):
     cfg = {
         "crystal_structure": {
             "lattice_vectors": [[4.0, 0, 0], [0, 9.0, 0], [0, 0, 9.0]],
@@ -106,13 +106,13 @@ def _dimer_calculator():
         "units": [["CuA", "CuB"]],
     }
     m = GenericSpinModel(cfg)
-    return EntangledCalculator(m, cfg, [])
+    return EntangledCalculator(m, cfg, [], kernels=kernels)
 
 
-def test_entangled_powder_is_the_exact_spherical_average():
+def test_entangled_powder_is_the_exact_spherical_average(kernels):
     """Cu5SbO6-like dimer chain: powder == manual average of calculate_sqw over the
     same Fibonacci sphere points, to machine precision."""
-    calc = _dimer_calculator()
+    calc = _dimer_calculator(kernels)
     res = calc.calculate_powder_average(Q_MAGS, num_samples=N_SAMP)
     assert res.energies.shape[0] == len(Q_MAGS)
 

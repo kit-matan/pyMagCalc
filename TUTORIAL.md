@@ -633,7 +633,7 @@ deterministic for a given `seed` under either kernel set, but the two do **not**
 share a random stream: a `kernels: rust` run with the same seed is a different,
 equally valid sample.
 
-### What the kernels cover (K1 and K2, 2026-10-26)
+### What the kernels cover (K1, K2 and K3, 2026-10-26)
 
 `kernels: rust` currently accelerates the **classical samplers** (K1): the Metropolis
 sweep (uniform and `propose: flip`) behind `thermal_mc`, `static_correlations` and
@@ -656,6 +656,20 @@ total energy twice per site: on the 144-site S09 triangular lattice a sweep went
 from ~1 s to 0.08 ms (`GAP_STATUS.md`, "Rust kernels K2"). Mixed-spin cells run
 through the kernel (the NumPy fast path takes a per-site loop for them).
 
+And **SU(N) and entangled-unit LSWT** (K3) for `calculation: {mode: SUN}` and
+`{mode: entangled}`: the per-q H(q) assembly, the Bogoliubov (Colpa)
+diagonalization, the one-magnon intensities, the eigenvalues behind `dispersion`
+and the imaginary-mode guard, and the H₂(q) ⪰ 0 guard of `kpm_sqw` (the same
+shifted Cholesky at the same `h2_rel_tolerance`, so the verdict cannot differ) --
+each over the whole q list at once, in parallel. The cross-section contraction,
+the form factor, domain and powder averaging stay in NumPy and are shared by both
+kernel sets. Energies and intensities agree with the NumPy path to ~1e-14 on FeI2;
+where two bands are exactly degenerate, how the weight splits between them is a
+basis choice that can differ between the two (their sum does not). FeI2's
+SU(3) run (`examples/materials/FeI2/config_fei2_sun.yaml`) went from 11.5 s to
+4.0 s end to end, and one H(q) build on the 900-site S09 cell from 870 ms to 17 ms
+(`GAP_STATUS.md`, "Rust kernels K3"). The KPM recursion itself is still NumPy (K4).
+
 Three blocks take an `n_workers` for the Rust thread pool (default: every core):
 
 ```yaml
@@ -664,13 +678,22 @@ sampled_correlations:     {temperature: 0.5, supercell: [16, 1, 1], n_traj: 64, 
 sun_sampled_correlations: {temperature: 0.5, n_traj: 16, therm_sweeps: 2000, n_workers: 4}
 ```
 
+and the SU(N)/entangled LSWT kernels read it from the `calculation` block:
+
+```yaml
+calculation: {mode: SUN, kernels: rust, n_workers: 4}
+```
+
 Under `kernels: numpy` these keys are ignored (the NumPy loops are serial). If a
 kernel raises at run time, the exception is logged and that call is redone in
 NumPy -- the run completes either way, and the log says which code produced
 what. The same functions take `kernels="rust"` from Python
 (`parallel_tempering`, `static_correlations`, `wang_landau`, `evolve`,
 `langevin_thermalize`, `sampled_correlations`; in `magcalc.sun.dynamics`:
-`evolve`, `quench`, `damped_step`, `sampled_correlations`), and
+`evolve`, `quench`, `damped_step`, `sampled_correlations`; and
+`SUNModel(..., kernels="rust")` / `SUNModel.from_generic_model(..., kernels="rust")`,
+whose `hamiltonians`, `dispersion_batch`, `structure_factor_batch` and
+`assert_stable` take a whole q array), and
 `magcalc.kernels.make_rng(seed, "rust")` returns the Rust random stream that
 `_sweep`, `langevin_step` and `sun.dynamics.thermalize` run on.
 

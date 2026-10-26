@@ -37,12 +37,12 @@ def _cfg():
             "calculation": {"mode": "SUN", "on_imaginary": "off"}, "tasks": {}}
 
 
-def _model(n=4):
+def _model(n=4, kernels="numpy"):
     """A supercell. Disorder on the CHEMICAL cell is not disorder -- it is a
     different clean model repeated periodically."""
     return SUNModel.from_generic_model(
         GenericSpinModel(copy.deepcopy(_cfg())), params=[],
-        supercell=[[n, 0, 0], [0, n, 0], [0, 0, 1]])
+        supercell=[[n, 0, 0], [0, n, 0], [0, 0, 1]], kernels=kernels)
 
 
 def _q():
@@ -54,40 +54,40 @@ def _bands(m):
     return np.sort(np.real(m.dispersion(_q())))
 
 
-def test_zero_disorder_is_bit_identical():
+def test_zero_disorder_is_bit_identical(kernels):
     """The sigma -> 0 limit, exactly -- not merely close."""
-    clean = _bands(_model())
-    got = _bands(apply_bond_disorder(_model(), 0.0, seed=1))
+    clean = _bands(_model(kernels=kernels))
+    got = _bands(apply_bond_disorder(_model(kernels=kernels), 0.0, seed=1))
     assert np.abs(got - clean).max() == 0.0
 
 
-def test_hermiticity_is_preserved():
+def test_hermiticity_is_preserved(kernels):
     """THE bookkeeping check. Both directions of each bond must get the SAME draw;
     independent draws break Hermiticity and the imaginary parts masquerade as an
     instability."""
     for seed in range(4):
-        m = apply_bond_disorder(_model(), 0.25, seed=seed)
+        m = apply_bond_disorder(_model(kernels=kernels), 0.25, seed=seed)
         ev = np.linalg.eigvals(m.hamiltonian(_q()))
         assert np.abs(np.imag(ev)).max() < 1e-10, f"seed {seed}"
 
 
-def test_disorder_broadens_the_spectrum():
+def test_disorder_broadens_the_spectrum(kernels):
     """Physics: randomizing the couplings must spread the bands, and more disorder
     must spread them more."""
-    clean = _bands(_model()).std()
+    clean = _bands(_model(kernels=kernels)).std()
     widths = {}
     for sig in (0.05, 0.2, 0.4):
-        widths[sig] = np.mean([_bands(apply_bond_disorder(_model(), sig, seed=s)).std()
+        widths[sig] = np.mean([_bands(apply_bond_disorder(_model(kernels=kernels), sig, seed=s)).std()
                                for s in range(4)])
     assert widths[0.05] > clean
     assert widths[0.2] > widths[0.05]
     assert widths[0.4] > widths[0.2]
 
 
-def test_each_bond_pair_gets_one_draw():
+def test_each_bond_pair_gets_one_draw(kernels):
     """A bond and its reverse must carry the same perturbation, so J_ji stays J_ij^T
     -- checked on the matrices themselves rather than through the spectrum."""
-    m = apply_bond_disorder(_model(), 0.3, seed=2)
+    m = apply_bond_disorder(_model(kernels=kernels), 0.3, seed=2)
     table = {}
     for (i, j, dr, J) in m.bonds:
         table[(i, j, tuple(np.round(dr, 8)))] = J
@@ -101,15 +101,15 @@ def test_each_bond_pair_gets_one_draw():
     assert checked > 0
 
 
-def test_results_self_average_across_seeds():
+def test_results_self_average_across_seeds(kernels):
     """A single realization is not an answer; the seed-to-seed spread must be small
     compared with the effect being reported."""
-    vals = [_bands(apply_bond_disorder(_model(6), 0.2, seed=s)).std()
+    vals = [_bands(apply_bond_disorder(_model(6, kernels=kernels), 0.2, seed=s)).std()
             for s in range(5)]
     vals = np.array(vals)
     assert vals.std() / vals.mean() < 0.05
 
 
-def test_bad_kind_raises():
+def test_bad_kind_raises(kernels):
     with pytest.raises(ValueError, match="relative.*absolute"):
-        apply_bond_disorder(_model(), 0.1, kind="gaussian")
+        apply_bond_disorder(_model(kernels=kernels), 0.1, kind="gaussian")

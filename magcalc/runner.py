@@ -639,10 +639,12 @@ def run_calculation(config_file: str):
     try:
         if mode == 'SUN':
             from magcalc.sun.adapter import SUNCalculator
-            calculator = SUNCalculator(spin_model, final_config, params_val)
+            calculator = SUNCalculator(spin_model, final_config, params_val,
+                                       kernels=kernels)
         elif mode == 'ENTANGLED':
             from magcalc.sun.entangled import EntangledCalculator
-            calculator = EntangledCalculator(spin_model, final_config, params_val)
+            calculator = EntangledCalculator(spin_model, final_config, params_val,
+                                             kernels=kernels)
         else:
             calculator = mc.MagCalc(
                 spin_model_module=spin_model,

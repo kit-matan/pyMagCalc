@@ -976,6 +976,72 @@ the rule-value parser fix a87c8a8 below, magpipe at 283f694), 2026-10-22, idle m
 ALPS ones. The merge is also what makes `sqrt(3)*D1x/3`, the allowed kagome DM, pass this check: before the
 parser fix it reached the check as an unbound `sqrt3` and was refused as a conflict.
 
+### Rust kernels K3, 2026-10-26 — SU(N) LSWT behind `kernels: rust`
+
+M3 of `RUST_KERNELS_PLAN.md`. rsMagCalc `d5e581d` (`src/sun_lswt.rs`, `rsmagcalc.SunModel`; `src/lapack.rs`) carries
+the per-q hot path of `SUNModel`: the H(q) assembly (`hamiltonian` was a Python loop over bonds × n_ops² with an
+`np.outer` per term), the general eigenvalues `dispersion` / `max_imaginary` / the adapters' `stability_report` reduce,
+the Colpa diagonalization (`_bogoliubov`, with the explicit [D positive descending, D negative] order), the per-band
+one-magnon tensors of `structure_factor` (before the cross-section contraction, which stays in NumPy so every engine
+shares ONE `contract_cross_section`), and the shifted Cholesky of the H₂ ⪰ 0 guard (`is_stable_at` / `assert_stable`),
+each over a q BATCH with rayon. The guard is reimplemented identically, not approximately: Python computes the shift
+`h2_rel_tolerance × _reference_h2_scale()` (the q-INDEPENDENT scale, Gap 4 #16) and the kernel answers "is H₂(q) +
+shift·I positive definite" with LAPACK `zpotrf` — the same routine `np.linalg.cholesky` calls. The reference-state
+tables (`t`, `tb`, `Q`, `QA`, `s0`) are still built by `_prepare` in Python and packed once per reference state
+(`SUNModel._rust`, dropped by every `_prepare` and keyed on the bond/on-site/operator lists the way `sun.dynamics._fast`
+is), ragged per site, so mixed spin runs through it. The entangled engine IS a `SUNModel`, so it gets the kernel with
+no code of its own. pyMagCalc selects it with `kernels.rust_for` + `fell_back` at every entry point; the runner hands its
+resolved `kernels` to `SUNCalculator` / `EntangledCalculator`, which also read `calculation.n_workers`, and both now
+call the batch methods (`dispersion_batch`, `structure_factor_batch`, `eigenvalues`). A NON-minimum is not a kernel
+failure: the kernel raises `rsmagcalc.NotPositiveDefinite` and pyMagCalc re-raises the NumPy path's `LinAlgError`, with
+no fallback logged. `kpm.py` is untouched; the runner's KPM loop gets the fast H(q) through `hamiltonian`.
+
+**Why LAPACK and not faer.** The plan named faer first. The deciding fact was the oracle, not speed: NumPy here links
+Accelerate, and inside a DEGENERATE eigenspace the per-band split of the one-magnon weight is a basis choice that only
+the same eigensolver reproduces. Calling Accelerate's ILP64 `zheevd`/`zpotrf`/`zgeev` (the symbols NumPy 2 calls) keeps
+every band-by-band oracle test meaningful under both kernel sets. One layout detail mattered: `zgeev` is handed H in
+column-major order, as NumPy hands it; passing the row-major buffer (Hᵀ, same eigenvalues) cost ~sqrt(eps) = 5e-8 on
+S09's degenerate non-normal g·H₂ at 2D = 1800, against ~1e-15 with the same layout.
+
+**Pinned to.** `rsMagCalc/tests/test_sun_lswt_parity.py` (37 tests): H(q) elementwise to 1e-13 (measured 2e-15 on FeI2,
+1.4e-16 at S09 L = 30), eigenvalues against `np.linalg.eigvals`, energies and per-band correlation tensors to 1e-10
+(summed over degenerate groups), T para-unitary with T†H₂T = diag(E) and equal to NumPy's columns up to a phase, the
+guard verdict by verdict against `is_stable_at` on the `test_kpm_stability` fixtures (the stationary maximum, the
+frustrated chain on both sides of J₂ = |J₁|/4, the 120° supercell with its Goldstone zeros, a σ = 0.6 disordered
+supercell against the exact eigvalsh criterion), on mixed spin, on the 12-wide biquadratic operator set and on the
+entangled dimer chain (the constituent offsets of the moment operator). Every K3 oracle in the plan runs under both
+kernel sets through the `kernels` fixture: `test_sun` (gates 1–3 vs dipole and Sunny, the FeI2 bands AND intensities vs
+Sunny, the runner end to end with `sqw_map`, the wrong-reference-state trap), `test_mixed_spin_sun`, `test_powder_sun`,
+`test_sun_zeeman`, `test_sun_missing_terms`, `test_pair_operator`, `test_entangled_units`, `test_kpm_stability` (the
+runner's KPM refusals included), `test_bond_disorder` (bit-identical at σ = 0, so the packed copy is rebuilt after a
+disorder draw), and a new S09 case in `test_sunny_tutorials`: the shipped `config_supercell.yaml` through
+`SUNCalculator` lands on E/site = −0.375 exactly and on the closed-form folded bands to 1e-9, with the Goldstone zero at
+K. (The other S0x cases there are dipole-mode or K2.) `tests/test_kernels_sun.py` (16, fast) pins the wiring: every
+entry point on a mixed-spin supercell, the empty batch, a failing kernel logged with NumPy answering (per kernel
+method, and when packing fails), a non-minimum raising `LinAlgError` with no fallback logged, the cache following a
+relaxation / disorder draw / swapped bond list, deepcopy and pickle, and both config paths (`mode: SUN` with
+`sqw_map` and `n_workers`, `mode: entangled`).
+
+**End to end, FeI2** (`examples/materials/FeI2/config_fei2_sun.yaml`, plots off, 60 q, `tasks: {minimization,
+dispersion, sqw_map}`), the same config with `calculation.kernels` switched: energies agree to 5.3e-15 and intensities
+to 3.1e-15 (the saved `disp`/`sqw` npz files), and the run log names the kernel after the engine line,
+`kernels: rust (rsmagcalc 0.1.0, git d5e581d452f3, release)`.
+
+**Timing** (M1 Pro, 10 cores, 2026-10-26; NOT an idle machine — a stale `python -` process from the K1 session, PID
+27374, was spawning multiprocessing workers throughout, load average ~190; idle re-measurement pending):
+
+| path | numpy | rust | how measured |
+|---|---|---|---|
+| FeI2 SU(3) `magcalc run`, wall (minimization + 60-q dispersion + S(Q,ω)) | 11.5 s | 4.0 s | `/usr/bin/time -p env MAGCALC_NO_GUI=1 magcalc run fei2_<k>.yaml` |
+| FeI2 per q: H(q) / dispersion / S(Q,ω) / guard (121 q) | 47 / 46 / 60 / 69 ms | 0.04 / 0.09 / 0.16 / 0.06 ms | in-process `perf_counter`, batch of 121 q |
+| S09 L = 30 (900 sites, 2D = 1800): one H(q) build | **870 ms** | **17.1 ms** (1 thread), 16.5 ms | `<scratch>/bench_s09.py 30`, 8 generic q |
+| S09 L = 30: guard (shifted Cholesky) per q | 789 ms | 114 ms (1 thread), 53 ms | same |
+| S09 L = 30: general eigenvalues (`zgeev`) per q | 17.5 s | 11.4 s (1 thread), 6.2 s | same, 4 q |
+
+The H(q) build is the plan's headline: 620 ms/q on an idle machine in `OPEN_WORK.md`, 870 ms here under load, 17 ms in
+the kernel (51×) — the build that dominated KPM's per-q cost at L = 30. The general eigenproblem is LAPACK-bound under
+both, so the kernel buys only its thread parallelism there.
+
 ### Rust kernels K2, 2026-10-26 — the CP^(N−1) sampler and dynamics behind `kernels: rust`
 
 M2 of `RUST_KERNELS_PLAN.md`. rsMagCalc `ec28492` (`src/cpn.rs`, `rsmagcalc.CpnModel`) carries the CP^(N−1)

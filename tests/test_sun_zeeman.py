@@ -70,23 +70,24 @@ def _dipole_bands(h_mag, S, h_dir=(0, 0, 1)):
     return np.sort(np.real(calc.calculate_dispersion(_qs()).energies), axis=1)
 
 
-def _sun_bands(h_mag, S, h_dir=(0, 0, 1)):
+def _sun_bands(h_mag, S, h_dir=(0, 0, 1), kernels="numpy"):
     cfg = _cfg("SUN", h_mag, S, h_dir)
     mdl = SUNModel.from_generic_model(GenericSpinModel(copy.deepcopy(cfg)),
-                                      params=_params(h_mag, h_dir))
+                                      params=_params(h_mag, h_dir), kernels=kernels)
     return np.sort(np.array([np.sort(np.real(mdl.dispersion(q))) for q in _qs()]),
                    axis=1)
 
 
 @pytest.mark.parametrize("h_mag", [0.0, 2.0, 5.0])
-def test_spin_half_sun_equals_dipole_in_a_field(h_mag):
+def test_spin_half_sun_equals_dipole_in_a_field(h_mag, kernels):
     """THE gate, extended to finite field. Presence and sign in one assertion."""
-    assert _sun_bands(h_mag, 0.5) == pytest.approx(_dipole_bands(h_mag, 0.5), abs=1e-12)
+    assert _sun_bands(h_mag, 0.5, kernels=kernels) == pytest.approx(
+        _dipole_bands(h_mag, 0.5), abs=1e-12)
 
 
 @pytest.mark.parametrize("h_dir", [(0, 0, 1), (1, 0, 0), (0, 1, 0),
                                   (0.3, -0.5, 0.81)])
-def test_field_direction_is_respected(h_dir):
+def test_field_direction_is_respected(h_dir, kernels):
     """A SECOND BUG, surfaced by fixing the first, and now fixed too.
 
     `_resolve_param_map` FLATTENS vector-valued parameters, so `H_dir: [1, 0, 0]`
@@ -100,26 +101,27 @@ def test_field_direction_is_respected(h_dir):
     uses it as given, and normalizing here made the two disagree by |H_dir| -- 0.2%
     for [0.3, -0.5, 0.81]. Small, plausible, and hard to notice later.
     """
-    assert _sun_bands(4.0, 0.5, h_dir) == pytest.approx(
+    assert _sun_bands(4.0, 0.5, h_dir, kernels) == pytest.approx(
         _dipole_bands(4.0, 0.5, h_dir), abs=1e-12)
 
 
-def test_transverse_field_is_not_just_the_z_field():
+def test_transverse_field_is_not_just_the_z_field(kernels):
     """Guards the guard: with the direction ignored, every one of the cases above
     returned the SAME numbers as a field along z, so agreement alone proved nothing.
     """
-    z = _sun_bands(4.0, 0.5, (0, 0, 1))
-    x = _sun_bands(4.0, 0.5, (1, 0, 0))
+    z = _sun_bands(4.0, 0.5, (0, 0, 1), kernels)
+    x = _sun_bands(4.0, 0.5, (1, 0, 0), kernels)
     assert np.abs(x - z).max() > 1e-6
 
 
-def test_the_field_actually_changes_the_sun_spectrum():
+def test_the_field_actually_changes_the_sun_spectrum(kernels):
     """The regression itself, stated directly: before the fix the SU(N) spectrum was
     bit-identical with and without a field, because the term never entered."""
-    assert np.abs(_sun_bands(5.0, 0.5) - _sun_bands(0.0, 0.5)).max() > 0.1
+    assert np.abs(_sun_bands(5.0, 0.5, kernels=kernels)
+                  - _sun_bands(0.0, 0.5, kernels=kernels)).max() > 0.1
 
 
-def test_zeeman_convention_matches_the_dipole_engine_across_field_strengths():
+def test_zeeman_convention_matches_the_dipole_engine_across_field_strengths(kernels):
     """Rather than assert a shape for the field dependence, assert that SU(N)
     reproduces the DIPOLE engine's, whose Zeeman convention is pinned separately by
     `test_zeeman_calibration.py`.
@@ -134,16 +136,17 @@ def test_zeeman_convention_matches_the_dipole_engine_across_field_strengths():
     expectation that should be checked against the engine rather than asserted.
     """
     for h in (0.0, 1.0, 2.0, 4.0, 8.0):
-        assert _sun_bands(h, 0.5) == pytest.approx(_dipole_bands(h, 0.5), abs=1e-12)
+        assert _sun_bands(h, 0.5, kernels=kernels) == pytest.approx(
+            _dipole_bands(h, 0.5), abs=1e-12)
 
 
 @pytest.mark.slow
-def test_higher_spin_sun_in_field_matches_dipole_without_anisotropy():
+def test_higher_spin_sun_in_field_matches_dipole_without_anisotropy(kernels):
     """With no single-ion term, SU(N) reproduces the dipole bands for any S (the
     extra flat Delta-m modes aside), so the field must agree there too."""
     for S in (1.0, 1.5):
         dip = _dipole_bands(3.0, S)
-        sun = _sun_bands(3.0, S)
+        sun = _sun_bands(3.0, S, kernels=kernels)
         for iq in range(len(HS)):
             for e in dip[iq]:
                 assert np.min(np.abs(sun[iq] - e)) < 1e-9, f"S={S} band {e}"

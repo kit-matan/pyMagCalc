@@ -137,7 +137,7 @@ def _dipole(S, J, directions, sia=None):
     return np.sort(np.real(calc.calculate_dispersion(QS).energies), axis=1)
 
 
-def _sun(S, J, directions, sia=None):
+def _sun(S, J, directions, sia=None, kernels="numpy"):
     n = len(directions)
     d = A / n
     bonds = []
@@ -149,7 +149,7 @@ def _sun(S, J, directions, sia=None):
     if sia is not None:
         Sz = spin_matrices(S)[2]
         onsite = [(i, sia * (Sz @ Sz)) for i in range(n)]
-    mdl = SUNModel.from_directions([S] * n, directions, bonds, onsite)
+    mdl = SUNModel.from_directions([S] * n, directions, bonds, onsite, kernels=kernels)
     return mdl, np.array([mdl.dispersion(q) for q in QS])
 
 
@@ -158,11 +158,11 @@ def _sun(S, J, directions, sia=None):
     (-1.0, [[0, 0, 1]]),                       # FM chain
     (+1.0, [[0, 0, 1], [0, 0, -1]]),           # Neel chain
 ])
-def test_gate1_spin_half_is_identical_to_dipole_lswt(J, dirs):
+def test_gate1_spin_half_is_identical_to_dipole_lswt(J, dirs, kernels):
     """THE load-bearing test. At S=1/2 there is one boson per site, so SU(N) and dipole
     LSWT are the same theory and must agree to machine precision."""
     dip = _dipole(0.5, J, dirs)
-    _, sun = _sun(0.5, J, dirs)
+    _, sun = _sun(0.5, J, dirs, kernels=kernels)
     assert np.allclose(np.sort(dip, axis=1), np.sort(sun, axis=1), atol=1e-10)
 
 
@@ -172,12 +172,12 @@ def test_gate1_spin_half_is_identical_to_dipole_lswt(J, dirs):
     (1.0, +1.0, [[0, 0, 1], [0, 0, -1]]),
     (2.0, -1.0, [[0, 0, 1]]),
 ])
-def test_gate2_dipole_band_is_reproduced_and_extras_are_multipolar(S, J, dirs):
+def test_gate2_dipole_band_is_reproduced_and_extras_are_multipolar(S, J, dirs, kernels):
     """Without single-ion terms the DIPOLE bands must appear exactly among the SU(N)
     bands. The extras are flat Dm >= 2 modes: the spin operators cannot connect states
     differing by more than one unit of m, so those modes do not disperse."""
     dip = _dipole(S, J, dirs)
-    _, sun = _sun(S, J, dirs)
+    _, sun = _sun(S, J, dirs, kernels=kernels)
     for iq in range(len(QS)):
         for e in dip[iq]:
             assert np.min(np.abs(sun[iq] - e)) < 1e-8, f"dipole band {e} missing"
@@ -189,7 +189,7 @@ def test_gate2_dipole_band_is_reproduced_and_extras_are_multipolar(S, J, dirs):
 
 
 # ----------------------------------------------------------------- GATE 3
-def test_gate3_single_ion_physics_matches_sunny_SUN():
+def test_gate3_single_ion_physics_matches_sunny_SUN(kernels):
     """S=1 FM chain with EASY-AXIS anisotropy. The Dm=2 (quadrupolar) level hybridises
     with the magnon -- the mechanism behind FeI2's single-ion bound state, and something
     dipole LSWT cannot represent at all.
@@ -197,7 +197,7 @@ def test_gate3_single_ion_physics_matches_sunny_SUN():
     Reference: Sunny 0.8.1, :SUN mode.
     """
     sunny = {0.10: [0.981966, 4.0], 0.27: [2.850666, 4.0], 0.45: [4.0, 4.502113]}
-    mdl, sun = _sun(1.0, -1.0, [[0, 0, 1]], sia=-0.6)
+    mdl, sun = _sun(1.0, -1.0, [[0, 0, 1]], sia=-0.6, kernels=kernels)
 
     assert abs(mdl.classical_energy() - (-1.6)) < 1e-9      # Sunny energy_per_site
 
@@ -206,11 +206,11 @@ def test_gate3_single_ion_physics_matches_sunny_SUN():
             f"q={h}: {sun[iq]} vs {sunny[h]}"
 
 
-def test_gate3_dipole_mode_misses_the_single_ion_band():
+def test_gate3_dipole_mode_misses_the_single_ion_band(kernels):
     """The point of the whole exercise: dipole LSWT has only ONE band here and simply
     does not contain the quadrupolar excitation."""
     dip = _dipole(1.0, -1.0, [[0, 0, 1]], sia=-0.6)
-    _, sun = _sun(1.0, -1.0, [[0, 0, 1]], sia=-0.6)
+    _, sun = _sun(1.0, -1.0, [[0, 0, 1]], sia=-0.6, kernels=kernels)
     assert dip.shape[1] == 1
     assert sun.shape[1] == 2
     # and the extra SU(N) band is nowhere near the dipole one
@@ -231,7 +231,7 @@ def test_sun_supports_mixed_spin():
 
 
 # ----------------------------------------------------------------- config bridge
-def test_bridge_from_generic_model_matches_sunny():
+def test_bridge_from_generic_model_matches_sunny(kernels):
     """SU(N) built from a pyMagCalc CONFIG -- reusing the whole existing front end
     (structure, symmetry propagation of the exchange matrices, supercells) and only
     swapping the LSWT engine. Same model as GATE 3, so it must land on the same Sunny
@@ -249,7 +249,7 @@ def test_bridge_from_generic_model_matches_sunny():
         "magnetic_structure": {"type": "pattern", "pattern_type": "ferromagnetic",
                                "direction": [0, 0, 1]},
     }
-    mdl = SUNModel.from_generic_model(GenericSpinModel(cfg))
+    mdl = SUNModel.from_generic_model(GenericSpinModel(cfg), kernels=kernels)
     assert abs(mdl.classical_energy() - (-1.6)) < 1e-9
     for h, want in sunny.items():
         got = mdl.dispersion(np.array([h, 0, 0]) @ B)
@@ -357,7 +357,7 @@ def test_nondiagonal_supercell_replication():
 
 
 # ----------------------------------------------------------------- FeI2 (the target)
-def test_fei2_su3_matches_sunny():
+def test_fei2_su3_matches_sunny(kernels):
     """FeI2 in SU(3) -- the whole reason SU(N) exists.
 
     S=1 triangular Fe, six ANISOTROPIC exchange matrices + strong easy-axis anisotropy.
@@ -393,7 +393,7 @@ def test_fei2_su3_matches_sunny():
     lat = np.array(m.config["crystal_structure"]["lattice_vectors"], float)
 
     mdl = SUNModel.from_generic_model(m, supercell=MSUPER,
-                                      directions=[[0, 0, 1]] * 4)
+                                      directions=[[0, 0, 1]] * 4, kernels=kernels)
     assert mdl.L == 4 and mdl.M == 2          # 4 sites x 2 bosons = 8 bands
 
     mdl.minimize_energy(n_restarts=40, seed=1)
@@ -405,7 +405,7 @@ def test_fei2_su3_matches_sunny():
         assert np.allclose(got, np.sort(want), atol=1e-4), f"q={q}: {got} vs {want}"
 
 
-def test_fei2_su3_intensities_match_sunny():
+def test_fei2_su3_intensities_match_sunny(kernels):
     """SU(N) S(Q,w). The payoff: the SINGLE-ION bands carry real spectral weight
     (0.164 and 0.315 below) because the observables are the full N x N spin operators.
     Dipole LSWT cannot produce those bands at all, let alone their intensity.
@@ -431,7 +431,8 @@ def test_fei2_su3_intensities_match_sunny():
     cfg = _fei2_cfg()
     m = GenericSpinModel(cfg)
     lat = np.array(m.config["crystal_structure"]["lattice_vectors"], float)
-    mdl = SUNModel.from_generic_model(m, supercell=MSUPER, directions=[[0, 0, 1]] * 4)
+    mdl = SUNModel.from_generic_model(m, supercell=MSUPER, directions=[[0, 0, 1]] * 4,
+                                      kernels=kernels)
     mdl.minimize_energy(n_restarts=40, seed=1)
 
     Bm = 2 * np.pi * np.linalg.inv(lat).T
@@ -450,7 +451,7 @@ def test_fei2_su3_intensities_match_sunny():
 
 
 # ----------------------------------------------------------------- runner integration
-def test_runner_mode_sun_end_to_end(tmp_path):
+def test_runner_mode_sun_end_to_end(tmp_path, kernels):
     """`calculation: {mode: SUN}` swaps the LSWT engine; everything else (structure,
     symmetry propagation, q-path, tasks, plotting, the ground-state guards) is unchanged.
 
@@ -463,8 +464,8 @@ def test_runner_mode_sun_end_to_end(tmp_path):
     cfg = _fei2_cfg()
     cfg["crystal_structure"]["magnetic_supercell"] = {
         "matrix": [[1, 0, 0], [0, 1, -2], [0, 1, 2]]}
-    cfg["calculation"] = {"mode": "SUN", "cache_mode": "none"}
-    cfg["tasks"] = {"minimization": True, "dispersion": True}
+    cfg["calculation"] = {"mode": "SUN", "cache_mode": "none", "kernels": kernels}
+    cfg["tasks"] = {"minimization": True, "dispersion": True, "sqw_map": True}
     cfg["minimization"] = {"enabled": True, "num_starts": 25, "seed": 1}
     cfg["q_path"] = {"G": [0.0, 0.0, 0.0], "M": [0.5, 0.0, 0.0],
                      "path": ["G", "M"], "points_per_segment": 3}
@@ -503,7 +504,7 @@ def test_runner_rejects_unknown_mode(tmp_path):
 
 
 # ================================================================== the traps
-def test_wrong_sun_reference_state_is_INVISIBLE_to_the_imaginary_check():
+def test_wrong_sun_reference_state_is_INVISIBLE_to_the_imaginary_check(kernels):
     """Documents WHY the SU(N) energy audit is not optional.
 
     A structure taken from a DIPOLE run is generally not the SU(N) ground state (a
@@ -525,7 +526,7 @@ def test_wrong_sun_reference_state_is_INVISIBLE_to_the_imaginary_check():
     # would hand you), instead of the true canted one
     wrong = SUNModel.from_generic_model(
         m, supercell=MSUPER,
-        directions=[[0, 0, 1], [0, 0, -1], [0, 0, -1], [0, 0, 1]])
+        directions=[[0, 0, 1], [0, 0, -1], [0, 0, -1], [0, 0, 1]], kernels=kernels)
     e_wrong = wrong.energy_per_site()
 
     assert e_wrong > e_true + 1e-3                      # genuinely the wrong state

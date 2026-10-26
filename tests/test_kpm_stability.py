@@ -58,7 +58,7 @@ CHAIN_LAT = [[1.0, 0, 0], [0, 6.0, 0], [0, 0, 6.0]]
 CHAIN_B = 2 * np.pi * np.linalg.inv(np.array(CHAIN_LAT, float)).T
 
 
-def _square(J, S=0.5):
+def _square(J, S=0.5, kernels="numpy"):
     """One site per cell, `z` = 4 neighbours, in the FERROMAGNETIC state. With J > 0
     (antiferromagnetic) that state is a stationary MAXIMUM."""
     cfg = {"crystal_structure": {"lattice_vectors": SQ_LAT,
@@ -69,7 +69,7 @@ def _square(J, S=0.5):
            "magnetic_structure": {"type": "pattern", "pattern_type": "ferromagnetic",
                                   "direction": [0, 0, 1]},
            "parameters": {}, "parameter_order": []}
-    return SUNModel.from_generic_model(GenericSpinModel(cfg), [])
+    return SUNModel.from_generic_model(GenericSpinModel(cfg), [], kernels=kernels)
 
 
 def _chain_cfg(J1=-1.0, J2=0.5, S=0.5, **calculation):
@@ -103,11 +103,12 @@ def _chain_cfg(J1=-1.0, J2=0.5, S=0.5, **calculation):
             "plotting": {"enabled": False, "save_plot": False, "show_plot": False}}
 
 
-def _chain_model(J1=-1.0, J2=0.5, S=0.5):
-    return SUNModel.from_generic_model(GenericSpinModel(_chain_cfg(J1, J2, S)), [])
+def _chain_model(J1=-1.0, J2=0.5, S=0.5, kernels="numpy"):
+    return SUNModel.from_generic_model(GenericSpinModel(_chain_cfg(J1, J2, S)), [],
+                                       kernels=kernels)
 
 
-def _triangular_120(n):
+def _triangular_120(n, kernels="numpy"):
     """The exact 120-degree ground state on an n x n cell -- NON-COLLINEAR, with a
     Goldstone zero at Gamma and at K."""
     cfg = {"crystal_structure": {"lattice_vectors": TRI.tolist(),
@@ -119,7 +120,8 @@ def _triangular_120(n):
                                   "direction": [0, 0, 1]},
            "parameters": {}, "parameter_order": []}
     m = SUNModel.from_generic_model(GenericSpinModel(cfg), [],
-                                    supercell=[[n, 0, 0], [0, n, 0], [0, 0, 1]])
+                                    supercell=[[n, 0, 0], [0, n, 0], [0, 0, 1]],
+                                    kernels=kernels)
     ang = 2 * np.pi * ((np.asarray(m.pos, float) @ np.linalg.inv(TRI)) @ K120)
     m.Z = [coherent_from_direction(s, d) for s, d in
            zip(m.S, np.stack([np.cos(ang), np.sin(ang), np.zeros_like(ang)], axis=1))]
@@ -139,21 +141,21 @@ def _exact_min_eig(model, q_cart):
 @pytest.mark.parametrize("J", [1.0, 2.5])
 @pytest.mark.parametrize("q_rlu", [[0.3, 0.2, 0], [0.5, 0.5, 0], [0.1, 0, 0],
                                    [0.25, 0, 0]])
-def test_min_h2_eigenvalue_matches_the_closed_form_at_a_maximum(J, q_rlu):
+def test_min_h2_eigenvalue_matches_the_closed_form_at_a_maximum(J, q_rlu, kernels):
     """min eig H2 = -S J (z - sum_d cos q.d) for the ferromagnetic state of an
     ANTIFERROMAGNET -- minus the engine's own ferromagnet dispersion, which is the
     statement that flipping the exchange flips the curvature."""
-    m, q = _square(J), np.array(q_rlu, float) @ SQ_B
+    m, q = _square(J, kernels=kernels), np.array(q_rlu, float) @ SQ_B
     want = -0.5 * J * (4 - 2 * np.cos(q[0]) - 2 * np.cos(q[1]))
     assert m.min_h2_eigenvalue(q, method="exact") == pytest.approx(want, abs=1e-10)
     assert m.min_h2_eigenvalue(q, method="bisect") == pytest.approx(want, abs=1e-8)
 
 
-def test_the_sign_flip_against_the_engines_own_ferromagnet_dispersion():
+def test_the_sign_flip_against_the_engines_own_ferromagnet_dispersion(kernels):
     """The other half of the same identity: the AFM's H2 curvature at the FM state is
     exactly MINUS the magnon energy of the model with J -> -J, band by band, computed
     by a different route (`dispersion`, i.e. eigenvalues of g H2)."""
-    afm, fm = _square(1.0), _square(-1.0)
+    afm, fm = _square(1.0, kernels=kernels), _square(-1.0, kernels=kernels)
     for q_rlu in ([0.3, 0.2, 0], [0.25, 0, 0], [0.5, 0.5, 0], [0.13, 0.41, 0]):
         q = np.array(q_rlu, float) @ SQ_B
         assert _exact_min_eig(afm, q) == pytest.approx(-float(fm.dispersion(q)[0]),
@@ -161,12 +163,12 @@ def test_the_sign_flip_against_the_engines_own_ferromagnet_dispersion():
 
 
 @pytest.mark.parametrize("q_rlu", [[0.3, 0.2, 0], [0.5, 0.5, 0], [0.25, 0, 0]])
-def test_a_stationary_maximum_is_INVISIBLE_to_the_imaginary_mode_check(q_rlu):
+def test_a_stationary_maximum_is_INVISIBLE_to_the_imaginary_mode_check(q_rlu, kernels):
     """Why H2 >= 0 and not max|Im w|. At a stationary maximum H2 stays diagonal, so
     g H2 has an entirely real spectrum and the imaginary-mode guard -- the one the
     runner already runs -- reads exactly 0.0 while the state is as wrong as a state
     can be. The H2 check is strictly sharper, and this is where they part."""
-    m, q = _square(1.0), np.array(q_rlu, float) @ SQ_B
+    m, q = _square(1.0, kernels=kernels), np.array(q_rlu, float) @ SQ_B
     assert m.max_imaginary(q) < 1e-12, "the weaker check is supposed to be blind here"
     assert _exact_min_eig(m, q) < -0.1, "test model must actually be a maximum"
     assert not m.is_stable_at(q)
@@ -176,48 +178,49 @@ def test_a_stationary_maximum_is_INVISIBLE_to_the_imaginary_mode_check(q_rlu):
 # 2. No false alarms: true ground states, including at their Goldstone q
 # ---------------------------------------------------------------------------
 
-def test_a_true_ground_state_is_stable_everywhere_including_gamma():
+def test_a_true_ground_state_is_stable_everywhere_including_gamma(kernels):
     """A ferromagnet's H2 is EXACTLY ZERO at Gamma (and a Goldstone mode puts an exact
     zero eigenvalue at the ordering wavevector of any gapless magnet). An unshifted
     positive-definiteness test refuses those, and Gamma is in every path ever plotted,
     so this is the false-alarm case the shift and the q-independent scale exist for."""
-    m = _square(-1.0)
+    m = _square(-1.0, kernels=kernels)
     for q_rlu in ([0, 0, 0], [0.3, 0.2, 0], [0.5, 0.5, 0], [0.001, 0, 0]):
         q = np.array(q_rlu, float) @ SQ_B
         assert m.is_stable_at(q), f"false alarm at q = {q_rlu}"
     assert m.assert_stable(np.array([[0, 0, 0]], float) @ SQ_B)["stable"]
 
 
-def test_a_non_collinear_ground_state_is_stable_at_gamma_and_at_K():
+def test_a_non_collinear_ground_state_is_stable_at_gamma_and_at_K(kernels):
     """The 120-degree state on a 9x9 cell: non-collinear, with the Goldstone zero
     folded onto Gamma_super. Its energy is the exact -0.375, so any refusal here is
     the guard's fault and not the state's."""
-    m = _triangular_120(9)
+    m = _triangular_120(9, kernels=kernels)
     qs = np.array([[0, 0, 0], K120, [0.5, 0.0, 0.0], [0.2, 0.1, 0.0],
                    [0.37, -0.11, 0.0]], float) @ TRI_B
     rep = m.assert_stable(qs)
     assert rep["stable"] and rep["n_unstable"] == 0 and rep["n_checked"] == len(qs)
 
 
-def test_the_frustrated_chain_is_stable_below_its_transition_and_not_above():
+def test_the_frustrated_chain_is_stable_below_its_transition_and_not_above(kernels):
     """J2 = |J1|/4 is the exact classical boundary at which the ferromagnet gives way
     to a spiral, so the guard's verdict is pinned to an analytic phase boundary rather
     than to a threshold anyone chose: J2 = 0.1 stable at every q, J2 = 0.5 not."""
     qs = np.array([[h, 0, 0] for h in np.linspace(0, 0.5, 21)], float) @ CHAIN_B
-    assert _chain_model(J2=0.1).assert_stable(qs, on_failure="off")["stable"]
-    assert not _chain_model(J2=0.5).assert_stable(qs, on_failure="off")["stable"]
+    lo, hi = _chain_model(J2=0.1, kernels=kernels), _chain_model(J2=0.5, kernels=kernels)
+    assert lo.assert_stable(qs, on_failure="off")["stable"]
+    assert not hi.assert_stable(qs, on_failure="off")["stable"]
 
 
 # ---------------------------------------------------------------------------
 # 3. The cheap machinery against the exact eigensolve
 # ---------------------------------------------------------------------------
 
-def test_the_verdict_agrees_with_the_exact_criterion_point_by_point():
+def test_the_verdict_agrees_with_the_exact_criterion_point_by_point(kernels):
     """`is_stable_at` is a shifted Cholesky; it must decide exactly what
     `eigvalsh(H2).min() > -eps` decides, at every q, on both sides of the boundary --
     including the q where the frustrated chain's band touches zero."""
     for J2 in (0.1, 0.5):
-        m = _chain_model(J2=J2)
+        m = _chain_model(J2=J2, kernels=kernels)
         eps = H2_REL_TOL * m._reference_h2_scale()
         for h in np.linspace(0, 0.5, 26):
             q = np.array([h, 0, 0], float) @ CHAIN_B
@@ -225,12 +228,12 @@ def test_the_verdict_agrees_with_the_exact_criterion_point_by_point():
                 f"J2={J2} h={h}: min eig {_exact_min_eig(m, q):+.3e}, eps {eps:.3e}"
 
 
-def test_bisection_reproduces_the_eigensolve_on_a_disordered_supercell():
+def test_bisection_reproduces_the_eigensolve_on_a_disordered_supercell(kernels):
     """The reporting number. Bisection over the Cholesky shift is what runs instead of
     `eigvalsh` on a large cell, so it is checked against `eigvalsh` on a cell small
     enough to afford both -- on a DISORDERED, non-collinear state, where the smallest
     eigenvalue is not protected by any symmetry."""
-    m = _triangular_120(6)
+    m = _triangular_120(6, kernels=kernels)
     apply_bond_disorder(m, 1 / 3, seed=0)
     m.minimize_energy(n_restarts=1, max_iter=2000, tol=1e-15)
     scale = m._reference_h2_scale()
@@ -240,10 +243,10 @@ def test_bisection_reproduces_the_eigensolve_on_a_disordered_supercell():
             _exact_min_eig(m, q), abs=1e-6 * scale)
 
 
-def test_auto_picks_the_exact_route_only_while_it_is_affordable():
+def test_auto_picks_the_exact_route_only_while_it_is_affordable(kernels):
     """`method='auto'` is a cost switch, not a physics one, so it must agree with both
     named routes wherever they are both available."""
-    m = _chain_model(J2=0.5)                      # 2D = 2, far below the switch
+    m = _chain_model(J2=0.5, kernels=kernels)     # 2D = 2, far below the switch
     q = np.array([0.15, 0, 0], float) @ CHAIN_B
     assert m.min_h2_eigenvalue(q) == m.min_h2_eigenvalue(q, method="exact")
     assert m.min_h2_eigenvalue(q, method="bisect") == pytest.approx(
@@ -252,11 +255,11 @@ def test_auto_picks_the_exact_route_only_while_it_is_affordable():
         m.min_h2_eigenvalue(q, method="lanczos")
 
 
-def test_the_shared_hamiltonian_shortcut_changes_nothing():
+def test_the_shared_hamiltonian_shortcut_changes_nothing(kernels):
     """The guard and the spectrum share ONE build of g H2 per q -- that is what keeps
     the check at a few percent of the KPM cost. A shared build must give bit-identical
     answers to an independent one, on both sides."""
-    m = _triangular_120(3)
+    m = _triangular_120(3, kernels=kernels)
     q = np.array([0.2, 0.1, 0], float) @ TRI_B
     H = np.asarray(m.hamiltonian(q), complex)
     egrid = np.arange(0.0, 3.0001, 0.1)
@@ -267,14 +270,14 @@ def test_the_shared_hamiltonian_shortcut_changes_nothing():
     assert m.is_stable_at(q, hmat=H) == m.is_stable_at(q)
 
 
-def test_kpm_at_a_goldstone_point_is_finite_and_says_it_is_undefined(caplog):
+def test_kpm_at_a_goldstone_point_is_finite_and_says_it_is_undefined(caplog, kernels):
     """Found while pointing a guarded KPM run at a path that starts at Gamma: for a
     ferromagnet H(Gamma) is IDENTICALLY zero, so the spectral bound gamma is zero and
     Â = D̂/gamma divided 0 by 0 -- the whole q-column came back NaN, silently, into the
     saved map, the plot and the logged intensity range. It is now finite, and warns:
     the value is 0 rather than the q -> 0 limit (0.587 here), because with every mode
     at omega = 0 the +/-omega poles coincide and cancel."""
-    m = _square(-1.0)
+    m = _square(-1.0, kernels=kernels)
     egrid = np.linspace(0, 4, 41)
     caplog.clear()
     with caplog.at_level("WARNING"):
@@ -290,10 +293,10 @@ def test_kpm_at_a_goldstone_point_is_finite_and_says_it_is_undefined(caplog):
 # 4. `assert_stable`'s three modes
 # ---------------------------------------------------------------------------
 
-def test_assert_stable_raises_warns_or_stays_quiet(caplog):
+def test_assert_stable_raises_warns_or_stays_quiet(caplog, kernels):
     """The three spellings are `calculation.on_imaginary`'s, so a config that has
     knowingly downgraded the other two guards downgrades this one with them."""
-    m = _chain_model(J2=0.5)
+    m = _chain_model(J2=0.5, kernels=kernels)
     qs = np.array([[h, 0, 0] for h in (0.1, 0.15, 0.2, 0.4)], float) @ CHAIN_B
     with pytest.raises(ValueError, match="NOT a classical minimum"):
         m.assert_stable(qs)
@@ -331,41 +334,41 @@ def _run(tmp_path, cfg, name="c.yaml"):
         os.chdir(cwd)
 
 
-def test_the_two_EXISTING_guards_pass_this_model(tmp_path):
+def test_the_two_EXISTING_guards_pass_this_model(tmp_path, kernels):
     """The control, and the reason this item was not closed by the guards already
     there. The frustrated ferromagnetic chain is a genuine minimum within its cell and
     has an entirely real spectrum, so the energy audit and the imaginary-mode check
     both pass it -- a `dispersion` run of exactly this config succeeds and plots a
     perfectly plausible band. Only the per-q H2 check knows better."""
-    cfg = _chain_cfg()
+    cfg = _chain_cfg(kernels=kernels)
     cfg["tasks"] = {"dispersion": True}
     assert _run(tmp_path, cfg) is None
 
 
-def test_the_runner_refuses_a_KPM_spectrum_about_a_non_minimum(tmp_path):
-    msg = _run(tmp_path, _chain_cfg())
+def test_the_runner_refuses_a_KPM_spectrum_about_a_non_minimum(tmp_path, kernels):
+    msg = _run(tmp_path, _chain_cfg(kernels=kernels))
     assert msg is not None, "kpm_sqw ran about a non-minimum"
     assert "NOT a classical minimum" in msg and "KPM" in msg
 
 
-def test_on_imaginary_off_lets_the_KPM_run_through(tmp_path):
+def test_on_imaginary_off_lets_the_KPM_run_through(tmp_path, kernels):
     """The escape hatch has to work, or the guard gets removed instead of downgraded."""
-    assert _run(tmp_path, _chain_cfg(on_imaginary="off")) is None
+    assert _run(tmp_path, _chain_cfg(on_imaginary="off", kernels=kernels)) is None
 
 
-def test_a_stable_model_runs_the_KPM_task_untouched(tmp_path):
+def test_a_stable_model_runs_the_KPM_task_untouched(tmp_path, kernels):
     """The guard must not cost a correct config anything -- the same config below its
     frustration boundary runs to completion."""
-    assert _run(tmp_path, _chain_cfg(J2=0.1)) is None
+    assert _run(tmp_path, _chain_cfg(J2=0.1, kernels=kernels)) is None
 
 
-def test_kpm_is_treated_as_an_LSWT_task_by_the_up_front_guards(tmp_path):
+def test_kpm_is_treated_as_an_LSWT_task_by_the_up_front_guards(tmp_path, kernels):
     """`kpm_sqw` was missing from the runner's `_lswt_tasks` list, so pairing it with
     any classical task -- which is a natural thing to do, thermodynamics plus the
     spectrum of the same model -- silenced the up-front ground-state guards for the
     whole run. The structure here is a ferromagnet on an antiferromagnet, i.e. the
     energy audit's own case, so it must be refused even in that combination."""
-    cfg = _chain_cfg(J1=1.0, J2=0.0)             # AFM chain, ferromagnetic structure
+    cfg = _chain_cfg(J1=1.0, J2=0.0, kernels=kernels)   # AFM chain, FM structure
     cfg["tasks"] = {"kpm_sqw": True, "thermal_mc": True}
     cfg["thermal_mc"] = {"temperatures": [1.0], "supercell": [4, 1, 1],
                          "n_sweeps": 10, "n_equil": 5}
@@ -373,7 +376,7 @@ def test_kpm_is_treated_as_an_LSWT_task_by_the_up_front_guards(tmp_path):
     assert msg is not None and "NOT a classical" in msg
 
 
-def test_h2_rel_tolerance_reaches_the_guard_from_the_config(tmp_path):
+def test_h2_rel_tolerance_reaches_the_guard_from_the_config(tmp_path, kernels):
     """`calculation.h2_rel_tolerance` must actually move guard 3's threshold.
 
     Found by `tests/test_config_key_coverage.py`, which enumerates config keys from
@@ -388,10 +391,12 @@ def test_h2_rel_tolerance_reaches_the_guard_from_the_config(tmp_path):
     frustrated chain's H2 goes about 5e-2 negative relative to the reference scale,
     so a tolerance below that must still refuse and one well above must accept.
     """
-    strict = _run(tmp_path, _chain_cfg(h2_rel_tolerance=1e-6), name="strict.yaml")
+    strict = _run(tmp_path, _chain_cfg(h2_rel_tolerance=1e-6, kernels=kernels),
+                  name="strict.yaml")
     assert strict is not None and "NOT a classical minimum" in strict
 
     # A tolerance wider than the instability turns the guard off for this model --
     # which is the point: the number is the knob, not the verdict.
-    loose = _run(tmp_path, _chain_cfg(h2_rel_tolerance=10.0), name="loose.yaml")
+    loose = _run(tmp_path, _chain_cfg(h2_rel_tolerance=10.0, kernels=kernels),
+                 name="loose.yaml")
     assert loose is None, f"h2_rel_tolerance did not reach the guard: {loose}"
