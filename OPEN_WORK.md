@@ -16,8 +16,8 @@
 > sets, and the 128-trajectory case runs in 3 s instead of 169 s (`GAP_STATUS.md`, "Rust
 > kernels K1", which also records what the second random stream exposed about the
 > low-T tests' own statistics).
-> Gate on that branch, 2026-10-26: **1850 passed, 2 skipped, 20 min 24 s** (not idle). Not
-> committed in pyMagCalc. Pick up at K2 (`sun/dynamics`): the plan's §3 names the
+> Gate on that branch, 2026-10-26: **1850 passed, 2 skipped, 20 min 24 s** (not idle).
+> Committed as 24a1d5c. Pick up at K2 (`sun/dynamics`): the plan's §3 names the
 > functions and the tests.
 > Gate on this tree with rsmagcalc installed (2026-10-26, workspace root,
 > `MAGCALC_NO_GUI=1 pytest -rs`): **1753 passed, 2 skipped, 13 min 58 s** — the
