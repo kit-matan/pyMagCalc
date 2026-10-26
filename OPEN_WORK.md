@@ -30,9 +30,13 @@
 > Cholesky) run in rsMagCalc (`d5e581d`, `SunModel`, Accelerate LAPACK) behind
 > `kernels: rust`, for `mode: SUN` and `mode: entangled`; every K3 oracle runs under
 > both kernel sets, FeI2 matches NumPy to 5e-15 (`GAP_STATUS.md`, "Rust kernels K3").
-> NOT COMMITTED. Still open: the full gate and the idle-machine timings (the K3
-> numbers so far were taken at load average ~190 from a stale K1 process). Then K4
-> (KPM) builds on `SunModel.hamiltonians`.
+> Committed as `1d85c87` on `feature/rust-kernels-k1`. Gate on that tree
+> (2026-10-27, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`):
+> **2064 passed, 2 skipped, 0 failed, 13 min 34 s**, the same two structural skips. The
+> K3 timings were re-measured with no other compute job running (one S09 L = 30 H(q)
+> build 425 ms → 14 ms, FeI2 end to end 5.6 s → 1.7 s); the machine was still busy with
+> desktop apps, so they are recorded as a lower bound. Nothing pushed, the branch not
+> merged to master. Next: K4 (KPM) builds on `SunModel.hamiltonians`.
 > Gate on this tree with rsmagcalc installed (2026-10-26, workspace root,
 > `MAGCALC_NO_GUI=1 pytest -rs`): **1753 passed, 2 skipped, 13 min 58 s** — the
 > previous 1735 plus the 18 M0 tests, the same two structural skips. NOT COMMITTED

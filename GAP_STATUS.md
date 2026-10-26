@@ -1027,20 +1027,40 @@ dispersion, sqw_map}`), the same config with `calculation.kernels` switched: ene
 to 3.1e-15 (the saved `disp`/`sqw` npz files), and the run log names the kernel after the engine line,
 `kernels: rust (rsmagcalc 0.1.0, git d5e581d452f3, release)`.
 
-**Timing** (M1 Pro, 10 cores, 2026-10-26; NOT an idle machine — a stale `python -` process from the K1 session, PID
-27374, was spawning multiprocessing workers throughout, load average ~190; idle re-measurement pending):
+**Timing** (M1 Pro, 10 cores, re-measured 2026-10-27 00:27–00:32 with no other compute job running: the stale K1
+process PID 27374 that loaded the first measurement had exited with its session, and no pytest or `magcalc run` was
+live. The machine was still not quiet — CPU 50–69 % idle, the 1-min load average 96–112 and falling, OneDrive and
+`contactsd` busy, 8.9 GB of swap in use — so treat these as a lower bound on the speedup and the absolute numbers as
+this machine's, not a clean benchmark. The first, fully loaded measurement of 2026-10-26 is kept in brackets.)
 
 | path | numpy | rust | how measured |
 |---|---|---|---|
-| FeI2 SU(3) `magcalc run`, wall (minimization + 60-q dispersion + S(Q,ω)) | 11.5 s | 4.0 s | `/usr/bin/time -p env MAGCALC_NO_GUI=1 magcalc run fei2_<k>.yaml` |
-| FeI2 per q: H(q) / dispersion / S(Q,ω) / guard (121 q) | 47 / 46 / 60 / 69 ms | 0.04 / 0.09 / 0.16 / 0.06 ms | in-process `perf_counter`, batch of 121 q |
-| S09 L = 30 (900 sites, 2D = 1800): one H(q) build | **870 ms** | **17.1 ms** (1 thread), 16.5 ms | `<scratch>/bench_s09.py 30`, 8 generic q |
-| S09 L = 30: guard (shifted Cholesky) per q | 789 ms | 114 ms (1 thread), 53 ms | same |
-| S09 L = 30: general eigenvalues (`zgeev`) per q | 17.5 s | 11.4 s (1 thread), 6.2 s | same, 4 q |
+| FeI2 SU(3) `magcalc run`, wall (minimization + 60-q dispersion + S(Q,ω)) | **5.6 s, 6.1 s** [11.5 s] | **1.7 s, 1.7 s** [4.0 s] | `/usr/bin/time -p env MAGCALC_NO_GUI=1 magcalc run fei2_<k>.yaml`, two runs each |
+| FeI2 per q: H(q) / dispersion / S(Q,ω) / guard (121 q) | 47 / 46 / 60 / 69 ms | 0.04 / 0.09 / 0.16 / 0.06 ms | in-process `perf_counter`, batch of 121 q (loaded run only, not re-measured) |
+| S09 L = 30 (900 sites, 2D = 1800): one H(q) build | **425 ms** [870 ms] | **15.8 ms** (1 thread), 13.6 ms [17.1, 16.5] | `<scratch>/bench_s09.py 30`, 8 generic q |
+| S09 L = 30: guard (shifted Cholesky) per q | 468 ms [789 ms] | 61.9 ms (1 thread), 49.5 ms [114, 53] | same |
+| S09 L = 30: general eigenvalues (`zgeev`) per q | 7.1 s [17.5 s] | 7.0 s (1 thread), 3.0 s [11.4, 6.2] | same, 4 q |
+| S09 L = 30: one-magnon `structure_factor` per q | 8.3 s | 6.7 s (1 thread), 3.7 s | same, 4 q (first run of this line) |
 
-The H(q) build is the plan's headline: 620 ms/q on an idle machine in `OPEN_WORK.md`, 870 ms here under load, 17 ms in
-the kernel (51×) — the build that dominated KPM's per-q cost at L = 30. The general eigenproblem is LAPACK-bound under
-both, so the kernel buys only its thread parallelism there.
+The H(q) build is the plan's headline: 620 ms/q in `OPEN_WORK.md`, 425 ms here, 14–16 ms in the kernel (27–31×) — the
+build that dominated KPM's per-q cost at L = 30. The general eigenproblem and the Colpa step are LAPACK-bound under
+both (single-thread Rust ≈ NumPy, both calling Accelerate), so the kernel buys only its thread parallelism there, about
+2.3×. FeI2 end to end: 3.4–3.6×, and its outputs agreed again on this run (energies 5.3e-15, intensities 3.1e-15).
+
+**The S09 `structure_factor` line reports a per-band intensity gap of 7.4e-2, and it is not a defect.** At q = (0.31,
+0.19, 0) the 30×30 supercell folds 30 bands onto ω = 1.000000 exactly, and inside a degenerate eigenspace how the weight
+splits between bands is a choice of basis, not an observable (the same point as the collinear chirality in §6 of
+`CLAUDE.md`). Summed over every degenerate group the two kernels agree to 3.6e-16, the total intensity to 5.6e-16, and
+every non-degenerate band to 1e-28; the other three q points agree per band to 1e-10 or better. The earlier claim that
+calling the same LAPACK eigensolver reproduces NumPy's per-band split holds for 2-fold groups but not for this 30-fold
+one, so `tests/test_sun_lswt_parity.py` and `test_kernels_sun.py` are right to compare group sums. Checked with
+`<this session's scratch>/k3check/s09_groups.py`.
+
+**Gate** (2026-10-27, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`, pyMagCalc `1d85c87`, rsMagCalc
+`021693c` installed, magpipe 283f694): **2064 passed, 2 skipped, 0 failed, 13 min 34 s** — 151 more than the K1+K2 gate,
+all from K3 (the `rust` parametrizations of its oracle files, `tests/test_kernels_sun.py`, the new S09 SU(N) case
+and rsMagCalc's `tests/test_sun_lswt_parity.py`), and the same two structural skips (`seekpath` absent, ALPS present). No
+crashed xdist worker.
 
 ### Rust kernels K2, 2026-10-26 — the CP^(N−1) sampler and dynamics behind `kernels: rust`
 
