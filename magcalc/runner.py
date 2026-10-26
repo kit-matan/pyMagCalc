@@ -1419,7 +1419,8 @@ def run_calculation(config_file: str):
                     adapt_sigma=bool(sd_cfg.get('adapt_sigma', True)),
                     target_acceptance=float(
                         sd_cfg.get('target_acceptance', 0.5)),
-                    on_unequilibrated=sd_cfg.get('on_unequilibrated', 'warn'))
+                    on_unequilibrated=sd_cfg.get('on_unequilibrated', 'warn'),
+                    kernels=kernels, n_workers=sd_cfg.get('n_workers'))
                 logger.info(
                     f"SU(N) SampledCorrelations (kT={kT} meV, {calculator.model.L} sites): "
                     f"S(q,w) {sqw.shape}, E up to {w.max():.3g} meV.")

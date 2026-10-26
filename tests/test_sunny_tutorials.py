@@ -385,7 +385,7 @@ def test_S06_field_and_anisotropy_enter_with_the_right_signs():
 
 
 @pytest.mark.slow
-def test_S06_quench_produces_a_quantized_nonzero_skyrmion_number():
+def test_S06_quench_produces_a_quantized_nonzero_skyrmion_number(kernels):
     """The tutorial's actual claim: a quench leaves a TOPOLOGICAL texture behind.
 
     Two assertions, neither a golden number. (1) The SU(3) charge is an INTEGER --
@@ -406,7 +406,7 @@ def test_S06_quench_produces_a_quantized_nonzero_skyrmion_number():
     a1 = np.array([1.0, 0.0, 0.0])
     a2 = np.array([-0.5, np.sqrt(3) / 2, 0.0])
     tris = sd.triangulate_lattice(mdl.pos, a1, a2, L, L)
-    Zf, _ = sd.quench(mdl, Z0, dt=0.01, n_steps=1600, damping=0.05)
+    Zf, _ = sd.quench(mdl, Z0, dt=0.01, n_steps=1600, damping=0.05, kernels=kernels)
     q = sd.sun_topological_charge(Zf, tris)
     assert abs(q - round(q)) < 1e-6, f"charge not quantized: {q}"
     assert round(q) != 0, "quench relaxed to a topologically trivial state"

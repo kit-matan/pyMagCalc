@@ -17,8 +17,15 @@
 > kernels K1", which also records what the second random stream exposed about the
 > low-T tests' own statistics).
 > Gate on that branch, 2026-10-26: **1850 passed, 2 skipped, 20 min 24 s** (not idle).
-> Committed as 24a1d5c. Pick up at K2 (`sun/dynamics`): the plan's §3 names the
-> functions and the tests.
+> Committed as 24a1d5c. **M2 (K2) is done, 2026-10-26**: the CP^(N−1) Metropolis
+> sampler (local dE from the bonds touching the site, O(L z n_ops²) per sweep where
+> the NumPy one is O(L²)), the RK4 integrator, the damped quench and the trajectory
+> loop of `sun.dynamics.sampled_correlations` run in rsMagCalc (`ec28492`+,
+> `CpnModel`) behind `kernels: rust`, ragged per-site tables so mixed spin goes
+> through the kernel; every oracle test in the plan's K2 list runs under both kernel
+> sets (`GAP_STATUS.md`, "Rust kernels K2", with the timings). Gate on that tree,
+> 2026-10-26: **1913 passed, 2 skipped, 20 min 21 s**. Pick up at K3 (SU(N) H(q)
+> assembly, Colpa, intensities): the plan's §3 names the functions and the tests.
 > Gate on this tree with rsmagcalc installed (2026-10-26, workspace root,
 > `MAGCALC_NO_GUI=1 pytest -rs`): **1753 passed, 2 skipped, 13 min 58 s** — the
 > previous 1735 plus the 18 M0 tests, the same two structural skips. NOT COMMITTED

@@ -197,7 +197,7 @@ def test_the_damped_flow_preserves_the_norm_by_itself():
 
 
 @pytest.mark.parametrize("lam", [0.05, 0.4])
-def test_energy_decay_rate_is_minus_two_lambda_times_the_variance(lam):
+def test_energy_decay_rate_is_minus_two_lambda_times_the_variance(lam, kernels):
     """dE/dt = -2 lambda sum_i Var_i(h) -- the identity that fixes the SIGN.
 
     The left side is a central difference of `SUNModel._energy_of` along the flow;
@@ -208,15 +208,15 @@ def test_energy_decay_rate_is_minus_two_lambda_times_the_variance(lam):
     mdl = _s06_model(L=3)
     Z = _random_state(mdl, 3)
     dt = 1e-4
-    fwd = sd.damped_step(mdl, Z, dt, lam)
-    bwd = sd.damped_step(mdl, Z, -dt, lam)
+    fwd = sd.damped_step(mdl, Z, dt, lam, kernels=kernels)
+    bwd = sd.damped_step(mdl, Z, -dt, lam, kernels=kernels)
     numeric = (sd.energy(mdl, fwd) - sd.energy(mdl, bwd)) / (2 * dt)
     exact = -2.0 * lam * _variance_sum(mdl, Z)
     assert exact <= 0.0
     assert numeric == pytest.approx(exact, rel=1e-6)
 
 
-def test_the_quench_descends_to_the_LOWEST_local_eigenvector():
+def test_the_quench_descends_to_the_LOWEST_local_eigenvector(kernels):
     """The fixed point is <h_i>-self-consistency, and the sign picks which one.
 
     A single site in a field plus an easy-plane anisotropy has no bonds, so the
@@ -231,20 +231,20 @@ def test_the_quench_descends_to_the_LOWEST_local_eigenvector():
     w, v = np.linalg.eigh(h)
 
     Z0 = _random_state(mdl, 5)
-    Zf, _ = sd.quench(mdl, Z0, dt=0.02, n_steps=4000, damping=0.1)
+    Zf, _ = sd.quench(mdl, Z0, dt=0.02, n_steps=4000, damping=0.1, kernels=kernels)
     overlap = abs(complex(v[:, 0].conj() @ Zf[0]))
     assert overlap == pytest.approx(1.0, abs=1e-6), (
         f"converged onto eigenvalue {float(np.real(Zf[0].conj() @ h @ Zf[0]))}, "
         f"spectrum {w}")
 
 
-def test_the_quench_energy_never_rises():
+def test_the_quench_energy_never_rises(kernels):
     """Monotone descent on the real (bonded) model, where h_i is not constant."""
     mdl = _s06_model(L=4)
     Z = _random_state(mdl, 9)
     energies = [sd.energy(mdl, Z)]
     for _ in range(60):
-        Z = sd.damped_step(mdl, Z, 0.01, 0.05)
+        Z = sd.damped_step(mdl, Z, 0.01, 0.05, kernels=kernels)
         energies.append(sd.energy(mdl, Z))
     e = np.array(energies)
     assert np.all(np.diff(e) <= 1e-9), f"energy rose: {np.diff(e).max()}"

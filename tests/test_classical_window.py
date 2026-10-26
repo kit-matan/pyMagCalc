@@ -161,7 +161,7 @@ def test_windowing_is_applied_before_the_one_sided_slice():
 # --------------------------------------------------------------------------
 # 3. The SU(N) path shares the implementation, so it must share the identity
 # --------------------------------------------------------------------------
-def test_the_sun_path_uses_the_same_window():
+def test_the_sun_path_uses_the_same_window(kernels):
     """`sun/dynamics.dynamical_structure_factor` imports the same `lag_window` /
     `_window_correlation`; the identity must hold there too, or the two classical
     paths have quietly diverged again (which is exactly how the missing 1/2pi and the
@@ -170,11 +170,13 @@ def test_the_sun_path_uses_the_same_window():
 
     model = _sun_model(4)
     model.minimize_energy(n_restarts=4, seed=1)
-    rng = np.random.default_rng(2)
+    from magcalc import kernels as K
+
+    rng = K.make_rng(2, kernels)
     Z = [np.asarray(z, complex).copy() for z in model.Z]
     sd.thermalize(model, Z, kT=0.4, n_sweeps=40, rng=rng, sigma=0.1,
                   on_unequilibrated="off")
-    traj = sd.evolve(model, Z, 0.02, 256)
+    traj = sd.evolve(model, Z, 0.02, 256, kernels=kernels)
     B = 2 * np.pi * np.linalg.inv(np.array(SUN_LAT, float)).T
     qs = np.array([[0.25, 0, 0], [0.5, 0, 0]]) @ B
 
@@ -348,7 +350,8 @@ def test_both_samplers_run_the_check_from_their_own_settings(caplog, kernels):
         B = 2 * np.pi * np.linalg.inv(np.array(SUN_LAT, float)).T
         sd.sampled_correlations(model, np.array([[0.25, 0, 0]]) @ B, 0.005,
                                 dt=0.02, n_steps=64, n_traj=1, therm_sweeps=20,
-                                window="cosine", on_unequilibrated="off")
+                                window="cosine", on_unequilibrated="off",
+                                kernels=kernels)
         assert "subtract_elastic" in caplog.text
 
 

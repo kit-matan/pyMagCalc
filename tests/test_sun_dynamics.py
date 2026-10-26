@@ -29,6 +29,7 @@ import copy
 import numpy as np
 import pytest
 
+from magcalc import kernels as K
 from magcalc.classical_dynamics import evolve as ll_evolve
 from magcalc.generic_model import GenericSpinModel
 from magcalc.sun import dynamics as sd
@@ -70,7 +71,7 @@ def _dipoles_along(mdl, traj):
 
 
 @pytest.mark.parametrize("dt,tol", [(0.02, 2e-8), (0.01, 1e-9)])
-def test_N2_reduces_exactly_to_landau_lifshitz(dt, tol):
+def test_N2_reduces_exactly_to_landau_lifshitz(dt, tol, kernels):
     """THE gate. For S = 1/2 the coherent state is a spinor and the CP^1 dynamics
     IS Landau-Lifshitz -- started from the same dipoles, the two engines must trace
     the same trajectory. The residual is RK4 truncation in two different
@@ -90,12 +91,13 @@ def test_N2_reduces_exactly_to_landau_lifshitz(dt, tol):
     assert np.linalg.norm(m0, axis=1) == pytest.approx([0.5, 0.5], abs=1e-12)
 
     n = 400
-    sun = _dipoles_along(mdl, sd.evolve(mdl, Z0, dt, n, record_every=50))
-    ll = ll_evolve(H, b, S, m0, dt, n, record_every=50)
+    sun = _dipoles_along(mdl, sd.evolve(mdl, Z0, dt, n, record_every=50,
+                                        kernels=kernels))
+    ll = ll_evolve(H, b, S, m0, dt, n, record_every=50, kernels=kernels)
     assert np.abs(sun - ll).max() < tol
 
 
-def test_energy_and_norms_are_conserved():
+def test_energy_and_norms_are_conserved(kernels):
     """Every h_i is Hermitian, so the flow is unitary per site: |Z_i| = 1 exactly and
     the energy is conserved to the integrator's order. A drift here means the mean
     field is not the true gradient of the energy being reported."""
@@ -106,14 +108,14 @@ def test_energy_and_norms_are_conserved():
         v = rng.standard_normal(mdl.Ns[i]) + 1j * rng.standard_normal(mdl.Ns[i])
         Z0.append(v / np.linalg.norm(v))
     E0 = sd.energy(mdl, Z0)
-    traj = sd.evolve(mdl, Z0, 0.01, 800, record_every=100)
+    traj = sd.evolve(mdl, Z0, 0.01, 800, record_every=100, kernels=kernels)
     for cfg_ in traj:
         assert [float(np.linalg.norm(z)) for z in cfg_] == pytest.approx(
             [1.0] * mdl.L, abs=1e-12)
         assert sd.energy(mdl, cfg_) == pytest.approx(E0, abs=1e-8)
 
 
-def test_dynamics_is_nontrivial_beyond_N2():
+def test_dynamics_is_nontrivial_beyond_N2(kernels):
     """Guards the guard: with S = 1 and a single-ion anisotropy the state explores
     directions no dipole can (quadrupolar components), so the trajectory must NOT be
     reproducible by evolving the dipole alone."""
@@ -123,7 +125,7 @@ def test_dynamics_is_nontrivial_beyond_N2():
     for i in range(mdl.L):
         v = rng.standard_normal(mdl.Ns[i]) + 1j * rng.standard_normal(mdl.Ns[i])
         Z0.append(v / np.linalg.norm(v))
-    traj = sd.evolve(mdl, Z0, 0.01, 400, record_every=50)
+    traj = sd.evolve(mdl, Z0, 0.01, 400, record_every=50, kernels=kernels)
     d = _dipoles_along(mdl, traj)
     lengths = np.linalg.norm(d, axis=2)
     # |<S>| is NOT conserved for a genuine SU(N) state -- weight moves between the
@@ -131,23 +133,24 @@ def test_dynamics_is_nontrivial_beyond_N2():
     assert lengths.max() - lengths.min() > 1e-3
 
 
-def test_metropolis_samples_and_leaves_the_state_normalized():
+def test_metropolis_samples_and_leaves_the_state_normalized(kernels):
     mdl = _model(_cfg(S=1.0))
-    rng = np.random.default_rng(7)
+    rng = K.make_rng(7, kernels)
     Z = [z.copy() for z in mdl.Z]
     acc = sd.thermalize(mdl, Z, kT=0.5, n_sweeps=40, rng=rng)
     assert [float(np.linalg.norm(z)) for z in Z] == pytest.approx([1.0] * mdl.L,
                                                                   abs=1e-12)
 
 
-def test_sampled_correlations_runs_and_is_positive():
+def test_sampled_correlations_runs_and_is_positive(kernels):
     """Smoke + sanity: S(q,w) must be real, finite and non-negative in the `perp`
     channel."""
     mdl = _model(_cfg(S=1.0))
     B = 2 * np.pi * np.linalg.inv(np.array(LAT, float)).T
     qs = np.array([[0.2, 0, 0], [0.5, 0, 0]]) @ B
     w, sqw = sd.sampled_correlations(mdl, qs, kT=0.5, dt=0.02, n_steps=128,
-                                     n_traj=2, therm_sweeps=40, seed=0)
+                                     n_traj=2, therm_sweeps=40, seed=0,
+                                     kernels=kernels)
     assert np.all(np.isfinite(sqw))
     assert sqw.min() >= -1e-12
     assert sqw.shape == (len(w), 2)
@@ -164,7 +167,7 @@ def _supercell_model(cfg, ncells=8):
 
 
 @pytest.mark.slow
-def test_low_T_peaks_fall_on_the_SUN_lswt_dispersion():
+def test_low_T_peaks_fall_on_the_SUN_lswt_dispersion(kernels):
     """The physical check that ties the dynamics to the validated LSWT engine.
 
     Two mistakes had to be cleared out of the way first, and both are worth keeping
@@ -196,17 +199,26 @@ def test_low_T_peaks_fall_on_the_SUN_lswt_dispersion():
     w, sqw = sd.sampled_correlations(sup, np.array([q]), kT=0.02, dt=0.02,
                                      n_steps=4096, n_traj=3, therm_sweeps=500,
                                      seed=2, sigma=0.03, classical_to_quantum=False,
-                                     subtract_elastic=True)
+                                     subtract_elastic=True, kernels=kernels)
     peak = w[int(np.argmax(sqw[:, 0]))]
     assert peak == pytest.approx(band, rel=0.05), (
         f"peak {peak:.4f} vs LSWT band {band:.4f}")
 
 
 @pytest.mark.slow
-def test_mode_hardens_toward_the_lswt_band_on_cooling():
+def test_mode_hardens_toward_the_lswt_band_on_cooling(kernels):
     """The temperature dependence itself, which is what distinguishes a genuine
     classical renormalization from a wrong frequency: a constant offset would NOT
-    shrink as kT falls."""
+    shrink as kT falls.
+
+    The peak is an argmax on a 0.077 meV grid, and 3 trajectories put the kT = 0.06
+    peak one bin up (1.918, the kT = 0.02 bin) under the Rust stream at first --
+    the sampler was not at fault: thermalized <E - E0> under both kernels sits on
+    equipartition 2 L kT at all three temperatures (64 Rust / 8 NumPy seeds,
+    2026-10-26), and 24 Rust trajectories give 1.611 < 1.841 < 1.918, the values
+    the docstring above records for NumPy. So the `rust` parametrization runs 24
+    trajectories (seconds); `numpy` keeps the historical 3 (~2 min of Python).
+    """
     cfg = _cfg(S=1.0, sia=-0.4)
     chem = _model(cfg)
     chem.minimize_energy(n_restarts=8, seed=1)
@@ -219,10 +231,10 @@ def test_mode_hardens_toward_the_lswt_band_on_cooling():
         sup = _supercell_model(cfg)
         sup.minimize_energy(n_restarts=6, seed=1)
         w, sqw = sd.sampled_correlations(sup, np.array([q]), kT=kT, dt=0.02,
-                                         n_steps=4096, n_traj=3, therm_sweeps=500,
-                                         seed=2, sigma=sig,
-                                         classical_to_quantum=False,
-                                         subtract_elastic=True)
+                                         n_steps=4096, therm_sweeps=500, seed=2,
+                                         n_traj=24 if kernels == "rust" else 3,
+                                         sigma=sig, classical_to_quantum=False,
+                                         subtract_elastic=True, kernels=kernels)
         peaks.append(w[int(np.argmax(sqw[:, 0]))])
     assert peaks[0] < peaks[1] < peaks[2], f"not monotone on cooling: {peaks}"
     assert peaks[-1] / band > 0.95

@@ -976,6 +976,76 @@ the rule-value parser fix a87c8a8 below, magpipe at 283f694), 2026-10-22, idle m
 ALPS ones. The merge is also what makes `sqrt(3)*D1x/3`, the allowed kagome DM, pass this check: before the
 parser fix it reached the check as an unbound `sqrt3` and was refused as a conflict.
 
+### Rust kernels K2, 2026-10-26 — the CP^(N−1) sampler and dynamics behind `kernels: rust`
+
+M2 of `RUST_KERNELS_PLAN.md`. rsMagCalc `ec28492` (`src/cpn.rs`, `rsmagcalc.CpnModel`) carries the CP^(N−1)
+Metropolis sweep with pyMagCalc's adaptive step size (`thermalize`: the tuning half and the recorded fixed-sigma half,
+on an `rsmagcalc.Rng` stream), the RK4 integrator (`evolve`), the damped quench (`quench`) and the trajectory loop of
+`sun.dynamics.sampled_correlations` (`sampled_trajectories`, rayon over trajectories, stream (seed, i) each). A
+`SUNModel`'s per-site operator tables, on-site matrices and bond list are packed ONCE as ragged arrays, so a
+mixed-spin cell runs through the kernel where the NumPy `_fast` path refuses it. pyMagCalc selects it per call
+(`kernels.rust_for` + `fell_back`; `thermalize` by the type of its `rng`, as K1's `_sweep`), the runner passes
+`kernels` and the new `sun_sampled_correlations.n_workers`, and `tests/test_kernels_cpn.py` pins the wiring, the
+fallback-with-logged-exception, chunk independence and the config path. The NumPy path is untouched.
+
+**The algorithmic fix.** `metropolis_sweep` evaluates the TOTAL energy before and after every proposal, O(L²) per
+sweep (cProfile on the 144-site S09 model: 99 % of a 1.9 s sweep in `SUNModel._energy_of`, called 2L times). The
+kernel's dE is the term-by-term change of the bond terms touching the site plus its on-site term — exact for any bond
+list, self-bonds included, not a mean-field linearization — O(L z n_ops²) per sweep. The equilibration verdict
+(drift, `equilibrated`, warn/error) is ONE Python function, `_thermalize_verdict`, fed by the per-sweep record the
+kernel returns, so the diagnostics are produced by the kernel rather than bypassed and cannot diverge between kernels.
+
+**Pinned to.** `rsMagCalc/tests/test_cpn_parity.py` (28 tests): dE = E(after) − E(before) to 1e-12 on plain SU(3),
+the biquadratic 12-wide operator set, a mixed-spin cell, a mixed-spin supercell and a self-bonded one-site cell;
+h_i|Z_i⟩ against the `local_field` definition; `evolve` against `sun.dynamics.evolve` to 1e-12 over 50 steps (all
+four cells); `quench` and `damped_step` to 1e-12; the sampler against the closed-form partition function of a
+decoupled site, determinism per seed, chunk and thread independence, |Z_i| = 1. Every K2 oracle in the plan runs under
+both kernel sets through the `kernels` fixture: `test_sun_dynamics` (N = 2 reduces to Landau–Lifshitz; the low-T
+peaks on the SU(N) LSWT band and the hardening on cooling), `test_sun_sampler_equilibration` (the closed-form
+⟨E⟩(kT), sigma-start independence, the stuck-sampler number, the verdict firing on the stuck run and not the good
+one), `test_sun_quench` (dE/dt = −2λ Var h, the LOWEST eigenvector, monotone descent), the SU(N) half of
+`test_classical_absolute_normalization` (the 1e-14 equal-time sum rule) and `test_classical_window`, and the S06 quench
+in `test_sunny_tutorials`.
+
+**Timing, the plan's acceptance (S09 thermalization ≥ 10×).** The S09 triangular AFM of `disorder_kpm.py` at
+L = 12 (144 sites, 864 directed bonds, N = 2) in its 120° state, kT = 0.1, sigma 0.1 adapted; this machine (M1 Pro,
+10 cores; a stale `python -` process from the K1 session held one core, nothing else), 2026-10-26, `MAGCALC_NO_GUI=1
+python <scratch>/bench_k2.py` (the calls below, timed with `perf_counter`):
+
+| what | numpy | rust | ratio |
+|---|---|---|---|
+| `thermalize`, per sweep (40 / 4000 sweeps) | **1457 ms** | **0.087 ms** | 17 000× |
+| `evolve`, per RK4 step (1000 steps) | 0.42 ms | 0.12 ms | 3.5× |
+| `sampled_correlations`, 4 traj × 200 sweeps + 512 steps, 3 q | **870 s** | **8.2 s** | 106× |
+| S06 quench, L = 40 (1600 sites, N = 3), 25 600 steps (`quench.py --kernels`) | 175 s (6.8 ms/step) | 44.5 s (1.7 ms/step) | 3.9× |
+
+The S06 quench reproduces the tutorial's charges under BOTH kernels, +12 → −4 → −6 at τ = 4, 16, 256, from the same
+random start (the kernels agree per step to 1e-12). The RK4 gains are modest because `_h_times_z` was already
+vectorized (its einsums are the time at 1600 sites; the kernel's inner loop is scalar complex arithmetic over the
+bond list and single-threaded per trajectory). Once the loops were in Rust the remaining cost of
+`sampled_correlations` was the Python `moment_of` loop inside `dynamical_structure_factor` (0.9 M iterations for
+4 × 256 steps at 144 sites), so it is now `moments_along`, one einsum over the trajectory including the
+entangled-unit staggered phases — a NumPy change that both kernels share, pinned against `moment_of` on the dimer
+chain and by the sum rule.
+
+**What the second random stream exposed this time** (the K1 lesson applied: compare ENSEMBLES before touching a
+tolerance). One K2 oracle failed under `rust` on the first full run, `test_mode_hardens_toward_the_lswt_band_on_cooling`:
+its kT = 0.06 and kT = 0.02 peaks landed on the same 0.077 meV bin (1.918) with 3 trajectories. The sampler was not at
+fault: thermalized ⟨E − E0⟩ after the test's own 500 adapted sweeps sits on equipartition 2 L kT (CP², four real degrees
+of freedom per site) at all three temperatures under both kernels — kT = 0.15: 5.24 ± 0.10 (64 Rust seeds), 5.73 ± 0.28
+(8 NumPy) vs 4.80; kT = 0.06: 2.013 ± 0.047, 1.90 ± 0.15 vs 1.92; kT = 0.02: 0.635 ± 0.013, 0.671 ± 0.034 vs 0.640 —
+and 24 Rust trajectories put the peaks at 1.611 < 1.841 < 1.918, exactly the NumPy values the test's docstring records.
+A 3-trajectory argmax at one-bin resolution is marginal; the `rust` parametrization now runs 24 trajectories (7 s),
+the `numpy` one keeps 3 (~2 min of Python), and the asymmetry is written into the test.
+
+**Gate on this tree** (pyMagCalc branch `feature/rust-kernels-k1` at `ca9ac16` plus the uncommitted K2 wiring,
+rsMagCalc `3b84215` installed, magpipe `283f694`), `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs` from the workspace
+root, 2026-10-26, machine otherwise idle (the one stale K1 process aside): **1913 passed, 2 skipped, 0 failed,
+20 min 21 s** — the K1 gate's 1850 plus 28 rsMagCalc K2 parity tests, 30 `rust` parametrizations of the K2 oracles and
+5 new wiring tests; the two skips are the structural pair (`seekpath` absent at `test_cell_utils.py:146`, ALPS present
+at `magpipe/tests/test_alps.py:187`). The gate floor is unchanged (the `numpy` parametrizations of K1's two low-T
+tests, ~3 min each); the K2 `numpy` oracles are 2–3 min of Python at most.
+
 ### Rust kernels K1, 2026-10-26 — the classical samplers behind `kernels: rust`
 
 M1 of `RUST_KERNELS_PLAN.md`. rsMagCalc `d53b90b` (`src/classical.rs`) carries the Metropolis sweep (uniform and

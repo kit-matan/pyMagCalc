@@ -24,6 +24,8 @@ import logging
 
 import numpy as np
 
+from ..kernels import fell_back, is_rust_rng, rust_for, rust_module
+
 logger = logging.getLogger(__name__)
 
 
@@ -122,6 +124,39 @@ def _as_array(Z):
     return np.array([np.asarray(z, dtype=complex) for z in Z])
 
 
+# --------------------------------------------------------------------------
+# The compiled kernels (rsMagCalc K2, `calculation: {kernels: rust}`).
+#
+# Every public loop below -- `thermalize`, `evolve`, `damped_step`, `quench`,
+# `sampled_correlations` -- tries `rsmagcalc.CpnModel` when asked for the Rust
+# kernels and falls back to the NumPy code on any exception, logging it
+# (`kernels.fell_back`, the fMagCalc contract). The NumPy path stays as the parity
+# reference: `rsMagCalc/tests/test_cpn_parity.py` pins the kernel to it at 1e-12
+# (RK4, quench, h_i|Z_i>, and the local dE against E(after) - E(before), on a
+# mixed-spin cell too), and `tests/test_kernels_cpn.py` pins the wiring here.
+# The kernel takes the model's RAGGED per-site tables, so unlike `_fast` it does
+# not refuse mixed spin.
+# --------------------------------------------------------------------------
+def _rust_model(model, rs):
+    """`rsmagcalc.CpnModel` for `model`, cached on it with `_fast`'s invalidation
+    key, so replacing or growing `model.bonds` rebuilds it."""
+    key = tuple((id(x), len(x)) for x in (model.bonds, model.onsite, model.ops))
+    cache = getattr(model, "_dyn_rust", None)
+    if cache is not None and cache[0] == key:
+        return cache[1]
+    cm = rs.CpnModel(model.Ns, model.ops, model.onsite,
+                     [(i, j, J) for (i, j, dr, J) in model.bonds])
+    model._dyn_rust = (key, cm)
+    return cm
+
+
+def _rust_write_back(Z, out):
+    """Put the kernel's per-site states into the caller's list/array IN PLACE, the
+    way the NumPy loops mutate `Z`."""
+    for i in range(len(out)):
+        Z[i] = np.array(out[i], dtype=complex)
+
+
 def _deriv_arr(model, Zs):
     return -1j * _h_times_z(model, Zs)
 
@@ -175,8 +210,19 @@ def rk4_step(model, Z, dt):
     return _renormalize(out)
 
 
-def evolve(model, Z0, dt, n_steps, record_every=1):
-    """Deterministic CP^(N-1) trajectory. Returns a list of configurations."""
+def evolve(model, Z0, dt, n_steps, record_every=1, kernels="numpy"):
+    """Deterministic CP^(N-1) trajectory. Returns a list of configurations.
+
+    `kernels="rust"` runs the whole loop in rsMagCalc (parity 1e-12 over 50
+    steps); any kernel failure is logged and the NumPy loop answers.
+    """
+    rs = rust_for(kernels)
+    if rs is not None:
+        try:
+            cm = _rust_model(model, rs)
+            return cm.evolve(Z0, dt, int(n_steps), int(record_every))
+        except Exception:
+            fell_back("cpn evolve")
     if _fast(model)["ok"]:
         Zs = _as_array(Z0)
         rec = []
@@ -277,12 +323,40 @@ def thermalize(model, Z, kT, n_sweeps, rng, sigma=0.5, adapt=True,
     like that" are indistinguishable in the output spectrum.
 
     Returns `Z` (as before), or `(Z, ThermalizeInfo)` with `return_info=True`.
+
+    THE KERNEL IS CHOSEN BY THE TYPE OF `rng`: an `rsmagcalc.Rng` (from
+    `kernels.make_rng(seed, "rust")`) runs both phases in rsMagCalc, which returns
+    the same per-sweep acceptance and energy record this function measures, so the
+    drift verdict below is made the same way for both kernels -- the diagnostics
+    are produced by the kernel, not bypassed. A NumPy Generator runs the loops
+    here. Either way `Z` is updated in place.
     """
-    beta = 1.0 / float(kT)
     n = max(int(n_sweeps), 1)
-    n_adapt = n // 2 if adapt else 0
     sig = float(sigma)
     target = float(target_acceptance)
+    rs = rust_module() if is_rust_rng(rng) else None
+    done = False
+    if rs is not None:
+        try:
+            cm = _rust_model(model, rs)
+            out, sig, accs, energies = cm.thermalize(Z, float(kT), n, rng, sig,
+                                                     bool(adapt), target)
+            _rust_write_back(Z, out)
+            accs = list(accs)
+            done = True
+        except Exception:
+            fell_back("cpn thermalize")
+    if not done:
+        sig, accs, energies = _thermalize_numpy(model, Z, kT, n, rng, sig, adapt,
+                                                target)
+    return _thermalize_verdict(Z, kT, n, sig, accs, energies, on_unequilibrated,
+                               drift_tolerance, return_info)
+
+
+def _thermalize_numpy(model, Z, kT, n, rng, sig, adapt, target):
+    """The two sweep phases in NumPy; returns (sigma, accs, energies)."""
+    beta = 1.0 / float(kT)
+    n_adapt = n // 2 if adapt else 0
 
     # Phase 1: tune sigma. The multiplicative rule is scale-free and its gain decays
     # like 1/sqrt(step), so it settles instead of oscillating about the target.
@@ -302,6 +376,12 @@ def thermalize(model, Z, kT, n_sweeps, rng, sigma=0.5, adapt=True,
     for _ in range(n - n_adapt):
         accs.append(metropolis_sweep(model, Z, beta, rng, sig))
         energies.append(energy(model, Z))
+    return sig, accs, energies
+
+
+def _thermalize_verdict(Z, kT, n, sig, accs, energies, on_unequilibrated,
+                        drift_tolerance, return_info):
+    """The equilibration verdict from the recorded half, shared by both kernels."""
     energies = np.asarray(energies, float)
 
     drift, equilibrated = 0.0, True
@@ -352,13 +432,47 @@ def moment_of(model, Z, q_cart):
     return out
 
 
+def moments_along(model, traj, q_cart):
+    """M^a(q, t) for a whole trajectory, shape (n_rec, n_q, 3): `moment_of` at every
+    recorded configuration, vectorized.
+
+    Same operator as `moment_of` (the per-unit staggered sum over `moment_terms`),
+    computed as one einsum over the stacked configurations instead of a Python
+    loop over configurations x q x sites x 3 -- which, once the sampler and the
+    integrator run in rsMagCalc, was the whole cost of `sampled_correlations`
+    (0.9 M Python iterations for 4 trajectories of 256 steps at 144 sites). Mixed
+    spin (ragged states) takes the per-configuration loop. Pinned against
+    `moment_of` by the equal-time sum rule in
+    `tests/test_classical_absolute_normalization.py`.
+    """
+    qs = np.asarray(q_cart, float).reshape(-1, 3)
+    if not _fast(model)["ok"]:
+        return np.array([[moment_of(model, cfg, q) for q in qs] for cfg in traj])
+    f = _fast(model)
+    Zs = np.array([np.asarray(cfg, dtype=complex) for cfg in traj])    # (T, L, N)
+    s0 = np.einsum("tia,ipab,tib->tip", Zs.conj(), f["ops"], Zs)        # (T, L, nop)
+    pos = model.pos if model.pos is not None else np.zeros((model.L, 3))
+    ph_site = np.exp(-1j * (qs @ np.asarray(pos, float).T))             # (nq, L)
+    out = np.zeros((len(traj), len(qs), 3), dtype=complex)
+    n_terms = max(len(ml) for ml in model.moment_terms)
+    for k in range(n_terms):
+        sites = np.array([i for i in range(model.L) if len(model.moment_terms[i]) > k],
+                         dtype=int)
+        d = np.array([model.moment_terms[i][k][0] for i in sites], float)    # (L', 3)
+        idx = np.array([model.moment_terms[i][k][1] for i in sites], int)    # (L', 3)
+        ph = ph_site[:, sites] * np.exp(1j * (qs @ d.T))                      # (nq, L')
+        gathered = s0[:, sites[:, None], idx]                                 # (T, L', 3)
+        out += np.einsum("qi,tia->tqa", ph, gathered)
+    return out
+
+
 def sampled_correlations(model, q_cart, kT, dt=0.02, n_steps=512, n_traj=4,
                          therm_sweeps=200, record_every=1, cross_section="perp",
                          seed=0, sigma=0.5, classical_to_quantum=True,
                          subtract_elastic=False, random_start=False,
                          window="rectangular", adapt_sigma=True,
                          target_acceptance=0.5, on_unequilibrated="warn",
-                         on_elastic_leakage="warn"):
+                         on_elastic_leakage="warn", kernels="numpy", n_workers=None):
     """S(q,w) from CP^(N-1) trajectories on thermally sampled coherent states.
 
     The SU(N) counterpart of `classical_dynamics.sampled_correlations`: thermalize by
@@ -391,6 +505,13 @@ def sampled_correlations(model, q_cart, kT, dt=0.02, n_steps=512, n_traj=4,
     directly for the whole frequency axis (`two_sided`) or to hand it a trajectory
     you built yourself.
 
+    `kernels="rust"` runs thermalization and the trajectories in rsMagCalc, the
+    trajectories in parallel (`n_workers` threads, default every core; ignored by
+    the NumPy loops, which are serial). Trajectory i owns the stream (seed, i), so
+    the sample does not depend on the thread count -- but it is a different sample
+    from the NumPy one at the same seed (RUST_KERNELS_PLAN.md, RNG). The transform
+    below is shared by both.
+
     `subtract_elastic` removes the time-average of M(q, t), i.e. the ELASTIC line.
     Off by default, matching Sunny, whose S(q,w) contains it. Turn it on to isolate
     the inelastic response: for an ordered state at low T the static moment dominates,
@@ -411,7 +532,19 @@ def sampled_correlations(model, q_cart, kT, dt=0.02, n_steps=512, n_traj=4,
     energies = None
     acc = None
 
-    for _ in range(int(n_traj)):
+    rs = rust_for(kernels)
+    if rs is not None:
+        try:
+            energies, acc = _sampled_rust(
+                _rust_model(model, rs), model, qs, kT, dt, n_steps, n_traj,
+                therm_sweeps, record_every, cross_section, seed, sigma,
+                subtract_elastic, random_start, window, adapt_sigma,
+                target_acceptance, on_unequilibrated, n_workers)
+        except Exception:
+            fell_back("cpn sampled_trajectories")
+            energies, acc = None, None
+
+    for _ in range(int(n_traj) if acc is None else 0):
         if random_start:
             Z = []
             for i in range(model.L):
@@ -437,6 +570,40 @@ def sampled_correlations(model, q_cart, kT, dt=0.02, n_steps=512, n_traj=4,
     if classical_to_quantum:
         sqw = sqw * classical_to_quantum_factor(energies, kT)[:, None]
     return energies, sqw
+
+
+def _sampled_rust(cm, model, qs, kT, dt, n_steps, n_traj, therm_sweeps, record_every,
+                  cross_section, seed, sigma, subtract_elastic, random_start, window,
+                  adapt_sigma, target_acceptance, on_unequilibrated, n_workers):
+    """The trajectory loop in rsMagCalc, in chunks of `n_workers` trajectories so
+    the recorded states stay bounded in memory; each trajectory's thermalization
+    record goes through the same verdict as the NumPy path."""
+    import os
+
+    n_traj = int(n_traj)
+    chunk = int(n_workers) if n_workers else (os.cpu_count() or 1)
+    chunk = max(min(chunk, n_traj), 1)
+    n = max(int(therm_sweeps), 1)
+    Z0 = None if random_start else [np.asarray(z, complex) for z in model.Z]
+    dt_rec = dt * record_every
+    energies, acc = None, None
+    for start in range(0, n_traj, chunk):
+        k = min(chunk, n_traj - start)
+        traj, sigs, accs, ens = cm.sampled_trajectories(
+            Z0, float(kT), start, k, n, float(sigma), bool(adapt_sigma),
+            float(target_acceptance), float(dt), int(n_steps), int(record_every),
+            int(seed), n_workers)
+        for t in range(k):
+            _, tinfo = _thermalize_verdict(None, kT, n, float(sigs[t]), list(accs[t]),
+                                           ens[t], on_unequilibrated, 1.0, True)
+            logger.info(f"CP^(N-1) thermalization: {tinfo}")
+            rec = [cm.unpack(row) for row in traj[t]]
+            e, sqw = dynamical_structure_factor(
+                model, rec, qs, dt_rec, cross_section=cross_section,
+                subtract_elastic=subtract_elastic, window=window)
+            acc = sqw if acc is None else acc + sqw
+            energies = e
+    return energies, acc
 
 
 def dynamical_structure_factor(model, traj, q_cart, dt, cross_section="perp",
@@ -465,7 +632,7 @@ def dynamical_structure_factor(model, traj, q_cart, dt, cross_section="perp",
     from ..classical_dynamics import _contract, _window_correlation, lag_window
 
     qs = np.asarray(q_cart, float).reshape(-1, 3)
-    Mt = np.array([[moment_of(model, cfg, q) for q in qs] for cfg in traj])
+    Mt = moments_along(model, traj, qs)
     if subtract_elastic:
         Mt = Mt - Mt.mean(axis=0, keepdims=True)
     n_rec = len(traj)
@@ -518,8 +685,14 @@ def damped_deriv(model, Z, damping):
     return out
 
 
-def damped_step(model, Z, dt, damping):
+def damped_step(model, Z, dt, damping, kernels="numpy"):
     """One RK4 step of the damped flow."""
+    rs = rust_for(kernels)
+    if rs is not None:
+        try:
+            return _rust_model(model, rs).quench(Z, dt, 1, damping)
+        except Exception:
+            fell_back("cpn damped_step")
     if _fast(model)["ok"]:
         return list(_rk4(lambda s: _damped_deriv_arr(model, s, damping),
                          _as_array(Z), dt))
@@ -535,7 +708,8 @@ def damped_step(model, Z, dt, damping):
     return _renormalize(out)
 
 
-def quench(model, Z0, dt, n_steps, damping=0.05, record_at=(), callback=None):
+def quench(model, Z0, dt, n_steps, damping=0.05, record_at=(), callback=None,
+           kernels="numpy"):
     """Damped relaxation from `Z0` (Sunny's randomize + Langevin at kT = 0).
 
     Returns (final state, {step: snapshot}). A quench is NOT the same as finding the
@@ -544,8 +718,16 @@ def quench(model, Z0, dt, n_steps, damping=0.05, record_at=(), callback=None):
     `minimize_energy` would destroy exactly the object of interest.
 
     `callback(step, Z)` is invoked at every recorded step, for progress reporting on
-    a run long enough to need it.
+    a run long enough to need it. Under `kernels="rust"` the steps between two
+    recorded ones run in rsMagCalc and the callback fires here, at the same steps.
     """
+    rs = rust_for(kernels)
+    if rs is not None:
+        try:
+            return _quench_rust(_rust_model(model, rs), Z0, dt, n_steps, damping,
+                                record_at, callback)
+        except Exception:
+            fell_back("cpn quench")
     fast = _fast(model)["ok"]
     Z = _as_array(Z0) if fast else [np.asarray(z, complex).copy() for z in Z0]
     want = set(int(t) for t in record_at)
@@ -559,6 +741,23 @@ def quench(model, Z0, dt, n_steps, damping=0.05, record_at=(), callback=None):
             Z = (_rk4(lambda s: _damped_deriv_arr(model, s, damping), Z, dt)
                  if fast else damped_step(model, Z, dt, damping))
     return (list(Z) if fast else Z), snaps
+
+
+def _quench_rust(cm, Z0, dt, n_steps, damping, record_at, callback):
+    n_steps = int(n_steps)
+    Z = cm.unpack(cm.pack(Z0).copy())
+    want = set(int(t) for t in record_at if 0 <= int(t) <= n_steps)
+    snaps = {}
+    cur = 0
+    for t in sorted(want | {n_steps}):
+        if t > cur:
+            Z = cm.quench(Z, dt, t - cur, damping)
+            cur = t
+        if t in want:
+            snaps[t] = [z.copy() for z in Z]
+            if callback is not None:
+                callback(t, snaps[t])
+    return Z, snaps
 
 
 def dipole_field(model, Z):

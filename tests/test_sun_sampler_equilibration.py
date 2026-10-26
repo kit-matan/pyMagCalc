@@ -33,6 +33,7 @@ the good ones.
 import numpy as np
 import pytest
 
+from magcalc import kernels as K
 from magcalc.generic_model import GenericSpinModel
 from magcalc.sun import dynamics as sd
 from magcalc.sun.lswt import SUNModel
@@ -77,9 +78,9 @@ def _exact_energy(kT, n_sites):
     return -(lnZ(beta + h) - lnZ(beta - h)) / (2 * h) * n_sites
 
 
-def _run(model, kT, sigma, adapt, n_sweeps=800, seed=3):
+def _run(model, kT, sigma, adapt, n_sweeps=800, seed=3, kernels="numpy"):
     Z = [np.asarray(z, complex).copy() for z in model.Z]
-    _, info = sd.thermalize(model, Z, kT, n_sweeps, np.random.default_rng(seed),
+    _, info = sd.thermalize(model, Z, kT, n_sweeps, K.make_rng(seed, kernels),
                             sigma=sigma, adapt=adapt, on_unequilibrated="off",
                             return_info=True)
     half = len(info.energies) // 2
@@ -113,31 +114,32 @@ def test_the_onsite_operator_is_the_one_the_oracle_assumes():
 
 @pytest.mark.slow
 @pytest.mark.parametrize("kT", [0.05, 0.2, 1.0])
-def test_the_adapted_sampler_reproduces_the_exact_energy(kT):
+def test_the_adapted_sampler_reproduces_the_exact_energy(kT, kernels):
     """<E>(kT) from the sampler must be the closed-form value, at low kT too -- which
-    is where the fixed step size failed."""
+    is where the fixed step size failed. Under both kernel sets: the Rust sampler
+    (rsMagCalc K2) is a second implementation of the same chain."""
     model = _decoupled()
     exact = _exact_energy(kT, model.L)
-    got, info = _run(model, kT, sigma=0.5, adapt=True, n_sweeps=1600)
+    got, info = _run(model, kT, sigma=0.5, adapt=True, n_sweeps=1600, kernels=kernels)
     assert got == pytest.approx(exact, rel=0.04), f"kT={kT}, {info}"
 
 
 @pytest.mark.slow
 @pytest.mark.parametrize("kT", [0.05, 0.2])
-def test_the_answer_no_longer_depends_on_where_sigma_started(kT):
+def test_the_answer_no_longer_depends_on_where_sigma_started(kT, kernels):
     """THE property this item is about. Two starting step sizes 25x apart must give
     the same physics; `sigma` is a convergence knob, and an answer that moves with it
     is an unconverged answer wearing a plausible face."""
     model = _decoupled()
-    lo, info_lo = _run(model, kT, sigma=0.02, adapt=True, n_sweeps=1600)
-    hi, info_hi = _run(model, kT, sigma=0.5, adapt=True, n_sweeps=1600)
+    lo, info_lo = _run(model, kT, sigma=0.02, adapt=True, n_sweeps=1600, kernels=kernels)
+    hi, info_hi = _run(model, kT, sigma=0.5, adapt=True, n_sweeps=1600, kernels=kernels)
     assert lo == pytest.approx(hi, rel=0.04), f"{info_lo} vs {info_hi}"
     # ... because both were tuned to the same acceptance, from opposite directions
     assert 0.3 < info_lo.acceptance < 0.95
     assert info_lo.sigma == pytest.approx(info_hi.sigma, rel=0.5)
 
 
-def test_the_fixed_step_sampler_is_measurably_wrong():
+def test_the_fixed_step_sampler_is_measurably_wrong(kernels):
     """The defect, stated as a number, so the fix cannot be undone quietly.
 
     With `adapt=False` and the small step the old callers used, the chain accepts
@@ -147,49 +149,56 @@ def test_the_fixed_step_sampler_is_measurably_wrong():
     """
     model = _decoupled()
     exact = _exact_energy(1.0, model.L)
-    stuck, info = _run(model, 1.0, sigma=0.02, adapt=False, n_sweeps=800)
+    stuck, info = _run(model, 1.0, sigma=0.02, adapt=False, n_sweeps=800,
+                       kernels=kernels)
     assert abs(stuck - exact) > 0.2 * abs(exact), f"{stuck} vs {exact}"
     assert info.acceptance > 0.95        # accepts everything, moves nowhere
-    good, _ = _run(model, 1.0, sigma=0.02, adapt=True, n_sweeps=800)
+    good, _ = _run(model, 1.0, sigma=0.02, adapt=True, n_sweeps=800, kernels=kernels)
     assert good == pytest.approx(exact, rel=0.05)
 
 
-def test_the_equilibration_check_fires_on_the_stuck_run_and_not_the_good_one():
+def test_the_equilibration_check_fires_on_the_stuck_run_and_not_the_good_one(kernels):
     """A diagnostic that fires on everything is as useless as one that fires on
-    nothing, so both directions are asserted."""
+    nothing, so both directions are asserted -- under both kernels, because the
+    Rust sampler returns the per-sweep record the verdict is made from (it must
+    reproduce the diagnostics, not bypass them)."""
     model = _decoupled()
-    _stuck, bad = _run(model, 0.05, sigma=0.02, adapt=False, n_sweeps=800)
-    _ok, good = _run(model, 0.05, sigma=0.02, adapt=True, n_sweeps=800)
+    _stuck, bad = _run(model, 0.05, sigma=0.02, adapt=False, n_sweeps=800,
+                       kernels=kernels)
+    _ok, good = _run(model, 0.05, sigma=0.02, adapt=True, n_sweeps=800, kernels=kernels)
     assert not bad.equilibrated and bad.drift > 1.0
     assert good.equilibrated and good.drift <= 1.0
 
 
-def test_on_unequilibrated_error_refuses_and_off_is_silent(caplog):
+def test_on_unequilibrated_error_refuses_and_off_is_silent(caplog, kernels):
     model = _decoupled()
     Z = [np.asarray(z, complex).copy() for z in model.Z]
     with pytest.raises(RuntimeError, match="NOT equilibrated"):
-        sd.thermalize(model, Z, 0.05, 800, np.random.default_rng(3), sigma=0.02,
+        sd.thermalize(model, Z, 0.05, 800, K.make_rng(3, kernels), sigma=0.02,
                       adapt=False, on_unequilibrated="error")
     caplog.clear()
     with caplog.at_level("WARNING"):
         Z = [np.asarray(z, complex).copy() for z in model.Z]
-        sd.thermalize(model, Z, 0.05, 800, np.random.default_rng(3), sigma=0.02,
+        sd.thermalize(model, Z, 0.05, 800, K.make_rng(3, kernels), sigma=0.02,
                       adapt=False, on_unequilibrated="off")
     assert caplog.text == ""
     caplog.clear()
     with caplog.at_level("WARNING"):
         Z = [np.asarray(z, complex).copy() for z in model.Z]
-        sd.thermalize(model, Z, 0.05, 800, np.random.default_rng(3), sigma=0.02,
+        sd.thermalize(model, Z, 0.05, 800, K.make_rng(3, kernels), sigma=0.02,
                       adapt=False, on_unequilibrated="warn")
     assert "NOT equilibrated" in caplog.text
 
 
-def test_thermalize_still_returns_Z_by_default():
-    """The signature grew; it must not have changed for existing callers."""
+def test_thermalize_still_returns_Z_by_default(kernels):
+    """The signature grew; it must not have changed for existing callers -- and
+    the Rust path writes the kernel's states back into the caller's list."""
     model = _decoupled(2)
     Z = [np.asarray(z, complex).copy() for z in model.Z]
-    out = sd.thermalize(model, Z, 0.5, 20, np.random.default_rng(0))
+    before = [z.copy() for z in Z]
+    out = sd.thermalize(model, Z, 0.5, 20, K.make_rng(0, kernels))
     assert out is Z
+    assert max(np.abs(a - b).max() for a, b in zip(Z, before)) > 1e-6   # it moved
     assert [float(np.linalg.norm(z)) for z in Z] == pytest.approx([1.0] * model.L,
                                                                   abs=1e-12)
 

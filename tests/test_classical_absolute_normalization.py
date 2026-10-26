@@ -45,6 +45,7 @@ import pytest
 
 import magcalc as mc
 from magcalc import classical_dynamics as cd
+from magcalc import kernels as K
 from magcalc.generic_model import GenericSpinModel
 from magcalc.numerical import static_intensities
 from magcalc.kernels import make_rng
@@ -302,7 +303,7 @@ def _sun_model(ncells, S=1.0, sia=-0.4):
         supercell=[[ncells, 0, 0], [0, 1, 0], [0, 0, 1]])
 
 
-def test_sun_two_sided_integral_is_the_equal_time_correlator():
+def test_sun_two_sided_integral_is_the_equal_time_correlator(kernels):
     """The same exact identity for the CP^(N-1) path, whose transform had the same
     two defects. `n_cells` is 6 here and `model.L` is 12, so the site-vs-cell divisor
     is a factor of 2 -- and `SUNModel.structure_factor`, the spectrum this one is
@@ -313,10 +314,10 @@ def test_sun_two_sided_integral_is_the_equal_time_correlator():
     model = _sun_model(ncells)
     model.minimize_energy(n_restarts=4, seed=1)
     assert model.n_cells == ncells and model.L == 2 * ncells
-    rng = np.random.default_rng(2)
+    rng = K.make_rng(2, kernels)
     Z = [np.asarray(z, complex).copy() for z in model.Z]
     sd.thermalize(model, Z, kT=0.4, n_sweeps=60, rng=rng, sigma=0.1)
-    traj = sd.evolve(model, Z, 0.02, 256)
+    traj = sd.evolve(model, Z, 0.02, 256, kernels=kernels)
 
     B = 2 * np.pi * np.linalg.inv(np.array(SUN_LAT, float)).T
     qs = np.array([[h, 0, 0] for h in (1 / 6, 0.5)]) @ B
@@ -331,7 +332,7 @@ def test_sun_two_sided_integral_is_the_equal_time_correlator():
         assert integral == pytest.approx(eq, rel=1e-12), cs
 
 
-def test_sun_scale_is_independent_of_the_fft_grid():
+def test_sun_scale_is_independent_of_the_fft_grid(kernels):
     """As for the dipole path: the un-normalized FFT made the SU(N) classical
     S(q,w) go as 1/dt. Measured agreement between dt = 0.02 and dt = 0.005 over the
     same trajectory length: 4e-4."""
@@ -345,6 +346,6 @@ def test_sun_scale_is_independent_of_the_fft_grid():
     for dt, n_steps in ((0.02, 1024), (0.005, 4096)):
         w, sqw = sd.sampled_correlations(model, qs, kT=0.4, dt=dt, n_steps=n_steps,
                                          n_traj=2, therm_sweeps=100, seed=3,
-                                         classical_to_quantum=False)
+                                         classical_to_quantum=False, kernels=kernels)
         out.append(sqw.sum(axis=0) * (w[1] - w[0]))
     assert out[0] == pytest.approx(out[1], rel=0.01)

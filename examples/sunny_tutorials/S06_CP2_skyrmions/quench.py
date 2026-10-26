@@ -106,6 +106,9 @@ def main():
                    help="snapshot times, in hbar/|J1|")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", default=os.path.join(HERE, "S06_skyrmions.png"))
+    p.add_argument("--kernels", default="numpy", choices=["numpy", "rust"],
+                   help="run the quench in rsMagCalc (`calculation.kernels` analogue; "
+                        "falls back to NumPy with a warning if it is not installed)")
     args = p.parse_args()
 
     t0 = time.time()
@@ -123,8 +126,9 @@ def main():
           f"{max(steps)} steps to tau = {max(args.taus)}")
 
     t0 = time.time()
+    from magcalc import kernels as K
     _, snaps = sd.quench(mdl, Z0, args.dt, max(steps), damping=args.damping,
-                         record_at=steps)
+                         record_at=steps, kernels=K.resolve(args.kernels))
     print(f"  {time.time() - t0:.1f} s "
           f"({1e3 * (time.time() - t0) / max(steps):.2f} ms/step)")
 

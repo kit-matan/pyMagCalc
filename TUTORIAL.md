@@ -633,9 +633,9 @@ deterministic for a given `seed` under either kernel set, but the two do **not**
 share a random stream: a `kernels: rust` run with the same seed is a different,
 equally valid sample.
 
-### What the kernels cover (K1, 2026-10-26)
+### What the kernels cover (K1 and K2, 2026-10-26)
 
-`kernels: rust` currently accelerates the **classical samplers**: the Metropolis
+`kernels: rust` currently accelerates the **classical samplers** (K1): the Metropolis
 sweep (uniform and `propose: flip`) behind `thermal_mc`, `static_correlations` and
 the thermalization of `sampled_correlations`; the whole replica-exchange loop of
 `thermal_mc` (replicas swept in parallel); the Wang–Landau move loop; the
@@ -645,20 +645,34 @@ The FFT and the neutron contraction stay in NumPy. Measured on the
 128-trajectory ferromagnet of `tests/test_classical_absolute_normalization.py`:
 169 s of Python became 3.3 s (see `GAP_STATUS.md`, "Rust kernels K1").
 
-Two blocks take an `n_workers` for the Rust thread pool (default: every core):
+And the **CP^(N−1) sampler and dynamics** (K2) behind `sun_sampled_correlations`
+and the SU(N) quench: the Metropolis sweep on coherent states with its adaptive
+step size (the thermalization diagnostics — acceptance, drift, `equilibrated` — are
+computed from the per-sweep record the kernel returns, so the verdict is the same
+code under both kernel sets), the RK4 integrator, the damped quench, and the
+trajectory loop, in parallel over trajectories. The sweep's energy change is the
+LOCAL one (the bond terms touching the site), where the NumPy sampler evaluates the
+total energy twice per site: on the 144-site S09 triangular lattice a sweep went
+from ~1 s to 0.08 ms (`GAP_STATUS.md`, "Rust kernels K2"). Mixed-spin cells run
+through the kernel (the NumPy fast path takes a per-site loop for them).
+
+Three blocks take an `n_workers` for the Rust thread pool (default: every core):
 
 ```yaml
-thermal_mc:           {temperatures: [0.5, 1, 2], supercell: [8, 8, 1], n_workers: 4}
-sampled_correlations: {temperature: 0.5, supercell: [16, 1, 1], n_traj: 64, n_workers: 4}
+thermal_mc:               {temperatures: [0.5, 1, 2], supercell: [8, 8, 1], n_workers: 4}
+sampled_correlations:     {temperature: 0.5, supercell: [16, 1, 1], n_traj: 64, n_workers: 4}
+sun_sampled_correlations: {temperature: 0.5, n_traj: 16, therm_sweeps: 2000, n_workers: 4}
 ```
 
-Under `kernels: numpy` both keys are ignored (the NumPy loops are serial). If a
+Under `kernels: numpy` these keys are ignored (the NumPy loops are serial). If a
 kernel raises at run time, the exception is logged and that call is redone in
 NumPy -- the run completes either way, and the log says which code produced
 what. The same functions take `kernels="rust"` from Python
 (`parallel_tempering`, `static_correlations`, `wang_landau`, `evolve`,
-`langevin_thermalize`, `sampled_correlations`), and `magcalc.kernels.make_rng(seed,
-"rust")` returns the Rust random stream that `_sweep` and `langevin_step` run on.
+`langevin_thermalize`, `sampled_correlations`; in `magcalc.sun.dynamics`:
+`evolve`, `quench`, `damped_step`, `sampled_correlations`), and
+`magcalc.kernels.make_rng(seed, "rust")` returns the Rust random stream that
+`_sweep`, `langevin_step` and `sun.dynamics.thermalize` run on.
 
 ## 4d. Spiral (Rotating-Frame) Structures
 
