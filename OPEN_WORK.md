@@ -11,40 +11,40 @@
 > `magcalc where` reports it, and the `kernels` fixture in `tests/conftest.py` runs a
 > test under both. **M1 (K1) is done, 2026-10-26**: the classical Metropolis sweep,
 > parallel tempering, Wang–Landau, the LL integrators, the Langevin thermostat and
-> the trajectory loop of `sampled_correlations` run in rsMagCalc (`d53b90b`+) behind
+> the trajectory loop of `sampled_correlations` run in rsMagCalc (`1a8dbdd`+) behind
 > `kernels: rust`, every oracle test in the plan's K1 list runs under both kernel
 > sets, and the 128-trajectory case runs in 3 s instead of 169 s (`GAP_STATUS.md`, "Rust
 > kernels K1", which also records what the second random stream exposed about the
 > low-T tests' own statistics).
 > Gate on that branch, 2026-10-26: **1850 passed, 2 skipped, 20 min 24 s** (not idle).
-> Committed as 24a1d5c. **M2 (K2) is done, 2026-10-26**: the CP^(N−1) Metropolis
+> Committed as 6a6ec2d. **M2 (K2) is done, 2026-10-26**: the CP^(N−1) Metropolis
 > sampler (local dE from the bonds touching the site, O(L z n_ops²) per sweep where
 > the NumPy one is O(L²)), the RK4 integrator, the damped quench and the trajectory
-> loop of `sun.dynamics.sampled_correlations` run in rsMagCalc (`ec28492`+,
+> loop of `sun.dynamics.sampled_correlations` run in rsMagCalc (`e865402`+,
 > `CpnModel`) behind `kernels: rust`, ragged per-site tables so mixed spin goes
 > through the kernel; every oracle test in the plan's K2 list runs under both kernel
 > sets (`GAP_STATUS.md`, "Rust kernels K2", with the timings). Gate on that tree,
 > 2026-10-26: **1913 passed, 2 skipped, 20 min 21 s**. **M3 (K3) is implemented,
 > 2026-10-26**: the SU(N) H(q) build, the Colpa diagonalization, the one-magnon
 > intensities, the general eigenvalues and the H₂ ⪰ 0 guard (identical shifted
-> Cholesky) run in rsMagCalc (`d5e581d`, `SunModel`, Accelerate LAPACK) behind
+> Cholesky) run in rsMagCalc (`063113c`, `SunModel`, Accelerate LAPACK) behind
 > `kernels: rust`, for `mode: SUN` and `mode: entangled`; every K3 oracle runs under
 > both kernel sets, FeI2 matches NumPy to 5e-15 (`GAP_STATUS.md`, "Rust kernels K3").
-> Committed as `1d85c87` on `feature/rust-kernels-k1`. Gate on that tree
+> Committed as `22e2d7a` on `feature/rust-kernels-k1`. Gate on that tree
 > (2026-10-27, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`):
 > **2064 passed, 2 skipped, 0 failed, 13 min 34 s**, the same two structural skips. The
 > K3 timings were re-measured with no other compute job running (one S09 L = 30 H(q)
 > build 425 ms → 14 ms, FeI2 end to end 5.6 s → 1.7 s); the machine was still busy with
 > desktop apps, so they are recorded as a lower bound. Nothing pushed, the branch not
 > merged to master. **M4 (K4) is done, 2026-10-27**: the KPM Chebyshev moments and the
-> spectral bound run in rsMagCalc (`d118cde`, `src/kpm.rs`) over the q path in parallel,
+> spectral bound run in rsMagCalc (`332d667`, `src/kpm.rs`) over the q path in parallel,
 > H(q) built inside by K3 and multiplied as CSR (0.7 % filled at S09 L = 30); the guard
 > runs first at every q (`SUNModel.unstable_indices`, same verdicts and messages); S09
 > L = 30 1.4 s/q → 43 ms/q guard included, and the dense guard Cholesky is now 86 % of a
 > KPM q (`GAP_STATUS.md`, "Rust kernels K4"). Gate (2026-10-27): **2151 passed, 2 skipped,
-> 18 min 00 s** (machine busy). Committed as `56bd881` (+ the sparse guard, `fac062e`).
+> 18 min 00 s** (machine busy). Committed as `24bc2ae` (+ the sparse guard, `9d5d943`).
 > **M5 (K5) is done, 2026-10-27**: the SCGA mesh eigenvalues, the per-sublattice
-> sum-rule traces and the per-q correlation tensors run in rsMagCalc (`c2e9b2a`,
+> sum-rule traces and the per-q correlation tensors run in rsMagCalc (`1288d66`,
 > `src/scga.rs`, `ScgaModel`) behind `kernels: rust`; J(q) and its eigenvalues are
 > bit-identical to NumPy's, so λ is; the 16-site pyrochlore `solve_lambda` 3.9 s → 0.17 s,
 > a 1681-q map 2.5 s → 27 ms (`GAP_STATUS.md`, "Rust kernels K5"). At 128 sites the
@@ -57,7 +57,7 @@
 > Gate on this tree with rsmagcalc installed (2026-10-26, workspace root,
 > `MAGCALC_NO_GUI=1 pytest -rs`): **1753 passed, 2 skipped, 13 min 58 s** — the
 > previous 1735 plus the 18 M0 tests, the same two structural skips. NOT COMMITTED
-> in pyMagCalc; rsMagCalc is its own repo at `ba1d9f8`.
+> in pyMagCalc; rsMagCalc is its own repo at `699900d`.
 > Two facts found while scoping, not yet acted on: `sun/dynamics.metropolis_sweep`
 > recomputes the FULL energy twice per site (O(L²) per sweep), and the 7-minute
 > `test_classical_absolute_normalization` floor is the per-spin Python loop in

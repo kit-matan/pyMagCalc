@@ -1057,7 +1057,7 @@ intensities per degenerate group at 1e-10, and Ewald moving the bands by > 1e-3 
 
 ### Rust kernels K5, 2026-10-27 — the SCGA loops behind `kernels: rust`
 
-M5 of `RUST_KERNELS_PLAN.md`. rsMagCalc `c2e9b2a` (`src/scga.rs`, `ScgaModel`, packed once from `scga._exchange_cache`
+M5 of `RUST_KERNELS_PLAN.md`. rsMagCalc `1288d66` (`src/scga.rs`, `ScgaModel`, packed once from `scga._exchange_cache`
 and cached on it) carries the three per-q loops of `magcalc/scga.py`, each with rayon over q: the J(q) eigenvalues over
 the λ mesh (`solve_lambda`), the per-site traces Tr₃[(λ+J(q))⁻¹]_ii over the same mesh
 (`sublattice_sum_rule_residuals`, the inequivalent-sublattice check), and the 3×3 correlation tensor C(q) of
@@ -1134,7 +1134,7 @@ Python-bound part at every size (166× at N = 128); on the small models what is 
 per-q `_contract` (14 ms for 1681 q) and form factors, shared with the NumPy path on purpose. λ is identical and S(q)
 agrees to ≤ 3e-14 in every row.
 
-**Gate** (2026-10-27 10:05–10:19, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`, pyMagCalc `fac062e` plus the uncommitted K5 wiring, rsMagCalc `3e703a6` installed, magpipe 283f694): **2260 passed, 2 skipped, 0 failed, 13 min 35 s** — 100 more than the sparse-guard gate, all K5's (75 in rsMagCalc `test_scga_parity.py`, 11 in `test_kernels_scga.py`, 13 in `test_scga.py` (its 9 `rust` parametrizations + the two new identities under both), 1 in `test_hamiltonian_terms.py`); the same two structural skips (`seekpath` absent, ALPS present), no crashed xdist worker. 1-min load 5.7 at the start (CPU 71 % idle), 35 (5-min 156, the gate's own workers) at the end.
+**Gate** (2026-10-27 10:05–10:19, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`, pyMagCalc `9d5d943` plus the uncommitted K5 wiring, rsMagCalc `406345c` installed, magpipe 283f694): **2260 passed, 2 skipped, 0 failed, 13 min 35 s** — 100 more than the sparse-guard gate, all K5's (75 in rsMagCalc `test_scga_parity.py`, 11 in `test_kernels_scga.py`, 13 in `test_scga.py` (its 9 `rust` parametrizations + the two new identities under both), 1 in `test_hamiltonian_terms.py`); the same two structural skips (`seekpath` absent, ALPS present), no crashed xdist worker. 1-min load 5.7 at the start (CPU 71 % idle), 35 (5-min 156, the gate's own workers) at the end.
 
 ### Rust kernels: guard 3 on a SPARSE Cholesky, 2026-10-27 — same verdicts, 37 ms → 0.6 ms per q
 
@@ -1205,15 +1205,15 @@ relaxed, 40 q of the Γ–K–M path; `<this session's scratch>/bench_guard.py 3
 Against (a) `kernels: numpy` (1369 ms/q in the same run) a KPM q is now **180×**; the guard went from 86 % of it to 8 %,
 and checking every q exactly is no longer the bottleneck. The maps still agree with (a) to 2e-15.
 
-**Gate** (2026-10-27 09:23–09:39, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`, pyMagCalc `56bd881`
-plus this change uncommitted, rsMagCalc `4a82428` plus this change uncommitted and installed, magpipe 283f694):
+**Gate** (2026-10-27 09:23–09:39, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`, pyMagCalc `24bc2ae`
+plus this change uncommitted, rsMagCalc `8f6ed78` plus this change uncommitted and installed, magpipe 283f694):
 **2160 passed, 2 skipped, 0 failed, 15 min 25 s** — the 9 added tests are this change's (8 in
 `test_sparse_guard.py`, 1 in `test_kpm_stability.py`); the same two structural skips (`seekpath` absent, ALPS
 present). Not idle: 1-min load 14 at the start, 53 (5-min 244) at the end.
 
 ### Rust kernels K4, 2026-10-27 — the KPM Chebyshev recursion behind `kernels: rust`
 
-M4 of `RUST_KERNELS_PLAN.md`. rsMagCalc `d118cde` (`src/kpm.rs`) carries the moment loop of `sun/kpm.kpm_sqw`
+M4 of `RUST_KERNELS_PLAN.md`. rsMagCalc `332d667` (`src/kpm.rs`) carries the moment loop of `sun/kpm.kpm_sqw`
 (β_{m+1} = 2Aβ_m − β_{m−1} with A = conj(g·H₂)/γ on the three observable vectors, μ_m^{ab} = v_a†β_m^b) and
 `spectral_bound`'s power iteration on D̂†D̂, three ways: `kpm_moments(HMat, v, M, γ)` and `spectral_bound(HMat, ...)` on
 a matrix already built, and `kpm_batch` (`rsmagcalc.SunModel.kpm_moments`) over a q batch with rayon, H(q) built inside
@@ -1287,11 +1287,11 @@ to 23–29 ms on one thread, i.e. ~35× from sparsity alone; rayon adds ~4× on 
 only 1.3× over one) where it was ~5 % before; that is the cost of checking every q exactly. (Since removed without changing a
 verdict: the sparse guard, section above — 0.6 ms of a 7.6 ms q.)
 
-**Gate** (2026-10-27 08:42–09:00, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`, pyMagCalc `6a03bc6` plus the uncommitted K4 wiring, rsMagCalc `d118cde` installed, magpipe 283f694): **2151 passed, 2 skipped, 0 failed, 18 min 00 s** — 87 more than the K3 gate, all K4's (the `rust` parametrizations of `test_kpm` and `test_s09_disorder_kpm`, `tests/test_kernels_kpm.py`, rsMagCalc's `tests/test_kpm_parity.py`), the same two structural skips (`seekpath` absent, ALPS present), no crashed xdist worker. Not an idle run: desktop apps held the 1-min load at ~19 when it started, and it read 126 (5-min 271) when it ended, a load the gate's own `-n auto` workers do not explain alone; another session's unrelated pytest started in its last minute. So 18 min against K3's 13 min 34 s is the machine, not the 87 tests.
+**Gate** (2026-10-27 08:42–09:00, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`, pyMagCalc `e85d96c` plus the uncommitted K4 wiring, rsMagCalc `332d667` installed, magpipe 283f694): **2151 passed, 2 skipped, 0 failed, 18 min 00 s** — 87 more than the K3 gate, all K4's (the `rust` parametrizations of `test_kpm` and `test_s09_disorder_kpm`, `tests/test_kernels_kpm.py`, rsMagCalc's `tests/test_kpm_parity.py`), the same two structural skips (`seekpath` absent, ALPS present), no crashed xdist worker. Not an idle run: desktop apps held the 1-min load at ~19 when it started, and it read 126 (5-min 271) when it ended, a load the gate's own `-n auto` workers do not explain alone; another session's unrelated pytest started in its last minute. So 18 min against K3's 13 min 34 s is the machine, not the 87 tests.
 
 ### Rust kernels K3, 2026-10-26 — SU(N) LSWT behind `kernels: rust`
 
-M3 of `RUST_KERNELS_PLAN.md`. rsMagCalc `d5e581d` (`src/sun_lswt.rs`, `rsmagcalc.SunModel`; `src/lapack.rs`) carries
+M3 of `RUST_KERNELS_PLAN.md`. rsMagCalc `063113c` (`src/sun_lswt.rs`, `rsmagcalc.SunModel`; `src/lapack.rs`) carries
 the per-q hot path of `SUNModel`: the H(q) assembly (`hamiltonian` was a Python loop over bonds × n_ops² with an
 `np.outer` per term), the general eigenvalues `dispersion` / `max_imaginary` / the adapters' `stability_report` reduce,
 the Colpa diagonalization (`_bogoliubov`, with the explicit [D positive descending, D negative] order), the per-band
@@ -1338,7 +1338,7 @@ relaxation / disorder draw / swapped bond list, deepcopy and pickle, and both co
 **End to end, FeI2** (`examples/materials/FeI2/config_fei2_sun.yaml`, plots off, 60 q, `tasks: {minimization,
 dispersion, sqw_map}`), the same config with `calculation.kernels` switched: energies agree to 5.3e-15 and intensities
 to 3.1e-15 (the saved `disp`/`sqw` npz files), and the run log names the kernel after the engine line,
-`kernels: rust (rsmagcalc 0.1.0, git d5e581d452f3, release)`.
+`kernels: rust (rsmagcalc 0.1.0, git 063113cfacf6, release)`.
 
 **Timing** (M1 Pro, 10 cores, re-measured 2026-10-27 00:27–00:32 with no other compute job running: the stale K1
 process PID 27374 that loaded the first measurement had exited with its session, and no pytest or `magcalc run` was
@@ -1369,15 +1369,15 @@ calling the same LAPACK eigensolver reproduces NumPy's per-band split holds for 
 one, so `tests/test_sun_lswt_parity.py` and `test_kernels_sun.py` are right to compare group sums. Checked with
 `<this session's scratch>/k3check/s09_groups.py`.
 
-**Gate** (2026-10-27, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`, pyMagCalc `1d85c87`, rsMagCalc
-`021693c` installed, magpipe 283f694): **2064 passed, 2 skipped, 0 failed, 13 min 34 s** — 151 more than the K1+K2 gate,
+**Gate** (2026-10-27, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`, pyMagCalc `22e2d7a`, rsMagCalc
+`2cda740` installed, magpipe 283f694): **2064 passed, 2 skipped, 0 failed, 13 min 34 s** — 151 more than the K1+K2 gate,
 all from K3 (the `rust` parametrizations of its oracle files, `tests/test_kernels_sun.py`, the new S09 SU(N) case
 and rsMagCalc's `tests/test_sun_lswt_parity.py`), and the same two structural skips (`seekpath` absent, ALPS present). No
 crashed xdist worker.
 
 ### Rust kernels K2, 2026-10-26 — the CP^(N−1) sampler and dynamics behind `kernels: rust`
 
-M2 of `RUST_KERNELS_PLAN.md`. rsMagCalc `ec28492` (`src/cpn.rs`, `rsmagcalc.CpnModel`) carries the CP^(N−1)
+M2 of `RUST_KERNELS_PLAN.md`. rsMagCalc `e865402` (`src/cpn.rs`, `rsmagcalc.CpnModel`) carries the CP^(N−1)
 Metropolis sweep with pyMagCalc's adaptive step size (`thermalize`: the tuning half and the recorded fixed-sigma half,
 on an `rsmagcalc.Rng` stream), the RK4 integrator (`evolve`), the damped quench (`quench`) and the trajectory loop of
 `sun.dynamics.sampled_correlations` (`sampled_trajectories`, rayon over trajectories, stream (seed, i) each). A
@@ -1437,8 +1437,8 @@ and 24 Rust trajectories put the peaks at 1.611 < 1.841 < 1.918, exactly the Num
 A 3-trajectory argmax at one-bin resolution is marginal; the `rust` parametrization now runs 24 trajectories (7 s),
 the `numpy` one keeps 3 (~2 min of Python), and the asymmetry is written into the test.
 
-**Gate on this tree** (pyMagCalc branch `feature/rust-kernels-k1` at `ca9ac16` plus the uncommitted K2 wiring,
-rsMagCalc `3b84215` installed, magpipe `283f694`), `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs` from the workspace
+**Gate on this tree** (pyMagCalc branch `feature/rust-kernels-k1` at `395da88` plus the uncommitted K2 wiring,
+rsMagCalc `d9bfc99` installed, magpipe `283f694`), `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs` from the workspace
 root, 2026-10-26, machine otherwise idle (the one stale K1 process aside): **1913 passed, 2 skipped, 0 failed,
 20 min 21 s** — the K1 gate's 1850 plus 28 rsMagCalc K2 parity tests, 30 `rust` parametrizations of the K2 oracles and
 5 new wiring tests; the two skips are the structural pair (`seekpath` absent at `test_cell_utils.py:146`, ALPS present
@@ -1447,7 +1447,7 @@ tests, ~3 min each); the K2 `numpy` oracles are 2–3 min of Python at most.
 
 ### Rust kernels K1, 2026-10-26 — the classical samplers behind `kernels: rust`
 
-M1 of `RUST_KERNELS_PLAN.md`. rsMagCalc `d53b90b` (`src/classical.rs`) carries the Metropolis sweep (uniform and
+M1 of `RUST_KERNELS_PLAN.md`. rsMagCalc `1a8dbdd` (`src/classical.rs`) carries the Metropolis sweep (uniform and
 `propose: flip`), the whole replica-exchange loop (rayon over replicas), the Wang–Landau move loop, the rk4 and
 implicit-midpoint integrators, the Heun Langevin step and the trajectory loop of `sampled_correlations` (rayon over
 trajectories; trajectory i owns the PCG64 stream (seed, i), so chunking and thread count change nothing). pyMagCalc
@@ -1488,7 +1488,7 @@ settings because the thermalized run would be ~30 min of Python — and that asy
 Gate floor: the `numpy` parametrizations of this test (~3 min) and of S05 (~3.5 min) are now the slowest tests;
 the plan's "below 1 min" needs the NumPy oracle dropped from the gate, which is not on offer.
 
-**Gate on this tree** (pyMagCalc branch `feature/rust-kernels-k1`, rsMagCalc `8293723` installed, magpipe `283f694`),
+**Gate on this tree** (pyMagCalc branch `feature/rust-kernels-k1`, rsMagCalc `f1c7923` installed, magpipe `283f694`),
 `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs` from the workspace root, 2026-10-26: **1850 passed, 2 skipped, 0 failed,
 20 min 24 s** — the previous 1753 plus 61 `rust` parametrizations and 36 rsMagCalc parity tests; the two skips are
 the structural `seekpath` and ALPS ones. Not an idle machine (OneDrive, VS Code and one stray Python process were
