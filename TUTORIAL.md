@@ -851,8 +851,12 @@ scales (~1.4 meV vs ~4 meV).
 > made every site whose S differed from the reference wrong by √(S_i/S_ref),
 > a 60 % error on a Cu(½)+Fe(2) model. Two things follow from it:
 >
-> * the **Fortran backend still applies the global factor**, so a mixed-spin
->   S(Q,ω) falls back to NumPy automatically (dispersions are unaffected);
+> * the **Fortran backend** (`calculation: {backend: fortran}`) carries the
+>   per-site factor as well since 2026-10-27, so a mixed-spin S(Q,ω) or powder
+>   average runs in fMagCalc (4–30× faster than the NumPy pool on the models
+>   measured in `GAP_STATUS.md`, "K6"); an fMagCalc installed before that date
+>   still falls back to NumPy with a warning — reinstall it
+>   (`pip install /path/to/fMagCalc`);
 > * **SU(N) mode supports mixed spin too** (`sun/lswt.py` indexes through a
 >   per-site offsets table), pinned by the exact decoupled-sublattice identity
 >   for (½,1), (1,3/2) and (½,3/2). `model.M`/`model.N` are `None` for such a

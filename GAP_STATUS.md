@@ -82,7 +82,7 @@ Tests: `tests/test_hamiltonian_terms.py`.
 |---|---|---|---|---|
 | 1 | **SU(N) mode** | ✅ | `calculation.mode: SUN` | Sunny `:SUN` — FeI₂ energy, all 8 bands, AND intensities to 4e-7 |
 | 2 | Fitting sees temperature/domains/cross_section | ✅ | (auto from `calculation:`) | ignoring T biased J by 17% |
-| 3 | Mixed-spin intensity prefactor | ✅ | (per-site √(S_i/2)) | decoupled-sublattice identity (was 60% error) |
+| 3 | Mixed-spin intensity prefactor | ✅ | (per-site √(S_i/2)) | decoupled-sublattice identity (was 60% error); the alternating-spin chain's closed form, energies AND per-band intensities to 1e-10, under `backend: numpy` and `fortran` (K6, 2026-10-27: fMagCalc carries the per-site factor, no NumPy fallback) |
 | 3b | Mixed-spin **classical ground state** | ✅ | (per-site \|m_i\| = S_i) | closed-triangle law of cosines: AFM trimer S = (1,1,½) minimises at 151.0°/104.5°, E = −1.125 J, not the 120°/−1.5 J a uniform-length search returns |
 | 4 | Polarized / chiral cross-sections | ✅ | `cross_section` | Sunny (also listed under Gap 1) |
 
@@ -975,6 +975,85 @@ the rule-value parser fix a87c8a8 below, magpipe at 283f694), 2026-10-22, idle m
 0 failed, 1737 collected, 14 min 34 s**, no crashed xdist worker. The two skips are the structural `seekpath` and
 ALPS ones. The merge is also what makes `sqrt(3)*D1x/3`, the allowed kagome DM, pass this check: before the
 parser fix it reached the check as an unbound `sqrt3` and was refused as a conflict.
+
+### K6, 2026-10-27 — mixed-spin dipole S(Q,ω) on fMagCalc (no Rust kernel)
+
+The optional K6 of `RUST_KERNELS_PLAN.md`. `backend: fortran` used to fall back to the NumPy pool for every
+mixed-spin model, because fMagCalc applied one global √(S/2) where `linalg._spin_prefactor_vector` applies
+√(S_i/2) per site. **It went into fMagCalc, not rsMagCalc**, after a profile and a test on paper (both in the
+hand-over note `k6-mixed-spin-sqw-handover.md`):
+
+* where the time goes, per q on a 20-site mixed YIG (SW21 with the 12 d sites at S = 0.8): `KKdMatrix` 81 % (half
+  LAPACK `eig`, half the Python ±q matching `_match_block`), H(±q) 12 %, the contraction 7 %; on a 2-site chain the
+  Pool spawn and per-worker lambdify (1.3–2 s) is the whole run. A compiled kernel's ceiling is the same whichever
+  language, and fMagCalc already has a `KKdMatrix` pinned to these Python helpers;
+* the prefactor is a per-site ROW scale of K and Kd, and the contraction already weights site i's rows by ff_i —
+  so the UNMODIFIED Fortran kernel fed `ff_i·√(S_i/S)` already matched NumPy (1.6e-15 on the chain, 3.6e-11 on
+  YIG, against 1.2 and 2.0 absolute errors with the global factor). A second compiled `KKdMatrix` in Rust, for
+  mixed spin only, would have been the duplicate §0 of the plan forbids.
+
+**The change.** fMagCalc: `kkd_matrix` takes `spins(n)` and scales row block 3i−2..3i by `sqrt(spins(i)/2)` after
+the matmuls; `run_sqw` / `run_sqw_model` / the C API (`magcalc_sqw_c`, `magcalc_sqw_model_c`: the third argument is
+now a pointer to n doubles, not a scalar by value) carry it; the Python wrappers take `spins=None` (default: n copies
+of S) and `powder_average(..., spins=)`; the subprocess transport, whose file format holds one S, raises
+`NotImplementedError` on a mixed vector. pyMagCalc: `_calculate_sqw_fortran` passes `spin_mags`, and the
+mixed-spin fallback in `_calculate_sqw_single_domain` is gone. An fMagCalc that predates `spins=` (detected by
+signature) still falls back for a mixed-spin model, with a warning saying to reinstall. The ground-state guards are
+untouched; S(Q,ω) runs after them as before.
+
+**Bit-identity, uniform spin.** With every S_i equal the row scale multiplies by the same double as the old
+scalar product, so nothing that is not mixed moves. Checked, not assumed: 26 arrays (fixture `run_sqw` on KFe3J
+and the 9-site GUI model, `run_sqw_model` on both, `powder_average`, and pyMagCalc `backend: fortran` end to end on
+KFe3J, a KFe3J powder, a uniform S = 3/2 chain and SW21 YIG — energies, intensities, eigenvalues, info) recorded
+from fMagCalc HEAD before the change and compared with `np.array_equal` after, on BOTH builds (the
+`-march=native` CMake dev build and the portable pip wheel): **26/26 bit-identical** on each.
+
+**Oracles.**
+* New, independent: the alternating-spin AFM chain in closed form (`tests/test_mixed_spin_sqw.py`). With
+  A = 2JS_B, B = 2JS_A, C = 2J√(S_AS_B)cos πh and tanh 2θ = 2C/(A+B): ω = E ± (A−B)/2, and
+  I_α = ½(f_A√S_A cosh θ − f_B√S_B sinh θ)²(1 + q̂_z²), I_β with A↔B — per chemical cell, the transverse
+  correlation of each mode under the perp projector. It weights the sublattices by √S_i separately, so a collapsed
+  spin length fails it outright. NumPy and Fortran both match it to 1e-10, energies AND per-band intensities, with
+  form factors and q off the chain axis. (Derived here 2026-10-27; it agreed with the NumPy path, which was
+  already pinned to Sunny's absolute scale and to the decoupled-sublattice identity, to every printed digit on the
+  first run.)
+* Fortran vs NumPy on the mixed YIG (degenerate bands: per band where non-degenerate, per degenerate-group sum
+  otherwise, 1e-10; slow) and on a mixed-spin powder average (gapped by an easy axis, see below).
+* `test_intensity_layer.py`'s two mixed-spin identities now take the `backend` fixture (`tests/conftest.py`,
+  `numpy` | `fortran`, the latter skipping by name when fMagCalc is absent or pre-K6).
+* fMagCalc `tests/test_sqw_per_site_spins.py`: the uniform vector bit-identical to the scalar call (all three
+  entry points), the vector equal to folding √(S_i/S) into ff (an exact row-scale identity, 1e-12), parity with
+  pyMagCalc's NumPy path on the mixed chain (exact-H 1e-10; bond-model path at its 1e-8/1e-7 reconstruction floor),
+  bad vectors, the subprocess refusal. Its existing parity tests are unchanged and pass.
+
+**One difference the parity tests have to step around, pre-existing and not K6's:** fMagCalc zeroes the intensity
+of any mode with |E| < 1e-3 (the Goldstone-streak fix, fMagCalc `30856dc`); NumPy does not. A gapless model's
+powder average therefore differs by the Goldstone weight on every sphere (every sphere holds h = 0), so the
+mixed-spin powder parity runs on an easy-axis-gapped chain.
+
+**Timing** (`python time_k6.py <ferri|yig> <nq> 3` from `pyMagCalc/`: `calculate_sqw` on the same model and q list
+under `backend: numpy` — exactly the path a mixed-spin `backend: fortran` took before — then `fortran`; 3 runs each,
+the first Fortran run pays the one-off lambdify of the vectorized H stack. 2026-10-27 11:47, M1 Pro, 1-min load
+7.9–8.4 at the start of each, CPU 62–69 % idle; desktop apps, OneDrive and the hourly rclone mirror running, no
+other compute job):
+
+| model | q | NumPy pool | Fortran, first | Fortran, warm |
+|---|---|---|---|---|
+| S = (½, 2) chain, 2 sites | 300 | 1.16 s | 0.10 s (12×) | 0.004 s |
+| mixed YIG, 20 sites | 300 | 2.14 s | 0.39 s (5.5×) | 0.074 s (29×) |
+| mixed YIG, 20 sites | 3000 | 4.41 s | 1.10 s (4.0×) | 0.75 s (5.9×) |
+
+Energies agree with NumPy to 2.6e-13 in every run.
+
+Gated 2026-10-27 11:56–12:12 from the workspace root (`MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`): **2275 passed, 2 skipped, 0 failed, 16 min 01 s** — 15 more than the K5 gate, all K6's (6 in `test_mixed_spin_sqw.py`, the 2 `fortran` cases of `test_intensity_layer.py`, 2 in `test_ewald.py`, 5 in fMagCalc `test_sqw_per_site_spins.py`); the same two structural skips (`seekpath` absent, ALPS present), no crashed xdist worker. 1-min load 9.7 at the start (CPU 71 % idle, after waiting out another session's pytest), 159 at the end (the gate's own workers).
+
+**Ewald under `backend: fortran` is carried, and now pinned.** Both Fortran routes take H(q) from
+`MagCalc._build_h_stack`, which adds `_ewald_h_stack` (−q for the −q stack); pyMagCalc never uses fMagCalc's
+bond-model `run_sqw_model`, the one route that would lack A(q). (The K6 STEP-1 note briefly claimed the opposite,
+from reading that function only up to its lambdify — wrong, and corrected.) `tests/test_ewald.py::
+test_fortran_backend_carries_the_ewald_term` runs a dipolar FM chain, uniform and mixed spin, moments along the
+chain (the dipolar ground state, no imaginary mode), under both backends: dispersion and S(Q,ω) energies at 1e-10,
+intensities per degenerate group at 1e-10, and Ewald moving the bands by > 1e-3 so a stack that dropped it fails.
 
 ### Rust kernels K5, 2026-10-27 — the SCGA loops behind `kernels: rust`
 

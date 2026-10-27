@@ -227,3 +227,74 @@ def test_ewald_reaches_the_sqw_path_too():
                        cache_file_base="ew_none", hamiltonian_params=[])
     e_plain = np.max(np.real(plain.calculate_sqw(qs).energies), axis=1)
     assert np.max(np.abs(e_sqw - e_plain)) > 1e-4
+
+
+def _chain_along_x(atoms, ewald, tag):
+    """FM chain(s) along a, moments ALONG the chain -- the dipolar ground state
+    (see the test above), so LSWT about it is an expansion about the true minimum."""
+    cfg = {
+        "crystal_structure": {"lattice_vectors": LAT, "atoms_uc": atoms},
+        "interactions": {"symmetry_rules": [
+            {"type": "heisenberg", "distance": 6.0 / len(atoms), "value": -1.0}]},
+        "parameters": {}, "parameter_order": [],
+        "magnetic_structure": {"type": "pattern", "pattern_type": "ferromagnetic",
+                               "direction": [1, 0, 0]},
+    }
+    if ewald:
+        cfg["interactions"]["dipole_dipole"] = {"method": "ewald"}
+    m = GenericSpinModel(copy.deepcopy(cfg))
+    th, ph = m.generate_magnetic_structure()
+    m.set_magnetic_structure(th, ph)
+    return mc.MagCalc(spin_model_module=m, spin_magnitude=float(atoms[0]["spin_S"]),
+                      cache_mode="none", cache_file_base=tag, hamiltonian_params=[])
+
+
+def _by_group(E, I, tol=1e-6):
+    """Per-q list of (energy, summed intensity) over degenerate groups."""
+    out = []
+    for e, i in zip(E, I):
+        o = np.argsort(e)
+        e, i = e[o], np.real(i)[o]
+        groups, start = [], 0
+        for k in range(1, len(e) + 1):
+            if k == len(e) or e[k] - e[k - 1] > tol:
+                groups.append((e[start], i[start:k].sum()))
+                start = k
+        out.append(groups)
+    return out
+
+
+@pytest.mark.parametrize("atoms", [
+    [{"label": "A", "pos": [0.0, 0.0, 0.0], "spin_S": 1.0, "ion": "Fe2+", "g": 2.0}],
+    # mixed spin as well: the per-site prefactor and the dipolar term together
+    [{"label": "A", "pos": [0.0, 0.0, 0.0], "spin_S": 0.5, "ion": "Cu2+", "g": 2.0},
+     {"label": "B", "pos": [0.5, 0.0, 0.0], "spin_S": 2.0, "ion": "Fe2+", "g": 2.0}],
+], ids=["uniform", "mixed_spin"])
+def test_fortran_backend_carries_the_ewald_term(atoms, fortran_backend):
+    """`backend: fortran` gets H(q) from `MagCalc._build_h_stack`, which adds
+    `_ewald_h_stack` (A(q) is not a bond, so it cannot come through the symbolic H or
+    fMagCalc's bond-model path). Pin that: dispersion AND S(Q,w) under fortran equal
+    numpy with Ewald on -- energies 1e-10, intensities per degenerate group 1e-10 --
+    and Ewald genuinely moves the bands, so a stack that dropped it would fail."""
+    B = 2 * np.pi * np.linalg.inv(np.array(LAT, float)).T
+    qs = np.array([[h, 0.2 * h, 0.1] for h in (0.07, 0.18, 0.33, 0.5, 0.71)]) @ B
+    tag = "ewf_" + "_".join(a["label"] for a in atoms)
+    ew = _chain_along_x(atoms, True, tag)
+    assert ew.max_imaginary_energy() < 1e-6       # an expansion about a minimum
+
+    d_np = ew.calculate_dispersion(qs, backend="numpy").energies
+    d_f = ew.calculate_dispersion(qs, backend=fortran_backend).energies
+    np.testing.assert_allclose(np.sort(np.real(d_f), 1), np.sort(np.real(d_np), 1),
+                               rtol=0, atol=1e-10)
+
+    s_np = ew.calculate_sqw(qs, backend="numpy")
+    s_f = ew.calculate_sqw(qs, backend=fortran_backend)
+    for g_np, g_f in zip(_by_group(s_np.energies, s_np.intensities),
+                         _by_group(s_f.energies, s_f.intensities)):
+        assert len(g_np) == len(g_f)
+        for (e1, i1), (e2, i2) in zip(g_np, g_f):
+            assert abs(e1 - e2) < 1e-10 and abs(i1 - i2) < 1e-10, (e1, e2, i1, i2)
+
+    plain = _chain_along_x(atoms, False, tag + "_plain")
+    d_plain = plain.calculate_dispersion(qs, backend=fortran_backend).energies
+    assert np.max(np.abs(np.sort(np.real(d_f), 1) - np.sort(np.real(d_plain), 1))) > 1e-3

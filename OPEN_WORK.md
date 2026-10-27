@@ -49,7 +49,11 @@
 > bit-identical to NumPy's, so λ is; the 16-site pyrochlore `solve_lambda` 3.9 s → 0.17 s,
 > a 1681-q map 2.5 s → 27 ms (`GAP_STATUS.md`, "Rust kernels K5"). At 128 sites the
 > pre-existing `_exchange_cache` (2.8 s of SymPy zero-tests) is what is left. UNCOMMITTED
-> in pyMagCalc. Next: K6 (optional, mixed-spin dipole S(Q,ω)).
+> in pyMagCalc. **K6 is done, 2026-10-27 — in fMagCalc, not Rust**: the profile showed a
+> compiled `KKdMatrix` already existed there and that the only gap was the prefactor, so
+> fMagCalc's kernel now takes the per-site √(S_i/2) and `backend: fortran` no longer falls
+> back for mixed spin (`GAP_STATUS.md`, "K6"; non-mixed output bit-identical). An Ewald
+> `dipole_dipole` term under `backend: fortran` is now pinned against NumPy as well.
 > Gate on this tree with rsmagcalc installed (2026-10-26, workspace root,
 > `MAGCALC_NO_GUI=1 pytest -rs`): **1753 passed, 2 skipped, 13 min 58 s** — the
 > previous 1735 plus the 18 M0 tests, the same two structural skips. NOT COMMITTED

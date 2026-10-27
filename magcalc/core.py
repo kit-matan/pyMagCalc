@@ -2236,6 +2236,7 @@ class MagCalc:
         self,
         q_vectors_list: List[npt.NDArray[np.float64]],
         ion_list: Optional[List[str]],
+        spin_mags: Optional[List[float]] = None,
     ) -> Optional[SqwResult]:
         """Opt-in S(q,w) via the external fMagCalc Fortran backend.
 
@@ -2244,6 +2245,11 @@ class MagCalc:
         falls back to the NumPy path. This keeps pyMagCalc fully functional
         without fMagCalc installed. Because the user explicitly asked for the
         Fortran backend, every fallback is logged at WARNING level.
+
+        `spin_mags` (per site) carries the sqrt(S_i/2) prefactor of a MIXED-SPIN
+        model into the kernel (fMagCalc's `spins=`, K6 2026-10-27). An fMagCalc
+        older than that applies one global sqrt(S/2), so a mixed-spin model on
+        one falls back to NumPy rather than return wrong relative intensities.
         """
         try:
             import fmagcalc
@@ -2266,6 +2272,15 @@ class MagCalc:
                 "`cmake -S . -B build && cmake --build build` in a source checkout); "
                 "using NumPy instead."
             )
+            return None
+        import inspect
+        per_site = "spins" in inspect.signature(fmagcalc.run_sqw).parameters
+        if not per_site and spin_mags is not None and len(set(np.round(spin_mags, 12))) > 1:
+            logger.warning(
+                "Mixed spin magnitudes detected and the installed fMagCalc predates "
+                "per-site spins (it applies one global sqrt(S/2), which would make "
+                "every relative intensity wrong); using NumPy for S(q,w). Reinstall "
+                "fMagCalc to run this on the Fortran backend.")
             return None
         try:
             from .form_factors import get_form_factor
@@ -2293,7 +2308,8 @@ class MagCalc:
                     qmag = float(np.linalg.norm(q))
                     ff[iq] = [get_form_factor(ion_list[i], qmag) for i in range(n)]
 
-            res = fmagcalc.run_sqw(h_plus, h_minus, Ud, ff, S, q_grid)
+            kw = {"spins": spin_mags} if (per_site and spin_mags is not None) else {}
+            res = fmagcalc.run_sqw(h_plus, h_minus, Ud, ff, S, q_grid, **kw)
             logger.info("S(q,w) computed via fMagCalc Fortran backend (exact-H path).")
             return SqwResult(
                 q_vectors=q_grid,
@@ -2465,15 +2481,11 @@ class MagCalc:
                 logger.info(
                     f"cross_section='{cross_section}' not available in the "
                     "Fortran backend (it computes the perp contraction); using NumPy.")
-            elif spin_mags is not None and len(set(np.round(spin_mags, 12))) > 1:
-                # The Fortran kernel applies a single global sqrt(S/2); with mixed
-                # spins that makes every relative intensity wrong by sqrt(S_i/S_ref).
-                logger.warning(
-                    "Mixed spin magnitudes detected; the Fortran backend applies a "
-                    "single global sqrt(S/2) prefactor and would give wrong relative "
-                    "intensities. Using NumPy for S(q,w).")
             else:
-                fortran_result = self._calculate_sqw_fortran(q_vectors_list, ion_list)
+                # Mixed spin goes through too: the per-site sqrt(S_i/2) is passed
+                # into the kernel (K6); an older fMagCalc falls back inside.
+                fortran_result = self._calculate_sqw_fortran(
+                    q_vectors_list, ion_list, spin_mags)
                 if fortran_result is not None:
                     if self.supercell_ncells > 1:
                         fortran_result.intensities = (

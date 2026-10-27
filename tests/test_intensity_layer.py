@@ -304,7 +304,7 @@ def _chain_cfg(atoms, J=-1.0):
     }
 
 
-def _weights(atoms, S_ref, qs, tag):
+def _weights(atoms, S_ref, qs, tag, backend="numpy"):
     import magcalc as mc
     from magcalc.generic_model import GenericSpinModel
     m = GenericSpinModel(_copy.deepcopy(_chain_cfg(atoms)))
@@ -313,7 +313,7 @@ def _weights(atoms, S_ref, qs, tag):
     calc = mc.MagCalc(spin_model_module=m, spin_magnitude=S_ref, cache_mode="none",
                       cache_file_base=tag, hamiltonian_params=[])
     B = 2 * np.pi * np.linalg.inv(np.array(_LAT_MS, float)).T
-    res = calc.calculate_sqw([np.array(q) @ B for q in qs])
+    res = calc.calculate_sqw([np.array(q) @ B for q in qs], backend=backend)
     return np.sum(np.real(res.intensities), axis=1)
 
 
@@ -323,22 +323,23 @@ _QS_MS = [[0.12, 0, 0], [0.3, 0, 0], [0.45, 0, 0]]
 
 
 @pytest.mark.slow
-def test_mixed_spin_intensity_is_additive_over_decoupled_sublattices():
+def test_mixed_spin_intensity_is_additive_over_decoupled_sublattices(backend):
     """The S(Q,w) prefactor is sqrt(S_i/2) PER SITE. With a single global sqrt(S/2)
     (the old code) the weight of every site whose S differs from the reference is wrong
     by sqrt(S_i/S_ref) -- a 60% error on this model. Exact identity: two DECOUPLED
-    sublattices must give exactly the sum of the two separate single-spin models."""
-    i_both = _weights([_CU, _FE], 0.5, _QS_MS, "ms_both")
-    i_cu = _weights([_CU], 0.5, _QS_MS, "ms_cu")
-    i_fe = _weights([_FE], 2.0, _QS_MS, "ms_fe")
+    sublattices must give exactly the sum of the two separate single-spin models.
+    Under both backends: fMagCalc carries the per-site factor too since K6."""
+    i_both = _weights([_CU, _FE], 0.5, _QS_MS, "ms_both", backend)
+    i_cu = _weights([_CU], 0.5, _QS_MS, "ms_cu", backend)
+    i_fe = _weights([_FE], 2.0, _QS_MS, "ms_fe", backend)
     assert np.allclose(i_both, i_cu + i_fe, atol=1e-9)
 
 
-def test_mixed_spin_relative_weight_follows_S():
+def test_mixed_spin_relative_weight_follows_S(backend):
     """A ferromagnetic magnon's spectral weight scales with S, so Fe(S=2) must carry
     4x the weight of Cu(S=1/2)."""
-    i_cu = _weights([_CU], 0.5, _QS_MS, "r_cu")
-    i_fe = _weights([_FE], 2.0, _QS_MS, "r_fe")
+    i_cu = _weights([_CU], 0.5, _QS_MS, "r_cu", backend)
+    i_fe = _weights([_FE], 2.0, _QS_MS, "r_fe", backend)
     assert np.allclose(i_fe / i_cu, 4.0, rtol=1e-9)
 
 

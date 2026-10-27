@@ -107,3 +107,44 @@ def kernels(request):
         if _kernels.rust_module() is None:
             pytest.skip("rsmagcalc not installed (optional Rust kernels)")
     return request.param
+
+
+def fortran_backend_status():
+    """None when fMagCalc's compiled S(Q,w) path can serve a mixed-spin model,
+    else the reason it cannot (the skip message)."""
+    import inspect
+
+    try:
+        import fmagcalc
+    except Exception:
+        return "fmagcalc not installed (optional Fortran backend)"
+    if getattr(fmagcalc, "backend", None) != "ctypes":
+        return "fmagcalc's compiled library not built (optional Fortran backend)"
+    if "spins" not in inspect.signature(fmagcalc.run_sqw).parameters:
+        return "fmagcalc predates per-site spins (K6); reinstall it"
+    return None
+
+
+@pytest.fixture(params=["numpy", "fortran"])
+def backend(request):
+    """Run a dipole S(Q,w) test under both `calculation.backend` values.
+
+    fMagCalc is pinned to the NumPy path the same way the `kernels` fixture pins
+    rsMagCalc; the 'fortran' case skips with a NAMED reason when the package is
+    absent or too old to carry per-site spins.
+    """
+    if request.param == "fortran":
+        reason = fortran_backend_status()
+        if reason:
+            pytest.skip(reason)
+    return request.param
+
+
+@pytest.fixture
+def fortran_backend():
+    """'fortran', for a test that only makes sense against fMagCalc (a parity
+    check); skips with the same named reason as `backend`."""
+    reason = fortran_backend_status()
+    if reason:
+        pytest.skip(reason)
+    return "fortran"

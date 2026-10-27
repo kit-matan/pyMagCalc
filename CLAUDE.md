@@ -969,8 +969,12 @@ so J only rescales the intensity and it carries no information about J at all.)
 
 **Mixed spin.** The S(Q,ω) prefactor is √(S_i/2) **per site**. It used to be a single
 global √(S/2), making every site whose S differed from the reference wrong by √(S_i/S_ref)
-— a 60% error on a Cu(½)+Fe(2) model. The Fortran backend still applies the global
-factor, so it now falls back to NumPy for mixed-spin S(Q,ω).
+— a 60% error on a Cu(½)+Fe(2) model. The Fortran backend carries the per-site factor
+too since K6 (2026-10-27): `fmagcalc.run_sqw(..., spins=)`, so `backend: fortran` no
+longer falls back to NumPy for mixed-spin S(Q,ω) or powder (an fMagCalc older than that
+still does, with a warning). Non-mixed Fortran output is bit-identical to before. The
+independent oracle is the alternating-spin chain's CLOSED FORM for energies and per-band
+intensities (`tests/test_mixed_spin_sqw.py`, both backends; GAP_STATUS "K6").
 
 **Mixed spin, the CLASSICAL half** (fixed 2026-08-18). `spin_magnitude` is the
 *reference* S — the first atom's `spin_S`, which is what `S_sym` binds to, with each
