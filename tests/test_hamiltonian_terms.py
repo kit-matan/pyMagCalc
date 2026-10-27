@@ -253,14 +253,30 @@ def test_gtensor_parameter_entries_in_classical_energy(g_entry, params):
     assert abs(ref - got) < 1e-10
 
 
-def test_scga_g_tensors_resolve_parameters():
+def test_scga_g_tensors_resolve_parameters(kernels):
     """REGRESSION (2026-10-13): scga._g_tensors swallowed the resolver's failure and
-    fell back to g = 2*I, so a parameterised g-tensor was silently ignored there."""
+    fell back to g = 2*I, so a parameterised g-tensor was silently ignored there.
+
+    And the resolved tensor is the one the S(q) sees, under both kernel sets: the
+    parameterised chain's diffuse S(q) equals the numeric-g chain's, and differs from
+    the default g = 2 one (so the comparison is not vacuous)."""
+    from magcalc import scga
     from magcalc.scga import _g_tensors
     g_entry, params = G_PARAM_FORMS[2]
     m = GenericSpinModel(_param_g_chain(g_entry, params))
     for g in _g_tensors(m, 2):
         assert np.allclose(g, np.array(G_NUM), atol=1e-12)
+
+    field = [3.0, 0.0, 0.0, 1.0]
+    qs = np.array([[0.1, 0.0, 0.0], [0.5, 0.2, 0.0], [0.9, 0.0, 0.4]])
+    def sq(model, p):
+        return scga.compute_scga(model, p, qs, 2.0, nq=8, kernels=kernels).intensities
+    got = sq(m, list(params.values()) + field)
+    num = sq(GenericSpinModel(with_field(neel_chain(atoms_extra=[{"g": G_NUM}] * 2))),
+             field)
+    two = sq(GenericSpinModel(with_field(neel_chain())), field)
+    assert np.allclose(got, num, rtol=1e-12, atol=0)
+    assert np.max(np.abs(got / two - 1)) > 0.05
 
 
 def test_gtensor_bad_spec_raises():

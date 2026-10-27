@@ -633,7 +633,7 @@ deterministic for a given `seed` under either kernel set, but the two do **not**
 share a random stream: a `kernels: rust` run with the same seed is a different,
 equally valid sample.
 
-### What the kernels cover (K1, K2, K3 and K4, 2026-10-26/27)
+### What the kernels cover (K1–K5, 2026-10-26/27)
 
 `kernels: rust` currently accelerates the **classical samplers** (K1): the Metropolis
 sweep (uniform and `propose: flip`) behind `thermal_mc`, `static_correlations` and
@@ -680,12 +680,23 @@ in NumPy, so the spectrum agrees with the NumPy path to ~1e-15. On the disordere
 (`GAP_STATUS.md`, "Rust kernels K4"). `kpm_sqw(model, q, ...)` called from a script
 uses the model's own `kernels`.
 
+And the **SCGA** loops (K5) of `tasks: {scga: true}`: the J(q) eigenvalues over the
+λ mesh, the per-sublattice sum-rule check, and the 3×3 correlation tensor at each q of
+the path, in parallel over q. The λ root solve, the refusal of inequivalent
+sublattices, the form factors and the cross-section contraction stay in NumPy; J(q)
+and its eigenvalues are bit-identical to the NumPy path's, so λ is the same number,
+and S(q) agrees to ~1e-15. The gain needs a cell of some size: the test models take
+milliseconds either way, while on a 16-site pyrochlore cell with a 16³ mesh
+`solve_lambda` went from 3.9 s to 0.17 s and a 1681-point map from 2.5 s to 27 ms
+(`GAP_STATUS.md`, "Rust kernels K5").
+
 Three blocks take an `n_workers` for the Rust thread pool (default: every core):
 
 ```yaml
 thermal_mc:               {temperatures: [0.5, 1, 2], supercell: [8, 8, 1], n_workers: 4}
 sampled_correlations:     {temperature: 0.5, supercell: [16, 1, 1], n_traj: 64, n_workers: 4}
 sun_sampled_correlations: {temperature: 0.5, n_traj: 16, therm_sweeps: 2000, n_workers: 4}
+scga:                     {temperature: 1.5, mesh_density: 20, n_workers: 4}   # else calculation.n_workers
 ```
 
 and the SU(N)/entangled LSWT and KPM kernels read it from the `calculation` block:

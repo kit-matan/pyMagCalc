@@ -841,6 +841,9 @@ kpm: {e_min: 0, e_max: 10, e_step: 0.05, fwhm: 0.1, tol: 0.02}    # or moments: 
   single Lagrange multiplier lambda from the spin sum rule. Single symmetry class only
   (Bravais + kagome/pyrochlore-type); refuses inequivalent sublattices. Validated vs
   Sunny 0.8.1 SCGA (square + kagome) and the exact classical-chain closed form.
+  `kernels: rust` (K5) runs the mesh eigenvalues, the sublattice traces and the per-q
+  tensors in rsMagCalc; J(q) and its eigenvalues are bit-identical to NumPy's, so lambda
+  is too. The root solve, the refusal and `_contract` stay in Python -- keep it so.
 * **Thermal MC** (`magcalc/thermal_mc.py`) -- parallel-tempering Metropolis on a PBC
   supercell built from `spin_interactions` + `_resolve_field`, same classical energy
   `1/2 m^T H m + b^T m` as `annealing`. Validated vs the Langevin function (free spins

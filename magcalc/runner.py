@@ -1199,7 +1199,9 @@ def run_calculation(config_file: str):
                 res = _scga.compute_scga(
                     spin_model, params_val, q_cart, float(kT),
                     nq=int(sc.get('mesh_density', 12)),
-                    cross_section=sc.get('cross_section', 'perp'))
+                    cross_section=sc.get('cross_section', 'perp'),
+                    kernels=kernels,
+                    n_workers=sc.get('n_workers', calc_config.get('n_workers')))
                 logger.info(
                     f"SCGA (kT={kT} meV, lambda={res.lam:.5f}, sum-rule residual "
                     f"{res.sum_rule_residual:.1e}): S(q) over {len(q_cart)} points, "

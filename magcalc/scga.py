@@ -43,6 +43,15 @@ S = 5/2) returned an S(q) whose two sublattice sum rules were off by +262% and
 −42% with a total residual of 3e-16 -- no warning, no clue in the output.
 `find_lagrange_multiplier_multi`, Sunny's multi-λ branch, is what would actually
 compute this case, and is not implemented here.
+
+KERNELS. `calculation: {kernels: rust}` (K5 of RUST_KERNELS_PLAN.md) moves the three
+per-q loops into rsMagCalc's `ScgaModel`: the J(q) eigenvalues over the λ mesh, the
+per-site traces of (λ+J(q))⁻¹ behind the sublattice check, and the correlation tensor
+C(q) of `scga_intensities`. J(q) and its eigenvalues are bit-identical to the loops
+below, so `solve_lambda` returns the same λ; the root solve, its bracketing, the
+refusal and `_contract` stay here. Any kernel failure logs and runs the NumPy loop,
+which is also the parity reference (tests/test_kernels_scga.py, and rsMagCalc's
+tests/test_scga_parity.py).
 """
 import logging
 from dataclasses import dataclass
@@ -50,6 +59,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy import optimize
 
+from . import kernels as _kernels
 from .form_factors import get_form_factor
 from .sun.entangled import _pair_matrix
 
@@ -107,6 +117,27 @@ def _exchange_cache(model, params):
             "ions": _ion_list(model, N), "g": _g_tensors(model, N)}
 
 
+def _rust_call(cache, kernels, what, call):
+    """`call(rsmagcalc.ScgaModel)` under kernels "rust", else None.
+
+    The packed model is cached on `cache` (keyed on the bond list it was packed
+    from). A failure -- packing or the call -- is logged by `kernels.fell_back`
+    and returns None, so the caller runs its NumPy loop."""
+    rs = _kernels.rust_for(kernels)
+    if rs is None:
+        return None
+    try:
+        key = (id(cache["bonds"]), len(cache["bonds"]))
+        packed = cache.get("_rust")
+        if packed is None or packed[0] != key:
+            packed = (key, rs.ScgaModel.from_cache(cache))
+            cache["_rust"] = packed
+        return call(packed[1])
+    except Exception:
+        _kernels.fell_back(what)
+        return None
+
+
 def _g_tensors(model, N):
     """Per-site 3×3 g-tensors (default 2·I), for the magnetic-moment prefactor.
 
@@ -154,7 +185,8 @@ def _wraps(cache):
 SUBLATTICE_SUM_RULE_TOL: float = 1e-6
 
 
-def sublattice_sum_rule_residuals(model, params, kT, lam, cache, mesh):
+def sublattice_sum_rule_residuals(model, params, kT, lam, cache, mesh, kernels=None,
+                                  n_workers=None):
     """Relative per-site sum-rule residuals of the single-λ solution.
 
         r_i = [ (1/N_q) Σ_q Tr₃ ((λ+J(q))⁻¹)_{ii} ] / (β S_i²) − 1
@@ -162,6 +194,10 @@ def sublattice_sum_rule_residuals(model, params, kT, lam, cache, mesh):
     Zero for every site iff the one λ enforces every sublattice constraint, which is
     the condition under which the single-λ theory is the theory. Returns an (N,) array.
     """
+    r = _rust_call(cache, kernels, "SCGA sum-rule residuals",
+                   lambda rm: rm.sum_rule_residuals(mesh, lam, kT, n_workers))
+    if r is not None:
+        return np.asarray(r, float)
     N = cache["N"]
     eye = np.eye(3 * N)
     acc = np.zeros(N)
@@ -176,7 +212,7 @@ def sublattice_sum_rule_residuals(model, params, kT, lam, cache, mesh):
 
 
 def solve_lambda(model, params, kT, nq=12, mesh=None,
-                 sublattice_tol=SUBLATTICE_SUM_RULE_TOL):
+                 sublattice_tol=SUBLATTICE_SUM_RULE_TOL, kernels=None, n_workers=None):
     """Find the single Lagrange multiplier λ from the spin sum rule.
 
     Returns (lam, lam_min, residual, Js) with Js the cached J(q) eigenvalues.
@@ -187,17 +223,23 @@ def solve_lambda(model, params, kT, nq=12, mesh=None,
     `sublattice_tol` -- i.e. when the model needs the multi-λ theory that is not
     implemented here. Pass `sublattice_tol=float('inf')` to compute the single-λ
     answer anyway, knowing it violates the constraint it is derived from.
+
+    `kernels="rust"` computes the mesh eigenvalues and the sublattice residuals in
+    rsMagCalc (`n_workers` threads); the root solve is the same either way.
     """
     cache = _exchange_cache(model, params)
     lat = np.asarray(model.unit_cell(), float)
     if mesh is None:
         mesh = _q_mesh(lat, nq, _wraps(cache))
     beta = 1.0 / kT
-    evals = []
-    for q in mesh:
-        A = fourier_exchange_matrix(model, params, q, cache)
-        evals.append(np.linalg.eigvalsh(A))
-    evals = np.concatenate(evals)                       # 3N * Nq eigenvalues
+    evals = _rust_call(cache, kernels, "SCGA mesh eigenvalues",
+                       lambda rm: rm.eigenvalues(mesh, n_workers).ravel())
+    if evals is None:
+        evals = []
+        for q in mesh:
+            A = fourier_exchange_matrix(model, params, q, cache)
+            evals.append(np.linalg.eigvalsh(A))
+        evals = np.concatenate(evals)                   # 3N * Nq eigenvalues
     Nq = len(mesh)
     s2 = float(np.sum(cache["spins"] ** 2))             # per cell
     target = beta * s2 * Nq                             # = Σ_{q,ev} 1/(λ+ev)
@@ -218,7 +260,8 @@ def solve_lambda(model, params, kT, nq=12, mesh=None,
     lam = optimize.brentq(g, lo, hi, xtol=1e-14, rtol=1e-14, maxiter=200)
     residual = abs(g(lam)) / target
     if cache["N"] > 1 and np.isfinite(sublattice_tol):
-        r = sublattice_sum_rule_residuals(model, params, kT, lam, cache, mesh)
+        r = sublattice_sum_rule_residuals(model, params, kT, lam, cache, mesh,
+                                          kernels=kernels, n_workers=n_workers)
         if np.max(np.abs(r)) > sublattice_tol:
             worst = int(np.argmax(np.abs(r)))
             per_site = ", ".join(f"site {i} (S={s_i:g}): {100 * r_i:+.3g}%"
@@ -246,41 +289,67 @@ def solve_lambda(model, params, kT, nq=12, mesh=None,
 
 
 def scga_intensities(model, params, q_vectors, kT, nq=12, cross_section="perp",
-                     lam=None, mesh=None, apply_g=True, cache=None):
+                     lam=None, mesh=None, apply_g=True, cache=None, kernels=None,
+                     n_workers=None):
     """Static SCGA structure factor S(q) at the given cartesian q-vectors.
 
     S(q) = kT · contract[ Σ_{ij} f_i f_j e^{-iq·r_i} g_i (λ+J(q))^{-1}_{ij} g_j^T e^{+iq·r_j} ].
     With `apply_g` the neutron sees the magnetic moment g·S (Sunny's default); set it
     False for the bare spin structure factor. `cache` may carry a precomputed
     _exchange_cache (compute_scga passes solve_lambda's, avoiding a rebuild).
+    `kernels="rust"` computes the tensors C(q) in rsMagCalc (`n_workers` threads);
+    the form factors are evaluated here and passed in, and `_contract` is shared.
     """
     if cache is None:
         cache = _exchange_cache(model, params)
     if lam is None:
-        lam, lam_min, residual, cache, mesh = solve_lambda(model, params, kT, nq, mesh)
+        lam, lam_min, residual, cache, mesh = solve_lambda(
+            model, params, kT, nq, mesh, kernels=kernels, n_workers=n_workers)
+    N = cache["N"]
+    ions = cache["ions"]
+    qs = np.asarray(q_vectors, float).reshape(-1, 3)
+    out = np.zeros(len(qs))
+    if _kernels.rust_for(kernels) is not None:
+        qmag = np.array([float(np.linalg.norm(q)) for q in qs])
+        ff = np.ones((len(qs), N))
+        for i in range(N):
+            if ions[i]:
+                ff[:, i] = get_form_factor(ions[i], qmag)
+        Cs = _rust_call(cache, kernels, "SCGA correlations",
+                        lambda rm: rm.correlations(qs, lam, kT, ff, apply_g, n_workers))
+        if Cs is not None:
+            for iq, q in enumerate(qs):
+                out[iq] = _contract(Cs[iq], q, cross_section)
+            return out
+    for iq, q in enumerate(qs):
+        C = correlation_tensor(model, params, q, kT, lam, cache, apply_g)
+        out[iq] = _contract(C, q, cross_section)
+    return out
+
+
+def correlation_tensor(model, params, q, kT, lam, cache, apply_g=True):
+    """The 3×3 magnetic-moment correlation tensor C^{αβ}(q) of `scga_intensities`
+    at one cartesian q, before the cross-section contraction (the NumPy loop, and
+    the parity reference of the `kernels: rust` path)."""
     N = cache["N"]
     pos = cache["pos"]
     ions = cache["ions"]
     g = cache["g"] if apply_g else [np.eye(3)] * N
-    qs = np.asarray(q_vectors, float).reshape(-1, 3)
-    out = np.zeros(len(qs))
-    for iq, q in enumerate(qs):
-        A = fourier_exchange_matrix(model, params, q, cache)
-        Cinv = np.linalg.inv(lam * np.eye(3 * N) + A)
-        qmag = float(np.linalg.norm(q))
-        ff = np.array([get_form_factor(ions[i], qmag) if ions[i] else 1.0
-                       for i in range(N)])
-        phase = np.array([np.exp(1j * float(q @ pos[i])) for i in range(N)])
-        # 3×3 magnetic-moment correlation tensor C^{αβ}(q)
-        C = np.zeros((3, 3), dtype=complex)
-        for i in range(N):
-            for j in range(N):
-                blk = Cinv[3 * i:3 * i + 3, 3 * j:3 * j + 3]
-                C += (ff[i] * ff[j] * np.conj(phase[i]) * phase[j]
-                      * (g[i] @ blk @ g[j].T))
-        C *= kT
-        out[iq] = _contract(C, q, cross_section)
-    return out
+    q = np.asarray(q, float)
+    A = fourier_exchange_matrix(model, params, q, cache)
+    Cinv = np.linalg.inv(lam * np.eye(3 * N) + A)
+    qmag = float(np.linalg.norm(q))
+    ff = np.array([get_form_factor(ions[i], qmag) if ions[i] else 1.0
+                   for i in range(N)])
+    phase = np.array([np.exp(1j * float(q @ pos[i])) for i in range(N)])
+    C = np.zeros((3, 3), dtype=complex)
+    for i in range(N):
+        for j in range(N):
+            blk = Cinv[3 * i:3 * i + 3, 3 * j:3 * j + 3]
+            C += (ff[i] * ff[j] * np.conj(phase[i]) * phase[j]
+                  * (g[i] @ blk @ g[j].T))
+    C *= kT
+    return C
 
 
 def _contract(C, q, cross_section):
@@ -301,12 +370,15 @@ def _contract(C, q, cross_section):
     return float(np.real(np.sum(P * C)))
 
 
-def compute_scga(model, params, q_vectors, kT, nq=12, cross_section="perp"):
+def compute_scga(model, params, q_vectors, kT, nq=12, cross_section="perp",
+                 kernels=None, n_workers=None):
     """Top-level: solve λ then evaluate S(q). Returns an SCGAResult."""
-    lam, lam_min, residual, cache, mesh = solve_lambda(model, params, kT, nq)
+    lam, lam_min, residual, cache, mesh = solve_lambda(model, params, kT, nq,
+                                                       kernels=kernels,
+                                                       n_workers=n_workers)
     qs = np.asarray(q_vectors, float).reshape(-1, 3)
     I = scga_intensities(model, params, qs, kT, nq, cross_section, lam=lam,
-                         mesh=mesh, cache=cache)
+                         mesh=mesh, cache=cache, kernels=kernels, n_workers=n_workers)
     logger.info("SCGA: kT=%.4g, λ=%.6g (λ_min=%.6g), %d q-mesh, sum-rule resid %.1e",
                 kT, lam, lam_min, len(mesh), residual)
     return SCGAResult(q_vectors=qs, intensities=I, lam=lam, temperature=kT,

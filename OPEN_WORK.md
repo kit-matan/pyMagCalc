@@ -42,7 +42,14 @@
 > runs first at every q (`SUNModel.unstable_indices`, same verdicts and messages); S09
 > L = 30 1.4 s/q → 43 ms/q guard included, and the dense guard Cholesky is now 86 % of a
 > KPM q (`GAP_STATUS.md`, "Rust kernels K4"). Gate (2026-10-27): **2151 passed, 2 skipped,
-> 18 min 00 s** (machine busy). UNCOMMITTED in pyMagCalc. Next: K5 (SCGA).
+> 18 min 00 s** (machine busy). Committed as `56bd881` (+ the sparse guard, `fac062e`).
+> **M5 (K5) is done, 2026-10-27**: the SCGA mesh eigenvalues, the per-sublattice
+> sum-rule traces and the per-q correlation tensors run in rsMagCalc (`c2e9b2a`,
+> `src/scga.rs`, `ScgaModel`) behind `kernels: rust`; J(q) and its eigenvalues are
+> bit-identical to NumPy's, so λ is; the 16-site pyrochlore `solve_lambda` 3.9 s → 0.17 s,
+> a 1681-q map 2.5 s → 27 ms (`GAP_STATUS.md`, "Rust kernels K5"). At 128 sites the
+> pre-existing `_exchange_cache` (2.8 s of SymPy zero-tests) is what is left. UNCOMMITTED
+> in pyMagCalc. Next: K6 (optional, mixed-spin dipole S(Q,ω)).
 > Gate on this tree with rsmagcalc installed (2026-10-26, workspace root,
 > `MAGCALC_NO_GUI=1 pytest -rs`): **1753 passed, 2 skipped, 13 min 58 s** — the
 > previous 1735 plus the 18 M0 tests, the same two structural skips. NOT COMMITTED

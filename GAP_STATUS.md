@@ -976,6 +976,87 @@ the rule-value parser fix a87c8a8 below, magpipe at 283f694), 2026-10-22, idle m
 ALPS ones. The merge is also what makes `sqrt(3)*D1x/3`, the allowed kagome DM, pass this check: before the
 parser fix it reached the check as an unbound `sqrt3` and was refused as a conflict.
 
+### Rust kernels K5, 2026-10-27 — the SCGA loops behind `kernels: rust`
+
+M5 of `RUST_KERNELS_PLAN.md`. rsMagCalc `c2e9b2a` (`src/scga.rs`, `ScgaModel`, packed once from `scga._exchange_cache`
+and cached on it) carries the three per-q loops of `magcalc/scga.py`, each with rayon over q: the J(q) eigenvalues over
+the λ mesh (`solve_lambda`), the per-site traces Tr₃[(λ+J(q))⁻¹]_ii over the same mesh
+(`sublattice_sum_rule_residuals`, the inequivalent-sublattice check), and the 3×3 correlation tensor C(q) of
+`scga_intensities` before the cross-section contraction. Stays in NumPy: the brentq root solve, its bracketing, the
+refusal and its message, the form factors (evaluated per |q| in Python and passed in, so the kernel cannot drift from
+`magcalc.form_factors`) and `_contract`. `solve_lambda`, `sublattice_sum_rule_residuals`, `scga_intensities` and
+`compute_scga` take `kernels` / `n_workers`; the runner's `scga` task passes the resolved `calculation.kernels` and
+`scga.n_workers` (else `calculation.n_workers`); a failure at packing or at any call is logged by `kernels.fell_back`
+and that loop runs in NumPy. The NumPy tensor body is now its own function, `scga.correlation_tensor` (same
+arithmetic), so the parity tests compare against the shipped loop rather than a copy of it.
+
+**Profiled before it was written** (cProfile, `solve_lambda` + `scga_intensities` on 400 q; `<this session's
+scratch>/prof.py`). On the test models SCGA is cheap: square (N = 1, 20² mesh) 13 + 23 ms, kagome (N = 3, 25²) 96 + 52
+ms, chain (2000 q) 40 + 22 ms — nothing a kernel can buy measurably there. On a 16-site conventional pyrochlore cell
+(16³ = 4096 mesh q) `solve_lambda` is 4.25 s, of which 3.06 s is the Python bond loop of `fourier_exchange_matrix`,
+0.55 s LAPACK `eigvalsh`, 0.29 s `inv` (+ 0.13 s trace calls): **~79 % Python-bound**; the q-map is ~90 % Python (the
+N² loop over 3×3 blocks). So the kernel is not threading-only on cells of that size. It becomes LAPACK-bound as N
+grows: at 128 sites (2×2×2 pyrochlore, 3N = 384) the mesh is 1.37 s `eigvalsh` against 0.21 s of J(q) build, and
+there the eigenvalue gain IS only threads (below).
+
+**Exact where it can be.** J(q) is summed in the cache's bond order and symmetrized as 0.5·(J + J^H), and the
+eigenvalues are `zheevd` jobz = 'N' on the lower triangle of the column-major J(q) with the QUERIED workspace (the
+blocking of the tridiagonal reduction depends on it) — the call `eigvalsh` makes. Result: **J(q) and its mesh
+eigenvalues are bit-identical to NumPy's** on every fixture, so `solve_lambda` returns the same λ to the last bit
+(asserted `==` in `test_kernels_scga.py` and through a config run). The sum rule is solved on λI + J(q), Hermitian
+positive definite for λ above the mesh's λ_min, so the solve is a Cholesky (`zpotrf`; `zpotrs` for C(q) = kT W^H
+(λ+J)⁻¹ W with W the 3N×3 stack f_j e^{iq·r_j} g_jᵀ — 3 right-hand sides instead of an explicit inverse; `ztrtri` for
+the inverse's diagonal), not NumPy's LU: tensors agree to ≤ 2e-15 relative on the ≤ 16-site fixtures (3e-14 at 128
+sites), residuals to 4e-16. Off the mesh, or below λ_min, λ + J(q) can be indefinite; then the kernel uses NumPy's own
+LU (`zgesv`) on the same matrix, pinned at 1e-10.
+
+**One test assertion changed, and why.** `test_the_refusal_reports_the_actual_violation` checked the message for
+"+262"; the residual of that mixed-spin chain is 2.625 to 1e-15, exactly a %.3g half-way point, and NumPy's sum lands
+one ulp below ("+262") while the kernel's lands one ulp above ("+263"). The value itself is still pinned at 1e-6, under
+both kernels; the string check accepts either rounding.
+
+**Pinned to.** rsMagCalc `tests/test_scga_parity.py` (75): on the chain, square, square + DM (complex J(q)), the
+Sunny-compared kagome, a kagome with an ANISOTROPIC off-diagonal g and Cu²⁺ form factors, and the 16-site pyrochlore —
+J(q) and the mesh eigenvalues at 1e-12 and bit-equal, λ / λ_min / the total residual from `solve_lambda(kernels=
+"rust")` at 1e-12, the per-site residuals at λ and λ + 0.37 at 1e-12 (directly and through pyMagCalc), C(q) against
+`correlation_tensor` at 1e-12 with and without `apply_g`, the indefinite LU branch, S(q) end to end in `perp`, `trace`,
+`zz`, threads not changing a bit, empty batches, loud shape errors, and a guard that the g / form-factor fixture really
+differs from g = 2, f = 1. Every SCGA oracle runs under both kernel sets through the `kernels` fixture:
+`tests/test_scga.py` (the chain closed form at three kT, high-T flattening, Sunny SCGA on square and kagome, the
+refusal and its reported residuals, the 1e-12 per-site rule on kagome) plus two exact identities added with K5 — **the
+free-spin sum rule** (J = 0: λ = 3kT/S² and the bare S(q) = N S² at every q, to 1e-12) and **the high-T Curie limit**
+(square lattice at kT = 200 J: S(q)/S² = 1 − S² J_q/(3kT) to 1e-4, with the correction itself > 1e-3 so it is seen);
+and the SCGA branch of `tests/test_hamiltonian_terms.py`, which now also checks that a parameterised g-tensor gives the
+numeric tensor's S(q) to 1e-12 and differs from g = 2's. `tests/test_kernels_scga.py` (11, fast) pins the wiring: every
+entry point reaching the kernel (a call-counting spy) with λ `==` NumPy's; `lam=None` solving through the kernel; the
+empty q batch under both; a failure injected in each of the three calls and in packing, each logged with NumPy
+answering; the packed model reused and repacked when the bond list changes; the refusal unchanged under rust (and
+raised before any S(q)); a config run with `tasks: {scga: true}`, `kernels: rust`, `scga.n_workers: 2` whose log names
+the kernel and whose saved λ and S(q) equal the `numpy` run's.
+
+**Timing** (M1 Pro, 10 cores, 2026-10-27 09:59–10:03, no pytest or `magcalc run` live; 1-min load 4–41 from desktop
+apps, CPU 74–79 % idle, 10.1 of 11 GB swap in use). `<this session's scratch>/bench.py <model> [nq] [n_qmap]
+[repeats]`, best of 3 (1 for 128 sites), two runs agreeing to a few %; q-map = 1681 q of an (h, k, 0.1) grid (400 at 128
+sites); "rust all" = default pool:
+
+| model (mesh) | | `solve_lambda` | q-map |
+|---|---|---|---|
+| square, N = 1 (20²) | numpy / rust 1 thr / rust all | 8.1 / 1.3 / 1.3 ms | 66 / 16 / 16 ms |
+| kagome, N = 3 (25²) | numpy / rust 1 thr / rust all | 73 / 8.4 / 6.5 ms | 180 / 17.6 / 16.3 ms |
+| pyrochlore, N = 16 (16³) | numpy / rust 1 thr / rust all | **3935 / 797 / 172 ms** | **2464 / 52 / 27 ms** |
+| pyrochlore 2×2×2, N = 128 (4³) | numpy / rust 1 thr / rust all | 4896 / 4498 / 3043 ms | **28 914 / 772 / 183 ms** |
+
+What each number is. At N = 16 the one-thread gain in `solve_lambda` (4.9×) is the Python J(q) build removed; what is
+left on one thread is LAPACK (`eigvalsh` 558 ms, the traces 166 ms), and threads add 4.6×. At N = 128 `solve_lambda`
+gains little because **2.8 s of it is `_exchange_cache`**, the pre-existing O(N·N_OUC) loop of `_pair_matrix` SymPy
+zero-tests (442 368 calls), which K5 does not replace; the mesh loops themselves are 1.37 s + 0.31 s in NumPy against
+0.21 s + 0.04 s in the kernel on all threads (eigenvalues: threads only, 6.5×). The q-map's N² block loop is the
+Python-bound part at every size (166× at N = 128); on the small models what is left of it is Python — the
+per-q `_contract` (14 ms for 1681 q) and form factors, shared with the NumPy path on purpose. λ is identical and S(q)
+agrees to ≤ 3e-14 in every row.
+
+**Gate** (2026-10-27 10:05–10:19, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`, pyMagCalc `fac062e` plus the uncommitted K5 wiring, rsMagCalc `3e703a6` installed, magpipe 283f694): **2260 passed, 2 skipped, 0 failed, 13 min 35 s** — 100 more than the sparse-guard gate, all K5's (75 in rsMagCalc `test_scga_parity.py`, 11 in `test_kernels_scga.py`, 13 in `test_scga.py` (its 9 `rust` parametrizations + the two new identities under both), 1 in `test_hamiltonian_terms.py`); the same two structural skips (`seekpath` absent, ALPS present), no crashed xdist worker. 1-min load 5.7 at the start (CPU 71 % idle), 35 (5-min 156, the gate's own workers) at the end.
+
 ### Rust kernels: guard 3 on a SPARSE Cholesky, 2026-10-27 — same verdicts, 37 ms → 0.6 ms per q
 
 K4 left guard 3 (H₂(q) + ε·I ≻ 0 at every q the KPM computes, ε = `h2_rel_tolerance` × the q-independent
