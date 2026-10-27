@@ -464,7 +464,11 @@ calculation:
    stationary maximum H₂ stays diagonal, so g·H₂ is entirely real. It runs at **every
    q the KPM computes**, not a sample, because the instability is q-specific — one
    shifted Cholesky (`H₂ + εI ≻ 0`, ε = `h2_rel_tolerance`·‖H₂‖) is exact and 45×
-   cheaper than an eigensolve at 2D = 1800, i.e. 1–5 % of the KPM work at that q. The
+   cheaper than an eigensolve at 2D = 1800, i.e. 1–5 % of the KPM work at that q. Under
+   `kernels: rust` a large sparse cell gets a SPARSE (multifrontal, minimum-degree)
+   Cholesky of the same bit-identical shifted matrix -- same verdict, 37 ms → 0.6 ms per
+   q at S09 L = 30 (GAP_STATUS, "guard 3 on a SPARSE Cholesky"). Never replace it with a
+   Lanczos/Ritz bound: that errs toward "stable". The
    shift is not a fudge: a Goldstone mode puts an *exact* zero in H₂ at the ordering
    wavevector and at Γ, so an unshifted test would refuse every gapless magnet.
 

@@ -595,7 +595,10 @@ class SUNModel:
         """The indices of the q in `qs_cart` where H2(q) is NOT >= 0 -- the per-q
         verdicts of `is_stable_at`, every q, no sampling. Under `kernels: rust`
         (and with no `hmats`) one K3 batch, in parallel; the criterion and the
-        tolerance are the same. `assert_stable` reports from this; the runner's
+        tolerance are the same. On a large sparse cell (2D >= 64 and a quarter of
+        the dense flops) the kernel factors H2 + eps I with a SPARSE multifrontal
+        Cholesky instead of a dense one -- same entries bit for bit, same verdict
+        (rsMagCalc `sparse_guard.rs`; 37 ms -> 0.6 ms per q at S09 L = 30). `assert_stable` reports from this; the runner's
         `kpm_sqw` task calls it directly ahead of the K4 batch."""
         qs = np.asarray(qs_cart, float).reshape(-1, 3)
         if hmats is None and len(qs):

@@ -255,6 +255,55 @@ def test_auto_picks_the_exact_route_only_while_it_is_affordable(kernels):
         m.min_h2_eigenvalue(q, method="lanczos")
 
 
+def _disordered_120(n, sigma, seed):
+    m = _triangular_120(n)
+    apply_bond_disorder(m, sigma, seed=seed)
+    m.minimize_energy(n_restarts=1, max_iter=2000, tol=1e-15)
+    return m
+
+
+def test_the_rust_guard_s_sparse_and_dense_paths_give_identical_verdicts():
+    """Under `kernels: rust` the guard is rsMagCalc's `SunModel.stable`, which picks
+    a sparse multifrontal Cholesky (minimum-degree ordering) on large sparse cells and
+    one dense zpotrf otherwise -- the 9x9 cell below already takes the sparse path.
+    Both test H2 + eps I on bit-identical entries; here every fixture of this file is
+    run through BOTH, forced, and against the NumPy verdict, q by q -- the Goldstone
+    zeros at Gamma and K, the frustrated chain on both sides of J2 = |J1|/4, the
+    stationary maximum, and Sunny's sigma = 1/3 disorder that is not a minimum.
+    (The exact-margin and mutation checks live in rsMagCalc/tests/test_sparse_guard.py.)"""
+    from magcalc.kernels import rust_module
+
+    if rust_module() is None:
+        pytest.skip("rsmagcalc not installed (optional Rust kernels)")
+    sq = np.array([[0, 0, 0], [0.3, 0.2, 0], [0.5, 0.5, 0], [0.1, 0, 0], [0.25, 0.1, 0],
+                   [0.001, 0, 0]], float) @ SQ_B
+    ch = np.array([[h, 0, 0] for h in np.linspace(0, 0.5, 26)], float) @ CHAIN_B
+    tri = np.vstack([np.array([[0, 0, 0], K120, [0.5, 0, 0], [0.2, 0.1, 0],
+                               [0.37, -0.11, 0], [0.44, 0.07, 0]], float),
+                     np.concatenate([np.linspace(np.zeros(3), K120, 8, endpoint=False),
+                                     np.linspace(K120, [0.5, 0, 0], 8)])]) @ TRI_B
+    cases = [(_square(1.0), sq, False), (_square(-1.0), sq, True),
+             (_chain_model(J2=0.1), ch, True), (_chain_model(J2=0.24), ch, True),
+             (_chain_model(J2=0.26), ch, False), (_chain_model(J2=0.5), ch, False),
+             (_triangular_120(9), tri, True), (_disordered_120(6, 1 / 3, 0), tri, None),
+             (_disordered_120(9, 1 / 3, 1), tri, None)]
+    refused = 0
+    for m, qs, all_stable in cases:
+        ref = np.array([m.is_stable_at(q) for q in qs])              # NumPy
+        m.kernels = "rust"
+        rs = m._rust()
+        eps = H2_REL_TOL * m._reference_h2_scale()
+        sparse, dense = rs.stable(qs, eps, sparse=True), rs.stable(qs, eps, sparse=False)
+        assert np.array_equal(sparse, ref) and np.array_equal(dense, ref), rs
+        assert m.unstable_indices(qs) == [int(k) for k in np.flatnonzero(~ref)]
+        if all_stable is not None:
+            assert bool(ref.all()) == all_stable, rs
+        else:
+            refused += not ref.all()
+    assert refused >= 1, "sigma = 1/3 should refuse at least one of the two cells"
+    assert _triangular_120(9, kernels="rust")._rust().guard_info()["auto"]
+
+
 def test_the_shared_hamiltonian_shortcut_changes_nothing(kernels):
     """The guard and the spectrum share ONE build of g H2 per q -- that is what keeps
     the check at a few percent of the KPM cost. A shared build must give bit-identical

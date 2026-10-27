@@ -784,6 +784,9 @@ Check every q you compute. The Lanczos idea recorded here was measured too (m = 
 caught every negative eigenvalue at 18 % of the KPM cost) and dropped: its error is
 one-sided in the WRONG direction -- Ritz values bound lambda_min from ABOVE, so it can
 report a genuinely unstable state as stable.
+(2026-10-27: once K4 made the KPM itself sparse, the dense Cholesky became 86 % of a
+q; under `kernels: rust` it is now a SPARSE Cholesky of the same matrix -- exact,
+same verdicts, 37 ms -> 0.6 ms at L = 30. GAP_STATUS, "guard 3 on a SPARSE Cholesky".)
 
 **The threshold is a shifted Cholesky, and the shift is not a fudge.** `H2 + eps I`
 positive definite <=> min eig H2 > -eps. Without a shift the guard refuses every

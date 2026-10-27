@@ -976,6 +976,81 @@ the rule-value parser fix a87c8a8 below, magpipe at 283f694), 2026-10-22, idle m
 ALPS ones. The merge is also what makes `sqrt(3)*D1x/3`, the allowed kagome DM, pass this check: before the
 parser fix it reached the check as an unbound `sqrt3` and was refused as a conflict.
 
+### Rust kernels: guard 3 on a SPARSE Cholesky, 2026-10-27 — same verdicts, 37 ms → 0.6 ms per q
+
+K4 left guard 3 (H₂(q) + ε·I ≻ 0 at every q the KPM computes, ε = `h2_rel_tolerance` × the q-independent
+`_reference_h2_scale()`) as 86 % of a KPM q: one DENSE `zpotrf` of the 2D × 2D matrix per q, ~1.9 G complex flops at
+2D = 1800 on a matrix that is 0.7 % nonzero. rsMagCalc `src/sparse_guard.rs` now decides the same question with a
+multifrontal sparse Cholesky, and `SunModel.stable` picks it per model. Nothing changes on the pyMagCalc side but a
+docstring: `is_stable_at` / `unstable_indices` / `assert_stable` call the same `stable(qs, shift)`.
+
+**Profiled before it was written** (S09 L = 30, H₂ at a generic q; symbolic fill counted in Python): natural order
+56.6 % fill, 5.9e8 flops; RCM + banded `zpbtrf` bandwidth 178, 2.4e7 flops, measured 9.8 ms vs dense 72 ms on one
+thread (7×); **minimum degree 90 115 nonzeros in L (5.6 % of a dense triangle), 7.6e6 flops — 250× fewer than dense.**
+So the kernel uses minimum degree, not a band.
+
+**Exact, not approximate — the argument, then the oracles.** (i) The matrix entries are BIT-IDENTICAL to the dense
+path's: `SunModel::assemble` (the body `build_h` always had, now emitting `add(row, col, value)`) produces its
+contributions in a q-independent order; the analysis records which slot each lands in, and the per-q build sums the
+same values in the same order, then symmetrizes as `h2_colmajor` does (0.5·(H₂[r,c] + conj H₂[c,r]), shift added to
+the real diagonal last). (ii) P^T A P is positive definite iff A is, and the multifrontal factorization computes
+exactly the pivots of the Cholesky of P^T A P (each front's pivot block is a diagonal block of a Schur complement), so
+the first front whose `zpotrf` fails IS a non-positive pivot, and if none fails the factor exists. Only the rounding of
+the factorization differs, i.e. a verdict can move only when min eig(H₂ + εI) is itself at round-off (~n·eps·‖H₂‖) —
+which the 1e-6 relative shift sits seven orders above. No Lanczos or Ritz bound anywhere (OPEN_WORK item 10: those err
+toward "stable"). The unshifted round-off case (`shift = 0` at a Goldstone zero) is a coin toss under either ordering,
+and the one test that compares it stays on the dense path.
+
+**The algorithm.** Analysis, once per packed model (lazily, 36 ms at L = 30): the slot sequence; the symmetric
+adjacency of H₂; indistinguishable variables merged into supervariables; a weighted minimum-degree elimination on the
+explicit elimination graph (ties to the lowest index, so it is deterministic), whose cliques ARE the factor's column
+structures; a variable merged into its child's front when that adds no fill; per front its index list, its slice of the
+original entries and each child's relative row positions — every one LOOKED UP, so a structure the fronts cannot hold
+is an analysis error (and the dense path answers) rather than a dropped entry. Per q: assemble, then front by front
+scatter the entries, extend-add the children, `zpotrf` the pivot block (return at the first failure), `ztrsm` and
+`zherk` the Schur update — Accelerate LAPACK/BLAS on each front, as the dense path uses. At L = 30: 673 fronts, the
+largest 180.
+
+**Dense fallback.** `stable(sparse=None)` uses the sparse path when 2D ≥ 64 and it needs at most a quarter of the dense
+flops; otherwise (a small cell, a dense operator, an analysis error) the dense `zpotrf` as before. `sparse=True/False`
+forces either, `guard_info()` reports the analysis and the choice. Crossover measured on the 120° cell, one thread,
+µs per q dense/sparse: 2D = 18 5/5, 72 50/34, 162 257/94, 288 782/163, 882 10 590/809. A chain coupled at every distance
+(every site touches every other, 2D = 80) keeps the dense path.
+
+**Pinned to.** `rsMagCalc/tests/test_sparse_guard.py` (8): the MARGIN, which is the exactness test — with λ = min eig H₂
+from `eigvalsh`, the verdict at shift = −λ ± 1e-9·scale must be (λ + shift > 0) on both paths, on disordered σ = 0.6
+cells (2D = 72, 288) and the clean 288 one, at Γ, K and generic q; the Goldstone zeros on the 12×12 120° cell where
+sparse is automatic (passed with ε, refused with −1e-9·scale on both paths, so the exact zero is really seen);
+Sunny's σ = 1/3 on three relaxed 81-site realizations along the Γ–K–M path, q by q equal to `is_stable_at`, ≥ 2 of 3
+refused; the dense operator keeping the dense path; the analysis of every K3 fixture; threads. In
+`tests/test_sun_lswt_parity.py` every guard case now forces BOTH paths against the automatic one and `is_stable_at`.
+pyMagCalc `tests/test_kpm_stability.py::test_the_rust_guard_s_sparse_and_dense_paths_give_identical_verdicts` runs
+every fixture of that file (the stationary maximum, the ferromagnet through Γ, the frustrated chain at J₂ = 0.1, 0.24,
+0.26, 0.5, the 9×9 120° state through Γ and K, σ = 1/3 on 6×6 and 9×9) through both, forced, against NumPy. The
+`kernels`-parametrized oracles of that file and of `test_s09_disorder_kpm` already reach the sparse path under `rust`
+(the 9×9 cell is above the switch). **Mutation-checked**: skipping one extend-add entry in seven fails 7 of those tests
+(all three margin cases, the Goldstone, σ = 1/3, threads, and the parity file's Γ/K case).
+
+**Timing** (M1 Pro, 10 cores, 2026-10-27 09:16–09:23, load average 13–23, no pytest live), S09 L = 30, σ = 0.1 seed 0
+relaxed, 40 q of the Γ–K–M path; `<this session's scratch>/bench_guard.py 30 0.1 40` and K4's `bench_k4.py 30 3 40`:
+
+| | dense `zpotrf` | sparse | |
+|---|---|---|---|
+| guard alone, default pool | 38.2 ms/q | **1.05 ms/q** | 36× |
+| guard alone, one thread | 47.6 ms/q | **1.50 ms/q** | 32× |
+| guard alone, σ = 1/3, default pool | 40.3 ms/q | 0.83 ms/q | verdicts identical |
+| (c) `kernels: rust` KPM q, guard included | 43.3 ms/q (K4) | **7.6 ms/q** (guard 0.6, KPM 7.0) | 5.7× |
+| (c) the same, one thread | 70–80 ms/q (K4) | **23.9 ms/q** (guard 1.5, KPM 22.4) | |
+
+Against (a) `kernels: numpy` (1369 ms/q in the same run) a KPM q is now **180×**; the guard went from 86 % of it to 8 %,
+and checking every q exactly is no longer the bottleneck. The maps still agree with (a) to 2e-15.
+
+**Gate** (2026-10-27 09:23–09:39, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`, pyMagCalc `56bd881`
+plus this change uncommitted, rsMagCalc `4a82428` plus this change uncommitted and installed, magpipe 283f694):
+**2160 passed, 2 skipped, 0 failed, 15 min 25 s** — the 9 added tests are this change's (8 in
+`test_sparse_guard.py`, 1 in `test_kpm_stability.py`); the same two structural skips (`seekpath` absent, ALPS
+present). Not idle: 1-min load 14 at the start, 53 (5-min 244) at the end.
+
 ### Rust kernels K4, 2026-10-27 — the KPM Chebyshev recursion behind `kernels: rust`
 
 M4 of `RUST_KERNELS_PLAN.md`. rsMagCalc `d118cde` (`src/kpm.rs`) carries the moment loop of `sun/kpm.kpm_sqw`
@@ -1049,7 +1124,8 @@ thread), from 1.4 s/q measured here; the M4 row's "S09 disorder KPM ≥ 5×" —
 the K3-only state. The KPM part alone (moments + bound + reconstruction, guard excluded) went from ~0.9 s/q under (b)
 to 23–29 ms on one thread, i.e. ~35× from sparsity alone; rayon adds ~4× on that part. The maps agree with (a) to
 2e-15 relative. **The guard is now 86 % of a KPM q** (one dense 1800² `zpotrf` per q, LAPACK-bound, so threads buy
-only 1.3× over one) where it was ~5 % before; that is the cost of checking every q exactly, and it stays.
+only 1.3× over one) where it was ~5 % before; that is the cost of checking every q exactly. (Since removed without changing a
+verdict: the sparse guard, section above — 0.6 ms of a 7.6 ms q.)
 
 **Gate** (2026-10-27 08:42–09:00, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`, pyMagCalc `6a03bc6` plus the uncommitted K4 wiring, rsMagCalc `d118cde` installed, magpipe 283f694): **2151 passed, 2 skipped, 0 failed, 18 min 00 s** — 87 more than the K3 gate, all K4's (the `rust` parametrizations of `test_kpm` and `test_s09_disorder_kpm`, `tests/test_kernels_kpm.py`, rsMagCalc's `tests/test_kpm_parity.py`), the same two structural skips (`seekpath` absent, ALPS present), no crashed xdist worker. Not an idle run: desktop apps held the 1-min load at ~19 when it started, and it read 126 (5-min 271) when it ended, a load the gate's own `-n auto` workers do not explain alone; another session's unrelated pytest started in its last minute. So 18 min against K3's 13 min 34 s is the machine, not the 87 tests.
 
