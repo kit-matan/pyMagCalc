@@ -976,6 +976,57 @@ the rule-value parser fix a87c8a8 below, magpipe at 283f694), 2026-10-22, idle m
 ALPS ones. The merge is also what makes `sqrt(3)*D1x/3`, the allowed kagome DM, pass this check: before the
 parser fix it reached the check as an unbound `sqrt3` and was refused as a conflict.
 
+### Ewald dipolar sum: q-independent terms computed once, 2026-10-27 — 63–84× per q, A(q) pinned to Sunny
+
+`ewald.dipole_ewald_at_q` ran a Python double loop over every site pair at every q, and
+it runs under `backend: fortran` as well, because `_build_h_stack` adds the dipolar term
+in Python. So a dipolar model got no compiled speedup at all; at 64 sites a 200-q path
+cost about 3 min, ±q stacks included. Most of that work did not depend on q. The real-
+space part depends on q only through exp(i q·L) over the lattice images L. Which images
+lie inside the cutoff, and the 3×3 tensor each contributes to each pair, are fixed.
+`ewald.DipoleEwald` now builds them once per cell, as a sparse (n²·9 × N_images)
+matrix, so each q is one sparse matrix-vector product. The reciprocal part does depend
+on q (k = G + q), but its pair dependence factorizes, exp(−ik·(r_j − r_i)) = conj(P_ki)
+P_kj with P = exp(−ik·r). It is therefore six dense (n × N_k)(N_k × n) products
+instead of n² Python iterations. `exchange_from_A` lost its per-pair loop the same
+way. `core._ewald_A` keeps one `DipoleEwald` per cell, rebuilt only if the lattice, the
+sites or `demag` change. The arithmetic is the old loop's, term for term; only the
+summation order differs. `dipole_ewald_at_q` keeps its signature as a one-off wrapper.
+
+**Pinned to Sunny's tensor, not only to its bands.** Until now the Sunny test
+(`test_ewald_matches_sunny`) compared band energies on one chain at `atol=1e-5`.
+`tests/data_ewald_sunny.json` now holds Sunny 0.8.1's own
+`precompute_dipole_ewald_at_wavevector`, from `tests/ewald_sunny_reference.jl`, for
+four cells: monoclinic 3-site, triclinic 2-site with a non-trivial `demag`, the 1-site
+chain, and an irregular 8-site cell. The q points are Γ, generic points, a zone-
+boundary point, and points outside the first zone. `tests/test_ewald_sunny_tensor.py`
+compares A_ij(q) element by element against a bar of 1e-8 of the largest element.
+Measured: 1.2e-15, 2.0e-15, 8.8e-15 and 1.8e-15. The OLD loop met the same reference to
+1.5e-15 before the change. **Mutation-checked:** swapping i and j in the pair index,
+dropping the gauge factor, or conjugating the wrong phase matrix each fails it, at an
+error of about 2.
+
+**Timing** (M1 Pro, 10 cores, 2026-10-27, no pytest live; 1-min load 8–15 for the
+"before" runs and 3.5–4 for the "after" runs, CPU ~75 % idle). Simple-cubic cells,
+a = 4 Å; "before" is one q, "after" averages 50 random q:
+
+| cell | before, per q | after: build once, then per q | 200-q path, before → after |
+|---|---|---|---|
+| 8 sites | 13.8 ms | 3.3 ms, then **0.22 ms** (63×) | 2.8 s → 0.05 s |
+| 64 sites | 455 ms | 140 ms, then **5.4 ms** (84×) | 91 s → 1.2 s |
+
+End to end, the shipped `examples/sunny_tutorials/S07_dipole_dipole/config.yaml` (16
+sites, 496 q, under `/usr/bin/time -p magcalc run`) went from 72 s to 54 s wall. Under
+cProfile, `_ewald_h_stack` went from 20.3 s to 3.4 s; the rest is the SymPy build
+(13.9 s) and the 12-start anneal (7.6 s), which this change does not touch. Its 496 × 16
+band energies are identical to before, to 3.4e-15 meV.
+
+**Gate** (2026-10-27, ended 14:58, workspace root, `MAGCALC_NO_GUI=1 python -m pytest
+-m "" -rs`, pyMagCalc `49aa5b4` plus this change, rsMagCalc `ff463f3`, fMagCalc
+`eae20e3`, magpipe 283f694): **2292 passed, 2 skipped, 0 failed, 16 min 54 s**. The 17
+added tests are this change's 9 and the wiki generator's 8; the two skips are the
+structural pair.
+
 ### K6, 2026-10-27 — mixed-spin dipole S(Q,ω) on fMagCalc (no Rust kernel)
 
 The optional K6 of `RUST_KERNELS_PLAN.md`. `backend: fortran` used to fall back to the NumPy pool for every

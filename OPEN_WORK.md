@@ -3,8 +3,8 @@
 **Current status (2026-10-27): nothing large is open.** The Rust kernels plan is
 finished. K1–K5 and a sparse exact KPM guard are in rsMagCalc, and K6 (mixed-spin
 dipole S(Q,ω)) is in fMagCalc. Everything is merged to `master` and pushed (pyMagCalc
-`b37fcd0`, fMagCalc `eae20e3`, rsMagCalc `406345c`, now public). Last full gate: **2275
-passed, 2 skipped** (structural). Two small follow-ups are known and not started:
+`b37fcd0`, fMagCalc `eae20e3`, rsMagCalc `406345c`, now public). Last full gate: **2292
+passed, 2 skipped** (structural). Four small follow-ups are known and not started:
 
 1. **Large-cell SCGA.** At 128 sites, 2.8 s of `solve_lambda` is the SymPy zero-test
    loop in `scga._exchange_cache` (442k calls), which K5 left in Python.
@@ -13,6 +13,21 @@ passed, 2 skipped** (structural). Two small follow-ups are known and not started
    of modes below 1e-3 meV and NumPy does not, so a gapless model's powder average
    depends on `backend:`. It predates K6 (`GAP_STATUS.md`, "K6"). Decide which treatment
    is right, and pin it to an independent reference, before changing either backend.
+3. **1/S corrections on a fine mesh.** `corrections.compute_corrections` makes one
+   `scipy.linalg.eigvals` call per k-point. At 16 sites that is 504 µs per point, so the
+   64³ mesh the docs recommend for the moment reduction takes about 132 s. Batch the mesh
+   through the compiled paths that already exist: fMagCalc's `run_dispersion` for dipole
+   models, K3's `SunModel` for SU(N). Do not port it. Oracles: the square-lattice dE =
+   −0.157947 J and Sunny (`tests/test_corrections.py`).
+4. **`anneal` on large cells.** `annealing.anneal`, the recommended ground-state
+   search, is a per-spin Python Metropolis loop: 4.3 s per 2000-sweep run at 128 sites,
+   ×4 default starts. It has the shape of K1's `thermal_mc` sweep, already compiled in
+   rsMagCalc, so reuse that kernel with a cooling schedule. Small cells (0.4 s at 16
+   sites) gain nothing.
+
+Items 3 and 4 come from the 2026-10-27 assessment of what is still worth compiling.
+Its third candidate, the Ewald dipolar sum, is done (`GAP_STATUS.md`, "Ewald dipolar
+sum: q-independent terms computed once").
 
 Orientation for a new contributor or AI model: `MAGCALC_GUIDE.md`. The block below is
 the record of how the kernels landed, kept for the hashes and gate numbers it holds.

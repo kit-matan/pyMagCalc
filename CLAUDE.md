@@ -323,9 +323,13 @@ interactions:
   # The dipolar sum is only CONDITIONALLY convergent: a truncated sum depends on the
   # cutoff and on the (fictitious) sample shape. `ewald` sums it exactly -- real-space
   # + reciprocal-space + the surface/demagnetisation term (`demag:`, default I/3, a
-  # sphere in vacuum). Matches Sunny's `enable_dipole_dipole!` to 1e-8; the truncated
-  # sum converges to it as the cutoff grows. With `truncated`, RAISE THE CUTOFF until
-  # your answer stops moving.
+  # sphere in vacuum). The tensor A_ij(q) itself matches Sunny's
+  # `precompute_dipole_ewald_at_wavevector` element by element to ~1e-15 relative (bar
+  # 1e-8; four cells up to 8 sites, Gamma and folded q,
+  # `tests/test_ewald_sunny_tensor.py`); the truncated sum converges to it as the
+  # cutoff grows. With `truncated`, RAISE THE CUTOFF until your answer stops moving.
+  # The q-independent part is computed once per cell (`ewald.DipoleEwald`), so a long
+  # q path costs a sparse product per q: 455 ms -> 5.4 ms per q at 64 sites.
   #
   # Ewald's A(q) is an infinite lattice sum, so it is NOT a bond list: it is added to
   # H(q) numerically, and to the classical energy via A(0) (so the minimiser optimises

@@ -414,12 +414,12 @@ pytest -m slow -k <name>    # one feature's deep validations
 pytest -m ""                # EVERYTHING -- the merge gate
 ```
 
-`pytest` alone runs the fast suite (1066 of 1274 tests), which is the iteration
+`pytest` alone runs the fast suite (1083 of 1291 tests), which is the iteration
 loop, **not** a merge gate: the `slow` marker holds the exact-diagonalization
 oracles, convergence sweeps and integration runs. Before merging to `master`, run
 `pytest -m "" -rs` and account for every skip. From the maintainer's workspace root
 that also collects the fMagCalc, rsMagCalc and magpipe tests; the last full gate there
-was **2275 passed, 2 skipped** (2026-10-27, 16 min), the two skips being structural
+was **2292 passed, 2 skipped** (2026-10-27, 17 min), the two skips being structural
 (`seekpath` absent, ALPS present). Tests run in parallel (pytest-xdist); use `-n0` for
 `-s` or pdb. Tests that involve a compiled companion run under both paths through the
 `kernels` (`numpy`/`rust`) and `backend` (`numpy`/`fortran`) fixtures, and skip by name

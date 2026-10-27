@@ -247,6 +247,11 @@ interactions:
   dipole_dipole: {method: ewald}        # exact lattice sum; prefer over `truncated`
 ```
 
+The Ewald sum is exact and matches Sunny's dipolar tensor to machine precision. Its
+q-independent part is computed once per cell, so it adds about 5 ms per q at 64
+magnetic sites (0.2 ms at 8). It runs in NumPy under both `backend: numpy` and
+`backend: fortran`.
+
 The per-site **g-tensor** goes on the atom, not here
 (`g: 2.0` | `[gxx,gyy,gzz]` | a 3×3 | `{g_par, g_perp, axis}`), which makes the
 Zeeman term `μ_B B·g_i·S_i`.

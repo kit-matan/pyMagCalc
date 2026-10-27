@@ -1817,8 +1817,12 @@ class MagCalc:
     def _ewald_A(self, q_rlu):
         """Ewald A(q) (n,n,3,3), cached per q (bounded cache; the guard,
         dispersion, and both S(q,w) branches would otherwise each redo the full
-        lattice sum for overlapping q sets)."""
-        from .ewald import dipole_ewald_at_q
+        lattice sum for overlapping q sets).
+
+        The q-independent part of the sum lives in one `ewald.DipoleEwald` per cell,
+        built on first use and rebuilt only if the lattice, the sites or `demag`
+        change, so each new q costs a sparse product rather than the whole sum."""
+        from .ewald import DipoleEwald
 
         key = tuple(np.round(np.asarray(q_rlu, dtype=float), 10))
         cache = getattr(self, "_ewald_A_cache", None)
@@ -1835,7 +1839,14 @@ class MagCalc:
         frac = np.asarray([a["pos"] for a in atoms], dtype=float)
         demag = spec.get("demag")
         demag = np.asarray(demag, dtype=float) if demag is not None else None
-        A = dipole_ewald_at_q(lat, frac, q_rlu, demag=demag)
+        engine_key = (lat.tobytes(), frac.tobytes(),
+                      None if demag is None else demag.tobytes())
+        engine = getattr(self, "_ewald_engine", None)
+        if engine is None or engine[0] != engine_key:
+            if engine is not None:      # the cell changed: per-q results are stale too
+                cache.clear()
+            engine = self._ewald_engine = (engine_key, DipoleEwald(lat, frac, demag=demag))
+        A = engine[1].at_q(q_rlu)
         if len(cache) > 4096:   # keep memory bounded on very long q-paths
             cache.clear()
         cache[key] = A
