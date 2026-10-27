@@ -26,11 +26,21 @@ Validated (tests/test_kpm.py) against the engine's OWN exact diagonalization
 (`SUNModel.structure_factor`) broadened by the same Gaussian: as M grows the KPM
 S(q,ω) converges to the exact broadened spectrum (square-lattice AFM, per-mode and
 integrated), and the eigenvalue bound γ is verified to enclose the spectrum.
+
+Under `kernels: rust` (rsMagCalc K4) the moment recursion and the spectral bound run
+compiled, over a q batch in parallel, on H(q) built by K3 inside the kernel and
+multiplied as a sparse matrix when it is one (a supercell's H(q) is: 0.7 % filled at
+S09's L = 30). Everything that decides the answer's shape stays here -- `_cheb_coefs`,
+the cutoff and its smearing, the reconstruction, the cross-section contraction -- and
+`_moments_numpy` is the fallback and the parity reference (moments to 1e-12 at the
+same γ, rsMagCalc/tests/test_kpm_parity.py).
 """
 import logging
 from dataclasses import dataclass
 
 import numpy as np
+
+from ..kernels import fell_back, rust_for
 
 logger = logging.getLogger(__name__)
 
@@ -96,50 +106,41 @@ class KPMResult:
     gamma: float
 
 
-def kpm_sqw(model, q_cart, energies, fwhm, n_moments=None, tol=0.02,
-            cross_section="perp", ion=None, gamma=None, hmat=None):
-    """KPM estimate of S(q,ω) at one q, on the given energy grid, Gaussian-broadened
-    with the supplied `fwhm`. `n_moments` (or `tol`, which sets M from the bandwidth)
-    controls resolution. Returns a KPMResult.
+def _n_moments_for(gamma, fwhm, tol):
+    """The moment count `tol` asks for at the bound `gamma`. rsMagCalc K4 evaluates
+    the same expression from the two factors `0.5 * fwhm` and `-log10(tol)`, and
+    `_kpm_rust` re-derives its counts from this and refuses a mismatch."""
+    return max(int(round(2.0 * gamma / (0.5 * fwhm) * (-np.log10(tol)))), 8)
 
-    NOTHING HERE CHECKS THAT THE REFERENCE STATE IS A MINIMUM, and no part of this
-    method can: there is no eigensolve, so no Cholesky to fail. About a saddle or a
-    maximum it returns a smooth, plausible, meaningless S(q,ω). Callers must check
-    for themselves — `SUNModel.is_stable_at(q)` / `assert_stable(qs)`, which the
-    runner's `kpm_sqw` task and `examples/.../S09_triangular_AFM/disorder_kpm.py`
-    both do, at every q they compute.
 
-    `hmat` lets the caller supply the g H₂ it already built for this exact q (it must
-    be `model.hamiltonian(q_cart)` — nothing here can check that). Building it is the
-    dominant per-q cost at large D (620 ms of KPM's 1.7 s at S09's L = 30), so
-    sharing one build with the stability guard is what keeps the guard at a few percent."""
-    from ..numerical import contract_cross_section
+def _goldstone_gamma(gamma, q_cart):
+    """`gamma` itself, or 1 when it is not a usable bound -- with the warning."""
+    if np.isfinite(gamma) and gamma > 0.0:
+        return gamma
+    # H(q) is IDENTICALLY ZERO -- a ferromagnet at Gamma, exactly, and Gamma is in
+    # every path ever plotted. The rescaling Â = D̂/gamma then divided 0 by 0 and
+    # the whole q-column came back NaN, SILENTLY, into the saved .npz and the plot
+    # (and into the "intensity range" log line, as nan). Any positive gamma leaves
+    # Â = 0, so the expansion is at least well defined -- but the answer it gives
+    # is zero, not the q -> 0 limit: with every mode at omega = 0 the +omega and
+    # -omega poles coincide and cancel in the g-weighted moments. That is a real
+    # ambiguity at a single q (the exact path cannot be evaluated there either --
+    # the Cholesky in `_bogoliubov` fails on the Goldstone zero), not something
+    # this can quietly paper over, so it says so.
+    logger.warning(
+        "KPM: H(q) is identically zero at q = %s (a Goldstone point, e.g. Gamma "
+        "for a ferromagnet). Every mode sits at omega = 0, where the +/-omega "
+        "poles coincide and cancel: the returned S(q,w) is 0 there, and is NOT "
+        "the limit of the neighbouring q. Read that column as undefined.",
+        np.round(np.asarray(q_cart, float), 6).tolist())
+    return 1.0
 
-    HMat = np.asarray(model.hamiltonian(np.asarray(q_cart, float))
-                      if hmat is None else hmat, dtype=complex)
-    D2 = HMat.shape[0]
-    D = D2 // 2
+
+def _moments_numpy(HMat, v, n_moments, gamma):
+    """Chebyshev moments mu_m^{ab} = v_a† T_m(Â) g v_b, (n_moments, 3, 3): the NumPy
+    reference rsMagCalc K4 is pinned to (rsMagCalc/tests/test_kpm_parity.py)."""
+    D = HMat.shape[0] // 2
     g = np.concatenate([np.ones(D), -np.ones(D)])
-    if gamma is None:
-        gamma = spectral_bound(HMat)
-    if not np.isfinite(gamma) or gamma <= 0.0:
-        # H(q) is IDENTICALLY ZERO -- a ferromagnet at Gamma, exactly, and Gamma is in
-        # every path ever plotted. The rescaling Â = D̂/gamma then divided 0 by 0 and
-        # the whole q-column came back NaN, SILENTLY, into the saved .npz and the plot
-        # (and into the "intensity range" log line, as nan). Any positive gamma leaves
-        # Â = 0, so the expansion is at least well defined -- but the answer it gives
-        # is zero, not the q -> 0 limit: with every mode at omega = 0 the +omega and
-        # -omega poles coincide and cancel in the g-weighted moments. That is a real
-        # ambiguity at a single q (the exact path cannot be evaluated there either --
-        # the Cholesky in `_bogoliubov` fails on the Goldstone zero), not something
-        # this can quietly paper over, so it says so.
-        gamma = 1.0
-        logger.warning(
-            "KPM: H(q) is identically zero at q = %s (a Goldstone point, e.g. Gamma "
-            "for a ferromagnet). Every mode sits at omega = 0, where the +/-omega "
-            "poles coincide and cancel: the returned S(q,w) is 0 there, and is NOT "
-            "the limit of the neighbouring q. Read that column as undefined.",
-            np.round(np.asarray(q_cart, float), 6).tolist())
     # THE RECURSION RUNS ON conj(D-hat), NOT D-hat, and the reason is exact rather
     # than cosmetic. Writing T for the para-unitary Bogoliubov matrix and M = v T,
     #
@@ -154,13 +155,6 @@ def kpm_sqw(model, q_cart, energies, fwhm, n_moments=None, tol=0.02,
     # bands that carry none, which reads as disorder-like broadening of a CLEAN
     # spectrum. Pinned in tests/test_kpm.py against exact diagonalization.
     A = HMat.conj() / gamma
-
-    energies = np.asarray(energies, float)
-    sigma = fwhm / (2.0 * np.sqrt(2.0 * np.log(2.0)))
-    if n_moments is None:
-        n_moments = max(int(round(2.0 * gamma / (0.5 * fwhm) * (-np.log10(tol)))), 8)
-
-    v = _observable_vectors(model, q_cart)      # (3, 2D)
     gv = v * g[None, :]                          # g v_b, per observable
 
     # Chebyshev recursion on β_m^b = T_m(A) (g v_b); moments μ_{m}^{ab} = v_a† β_m^b.
@@ -174,7 +168,18 @@ def kpm_sqw(model, q_cart, energies, fwhm, n_moments=None, tol=0.02,
         beta2 = 2.0 * (A @ beta1) - beta0
         moments[m] = v.conj() @ beta2
         beta0, beta1 = beta1, beta2
+    return moments
 
+
+def _reconstruct(model, q_cart, moments, gamma, energies, fwhm, tol, cross_section, ion):
+    """S(q,ω) on `energies` from the moments: the Gaussian, the smooth +ω cutoff,
+    the Chebyshev coefficients, the cross-section contraction and the form factor.
+    The whole grid goes through ONE `_cheb_coefs` call (its node matrix does not
+    depend on ω), which is the same arithmetic as one call per energy."""
+    from ..numerical import contract_cross_section
+
+    n_moments = len(moments)
+    sigma = fwhm / (2.0 * np.sqrt(2.0 * np.log(2.0)))
     # Smooth cutoff keeping the +ω_ν poles and dropping their −ω_ν mirror image.
     delta_e = 2.0 * gamma
     smear = max(2.0 * np.sqrt(max(-np.log10(tol), 1.0)) * (delta_e / n_moments), 1e-9)
@@ -182,30 +187,150 @@ def kpm_sqw(model, q_cart, energies, fwhm, n_moments=None, tol=0.02,
     def cutoff(E):
         return 0.5 * (np.tanh(E / smear) + 1.0)
 
-    out = np.zeros(len(energies))
-    for iw, w in enumerate(energies):
-        def f(E, w=w):
-            return (np.exp(-0.5 * ((E - w) / sigma) ** 2) / (sigma * np.sqrt(2 * np.pi))
-                    * cutoff(E))
-        c = _cheb_coefs(f, n_moments, gamma)
-        # .T because the moments above are assembled from the ANNIHILATION block of
-        # the Nambu basis while `structure_factor` uses the CREATION block, and the
-        # two carry complex-conjugate (i.e. transposed) weight matrices:
-        # M_{D+nu} = conj(M_nu). For the symmetric channels (perp, trace, xx, ...)
-        # that makes no difference at all, which is why it went unnoticed; for the
-        # ANTISYMMETRIC ones it is the whole answer -- without it `cross_section:
-        # chiral` came back with the SIGN REVERSED on so ordinary a model as a
-        # ferromagnet.
-        corr = np.tensordot(c, moments, axes=(0, 0)).T / getattr(model, "n_cells", 1)
-        inten, clamp = contract_cross_section(corr[:, :, None], q_cart, cross_section)
-        val = float(np.real(inten[0]))
-        out[iw] = max(val, 0.0) if clamp else val
+    def f(E):                                   # (K,) nodes -> (K, n_energies)
+        E = E[:, None]
+        return (np.exp(-0.5 * ((E - energies[None, :]) / sigma) ** 2)
+                / (sigma * np.sqrt(2 * np.pi)) * cutoff(E))
 
+    c = _cheb_coefs(f, n_moments, gamma)        # (n_moments, n_energies)
+    # The (b, a) order -- a transpose of each 3x3 -- because the moments are
+    # assembled from the ANNIHILATION block of the Nambu basis while
+    # `structure_factor` uses the CREATION block, and the two carry complex-conjugate
+    # (i.e. transposed) weight matrices: M_{D+nu} = conj(M_nu). For the symmetric
+    # channels (perp, trace, xx, ...) that makes no difference at all, which is why it
+    # went unnoticed; for the ANTISYMMETRIC ones it is the whole answer -- without it
+    # `cross_section: chiral` came back with the SIGN REVERSED on so ordinary a model
+    # as a ferromagnet.
+    corr = np.einsum("mw,mba->abw", c, moments) / getattr(model, "n_cells", 1)
+    inten, clamp = contract_cross_section(corr, q_cart, cross_section)
+    out = np.real(np.asarray(inten)).astype(float)
+    if clamp:
+        out = np.maximum(out, 0.0)
     if ion:
         from ..form_factors import get_form_factor
         out = out * get_form_factor(ion, float(np.linalg.norm(q_cart))) ** 2
-    return KPMResult(energies=energies, intensities=out, n_moments=n_moments,
+    return out
+
+
+def _kpm_rust(model, qs_cart, kernels, n_workers, n_moments, fwhm, tol, gammas=None):
+    """`(gamma_raw, n_moments, moments)` over a q batch from rsMagCalc K4, H(q) built
+    inside the kernel (K3's builder) so no 2D x 2D matrix crosses into Python; None
+    when the kernel is not selected or not available, or after a logged failure."""
+    if rust_for(kernels) is None or not hasattr(model, "_rust"):
+        return None
+    rs = model._rust(kernels)
+    if rs is None:
+        return None
+    try:
+        g_raw, nm, mom = rs.kpm_moments(qs_cart, n_moments=n_moments, gammas=gammas,
+                                        fwhm=fwhm, tol=tol, n_workers=n_workers)
+        if n_moments is None:
+            for gr, k in zip(g_raw, nm):
+                ge = gr if (np.isfinite(gr) and gr > 0.0) else 1.0
+                if int(k) != _n_moments_for(ge, fwhm, tol):
+                    raise RuntimeError(f"kernel moment count {int(k)} != "
+                                       f"{_n_moments_for(ge, fwhm, tol)} at gamma {gr!r}")
+        return g_raw, nm, mom
+    except Exception:
+        fell_back("kpm moments")
+        return None
+
+
+def kpm_sqw(model, q_cart, energies, fwhm, n_moments=None, tol=0.02,
+            cross_section="perp", ion=None, gamma=None, hmat=None, kernels=None,
+            n_workers=None):
+    """KPM estimate of S(q,ω) at one q, on the given energy grid, Gaussian-broadened
+    with the supplied `fwhm`. `n_moments` (or `tol`, which sets M from the bandwidth)
+    controls resolution. Returns a KPMResult.
+
+    NOTHING HERE CHECKS THAT THE REFERENCE STATE IS A MINIMUM, and no part of this
+    method can: there is no eigensolve, so no Cholesky to fail. About a saddle or a
+    maximum it returns a smooth, plausible, meaningless S(q,ω). Callers must check
+    for themselves — `SUNModel.is_stable_at(q)` / `assert_stable(qs)`, which the
+    runner's `kpm_sqw` task and `examples/.../S09_triangular_AFM/disorder_kpm.py`
+    both do, at every q they compute.
+
+    `hmat` lets the caller supply the g H₂ it already built for this exact q (it must
+    be `model.hamiltonian(q_cart)` — nothing here can check that). Building it was the
+    dominant per-q cost at large D under NumPy (620 ms of KPM's 1.7 s at S09's
+    L = 30), which is why the NumPy runner path shares one build with the guard.
+
+    `kernels` ("numpy" | "rust", default the model's own `kernels`) selects
+    rsMagCalc K4 for the moment recursion and the spectral bound; `n_workers`
+    (default the model's) sizes its pool. Without `hmat` the kernel builds H(q)
+    itself; with it, the supplied matrix is used. A kernel that fails is logged and
+    the NumPy loop answers. `kpm_sqw_batch` runs many q in parallel."""
+    q_cart = np.asarray(q_cart, float)
+    kernels = getattr(model, "kernels", "numpy") if kernels is None else kernels
+    n_workers = getattr(model, "n_workers", None) if n_workers is None else n_workers
+    energies = np.asarray(energies, float)
+    moments = None
+    if hmat is None:
+        got = _kpm_rust(model, q_cart.reshape(1, 3), kernels, n_workers, n_moments,
+                        fwhm, tol, None if gamma is None else [gamma])
+        if got is not None:
+            g_raw, nm, mom = got
+            gamma = _goldstone_gamma(float(g_raw[0]), q_cart)
+            moments = mom[0, :int(nm[0])]
+    else:
+        rs = rust_for(kernels)
+        if rs is not None:
+            try:
+                HMat = np.asarray(hmat, dtype=complex)
+                g = rs.spectral_bound(HMat) if gamma is None else gamma
+                g = _goldstone_gamma(g, q_cart)
+                nm = n_moments if n_moments is not None else _n_moments_for(g, fwhm, tol)
+                moments = rs.kpm_moments(HMat, _observable_vectors(model, q_cart), nm, g)
+                gamma = g
+            except Exception:
+                fell_back("kpm_moments")
+                moments = None
+    if moments is None:
+        HMat = np.asarray(model.hamiltonian(q_cart) if hmat is None else hmat,
+                          dtype=complex)
+        if gamma is None:
+            gamma = spectral_bound(HMat)
+        gamma = _goldstone_gamma(gamma, q_cart)
+        if n_moments is None:
+            n_moments = _n_moments_for(gamma, fwhm, tol)
+        moments = _moments_numpy(HMat, _observable_vectors(model, q_cart), n_moments,
+                                 gamma)
+    out = _reconstruct(model, q_cart, moments, gamma, energies, fwhm, tol,
+                       cross_section, ion)
+    return KPMResult(energies=energies, intensities=out, n_moments=len(moments),
                      gamma=gamma)
+
+
+def kpm_sqw_batch(model, qs_cart, energies, fwhm, n_moments=None, tol=0.02,
+                  cross_section="perp", ion=None, kernels=None, n_workers=None):
+    """`kpm_sqw` over a batch of q: a list of KPMResult, one per q.
+
+    Under `kernels: rust` the moments of every q come from ONE rsMagCalc K4 call
+    (rayon over q, H(q) built inside by K3's builder, the recursion sparse when H(q)
+    is), and only the reconstruction runs here. Otherwise, or if the kernel fails
+    (logged), it is `kpm_sqw` per q with the NumPy loop. Like `kpm_sqw` this checks
+    NOTHING about stability: run `SUNModel.assert_stable` / `unstable_indices` over
+    the same q first, as the runner does."""
+    qs = np.asarray(qs_cart, float).reshape(-1, 3)
+    kernels = getattr(model, "kernels", "numpy") if kernels is None else kernels
+    n_workers = getattr(model, "n_workers", None) if n_workers is None else n_workers
+    energies = np.asarray(energies, float)
+    got = _kpm_rust(model, qs, kernels, n_workers, n_moments, fwhm, tol) if len(qs) \
+        else None
+    if got is None:
+        return [kpm_sqw(model, q, energies, fwhm, n_moments=n_moments, tol=tol,
+                        cross_section=cross_section, ion=ion, kernels="numpy")
+                for q in qs]
+    g_raw, nm, mom = got
+    out = []
+    for iq, q in enumerate(qs):
+        gamma = _goldstone_gamma(float(g_raw[iq]), q)
+        k = int(nm[iq])
+        inten = _reconstruct(model, q, mom[iq, :k], gamma, energies, fwhm, tol,
+                             cross_section, ion)
+        out.append(KPMResult(energies=energies, intensities=inten, n_moments=k,
+                             gamma=gamma))
+    return out
 
 
 def exact_broadened_sqw(model, q_cart, energies, fwhm, cross_section="perp", ion=None):

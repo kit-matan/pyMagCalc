@@ -976,6 +976,83 @@ the rule-value parser fix a87c8a8 below, magpipe at 283f694), 2026-10-22, idle m
 ALPS ones. The merge is also what makes `sqrt(3)*D1x/3`, the allowed kagome DM, pass this check: before the
 parser fix it reached the check as an unbound `sqrt3` and was refused as a conflict.
 
+### Rust kernels K4, 2026-10-27 — the KPM Chebyshev recursion behind `kernels: rust`
+
+M4 of `RUST_KERNELS_PLAN.md`. rsMagCalc `d118cde` (`src/kpm.rs`) carries the moment loop of `sun/kpm.kpm_sqw`
+(β_{m+1} = 2Aβ_m − β_{m−1} with A = conj(g·H₂)/γ on the three observable vectors, μ_m^{ab} = v_a†β_m^b) and
+`spectral_bound`'s power iteration on D̂†D̂, three ways: `kpm_moments(HMat, v, M, γ)` and `spectral_bound(HMat, ...)` on
+a matrix already built, and `kpm_batch` (`rsmagcalc.SunModel.kpm_moments`) over a q batch with rayon, H(q) built inside
+by K3's `build_h`, so no 2D×2D matrix crosses into Python. The Chebyshev coefficients, the +ω cutoff and its smearing,
+the energy-grid reconstruction and the cross-section contraction stay in NumPy. What carries over exactly: the
+recursion on conj(D̂) and the transposed (b, a) weight order (the two past KPM bugs), the bound's start vector (NumPy's
+own `default_rng(seed)` draw, generated on the Python side and passed in), the moment count from `tol` (the same integer:
+round-half-even in Python's order of operations, and `_kpm_rust` re-derives every count and refuses a mismatch), and the
+Goldstone point (γ ≤ 0 → 1, the RAW bound returned so the same warning is issued once per q).
+
+**Where the speed comes from is sparsity, not LAPACK and not threads.** cProfile of the NumPy path at S09 L = 30
+(2D = 1800, M = 176): 0.50 s H(q) build, 0.25 s `spectral_bound` (a dense D̂†D̂ matmul, then 40 matvecs), 0.85 s moment
+loop (176 dense 1800² matmuls on 3 vectors), 0.09 s reconstruction. H(q) of that supercell is 0.7 % nonzero (23 400 of
+3.24 M entries), so the kernel scans each H(q) once into CSR when it is at most a quarter full and runs both the
+recursion and the power iteration sparse, O(nnz·M); a denser operator (a small entangled cell) goes through the
+platform `zgemm`, as NumPy's does. The skipped entries are exact zeros of the dense product too, so the two differ only
+in summation order. The reconstruction was also restructured in NumPy, with the same arithmetic: `_cheb_coefs`'s node
+matrix does not depend on ω, so the whole energy grid goes through ONE call (151 calls → 1, 90 ms → 2 ms per q) and
+through one `contract_cross_section`.
+
+**The runner under `kernels: rust`.** Guard 3 is unchanged in what it decides: `SUNModel.unstable_indices` (the per-q
+verdict list `assert_stable` now reports from) runs K3's shifted Cholesky over EVERY q as one batch, same criterion,
+same `h2_rel_tolerance`, and `on_imaginary: error` raises through the same `assert_stable(q_cart[iq:iq+1], context=
+"(KPM S(q,w), q-point i of n)")` call as before, naming the first unstable q — now before any moment is computed
+rather than after the q before it; `warn` warns with the same count and computes. Only then `kpm_sqw_batch` runs the
+K4 batch. The NumPy loop (one H(q) per q shared by the guard and `kpm_sqw(hmat=)`) is the `kernels: numpy` path,
+unchanged. `kpm_sqw` / `kpm_sqw_batch` take `kernels` and `n_workers` (default: the model's own), so a script such as
+`disorder_kpm.py` gets K4 from the model it builds; a kernel that raises is logged by `kernels.fell_back` and the NumPy
+loop answers.
+
+**Pinned to.** `rsMagCalc/tests/test_kpm_parity.py` (63 tests): moments against `kpm._moments_numpy` at the SAME γ to
+1e-12 relative to the largest moment, batch and standalone, with the operator forced dense, forced CSR and left to
+choose, on every K3 fixture — plain and biquadratic SU(3), mixed spin N = (2, 3), a mixed-spin 3-cell supercell, the
+non-collinear 120° supercell at 9, 36 and 81 sites (600 moments on the last), the entangled dimer chain — and the
+ferromagnet; the bound to 1e-12 against `spectral_bound`; the `tol`-derived moment count equal to NumPy's integer at
+three (fwhm, tol) pairs; the `chiral` channel end to end (rust vs numpy to 1e-11, with and without `hmat`); the
+Goldstone point (H(Γ) ≡ 0 on the s = ½ ferromagnet: bound 0, γ = 1, the warning under both, identical columns); the
+empty batch; refused arguments. Every K4 oracle runs under both kernel sets through the `kernels` fixture:
+`test_kpm` (convergence to the exact `structure_factor` on the square AFM and the NON-COLLINEAR 81-site supercell, the
+integrated intensity, the chiral sign, and the bound `kpm_sqw` actually used enclosing the spectrum),
+`test_kpm_stability` (K3 had parametrized it; its runner cases now take the K4 batch), `test_s09_disorder_kpm` (the
+disordered relaxed 81-site state against exact diagonalization, broadening, weight above the exact bandwidth),
+`test_bond_disorder`. `tests/test_kernels_kpm.py` (12, fast) pins the wiring: every entry point reaching the kernel (a
+call-counting spy) and agreeing with NumPy to 1e-10 on a mixed-spin supercell; `unstable_indices` against
+`is_stable_at` and the frustrated chain's closed form (unstable exactly for 0 < h < ¼); the empty batch; a failing
+batch, a failing standalone call and a wrong moment count each logged with NumPy answering; the runner refusing a
+non-minimum under rust with the q named and the K4 batch never called; `on_imaginary: warn` computing; the runner map
+and the shipped S09 `config_supercell.yaml` KPM task equal under both kernels. There was no S09 KPM case in
+`test_sunny_tutorials` to parametrize; the shipped-config case lives in `test_kernels_kpm` instead.
+
+**Timing** (M1 Pro, 10 cores, 2026-10-27 08:41–08:43, no pytest or `magcalc run` live; desktop apps busy: 1-min load
+average 12–21, CPU 33–62 % idle, 9.7 of 10 GB swap in use — absolute numbers are this machine's, not a clean
+benchmark). S09 L = 30 (900 sites, 2D = 1800), the σ = 0.1 seed-0 disordered state RELAXED (`minimize_energy`,
+stable at every q measured), the tutorial's grid (0–3 meV step 0.02, fwhm 0.2, tol 0.02 → M = 176), generic q of
+Γ–K–M; per q including the guard, as the runner pays it. Measured with
+`<this session's scratch>/bench_k4.py 30 3 40`, two runs:
+
+| configuration | per q | what runs |
+|---|---|---|
+| (a) `kernels: numpy` | **1376, 1399 ms** | the runner loop: NumPy H(q), NumPy Cholesky guard, NumPy moment loop (3 q) |
+| (b) K3 H(q), NumPy moment loop | **982, 977 ms** | the same loop with the model on `kernels: rust` — the runner as K3 left it |
+| (c) `kernels: rust` | **43.3, 43.7 ms** (guard 37, KPM 6) | `unstable_indices` + `kpm_sqw_batch`, 40 q, default pool |
+| (c) `kernels: rust`, `n_workers: 1` | 70, 80 ms (guard 48–51, KPM 23–29) | the same, one thread |
+| `kpm_sqw` one q per call, rust | 23, 34 ms | what `disorder_kpm.py`'s `sqw()` does (no guard) |
+
+Against the plan: S09 L = 30 "from 1.7 s/q to under 0.2 s/q" — 43 ms/q with the guard included (70–80 ms on one
+thread), from 1.4 s/q measured here; the M4 row's "S09 disorder KPM ≥ 5×" — **32×** over (a) and **22×** over (b),
+the K3-only state. The KPM part alone (moments + bound + reconstruction, guard excluded) went from ~0.9 s/q under (b)
+to 23–29 ms on one thread, i.e. ~35× from sparsity alone; rayon adds ~4× on that part. The maps agree with (a) to
+2e-15 relative. **The guard is now 86 % of a KPM q** (one dense 1800² `zpotrf` per q, LAPACK-bound, so threads buy
+only 1.3× over one) where it was ~5 % before; that is the cost of checking every q exactly, and it stays.
+
+**Gate** (2026-10-27 08:42–09:00, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`, pyMagCalc `6a03bc6` plus the uncommitted K4 wiring, rsMagCalc `d118cde` installed, magpipe 283f694): **2151 passed, 2 skipped, 0 failed, 18 min 00 s** — 87 more than the K3 gate, all K4's (the `rust` parametrizations of `test_kpm` and `test_s09_disorder_kpm`, `tests/test_kernels_kpm.py`, rsMagCalc's `tests/test_kpm_parity.py`), the same two structural skips (`seekpath` absent, ALPS present), no crashed xdist worker. Not an idle run: desktop apps held the 1-min load at ~19 when it started, and it read 126 (5-min 271) when it ended, a load the gate's own `-n auto` workers do not explain alone; another session's unrelated pytest started in its last minute. So 18 min against K3's 13 min 34 s is the machine, not the 87 tests.
+
 ### Rust kernels K3, 2026-10-26 — SU(N) LSWT behind `kernels: rust`
 
 M3 of `RUST_KERNELS_PLAN.md`. rsMagCalc `d5e581d` (`src/sun_lswt.rs`, `rsmagcalc.SunModel`; `src/lapack.rs`) carries

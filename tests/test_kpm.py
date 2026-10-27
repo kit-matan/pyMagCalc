@@ -5,6 +5,10 @@ KPM expands the SAME spectral function via Chebyshev moments of the para-unitary
 dynamical matrix, so with enough moments its S(q,ω) must converge to the exact
 diagonalization broadened by the same Gaussian — to machine precision. No external
 reference needed: it is pinned to the exact result the engine already trusts.
+
+Every test runs under both kernel sets (`kernels` fixture): under "rust" the moments
+and the bound come from rsMagCalc K4 (pinned to the NumPy loop at 1e-12 in
+rsMagCalc/tests/test_kpm_parity.py), and these are its oracle tests.
 """
 import numpy as np
 
@@ -17,7 +21,7 @@ from magcalc.sun.kpm import kpm_sqw, exact_broadened_sqw, spectral_bound
 from magcalc.sun.operators import coherent_from_direction
 
 
-def _square_afm(S=1.0, J=1.0):
+def _square_afm(S=1.0, J=1.0, kernels="numpy"):
     cfg = {"crystal_structure": {"lattice_vectors": [[1., 0, 0], [0, 1, 0], [0, 0, 10]],
             "atoms_uc": [{"label": "A", "pos": [0, 0, 0], "spin_S": S},
                          {"label": "B", "pos": [0.5, 0.5, 0], "spin_S": S}]},
@@ -27,7 +31,7 @@ def _square_afm(S=1.0, J=1.0):
         "magnetic_structure": {"type": "pattern", "pattern_type": "antiferromagnetic",
                                "direction": [0, 0, 1], "propagation_vector": [0, 0, 0]}}
     gm = GenericSpinModel(cfg)
-    sm = SUNModel.from_generic_model(gm, [J])
+    sm = SUNModel.from_generic_model(gm, [J], kernels=kernels)
     B = 2 * np.pi * np.linalg.inv(np.array([[1., 0, 0], [0, 1, 0], [0, 0, 10]])).T
     return sm, B
 
@@ -36,7 +40,7 @@ TRI = [[3.0, 0, 0], [-1.5, 3 * np.sqrt(3) / 2, 0], [0, 0, 10.0]]
 TRI_OFFS = ([1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [1, 1, 0], [-1, -1, 0])
 
 
-def _triangular_120(n):
+def _triangular_120(n, kernels="numpy"):
     """The 120-degree triangular AFM (J = 1, s = 1/2) on an n x n supercell, in its
     EXACT ground state (E/site = -0.375) rather than a searched one.
 
@@ -53,7 +57,8 @@ def _triangular_120(n):
                                   "direction": [0, 0, 1]},
            "parameters": {}, "parameter_order": []}
     sm = SUNModel.from_generic_model(GenericSpinModel(cfg), [],
-                                     supercell=[[n, 0, 0], [0, n, 0], [0, 0, 1]])
+                                     supercell=[[n, 0, 0], [0, n, 0], [0, 0, 1]],
+                                     kernels=kernels)
     lat = np.array(TRI, float)
     ang = 2 * np.pi * ((np.asarray(sm.pos, float) @ np.linalg.inv(lat))
                        @ np.array([1 / 3, 1 / 3, 0.0]))
@@ -64,7 +69,7 @@ def _triangular_120(n):
     return sm, 2 * np.pi * np.linalg.inv(lat).T
 
 
-def _ferromagnet():
+def _ferromagnet(kernels="numpy"):
     """s = 1, square-lattice FM. Its chiral term is non-zero for q out of the plane,
     which is what fixes the (a, b) ORDER of the weight matrix."""
     lat = [[1., 0, 0], [0, 1, 0], [0, 0, 10]]
@@ -78,11 +83,11 @@ def _ferromagnet():
            "magnetic_structure": {"type": "pattern", "pattern_type": "ferromagnetic",
                                   "direction": [0, 0, 1]},
            "parameters": {}, "parameter_order": []}
-    return (SUNModel.from_generic_model(GenericSpinModel(cfg), []),
+    return (SUNModel.from_generic_model(GenericSpinModel(cfg), [], kernels=kernels),
             2 * np.pi * np.linalg.inv(np.array(lat, float)).T)
 
 
-def test_kpm_matches_exact_on_a_NON_COLLINEAR_supercell():
+def test_kpm_matches_exact_on_a_NON_COLLINEAR_supercell(kernels):
     """The clean 120-degree state on 81 sites: only 3 of the 81 folded bands carry
     weight, and KPM has to reproduce that.
 
@@ -92,7 +97,7 @@ def test_kpm_matches_exact_on_a_NON_COLLINEAR_supercell():
     The symptom was worse than the number suggests: the spurious weight sits at LOW
     energy and looks exactly like disorder broadening of a CLEAN spectrum.
     """
-    sm, B = _triangular_120(9)
+    sm, B = _triangular_120(9, kernels=kernels)
     egrid = np.arange(0.0, 3.0001, 0.02)
     fwhm = 0.15
     # q off the 1/n grid: on it, the folded Goldstone zero makes the exact
@@ -105,12 +110,12 @@ def test_kpm_matches_exact_on_a_NON_COLLINEAR_supercell():
         assert rel < 2e-3, f"q={q_rlu}: relative error {rel:.2e}"
 
 
-def test_kpm_chiral_channel_has_the_right_SIGN():
+def test_kpm_chiral_channel_has_the_right_SIGN(kernels):
     """`cross_section: chiral` is ANTISYMMETRIC in (a, b), so it pins the order of
     the weight matrix -- which the symmetric channels (perp, trace, xx, ...) cannot
     see at all. It came back sign-REVERSED on a plain ferromagnet until 2026-08-13
     (relative error exactly 2.0, the signature of a flip)."""
-    sm, B = _ferromagnet()
+    sm, B = _ferromagnet(kernels=kernels)
     egrid = np.linspace(0, 10, 300)
     fwhm = 0.3
     for q_rlu in ([0.2, 0.1, 0.4], [0.3, 0.0, 0.6], [0.25, 0.35, 0.5]):
@@ -123,21 +128,24 @@ def test_kpm_chiral_channel_has_the_right_SIGN():
         assert rel < 1e-3, f"q={q_rlu}: relative error {rel:.2e}"
 
 
-def test_spectral_bound_encloses_the_spectrum():
-    sm, B = _square_afm()
+def test_spectral_bound_encloses_the_spectrum(kernels):
+    sm, B = _square_afm(kernels=kernels)
     for hk in [(0.25, 0.0), (0.5, 0.0), (0.3, 0.2)]:
         q = np.array([hk[0], hk[1], 0]) @ B
-        gam = spectral_bound(sm.hamiltonian(q))
         maxw = float(np.abs(sm.dispersion(q)).max())
-        assert gam > maxw, f"gamma {gam} must enclose max|w| {maxw}"
-        assert gam < 2.0 * maxw, "bound should not be wildly loose"
+        # the NumPy bound, and the one kpm_sqw actually used (rsMagCalc K4's power
+        # iteration under "rust", from the same start vector)
+        used = kpm_sqw(sm, q, [0.0], 0.3, n_moments=8).gamma
+        for gam in (spectral_bound(sm.hamiltonian(q)), used):
+            assert gam > maxw, f"gamma {gam} must enclose max|w| {maxw}"
+            assert gam < 2.0 * maxw, "bound should not be wildly loose"
 
 
 @pytest.mark.slow
-def test_kpm_converges_to_exact_diagonalization():
+def test_kpm_converges_to_exact_diagonalization(kernels):
     """As the moment count grows, KPM S(q,ω) → the exact broadened spectrum; the
     error decreases monotonically and hits machine zero at high order."""
-    sm, B = _square_afm()
+    sm, B = _square_afm(kernels=kernels)
     egrid = np.linspace(0, 8, 400)
     fwhm = 0.3
     for hk in [(0.25, 0.0), (0.5, 0.0), (0.3, 0.2)]:
@@ -154,9 +162,9 @@ def test_kpm_converges_to_exact_diagonalization():
 
 
 @pytest.mark.slow
-def test_kpm_conserves_integrated_intensity():
+def test_kpm_conserves_integrated_intensity(kernels):
     """∫dω S(q,ω) (the per-q sum rule) must match the exact total to high order."""
-    sm, B = _square_afm()
+    sm, B = _square_afm(kernels=kernels)
     egrid = np.linspace(0, 8, 600)
     fwhm = 0.3
     for hk in [(0.25, 0.0), (0.5, 0.0)]:

@@ -280,15 +280,16 @@ class SUNModel:
     # and intensities to 1e-10) and every oracle test runs under both through the
     # `kernels` fixture. The cross-section contraction and the form factor stay
     # here so that every engine shares ONE `contract_cross_section`.
-    def _rust(self):
+    def _rust(self, kernels=None):
         """The rsmagcalc `SunModel` packed from this reference state, or None.
 
         Rebuilt after every `_prepare` (which rebuilds the tables it packs) and
         when the bond / on-site / operator lists are replaced (the `(id, len)` key
         `sun.dynamics._fast` uses), so a relaxation, a disorder draw or a test
-        that swaps `model.bonds` never runs a stale Hamiltonian.
+        that swaps `model.bonds` never runs a stale Hamiltonian. `kernels`
+        overrides the model's own choice (`sun.kpm` passes the one it was given).
         """
-        rs = rust_for(getattr(self, "kernels", "numpy"))
+        rs = rust_for(getattr(self, "kernels", "numpy") if kernels is None else kernels)
         if rs is None:
             return None
         key = tuple((id(x), len(x)) for x in (self.bonds, self.onsite, self.ops))
@@ -590,6 +591,29 @@ class SUNModel:
                 hi = mid
         return 0.5 * (lo + hi)
 
+    def unstable_indices(self, qs_cart, rel_tol: float = H2_REL_TOL, hmats=None) -> list:
+        """The indices of the q in `qs_cart` where H2(q) is NOT >= 0 -- the per-q
+        verdicts of `is_stable_at`, every q, no sampling. Under `kernels: rust`
+        (and with no `hmats`) one K3 batch, in parallel; the criterion and the
+        tolerance are the same. `assert_stable` reports from this; the runner's
+        `kpm_sqw` task calls it directly ahead of the K4 batch."""
+        qs = np.asarray(qs_cart, float).reshape(-1, 3)
+        if hmats is None and len(qs):
+            rs = self._rust()
+            if rs is not None:
+                try:
+                    shift = float(rel_tol) * self._reference_h2_scale()
+                    mask = rs.stable(qs, shift, n_workers=self.n_workers)
+                    return [int(k) for k in np.flatnonzero(~np.asarray(mask, bool))]
+                except Exception:
+                    fell_back("sun assert_stable")
+        bad = []
+        for iq, q in enumerate(qs):
+            hm = None if hmats is None else hmats[iq]
+            if not self.is_stable_at(q, rel_tol=rel_tol, hmat=hm):
+                bad.append(iq)
+        return bad
+
     def assert_stable(self, qs_cart, rel_tol: float = H2_REL_TOL,
                       on_failure: str = "error", context: str = "", hmats=None) -> dict:
         """Refuse to expand about a non-minimum: check H2(q) >= 0 over `qs_cart`.
@@ -609,22 +633,7 @@ class SUNModel:
             raise ValueError(f"on_failure must be 'error', 'warn' or 'off', "
                              f"got {on_failure!r}.")
         qs = np.asarray(qs_cart, float).reshape(-1, 3)
-        bad = None
-        if hmats is None and len(qs):
-            rs = self._rust()
-            if rs is not None:
-                try:
-                    shift = float(rel_tol) * self._reference_h2_scale()
-                    mask = rs.stable(qs, shift, n_workers=self.n_workers)
-                    bad = [int(k) for k in np.flatnonzero(~np.asarray(mask, bool))]
-                except Exception:
-                    fell_back("sun assert_stable")
-        if bad is None:
-            bad = []
-            for iq, q in enumerate(qs):
-                hm = None if hmats is None else hmats[iq]
-                if not self.is_stable_at(q, rel_tol=rel_tol, hmat=hm):
-                    bad.append(iq)
+        bad = self.unstable_indices(qs, rel_tol=rel_tol, hmats=hmats)
         report = {"stable": not bad, "n_checked": len(qs), "n_unstable": len(bad),
                   "q_worst": None, "min_eig": 0.0, "rel_tol": float(rel_tol)}
         if not bad:

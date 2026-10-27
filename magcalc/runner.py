@@ -1237,7 +1237,7 @@ def run_calculation(config_file: str):
             logger.error("kpm_sqw needs `calculation.mode: SUN` or `entangled` "
                          "(a SUNModel-backed calculator).")
         else:
-            from magcalc.sun.kpm import kpm_sqw
+            from magcalc.sun.kpm import kpm_sqw, kpm_sqw_batch
             from magcalc.sun import lswt as _sun_lswt
             kp = final_config.get('kpm', {}) or {}
             e_min = kp.get('e_min', 0.0)
@@ -1280,27 +1280,57 @@ def run_calculation(config_file: str):
                     'h2_rel_tolerance', _sun_lswt.H2_REL_TOL))
                 guard = on_imaginary if on_imaginary in ('error', 'warn') else 'off'
                 unstable = []
-                for iq, q in enumerate(q_cart):
-                    # One build of g H2 per q, shared by the guard and the spectrum.
-                    hq = np.asarray(model_obj.hamiltonian(np.asarray(q, float)),
-                                    dtype=complex)
-                    if guard != 'off' and not model_obj.is_stable_at(
-                            q, rel_tol=h2_rel_tol, hmat=hq):
-                        unstable.append(iq)
-                        if guard == 'error':
-                            # Refuse HERE rather than after the whole map: the report
-                            # names this q, and nothing computed past it would be
-                            # meaningful anyway.
+                kpm_args = dict(n_moments=nmom, tol=kp.get('tol', 0.02),
+                                cross_section=kp.get('cross_section', 'perp'),
+                                ion=ion0)
+                if _kernels.rust_for(kernels) is not None and \
+                        hasattr(model_obj, 'unstable_indices'):
+                    # rsMagCalc: the SAME guard over EVERY q as one K3 batch (the
+                    # shifted Cholesky, same criterion, same tolerance), and only
+                    # then the K4 batch -- so an 'error' refuses before any
+                    # spectrum is computed, naming the first unstable q exactly as
+                    # the loop below does.
+                    if guard != 'off':
+                        unstable = model_obj.unstable_indices(q_cart,
+                                                              rel_tol=h2_rel_tol)
+                        if unstable and guard == 'error':
+                            iq = unstable[0]
                             model_obj.assert_stable(
                                 q_cart[iq:iq + 1], rel_tol=h2_rel_tol,
-                                on_failure='error', hmats=[hq],
+                                on_failure='error',
                                 context=" (KPM S(q,w), q-point "
                                         f"{iq + 1} of {len(q_cart)})")
-                    r = kpm_sqw(model_obj, q, energies, fwhm,
-                                n_moments=nmom, tol=kp.get('tol', 0.02),
-                                cross_section=kp.get('cross_section', 'perp'),
-                                ion=ion0, hmat=hq)
-                    smap[:, iq] = r.intensities
+                            raise RuntimeError(
+                                f"KPM guard: q-point {iq + 1} failed the batch "
+                                f"stability check but passed the single-q one; "
+                                f"refusing rather than guessing.")
+                    results = kpm_sqw_batch(model_obj, q_cart, energies, fwhm,
+                                            kernels=kernels,
+                                            n_workers=calc_config.get('n_workers'),
+                                            **kpm_args)
+                    for iq, r in enumerate(results):
+                        smap[:, iq] = r.intensities
+                else:
+                    for iq, q in enumerate(q_cart):
+                        # One build of g H2 per q, shared by the guard and the
+                        # spectrum.
+                        hq = np.asarray(model_obj.hamiltonian(np.asarray(q, float)),
+                                        dtype=complex)
+                        if guard != 'off' and not model_obj.is_stable_at(
+                                q, rel_tol=h2_rel_tol, hmat=hq):
+                            unstable.append(iq)
+                            if guard == 'error':
+                                # Refuse HERE rather than after the whole map: the
+                                # report names this q, and nothing computed past it
+                                # would be meaningful anyway.
+                                model_obj.assert_stable(
+                                    q_cart[iq:iq + 1], rel_tol=h2_rel_tol,
+                                    on_failure='error', hmats=[hq],
+                                    context=" (KPM S(q,w), q-point "
+                                            f"{iq + 1} of {len(q_cart)})")
+                        r = kpm_sqw(model_obj, q, energies, fwhm, hmat=hq,
+                                    kernels=kernels, **kpm_args)
+                        smap[:, iq] = r.intensities
                 if unstable:
                     model_obj.assert_stable(
                         q_cart[unstable[:1]], rel_tol=h2_rel_tol, on_failure='warn',

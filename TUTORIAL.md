@@ -633,7 +633,7 @@ deterministic for a given `seed` under either kernel set, but the two do **not**
 share a random stream: a `kernels: rust` run with the same seed is a different,
 equally valid sample.
 
-### What the kernels cover (K1, K2 and K3, 2026-10-26)
+### What the kernels cover (K1, K2, K3 and K4, 2026-10-26/27)
 
 `kernels: rust` currently accelerates the **classical samplers** (K1): the Metropolis
 sweep (uniform and `propose: flip`) behind `thermal_mc`, `static_correlations` and
@@ -668,7 +668,17 @@ where two bands are exactly degenerate, how the weight splits between them is a
 basis choice that can differ between the two (their sum does not). FeI2's
 SU(3) run (`examples/materials/FeI2/config_fei2_sun.yaml`) went from 11.5 s to
 4.0 s end to end, and one H(q) build on the 900-site S09 cell from 870 ms to 17 ms
-(`GAP_STATUS.md`, "Rust kernels K3"). The KPM recursion itself is still NumPy (K4).
+(`GAP_STATUS.md`, "Rust kernels K3").
+
+And the **KPM recursion** (K4) of `tasks: {kpm_sqw: true}`: the Chebyshev moments
+and the spectral bound, over the whole q path in parallel, with H(q) built inside
+the kernel and multiplied as a sparse matrix (a supercell's H(q) is mostly zeros:
+0.7 % filled on the 900-site S09 cell). The guard still checks H₂(q) ⪰ 0 at every q
+first, with the same verdicts and messages, and the energy-grid reconstruction stays
+in NumPy, so the spectrum agrees with the NumPy path to ~1e-15. On the disordered
+900-site S09 cell a KPM q went from 1.4 s to 43 ms, guard included
+(`GAP_STATUS.md`, "Rust kernels K4"). `kpm_sqw(model, q, ...)` called from a script
+uses the model's own `kernels`.
 
 Three blocks take an `n_workers` for the Rust thread pool (default: every core):
 
@@ -678,7 +688,7 @@ sampled_correlations:     {temperature: 0.5, supercell: [16, 1, 1], n_traj: 64, 
 sun_sampled_correlations: {temperature: 0.5, n_traj: 16, therm_sweeps: 2000, n_workers: 4}
 ```
 
-and the SU(N)/entangled LSWT kernels read it from the `calculation` block:
+and the SU(N)/entangled LSWT and KPM kernels read it from the `calculation` block:
 
 ```yaml
 calculation: {mode: SUN, kernels: rust, n_workers: 4}
@@ -1062,7 +1072,7 @@ scga: {temperature: 1.5, mesh_density: 20, cross_section: perp}   # temperature 
 tasks: {thermal_mc: true}
 thermal_mc: {temperatures: [0.2, 0.5, 1, 2, 4], supercell: [6, 6, 1],
              n_sweeps: 4000, n_equil: 1500}
-calculation: {kernels: rust}        # optional Rust kernels for (b), (c), static_correlations
+calculation: {kernels: rust}        # optional Rust kernels for (b), (c), (d), static_correlations
                                     # and wang_landau -- section 4c2; falls back to NumPy
 
 # (c) SampledCorrelations — classical-dynamics S(q,ω) (full thermal lineshape)

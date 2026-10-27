@@ -61,9 +61,9 @@ def _cfg():
             "parameters": {}, "parameter_order": []}
 
 
-def _model(supercell):
+def _model(supercell, kernels="numpy"):
     return SUNModel.from_generic_model(GenericSpinModel(copy.deepcopy(_cfg())),
-                                       params=[], supercell=supercell)
+                                       params=[], supercell=supercell, kernels=kernels)
 
 
 def _impose_120(m):
@@ -106,9 +106,9 @@ def test_the_other_determinant_3_cell_CANNOT_host_it():
     assert e > E_120 + 0.2, f"E/site = {e} -- this cell should NOT reach {E_120}"
 
 
-def test_supercell_bands_are_the_analytic_120_degree_dispersion():
+def test_supercell_bands_are_the_analytic_120_degree_dispersion(kernels):
     """The 3 bands at a chemical q are {w(q-k), w(q), w(q+k)} of the closed form."""
-    m = _impose_120(_model([[1, 1, 0], [-1, 2, 0], [0, 0, 1]]))
+    m = _impose_120(_model([[1, 1, 0], [-1, 2, 0], [0, 0, 1]], kernels))
     assert abs(m.energy_per_site() - E_120) < 1e-12
     for q_rlu in QGEN:
         q = np.array(q_rlu, float)
@@ -118,13 +118,13 @@ def test_supercell_bands_are_the_analytic_120_degree_dispersion():
 
 
 # ------------------------------------------------------------------ cell identity
-def test_a_big_supercell_gives_the_SAME_sqw_as_the_minimal_cell():
+def test_a_big_supercell_gives_the_SAME_sqw_as_the_minimal_cell(kernels):
     """Two cell choices for one crystal and one spin configuration, so S(q,w) per
     chemical cell is identical: the 78 extra folded bands of the 9x9 cell must carry
     EXACTLY zero weight. This is what makes a supercell spectrum meaningful at all,
     and it is an algebraic identity rather than a physical claim."""
-    small = _impose_120(_model([[1, 1, 0], [-1, 2, 0], [0, 0, 1]]))
-    big = _impose_120(_model([[9, 0, 0], [0, 9, 0], [0, 0, 1]]))
+    small = _impose_120(_model([[1, 1, 0], [-1, 2, 0], [0, 0, 1]], kernels))
+    big = _impose_120(_model([[9, 0, 0], [0, 9, 0], [0, 0, 1]], kernels))
     assert abs(big.energy_per_site() - E_120) < 1e-12
     egrid = np.arange(0.0, 3.0001, 0.02)
     for q_rlu in QGEN:
@@ -134,10 +134,10 @@ def test_a_big_supercell_gives_the_SAME_sqw_as_the_minimal_cell():
         assert np.abs(a - b).max() < 1e-9 * a.max(), f"q={q_rlu}"
 
 
-def test_the_clean_spectrum_has_no_weight_above_the_exact_bandwidth():
+def test_the_clean_spectrum_has_no_weight_above_the_exact_bandwidth(kernels):
     """w_max = 3 J S sqrt(9/8) is an analytic bound on the clean 120-degree spectrum.
     It is the baseline for the 'bands broaden into a continuum' claim below."""
-    m = _impose_120(_model([[9, 0, 0], [0, 9, 0], [0, 0, 1]]))
+    m = _impose_120(_model([[9, 0, 0], [0, 9, 0], [0, 0, 1]], kernels))
     egrid = np.arange(0.0, 3.0001, 0.02)
     for q_rlu in QGEN:
         s = exact_broadened_sqw(m, np.array(q_rlu, float) @ B, egrid, 0.15)
@@ -146,8 +146,8 @@ def test_the_clean_spectrum_has_no_weight_above_the_exact_bandwidth():
 
 
 # ----------------------------------------------------------------------- disorder
-def _disordered(n, sigma, seed):
-    m = _impose_120(_model([[n, 0, 0], [0, n, 0], [0, 0, 1]]))
+def _disordered(n, sigma, seed, kernels="numpy"):
+    m = _impose_120(_model([[n, 0, 0], [0, n, 0], [0, 0, 1]], kernels))
     apply_bond_disorder(m, sigma, seed=seed)
     m.minimize_energy(n_restarts=1, max_iter=2000, tol=1e-15)
     return m
@@ -163,23 +163,24 @@ def _width(model, egrid, fwhm=0.15):
     return float(np.mean(out))
 
 
-def test_disorder_BROADENS_and_does_so_monotonically():
+def test_disorder_BROADENS_and_does_so_monotonically(kernels):
     """The tutorial's actual claim. Measured on the exact spectrum, so a KPM
     reconstruction error cannot fake it -- which is exactly how the previous
     'disorder narrows the spectrum' conclusion came about."""
     egrid = np.arange(0.0, 3.0001, 0.02)
-    clean = _width(_impose_120(_model([[9, 0, 0], [0, 9, 0], [0, 0, 1]])), egrid)
-    widths = [np.mean([_width(_disordered(9, s, seed), egrid) for seed in range(2)])
+    clean = _width(_impose_120(_model([[9, 0, 0], [0, 9, 0], [0, 0, 1]], kernels)), egrid)
+    widths = [np.mean([_width(_disordered(9, s, seed, kernels), egrid)
+                       for seed in range(2)])
               for s in (0.1, 0.2)]
     assert clean < widths[0] < widths[1], f"clean {clean}, disordered {widths}"
     assert widths[0] > 1.05 * clean, f"no measurable broadening: {clean} -> {widths[0]}"
 
 
-def test_disorder_pushes_weight_ABOVE_the_clean_bandwidth():
+def test_disorder_pushes_weight_ABOVE_the_clean_bandwidth(kernels):
     """'The discrete bands broaden into a continuum', stated against the analytic
     bound rather than against a recorded number."""
     egrid = np.arange(0.0, 3.0001, 0.02)
-    m = _disordered(9, 0.25, seed=0)
+    m = _disordered(9, 0.25, seed=0, kernels=kernels)
     frac = []
     for q_rlu in QGEN:
         s = exact_broadened_sqw(m, np.array(q_rlu, float) @ B, egrid, 0.15)
@@ -187,10 +188,12 @@ def test_disorder_pushes_weight_ABOVE_the_clean_bandwidth():
     assert np.mean(frac) > 0.01, f"only {np.mean(frac):.4f} of the weight above w_max"
 
 
-def test_kpm_reproduces_the_exact_disordered_spectrum():
+def test_kpm_reproduces_the_exact_disordered_spectrum(kernels):
     """KPM is the tool the tutorial uses because it is linear in the system size;
-    it is only worth using if it agrees with the diagonalization it replaces."""
-    m = _disordered(9, 0.1, seed=0)
+    it is only worth using if it agrees with the diagonalization it replaces. Under
+    "rust" the moments are rsMagCalc K4's (the model's kernels select it), so the
+    disordered, non-collinear, relaxed 81-site state is its oracle case too."""
+    m = _disordered(9, 0.1, seed=0, kernels=kernels)
     egrid = np.arange(0.0, 3.0001, 0.02)
     for q_rlu in QGEN[:2]:
         q = np.array(q_rlu, float) @ B
@@ -201,7 +204,7 @@ def test_kpm_reproduces_the_exact_disordered_spectrum():
 
 
 @pytest.mark.slow
-def test_at_sunny_s_disorder_strength_the_120_state_is_NOT_a_minimum():
+def test_at_sunny_s_disorder_strength_the_120_state_is_NOT_a_minimum(kernels):
     """Why this port ships sigma = 0.1 and not Sunny's 1/3.
 
     H2 >= 0 at every q is the exact criterion for the reference state to be a
@@ -229,7 +232,7 @@ def test_at_sunny_s_disorder_strength_the_120_state_is_NOT_a_minimum():
             lo = min(lo, float(np.linalg.eigvalsh(0.5 * (H2 + H2.conj().T)).min()))
         return lo
 
-    weak = [min_eig_h2(_disordered(9, 0.05, seed)) for seed in range(3)]
+    weak = [min_eig_h2(_disordered(9, 0.05, seed, kernels)) for seed in range(3)]
     assert min(weak) > -1e-6, f"sigma = 0.05 should stay a minimum: {weak}"
-    strong = [min_eig_h2(_disordered(9, 1 / 3, seed)) for seed in range(3)]
+    strong = [min_eig_h2(_disordered(9, 1 / 3, seed, kernels)) for seed in range(3)]
     assert sum(x < -1e-4 for x in strong) >= 2, f"expected instability: {strong}"

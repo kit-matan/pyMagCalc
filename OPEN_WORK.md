@@ -36,7 +36,13 @@
 > K3 timings were re-measured with no other compute job running (one S09 L = 30 H(q)
 > build 425 ms → 14 ms, FeI2 end to end 5.6 s → 1.7 s); the machine was still busy with
 > desktop apps, so they are recorded as a lower bound. Nothing pushed, the branch not
-> merged to master. Next: K4 (KPM) builds on `SunModel.hamiltonians`.
+> merged to master. **M4 (K4) is done, 2026-10-27**: the KPM Chebyshev moments and the
+> spectral bound run in rsMagCalc (`d118cde`, `src/kpm.rs`) over the q path in parallel,
+> H(q) built inside by K3 and multiplied as CSR (0.7 % filled at S09 L = 30); the guard
+> runs first at every q (`SUNModel.unstable_indices`, same verdicts and messages); S09
+> L = 30 1.4 s/q → 43 ms/q guard included, and the dense guard Cholesky is now 86 % of a
+> KPM q (`GAP_STATUS.md`, "Rust kernels K4"). Gate (2026-10-27): **2151 passed, 2 skipped,
+> 18 min 00 s** (machine busy). UNCOMMITTED in pyMagCalc. Next: K5 (SCGA).
 > Gate on this tree with rsmagcalc installed (2026-10-26, workspace root,
 > `MAGCALC_NO_GUI=1 pytest -rs`): **1753 passed, 2 skipped, 13 min 58 s** — the
 > previous 1735 plus the 18 M0 tests, the same two structural skips. NOT COMMITTED
