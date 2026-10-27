@@ -18,7 +18,13 @@ magcalc --help
 
 Optionally, install the compiled **fMagCalc** backend for much faster
 dispersion / S(Q,ω) / powder calculations on dense q-grids — see
-**§4c. Faster Calculations with the Fortran Backend**.
+**§4c. Faster Calculations with the Fortran Backend** — and the compiled
+**rsMagCalc** kernels for the Monte-Carlo samplers, spin dynamics, SU(N)/entangled
+LSWT, KPM and SCGA — see **§4c2. Rust Kernels**. Both are optional; without them every
+calculation runs in NumPy with identical results.
+
+New to the code itself, or working on it as an AI model? Read `MAGCALC_GUIDE.md` in
+the repository first.
 
 ---
 
@@ -483,7 +489,9 @@ and results are identical to the NumPy path (parity to ~1e-13); the win is
 speed: the compute kernel is 18–100× faster than the multiprocessing NumPy
 path, and on the KFe3J example with 8000 q-points the end-to-end S(Q,ω) run is
 roughly an order of magnitude faster. It shines on dense q-grids and powder
-averages; for a handful of q-points the default NumPy path is fine.
+averages; for a handful of q-points the default NumPy path is fine. Mixed-spin
+models run through it too since 2026-10-27, with each site's own √(S_i/2)
+prefactor (see §4e).
 
 pyMagCalc never *requires* fMagCalc: if it is missing or broken, any
 `backend: fortran` request logs a WARNING and falls back to NumPy, so runs
@@ -585,8 +593,8 @@ Python-bound per site or per q in the classical and SU(N) **samplers**
 (`thermal_mc`, `sampled_correlations`, `sun_sampled_correlations`), SU(N) LSWT
 assembly, KPM and SCGA. It is written in Rust and loaded through PyO3. It is
 **not** a port of pyMagCalc, and it does not touch the dipole LSWT path, which
-stays with fMagCalc. The plan, the order the kernels arrive in, and the oracle
-each is pinned to: `RUST_KERNELS_PLAN.md` at the workspace root.
+stays with fMagCalc. What each kernel covers, the oracle it is pinned to and its
+measured speed-up are recorded in `GAP_STATUS.md` under "Rust kernels K1" to "K5".
 
 The contract is fMagCalc's. pyMagCalc never *requires* it: a `kernels: rust`
 request with the package missing (or built without its compiled core) logs a
@@ -666,8 +674,8 @@ the form factor, domain and powder averaging stay in NumPy and are shared by bot
 kernel sets. Energies and intensities agree with the NumPy path to ~1e-14 on FeI2;
 where two bands are exactly degenerate, how the weight splits between them is a
 basis choice that can differ between the two (their sum does not). FeI2's
-SU(3) run (`examples/materials/FeI2/config_fei2_sun.yaml`) went from 11.5 s to
-4.0 s end to end, and one H(q) build on the 900-site S09 cell from 870 ms to 17 ms
+SU(3) run (`examples/materials/FeI2/config_fei2_sun.yaml`) went from 5.6 s to
+1.7 s end to end, and one H(q) build on the 900-site S09 cell from 425 ms to 14 ms
 (`GAP_STATUS.md`, "Rust kernels K3").
 
 And the **KPM recursion** (K4) of `tasks: {kpm_sqw: true}`: the Chebyshev moments
@@ -675,9 +683,11 @@ and the spectral bound, over the whole q path in parallel, with H(q) built insid
 the kernel and multiplied as a sparse matrix (a supercell's H(q) is mostly zeros:
 0.7 % filled on the 900-site S09 cell). The guard still checks H₂(q) ⪰ 0 at every q
 first, with the same verdicts and messages, and the energy-grid reconstruction stays
-in NumPy, so the spectrum agrees with the NumPy path to ~1e-15. On the disordered
-900-site S09 cell a KPM q went from 1.4 s to 43 ms, guard included
-(`GAP_STATUS.md`, "Rust kernels K4"). `kpm_sqw(model, q, ...)` called from a script
+in NumPy, so the spectrum agrees with the NumPy path to ~1e-15. The guard itself runs
+on a sparse Cholesky under `kernels: rust`, deciding exactly the same question as the
+dense one with identical verdicts, 38 ms → 1 ms per q. On the disordered 900-site S09
+cell a KPM q went from 1.4 s to 7.6 ms, guard included (`GAP_STATUS.md`, "Rust
+kernels K4" and "guard 3 on a SPARSE Cholesky"). `kpm_sqw(model, q, ...)` called from a script
 uses the model's own `kernels`.
 
 And the **SCGA** loops (K5) of `tasks: {scga: true}`: the J(q) eigenvalues over the

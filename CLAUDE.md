@@ -1,5 +1,11 @@
 # pyMagCalc — config authoring rules
 
+> New here? Read [`MAGCALC_GUIDE.md`](MAGCALC_GUIDE.md) first: the map of the code, the
+> conventions and the validation rules. This file is the detailed config-authoring
+> reference. Any change that alters what README.md, TUTORIAL.md, MAGCALC_GUIDE.md or this
+> file describe updates them in the same commit, and the wiki is then regenerated with
+> `python tools/sync_wiki.py --push`.
+
 When writing or editing a `config.yaml` for `magcalc run`, always prefer the
 **symmetry model** over explicit listings, and always use the **compact YAML
 form**. The `examples/spinw_tutorials/` ports are the reference
@@ -567,7 +573,8 @@ N-1 bosons per site and the single-ion (multipolar) bands appear -- with intensi
   and `model.N` are `None` for such a cell — use `Ms`/`Ns`/`D` — so anything still
   assuming a uniform N fails loudly instead of silently using site 0's value.
 * Powder averaging: supported (shared spherical average over calculate_sqw,
-  `tests/test_powder_sun.py`). Not yet: domain averaging.
+  `tests/test_powder_sun.py`). Domain averaging: supported, the same
+  `sqw_domain_average` the dipole engine uses (`tests/test_domains_sun.py`).
 
 ### The two SU(N) traps, and what stops you
 
@@ -734,7 +741,7 @@ calculation: {mode: entangled, series_order: 5, series_resum: dlog_pade}  # | pa
   harmonic model. Reference: `examples/entangled/Rb2Cu3SnF12/series_dispersion.py`
   (the full pinwheel at J2 = 0.95 J1, gaps vs the measured 2.35 / 7.3 meV).
 * Powder averaging: supported (same shared spherical average as SU(N)).
-  Not yet: domain averaging.
+  Domain averaging: supported (`tests/test_domains_sun.py`, both modes).
 
 Example: `examples/entangled/dimer_chain/` -- a chain of S=1/2 dimers whose triplon
 `omega(q) = sqrt(J^2 - J J' cos 2 pi q)` matches the exact bond-operator result.

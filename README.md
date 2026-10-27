@@ -5,6 +5,11 @@
 
 ## Introduction
 
+> **New to the code, or an AI model about to work on it?** Start with
+> **[MAGCALC_GUIDE.md](MAGCALC_GUIDE.md)**: what MagCalc is, how the code is organized,
+> the physics conventions that are easy to get wrong, how correctness is established,
+> and a checklist for a first change.
+
 `pyMagCalc` is a Python package for modeling magnetic excitations. Its core is Linear Spin-Wave Theory (LSWT) — define a spin model (Hamiltonian, magnetic structure, lattice) and compute spin-wave dispersions and dynamic structure factors S(Q,ω) — with a second **SU(N)** engine for single-ion/multipolar excitations and **entangled-unit** (dimer/trimer) modes for valence-bond solids. Beyond LSWT it also provides paramagnetic diffuse scattering (**SCGA**), finite-temperature **classical Monte-Carlo** and **spin dynamics**, a **KPM** spectral solver for large cells, and a high-order **dimer series expansion** for strongly-coupled dimer magnets. Every feature is validated against an independent reference — Sunny.jl, SpinW, or an exact analytic result.
 
 ## Key Features
@@ -30,6 +35,7 @@
 *   **Symmetry Analyzer CLI:** `magcalc symmetry <config>` prints the space group, the symmetry-inequivalent bond orbits, and the symmetry-**allowed** exchange matrix per bond (the Sunny `print_symmetry_table` analogue) — the fast way to pick `ref_pair` bonds and see which matrix entries symmetry zeros or ties. `--cells` / `--species` / `--bz-path` add the crystal utilities (primitive cell, standardization, subcrystal, irreducible BZ paths).
 *   **Knowing Which Engine Ran:** `magcalc where` reports the `magcalc` package actually imported, its git HEAD, and any *other* importable copy — because `pip install -e .` does **not** win by default (its finder is appended to `sys.meta_path`, so anything on `sys.path` shadows it). Every `magcalc run` logs the same line first. An interpreter-startup check that fires even when a stale copy wins outright — which the in-package detector structurally cannot do — is **installed automatically on your first `magcalc` command** (`magcalc guard --install` / `--uninstall` to manage it by hand, `MAGCALC_SHADOW_GUARD=off` to opt out of both).
 *   **Data Fitting:** Fits the spin Hamiltonian to inelastic-neutron-scattering data — magnon dispersion `E(Q)`, single-crystal `I(Q, ω)`, or powder `I(|Q|, ω)` — via [lmfit](https://lmfit.github.io/) (bounds, tied/fixed parameters, uncertainties, choice of optimizer). Dispersion fits use a **compile-once fast evaluator** (`DispersionEvaluator`) that skips all per-iteration symbolic work, making fits of large magnetic cells orders of magnitude faster.
+*   **Optional compiled companions:** [fMagCalc](https://github.com/kit-matan/fMagCalc) (Fortran/OpenMP/LAPACK) runs the dipole engine's per-q diagonalization, S(Q,ω) and powder averages, mixed spin included, 18–100× faster than the NumPy pool on dense q-grids (`calculation: {backend: fortran}`). [rsMagCalc](https://github.com/kit-matan/rsMagCalc) (Rust/PyO3) runs the loops the Fortran path does not cover — the classical and CP^(N−1) samplers, SU(N)/entangled LSWT, KPM and SCGA (`calculation: {kernels: rust}`): for example 169 s → 3.3 s on a 128-trajectory classical average, and 1.4 s → 7.6 ms per q for KPM on a 900-site cell. Neither is required; a missing one logs a warning and the NumPy path runs, and every compiled result is pinned to the NumPy one.
 *   **Data Export (CSV):** Export results to `.csv` or `.npz` files for external analysis.
 *   **Validated Configurations:** Supports declarative YAML configurations validated against a robust **Pydantic schema** for immediate error feedback.
 
@@ -48,6 +54,7 @@
     *   `binning.py`: Histogram binning and NeXus (`.nxs`) reading for experiment data.
     *   `constants.py`: The shared physical constants (μ_B, the electron g, the dipolar prefactors) — deliberately one definition each, since six modules used to carry their own copy.
     *   `provenance.py` / `_shadow_guard.py`: which engine copy is running (`magcalc where`, `magcalc guard`).
+    *   `kernels.py`: selection of the optional Rust kernels (`calculation.kernels`), with the warn-and-fall-back contract.
     *   `mcif.py`: Magnetic CIF / magnetic space-group import.
     *   `fitting.py`: Data-fitting engine (`run_fit`, `FitProblem`) for dispersion / S(Q,ω) / powder data.
     *   `runner.py`: Declarative task runner (minimization → dispersion → S(Q,ω) → SCGA / thermal-MC / dynamics / corrections → powder → fit → plot).
@@ -85,9 +92,10 @@
 *   Typer (>=0.9, CLI framework)
 *   Pydantic (>=2.0, configuration validation)
 *   lmfit (>=1.2, for data fitting)
-*   pytest (>=7.0.0, for testing)
+*   pytest (>=7.0.0) and pytest-xdist (>=3.0, required: both `pytest.ini` files run in parallel), for testing — `pip install -e ".[dev]"`
 *   pymatgen (>=2023.0) + spglib (>=2.0) — optional, for the GUI's symmetry analysis
 *   fMagCalc (optional compiled Fortran backend — see Installation below)
+*   rsMagCalc (optional compiled Rust kernels — see Installation below)
 
 ## Installation
 
@@ -101,9 +109,10 @@
 ### Optional: compiled Fortran backend (fMagCalc)
 
 [fMagCalc](https://github.com/kit-matan/fMagCalc) is a compiled OpenMP/LAPACK
-engine for the numerical hot path (per-q diagonalization, S(Q,ω) intensities,
-powder averaging). It is optional — pyMagCalc is fully functional without it —
-but much faster at large q-counts.
+engine for the dipole engine's numerical hot path (per-q diagonalization, S(Q,ω)
+intensities, powder averaging), including mixed-spin models since 2026-10-27. It is
+optional — pyMagCalc is fully functional without it — but much faster at large
+q-counts.
 
 **Prerequisites** (compiles on install): a Fortran compiler, CMake ≥ 3.20, and
 LAPACK.
@@ -148,6 +157,32 @@ In **pyMagCalc Studio**, set **Tasks & Plotting → Calculation Settings →
 Compute Backend** to *Fortran (fMagCalc)*.
 
 See **TUTORIAL.md §4c** for details and troubleshooting.
+
+### Optional: compiled Rust kernels (rsMagCalc)
+
+[rsMagCalc](https://github.com/kit-matan/rsMagCalc) compiles the loops that stay in
+Python outside the dipole path: the classical and CP^(N−1) Monte-Carlo samplers and
+spin dynamics, SU(N) and entangled-unit LSWT, KPM, and SCGA. It needs a Rust
+toolchain (`rustup`) and maturin:
+
+```bash
+pip install maturin
+pip install git+https://github.com/kit-matan/rsMagCalc
+# or, inside a local clone (editable): pip install -e . --no-build-isolation
+python -c "import rsmagcalc; print(rsmagcalc.backend, rsmagcalc.describe())"   # pyo3 (...)
+```
+
+Select it per config — the run log then names the build right after the engine line,
+and `magcalc where` reports whether it is available:
+
+```yaml
+calculation:
+  kernels: rust           # default: numpy
+```
+
+On macOS 27, never strip the built extension: the system loader rejects a stripped
+library (`rsMagCalc/README.md` explains, and its build settings already prevent it).
+See **TUTORIAL.md §4c2** for what each kernel covers and its measured speed-up.
 
 ## CLI Usage
 
@@ -379,13 +414,16 @@ pytest -m slow -k <name>    # one feature's deep validations
 pytest -m ""                # EVERYTHING -- the merge gate
 ```
 
-`pytest` alone runs the fast suite (647 of 825 tests), which is the iteration
+`pytest` alone runs the fast suite (1066 of 1274 tests), which is the iteration
 loop, **not** a merge gate: the `slow` marker holds the exact-diagonalization
 oracles, convergence sweeps and integration runs. Before merging to `master`, run
-`pytest -m ""` — from the workspace root that is plain `pytest`, since the root
-`pytest.ini` deliberately does not inherit `-m "not slow"`, and it also picks up
-the `fMagCalc/` tests. The last full gate was **830 passed, 3 skipped**
-(2026-08-15, 30 min).
+`pytest -m "" -rs` and account for every skip. From the maintainer's workspace root
+that also collects the fMagCalc, rsMagCalc and magpipe tests; the last full gate there
+was **2275 passed, 2 skipped** (2026-10-27, 16 min), the two skips being structural
+(`seekpath` absent, ALPS present). Tests run in parallel (pytest-xdist); use `-n0` for
+`-s` or pdb. Tests that involve a compiled companion run under both paths through the
+`kernels` (`numpy`/`rust`) and `backend` (`numpy`/`fortran`) fixtures, and skip by name
+when the companion is not installed.
 
 Every feature is pinned to an **independent** reference — Sunny.jl (checked out
 in-repo), SpinW, or an exact analytic identity — never to a self-generated golden
@@ -394,6 +432,20 @@ touches its code path. `GAP_STATUS.md` records what each was validated against,
 and closes with the recurring trap this rule exists for: the engine has
 repeatedly produced plausible-but-wrong spectra, and every one was caught by an
 oracle or an exact identity, never by inspection.
+
+## Documentation
+
+| File | For |
+|---|---|
+| [MAGCALC_GUIDE.md](MAGCALC_GUIDE.md) | the orientation guide for AI models and new contributors |
+| [TUTORIAL.md](TUTORIAL.md) | the full user reference; mirrored to the [GitHub wiki](https://github.com/kit-matan/pyMagCalc/wiki) |
+| [CLAUDE.md](CLAUDE.md) | config-authoring rules and the engine's hard errors |
+| [GAP_STATUS.md](GAP_STATUS.md) | what is validated against what; internal conventions; the validation history |
+| [OPEN_WORK.md](OPEN_WORK.md) | what is next, with injection points and oracles |
+
+These are kept current: any change that alters a feature, default, config key,
+command, test count or convention they describe updates them in the same commit, and
+the wiki is regenerated from `TUTORIAL.md` with `python tools/sync_wiki.py`.
 
 ## Acknowledgments
 

@@ -1,6 +1,23 @@
 # Open work — pick-up notes
 
-> **Open as of 2026-10-25: the Rust kernels, K1–K5.** `RUST_KERNELS_PLAN.md` at the
+**Current status (2026-10-27): nothing large is open.** The Rust kernels plan is
+finished. K1–K5 and a sparse exact KPM guard are in rsMagCalc, and K6 (mixed-spin
+dipole S(Q,ω)) is in fMagCalc. Everything is merged to `master` and pushed (pyMagCalc
+`b37fcd0`, fMagCalc `eae20e3`, rsMagCalc `406345c`, now public). Last full gate: **2275
+passed, 2 skipped** (structural). Two small follow-ups are known and not started:
+
+1. **Large-cell SCGA.** At 128 sites, 2.8 s of `solve_lambda` is the SymPy zero-test
+   loop in `scga._exchange_cache` (442k calls), which K5 left in Python.
+   Oracle: `tests/test_scga.py`, λ unchanged (`==`).
+2. **Gapless powder averages differ between backends.** fMagCalc zeroes the intensity
+   of modes below 1e-3 meV and NumPy does not, so a gapless model's powder average
+   depends on `backend:`. It predates K6 (`GAP_STATUS.md`, "K6"). Decide which treatment
+   is right, and pin it to an independent reference, before changing either backend.
+
+Orientation for a new contributor or AI model: `MAGCALC_GUIDE.md`. The block below is
+the record of how the kernels landed, kept for the hashes and gate numbers it holds.
+
+> **Was open as of 2026-10-25: the Rust kernels, K1–K5.** `RUST_KERNELS_PLAN.md` at the
 > workspace root scopes six compiled kernels (rsMagCalc, PyO3) for the loops that are
 > Python-bound per site or per q — classical Metropolis + Landau–Lifshitz (K1),
 > CP^(N−1) sampler (K2), SU(N) LSWT (K3), KPM (K4), SCGA (K5), mixed-spin dipole
