@@ -170,6 +170,13 @@ def main(argv=None) -> int:
             return 2
     else:
         _git(wiki, "pull", "-q", "--ff-only", check=False)
+    # Commit as the repo's own identity, never the machine's global one: GitHub credits
+    # a commit by its email, and the global identity here belongs to another account.
+    for key in ("user.name", "user.email"):
+        val = subprocess.run(["git", "-C", str(REPO), "config", "--local", key],
+                             capture_output=True, text=True).stdout.strip()
+        if val:
+            _git(wiki, "config", "--local", key, val)
 
     pages = build_pages()
     stale = [n for n, body in pages.items()
