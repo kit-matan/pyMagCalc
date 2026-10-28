@@ -1,19 +1,22 @@
 # Open work — pick-up notes
 
-**Current status (2026-10-28): nothing large is open.** The Rust kernels plan is
+**Current status (2026-10-28): nothing is open.** The Rust kernels plan is
 finished. K1–K5 and a sparse exact KPM guard are in rsMagCalc, and K6 (mixed-spin
 dipole S(Q,ω)) is in fMagCalc. Everything is merged to `master` and pushed (pyMagCalc
-`b35e804` before the compiled annealer, fMagCalc `eae20e3`, rsMagCalc `1d2532d`, now
-public). Last full gate: **2331 passed, 2 skipped** (structural; 2026-10-28, see
-`GAP_STATUS.md`, "anneal on K1's dense model"). Four small follow-ups were known; item 3 is done:
+`9b70cf5` before the last two items, fMagCalc `4a5ff4b`, rsMagCalc `1d2532d`, now
+public). Last full gate: **2345 passed, 2 skipped** (structural; 2026-10-28, see
+`GAP_STATUS.md`, "Bond builders"). Four small follow-ups were known; item 3 is done:
 
-1. **Large-cell SCGA.** At 128 sites, 2.8 s of `solve_lambda` is the SymPy zero-test
-   loop in `scga._exchange_cache` (442k calls), which K5 left in Python.
-   Oracle: `tests/test_scga.py`, λ unchanged (`==`).
-2. **Gapless powder averages differ between backends.** fMagCalc zeroes the intensity
-   of modes below 1e-3 meV and NumPy does not, so a gapless model's powder average
-   depends on `backend:`. It predates K6 (`GAP_STATUS.md`, "K6"). Decide which treatment
-   is right, and pin it to an independent reference, before changing either backend.
+1. **Large-cell SCGA. DONE 2026-10-28.** The SymPy zero-test loop is gone from all four
+   bond builders (`sun.entangled.iter_pair_matrices`). `_exchange_cache` at 128 sites
+   went from 2.71 s to 0.29 s, with λ unchanged (`==`) and bond lists identical on all 61
+   buildable example configs (`GAP_STATUS.md`, "Bond builders").
+2. **Gapless powder averages differ between backends. DONE 2026-10-28.** NumPy was right.
+   A closed form showed fMagCalc's 1e-3 meV cut dropping well-conditioned modes, and
+   checking against Sunny turned up a second, larger Fortran defect: degenerate magnons
+   lost all intensity, at 172 of 1495 points on a Néel chain. Both are fixed in fMagCalc,
+   and the backends agree on gapless models to 1e-8 (`GAP_STATUS.md`, "Gapless and
+   degenerate S(Q,ω)").
 3. **1/S corrections on a fine mesh. DONE 2026-10-28.** The mesh is now solved in
    batched chunks on every core, and the general eigensolve runs only where the Cholesky
    fails. That is 25–27× faster, and the memory is bounded: 64³ at 16 sites takes 5.2 s

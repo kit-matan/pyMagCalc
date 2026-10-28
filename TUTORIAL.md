@@ -586,6 +586,11 @@ powder = calc.calculate_powder_average(q_mags, num_samples=200, backend="fortran
   fMagCalc speeds them up directly. `dispersion` fits with `fast: true` (the
   default) instead use the compile-once `DispersionEvaluator` (§4b) and do not
   need fMagCalc.
+* **Reinstall fMagCalc if it predates 2026-10-28.** Older builds gave degenerate
+  magnons zero intensity at some q, which hits every collinear antiferromagnet (about
+  one powder point in eight on a Néel chain). They also dropped every mode below
+  1e-3 meV. NumPy was right in both cases, and current fMagCalc agrees with it and
+  with Sunny (`GAP_STATUS.md`, "Gapless and degenerate S(Q,ω)").
 
 ---
 

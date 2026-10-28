@@ -158,6 +158,64 @@ def _pair_matrix(Jex, DM, Kex, i, j) -> np.ndarray:
     return M
 
 
+def _carries_term(x) -> bool:
+    """`_pair_matrix`'s own test for whether a DM / Kex entry contributes."""
+    return x is not None and not (hasattr(x, "is_zero_matrix") and x.is_zero_matrix)
+
+
+def iter_pair_matrices(Jex, DM, Kex, n_rows: int, n_cols: int):
+    """Yield (i, j, M) for every pair whose `_pair_matrix` is nonzero, in the
+    row-major order of the double loop
+
+        for i in range(n_rows):
+            for j in range(n_cols):
+                M = _pair_matrix(Jex, DM, Kex, i, j)
+                if np.any(M): ...
+
+    that every bond builder used to run, so the bond lists it produces are
+    IDENTICAL, entry for entry and in order.
+
+    That loop is over (site, image) pairs and paid SymPy's `is_zero_matrix` four
+    times per pair: 442k pairs and 6.9 s at 128 sites, for 768 bonds. Here the
+    candidates come from the nonzero entries of Jex (its sparse view) and from the
+    DM / Kex entries that pass the same test `_pair_matrix` applies, memoized per
+    object: the unset pairs all share one zero matrix, so that test runs a handful
+    of times rather than once per pair. `_pair_matrix` then decides each candidate
+    exactly as before, so a candidate whose terms cancel is still dropped.
+    """
+    cand = set()
+    todok = getattr(Jex, "todok", None)
+    if todok is not None:
+        cand.update(todok().keys())
+    elif isinstance(Jex, np.ndarray):
+        cand.update(map(tuple, np.argwhere(Jex != 0)))
+    else:
+        cand.update((i, j) for i in range(n_rows) for j in range(n_cols)
+                    if Jex[i, j] != 0)
+    memo = {}
+    for table in (DM, Kex):
+        last_empty = None          # the shared zero entry, skipped by identity
+        for i in range(n_rows):
+            row = table[i]
+            for j in range(n_cols):
+                x = row[j]
+                if x is None or x is last_empty:
+                    continue
+                key = id(x)
+                if key not in memo:
+                    memo[key] = _carries_term(x)
+                if memo[key]:
+                    cand.add((i, j))
+                else:
+                    last_empty = x
+    for i, j in sorted(cand):
+        if i >= n_rows or j >= n_cols:
+            continue
+        M = _pair_matrix(Jex, DM, Kex, i, j)
+        if np.any(M):
+            yield i, j, M
+
+
 def build_entangled_model(model, params: Optional[Sequence[float]] = None,
                           units: Optional[Sequence[Sequence[int]]] = None,
                           kernels: str = "numpy", n_workers: Optional[int] = None) -> SUNModel:
@@ -231,26 +289,22 @@ def build_entangled_model(model, params: Optional[Sequence[float]] = None,
     # ob - shift(jc) + shift(i): it accounts for where each endpoint sits inside its unit.
     A_intra = [np.zeros((unit_dim[0], unit_dim[0]), dtype=complex) for _ in range(U)]
     bond_C: Dict[Any, np.ndarray] = {}
-    for i in range(L):
-        for j in range(len(aouc)):
-            M = _pair_matrix(Jex, DM, Kex, i, j)
-            if not np.any(M):
-                continue
-            jc = j % L
-            ob = np.round((aouc[j] - apos[jc]) @ inv_lat).astype(int)
-            ui, uj = unit_of[i], unit_of[jc]
-            cell = ob - shift[jc] + shift[i]
-            oi, oj = 3 * role[i], 3 * role[jc]
-            if ui == uj and np.all(cell == 0):
-                emb = unit_ops[ui]
-                for a in range(3):
-                    for b in range(3):
-                        if M[a, b] != 0.0:
-                            A_intra[ui] += 0.5 * M[a, b] * (emb[oi + a] @ emb[oj + b])
-                continue
-            key = (ui, uj, tuple(int(x) for x in cell))
-            C = bond_C.setdefault(key, np.zeros((3 * n_per_unit[ui], 3 * n_per_unit[uj])))
-            C[oi:oi + 3, oj:oj + 3] += M
+    for i, j, M in iter_pair_matrices(Jex, DM, Kex, L, len(aouc)):
+        jc = j % L
+        ob = np.round((aouc[j] - apos[jc]) @ inv_lat).astype(int)
+        ui, uj = unit_of[i], unit_of[jc]
+        cell = ob - shift[jc] + shift[i]
+        oi, oj = 3 * role[i], 3 * role[jc]
+        if ui == uj and np.all(cell == 0):
+            emb = unit_ops[ui]
+            for a in range(3):
+                for b in range(3):
+                    if M[a, b] != 0.0:
+                        A_intra[ui] += 0.5 * M[a, b] * (emb[oi + a] @ emb[oj + b])
+            continue
+        key = (ui, uj, tuple(int(x) for x in cell))
+        C = bond_C.setdefault(key, np.zeros((3 * n_per_unit[ui], 3 * n_per_unit[uj])))
+        C[oi:oi + 3, oj:oj + 3] += M
 
     # On-site anisotropy (sia / sia_matrix / stevens), embedded per constituent. Folded
     # into the unit's on-site block BEFORE the reference state is chosen, so an

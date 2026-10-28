@@ -32,7 +32,7 @@ import numpy as np
 from . import kernels as _kernels
 from .annealing import energy as _cell_energy
 from .constants import GAMMA_ELECTRON as GAMMA, MU_B
-from .sun.entangled import _pair_matrix
+from .sun.entangled import iter_pair_matrices
 
 logger = logging.getLogger(__name__)
 
@@ -211,19 +211,15 @@ def build_supercell(model, params, supercell=(4, 4, 1), disorder=None,
         return False
 
     H = np.zeros((3 * N, 3 * N))
-    for i in range(n):
-        for j in range(len(aouc)):
-            M = _pair_matrix(Jex, DM, Kex, i, j)
-            if not np.any(M):
+    for i, j, M in iter_pair_matrices(Jex, DM, Kex, n, len(aouc)):
+        jc = j % n
+        off = np.round((aouc[j] - apos[jc]) @ inv).astype(int)
+        for cc in cells:
+            if wraps(cc, off):
                 continue
-            jc = j % n
-            off = np.round((aouc[j] - apos[jc]) @ inv).astype(int)
-            for cc in cells:
-                if wraps(cc, off):
-                    continue
-                a = site(cc, i)
-                bnb = site((cc[0] + off[0], cc[1] + off[1], cc[2] + off[2]), jc)
-                H[3 * a:3 * a + 3, 3 * bnb:3 * bnb + 3] += M
+            a = site(cc, i)
+            bnb = site((cc[0] + off[0], cc[1] + off[1], cc[2] + off[2]), jc)
+            H[3 * a:3 * a + 3, 3 * bnb:3 * bnb + 3] += M
 
     b = np.zeros(3 * N)
 

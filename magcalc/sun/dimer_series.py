@@ -44,7 +44,7 @@ import numpy as np
 import scipy.sparse as sp
 
 from ..constants import GAMMA_ELECTRON as GAMMA, MU_B
-from .entangled import _embedded_spin_ops, _pair_matrix
+from .entangled import _embedded_spin_ops, iter_pair_matrices
 
 logger = logging.getLogger(__name__)
 
@@ -457,15 +457,11 @@ class DimerSeriesModel:
         pos_frac = apos @ inv_lat
 
         directed = []
-        for i in range(L):
-            for j in range(len(aouc)):
-                M = _pair_matrix(Jex, DM, Kex, i, j)
-                if not np.any(M):
-                    continue
-                jc = j % L
-                off = tuple(int(x) for x in
-                            np.round((aouc[j] - apos[jc]) @ inv_lat).astype(int))
-                directed.append((i, jc, off, M, 0.5))   # both directions listed -> 1/2
+        for i, j, M in iter_pair_matrices(Jex, DM, Kex, L, len(aouc)):
+            jc = j % L
+            off = tuple(int(x) for x in
+                        np.round((aouc[j] - apos[jc]) @ inv_lat).astype(int))
+            directed.append((i, jc, off, M, 0.5))   # both directions listed -> 1/2
 
         field = None
         try:

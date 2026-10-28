@@ -998,6 +998,16 @@ still does, with a warning). Non-mixed Fortran output is bit-identical to before
 independent oracle is the alternating-spin chain's CLOSED FORM for energies and per-band
 intensities (`tests/test_mixed_spin_sqw.py`, both backends; GAP_STATUS "K6").
 
+**Degenerate and gapless models on the Fortran backend** (fixed 2026-10-28). fMagCalc
+matched each +q eigenvector to ONE best −q column. Inside a degenerate pair, which is
+every q of a collinear antiferromagnet, that column need not exist, and the mode came out
+with zero intensity: 172 of 1495 powder points on a Néel chain, at energies nowhere near
+zero. Separately, it zeroed every mode below 1e-3 meV, dropping well-conditioned ones.
+NumPy had neither problem. Both backends are now pinned to Sunny's degenerate-pair totals
+and to the ferromagnetic chain's closed form (`tests/test_gapless_backends.py`). Compare
+a degenerate group's TOTAL, never its per-mode split, which depends on each LAPACK's
+basis.
+
 **Mixed spin, the CLASSICAL half** (fixed 2026-08-18). `spin_magnitude` is the
 *reference* S — the first atom's `spin_S`, which is what `S_sym` binds to, with each
 site's ratio already inside H(q). The ground-state search used it as a **length** as

@@ -61,7 +61,7 @@ from scipy import optimize
 
 from . import kernels as _kernels
 from .form_factors import get_form_factor
-from .sun.entangled import _pair_matrix
+from .sun.entangled import iter_pair_matrices
 
 logger = logging.getLogger(__name__)
 
@@ -104,14 +104,10 @@ def _exchange_cache(model, params):
     inv_lat = np.linalg.inv(lat)
     N = len(apos)
     bonds = []
-    for i in range(N):
-        for j in range(len(aouc)):
-            M = _pair_matrix(Jex, DM, Kex, i, j)
-            if not np.any(M):
-                continue
-            jc = j % N
-            R = np.round((aouc[j] - apos[jc]) @ inv_lat).astype(int)
-            bonds.append((i, jc, R.astype(float) @ lat, M))
+    for i, j, M in iter_pair_matrices(Jex, DM, Kex, N, len(aouc)):
+        jc = j % N
+        R = np.round((aouc[j] - apos[jc]) @ inv_lat).astype(int)
+        bonds.append((i, jc, R.astype(float) @ lat, M))
     spins = np.asarray(model.spin_magnitudes(), float)
     return {"N": N, "bonds": bonds, "pos": apos, "spins": spins,
             "ions": _ion_list(model, N), "g": _g_tensors(model, N)}

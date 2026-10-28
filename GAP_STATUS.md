@@ -976,6 +976,106 @@ the rule-value parser fix a87c8a8 below, magpipe at 283f694), 2026-10-22, idle m
 ALPS ones. The merge is also what makes `sqrt(3)*D1x/3`, the allowed kagome DM, pass this check: before the
 parser fix it reached the check as an unbound `sqrt3` and was refused as a conflict.
 
+### Gapless and degenerate S(Q,ω) under `backend: fortran`, 2026-10-28 — two Fortran defects, pinned to Sunny and a closed form
+
+OPEN_WORK item 2 read: "fMagCalc zeroes the intensity of modes below 1e-3 meV and NumPy
+does not, so a gapless model's powder average depends on `backend:`; decide which is
+right, against an independent reference, before changing either." Two references
+decided it, and they found two Fortran defects. The second was much larger.
+
+**1. The 1e-3 meV cut was wrong on the exact-H path.** The ferromagnetic chain's
+one-magnon intensity is (S/2)(1 + Q̂_z²) exactly, at every q however small its energy.
+
+* NumPy reproduces it down to 4e-11 meV and gives 0 at the exact zero, where H(q) = 0.
+* Fortran zeroed every mode from 4e-11 to 9.9e-4 meV.
+
+The cut came from fMagCalc `30856dc`, which fought streaks on `run_sqw_model`, the path
+that rebuilds H(q) from bonds. That rebuild differs from the exact H by ~1e-14, enough
+to light up a Goldstone mode's ill-conditioned eigenvector. pyMagCalc calls `run_sqw`
+with the exact H instead. There the pseudo-norm rule both backends share already zeroes
+a genuinely zero mode: α = 0 when |N_ii| < 1e-12, where N_ii is the eigenvector's
+para-unitary norm. So the right treatment is NumPy's. `sqw_intensity` now takes the cut
+as an argument: 0 from `run_sqw`, 1e-3 meV from `run_sqw_model`, whose streak test
+still passes. The convention is that an exactly-zero mode carries no inelastic
+intensity, which is also a set of measure zero in any powder integral.
+
+**2. Degenerate magnons lost all their intensity, at energies far from zero.** This came
+out of checking item 1 on a Néel chain, where the two magnons are degenerate at every q.
+
+* After the cut was gone, Fortran still returned exactly 0 at 172 of 1495 powder points
+  above 0.2 meV, with energies of 0.06–0.36 meV. NumPy matched Sunny at all 1495.
+* The cause was in `kkd_matrix`'s ±q eigenvector matching. Fortran paired each +q
+  vector with the single −q column of best overlap. Inside a degenerate pair, the two
+  diagonalizations mix the subspace by an arbitrary unitary, so no column need overlap
+  enough. The mode then stayed unmatched, with α(−q) = 0 and no intensity.
+* pyMagCalc fixed exactly this on 2026-07-13 (`5449196`): it projects the +q target onto
+  the degenerate −q subspace. Its docstring says that without it, degenerate bands
+  "silently lose all S(q,w) weight". The Fortran port predated that and was never
+  updated. `match_reorder` now carries the same algorithm, line for line.
+
+Every collinear antiferromagnet run under `backend: fortran` was affected, in its S(Q,ω)
+maps as well as its powder averages, at the fraction of q points where the two LAPACK
+bases differ. The original library shows the same zeroed points. With the fix, the
+degenerate-pair totals match NumPy to 1.9e-8 at all 1600 points of 8 powder shells,
+the near-zero ones included.
+
+**Oracles** (`tests/test_gapless_backends.py`, both backends through the `backend`
+fixture):
+
+* the FM chain's closed form at six energies from 4e-11 meV up;
+* the exact zero giving 0;
+* the Néel chain's degenerate-pair totals against **Sunny 0.8.1** at 400 points on two
+  powder shells (`tests/data_afm_chain_sunny.json`, from
+  `tests/afm_chain_sunny_reference.jl`). Above 0.2 meV both backends agree with Sunny to
+  4.7e-7 relative. The cut-off exists because Sunny's 1e-8 regularization moves
+  energies near the Goldstone points;
+* gapless powder averages, FM and Néel, agreeing between the backends to 1e-8.
+
+Only a degenerate group's total is an observable. How a pair splits its weight differs
+by up to 3.6 between the backends and depends on each LAPACK's basis, so every
+comparison is of totals. On the original library the three Fortran cases fail. fMagCalc
+gets its own pin, `tests/test_degenerate_and_gapless.py`, against pyMagCalc as the
+oracle. Its other tests, the streak regression and the KFe3J parity at 1e-8 among them,
+pass unchanged (14 pytest, 7/7 ctest).
+
+### Bond builders: the (site, image) loop skipped, 2026-10-28 — SCGA's exchange cache 9× at 128 sites, λ bit-identical
+
+OPEN_WORK item 1. SCGA's `_exchange_cache` called `sun.entangled._pair_matrix` for every
+(site, image) pair: 442k pairs at 128 sites, for 768 bonds. Each call paid SymPy's
+`is_zero_matrix` four times, mostly on the one shared zero matrix the model builder puts
+in every unset DM and Kex entry. That cost 2.7–6.9 s, depending on load. The same loop
+ran in `thermal_mc.build_supercell`, the entangled-unit builder and the dimer series.
+
+`sun.entangled.iter_pair_matrices` replaces it in all four:
+
+* candidate pairs come from the nonzero entries of Jex, via SymPy's sparse `todok`;
+* DM and Kex entries pass the same test `_pair_matrix` applies, memoized per object,
+  with the shared zero skipped by identity;
+* `_pair_matrix` then decides each candidate as before, so terms that cancel are
+  still dropped;
+* output is row-major, the loop's order.
+
+The bond lists are therefore identical, entry for entry. Checked on all 61 buildable
+shipped example configs, 118 560 pairs and 3598 bonds, with exceptions compared too, and
+pinned in `tests/test_pair_iteration.py` against the loop itself. That test covers exact
+and float exchange, DM-only and Kex-only pairs, a list-valued Kex, `None`, the shared zero,
+an exactly cancelling pair, a NumPy Jex, and KFe3J's DM end to end. Removing the DM/Kex
+scan, or the sort, fails it.
+
+On the 128-site pyrochlore (S07's cell, 2×2×2, NN J only, nq = 6, kT = 0.05), times are
+in seconds:
+
+| step | before | after |
+|---|---|---|
+| `_exchange_cache` | 2.71 | 0.29 |
+| `solve_lambda`, `kernels: numpy` | 9.7 | 7.4 |
+| `solve_lambda`, `kernels: rust` | 3.4 | 1.2 |
+
+λ = 0.059040732407190946 under both kernels, before and after (`==`). What remains of the
+cache is the model's own `spin_interactions`, about 0.25 s.
+
+**Gate:** (2026-10-28, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`, pyMagCalc `9b70cf5` plus both changes, fMagCalc `4a5ff4b` (the same source, built and installed), rsMagCalc `1d2532d`, magpipe 283f694): **2345 passed, 2 skipped, 0 failed, 16 min 32 s**. The 14 added tests are `tests/test_pair_iteration.py` (4), `tests/test_gapless_backends.py` (8) and fMagCalc's `tests/test_degenerate_and_gapless.py` (2). The two skips are the structural pair.
+
 ### anneal on K1's dense model, 2026-10-28 — 19–185× per run, all starts in parallel
 
 `annealing.anneal`, the recommended ground-state search, was a per-spin Python
@@ -1233,7 +1333,8 @@ from fMagCalc HEAD before the change and compared with `np.array_equal` after, o
   pyMagCalc's NumPy path on the mixed chain (exact-H 1e-10; bond-model path at its 1e-8/1e-7 reconstruction floor),
   bad vectors, the subprocess refusal. Its existing parity tests are unchanged and pass.
 
-**One difference the parity tests have to step around, pre-existing and not K6's:** fMagCalc zeroes the intensity
+**One difference the parity tests had to step around, pre-existing and not K6's** (resolved 2026-10-28, see
+"Gapless and degenerate S(Q,ω) under `backend: fortran`"): fMagCalc zeroed the intensity
 of any mode with |E| < 1e-3 (the Goldstone-streak fix, fMagCalc `30856dc`); NumPy does not. A gapless model's
 powder average therefore differs by the Goldstone weight on every sphere (every sphere holds h = 0), so the
 mixed-spin powder parity runs on an easy-axis-gapped chain.
