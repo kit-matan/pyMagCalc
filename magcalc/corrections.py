@@ -30,6 +30,8 @@ magnetization_lswt_correction_dipole) AND the textbook S=1/2 square-lattice Heis
 antiferromagnet: dE = -0.157947 J/site, dS = 0.19657. See tests/test_corrections.py.
 """
 import logging
+import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import numpy as np
@@ -38,6 +40,7 @@ from scipy import linalg as la
 logger = logging.getLogger(__name__)
 
 _COLPA_JITTER = 1e-9         # tiny diagonal shift if H2 is only semi-definite
+_HERMITIAN_TOL = 1e-10       # relative; a less Hermitian H2 takes the per-k loop
 
 
 @dataclass
@@ -73,10 +76,79 @@ def _colpa(H2: np.ndarray):
     return omega, T
 
 
+def _chunk_sums_per_k(h_stack: np.ndarray, N: int):
+    """The original per-k loop, kept for any chunk the batched path cannot take.
+
+    Runs a general eigensolve at every k (to report |Im w|) and the Colpa transform
+    with its jitter fallback, exactly as `compute_corrections` always did.
+    """
+    g = np.diag([1.0] * N + [-1.0] * N)
+    sum_zero, dens = 0.0, np.zeros(N)
+    n_used = n_failed = 0
+    max_imag = 0.0
+    for H in h_stack:
+        ev = la.eigvals(H)
+        max_imag = max(max_imag, float(np.max(np.abs(np.imag(ev)))))
+        H2 = g @ H
+        A = H2[:N, :N]
+        try:
+            omega, T = _colpa(H2)
+        except la.LinAlgError:
+            n_failed += 1                  # H2 not positive definite at this k
+            continue
+        sum_zero += float(np.sum(omega) - np.real(np.trace(A)))
+        # <a^dag_i a_i> = sum_nu |T[i, N+nu]|^2
+        dens += np.sum(np.abs(T[:N, N:]) ** 2, axis=1)
+        n_used += 1
+    return sum_zero, dens, n_used, n_failed, max_imag
+
+
+def _chunk_sums(h_stack: np.ndarray, N: int):
+    """Zero-point and boson-density sums over a chunk of k-points, batched.
+
+    The same Colpa transform as `_colpa`, written for a stack. With H2 = L L^dag
+    (L lower triangular, i.e. K = L^dag) and W = L^dag g L = U diag(vals) U^dag:
+
+      * W has exactly N positive and N negative eigenvalues when H2 is positive
+        definite (Sylvester), so `eigh`'s ascending order puts the omega_nu last;
+      * the beta^dag columns of T = K^-1 U E are L^-dag U[:, :N] sqrt(-vals[:N]),
+        a triangular solve; only their first N rows enter <a^dag_i a_i>.
+
+    No general eigensolve is needed: g H2 = g K^dag K is similar to the Hermitian
+    K g K^dag = W, so where the Cholesky succeeds its eigenvalues are exactly real
+    and |Im w| is zero. The only k-points that can carry an imaginary magnon are
+    the ones whose Cholesky fails, and a failure anywhere in the chunk sends the
+    whole chunk through `_chunk_sums_per_k`, the original loop.
+    """
+    gv = np.concatenate([np.ones(N), -np.ones(N)])
+    H2 = h_stack * gv[None, :, None]
+    H2h = np.conj(np.swapaxes(H2, 1, 2))
+    # The similarity argument needs H2 itself to be Hermitian; the per-k loop ran
+    # its eigensolve on the raw, unsymmetrized H. Should H2 not be, take that loop.
+    if np.max(np.abs(H2 - H2h)) > _HERMITIAN_TOL * max(1.0, float(np.max(np.abs(H2)))):
+        return _chunk_sums_per_k(h_stack, N)
+    H2 = 0.5 * (H2 + H2h)
+    try:
+        L = np.linalg.cholesky(H2)
+    except np.linalg.LinAlgError:
+        return _chunk_sums_per_k(h_stack, N)
+    Lh = np.conj(np.swapaxes(L, 1, 2))
+    W = (Lh * gv[None, None, :]) @ L
+    W = 0.5 * (W + np.conj(np.swapaxes(W, 1, 2)))
+    vals, U = np.linalg.eigh(W)
+    Tn = np.linalg.solve(Lh, U[:, :, :N] * np.sqrt(np.abs(vals[:, None, :N])))
+    tr = np.real(np.trace(H2[:, :N, :N], axis1=1, axis2=2))
+    sum_zero = float(np.sum(np.abs(vals[:, N:])) - np.sum(tr))
+    dens = np.sum(np.abs(Tn[:, :N, :]) ** 2, axis=(0, 2))
+    return sum_zero, dens, len(h_stack), 0, 0.0
+
+
 def compute_corrections(
     calc,
     k_mesh=(8, 8, 8),
     tol_imag: float = 1e-3,
+    n_threads=None,
+    chunk_size=None,
 ) -> LSWTCorrections:
     """1/S corrections for a built MagCalc `calc`.
 
@@ -93,6 +165,11 @@ def compute_corrections(
     <a^dag_i a_i>, which carries no explicit S at all. Checked against the
     decoupled-sublattice identity: an S=1 and an S=1/2 chain in one cell return
     exactly the union of their separate results.
+
+    The mesh is processed in chunks of `chunk_size` k-points (default: about 8 MB
+    of H(q) each), batched through `_chunk_sums` on `n_threads` threads (default:
+    every core). Neither changes the answer beyond rounding: the per-chunk sums are
+    combined in mesh order.
     """
     from .core import reciprocal_b_matrix
 
@@ -114,37 +191,53 @@ def compute_corrections(
     qs = np.array([[a, b, c] for a in grid[0] for b in grid[1] for c in grid[2]])
     q_cart = qs @ B
 
-    g = np.diag([1.0] * N + [-1.0] * N)
-    h_stack = calc._build_h_stack(q_cart, S)
+    nk = len(q_cart)
+    if chunk_size is None:
+        # ~8 MB of H(q) per chunk. Each thread holds a few working copies of its
+        # chunk, so the peak is about (threads x 8 x 8 MB) whatever the mesh; the
+        # whole-mesh stack this replaced peaked near 8.6 GB at 64^3 and 16 sites.
+        chunk_size = max(16, int(2 ** 19 // (2 * N) ** 2))
+    chunks = [q_cart[i:i + chunk_size] for i in range(0, nk, chunk_size)]
+    n_threads = int(n_threads) if n_threads else (os.cpu_count() or 1)
+    n_threads = max(1, min(n_threads, len(chunks)))
+
+    # Prime the lambdify and Ewald-engine caches once, so the worker threads share
+    # them instead of each building its own.
+    calc._build_h_stack(q_cart[:1], S)
+
+    def one_chunk(qc):
+        return _chunk_sums(calc._build_h_stack(qc, S), N)
+
+    if n_threads == 1:
+        parts = [one_chunk(qc) for qc in chunks]
+    else:
+        # The LAPACK calls release the GIL, so threads run them in parallel; the
+        # sums are taken in chunk order below, so the result does not depend on
+        # the thread count.
+        with ThreadPoolExecutor(max_workers=n_threads) as ex:
+            parts = list(ex.map(one_chunk, chunks))
 
     sum_zero = 0.0                          # sum_k [ sum_nu omega - tr A ]
     dens = np.zeros(N)                      # sum_k <a^dag_i a_i>
     n_used = 0
     n_failed = 0
     max_imag = 0.0
-    for H in h_stack:
-        ev = la.eigvals(H)
-        max_imag = max(max_imag, float(np.max(np.abs(np.imag(ev)))))
-        H2 = g @ H
-        A = H2[:N, :N]
-        try:
-            omega, T = _colpa(H2)
-        except la.LinAlgError:
-            n_failed += 1                  # H2 not positive definite at this k
-            continue
-        sum_zero += float(np.sum(omega) - np.real(np.trace(A)))
-        # <a^dag_i a_i> = sum_nu |T[i, N+nu]|^2
-        dens += np.sum(np.abs(T[:N, N:]) ** 2, axis=1)
-        n_used += 1
+    for z, d, used, failed, imag in parts:
+        sum_zero += z
+        dens += d
+        n_used += used
+        n_failed += failed
+        max_imag = max(max_imag, imag)
+    n_total = nk
 
     # Imaginary eigenvalues OR a non-positive-definite H2 (Colpa failing) both mean the
     # reference state is not a classical minimum -- the corrections are then meaningless.
     not_a_minimum = (max_imag > tol_imag) or (n_failed > 0)
-    if n_used == 0 or (not_a_minimum and n_failed > 0.5 * len(h_stack)):
+    if n_used == 0 or (not_a_minimum and n_failed > 0.5 * n_total):
         raise ValueError(
             f"1/S corrections: the magnetic structure is NOT a classical minimum "
             f"(imaginary magnon energies, max |Im w| = {max_imag:.2e}; H(q) not positive "
-            f"definite at {n_failed}/{len(h_stack)} k-points). Minimise the structure "
+            f"definite at {n_failed}/{n_total} k-points). Minimise the structure "
             f"first -- corrections about a non-minimum are meaningless.")
     if not_a_minimum:
         logger.warning(

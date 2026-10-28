@@ -1072,7 +1072,8 @@ def run_calculation(config_file: str):
         cc = final_config.get('corrections', {}) or {}
         mesh = cc.get('k_mesh', [16, 16, 16])
         try:
-            res = compute_corrections(calculator, k_mesh=tuple(mesh))
+            res = compute_corrections(calculator, k_mesh=tuple(mesh),
+                                      n_threads=cc.get('n_threads'))
             logger.info(
                 f"1/S corrections ({res.n_kpoints} k-points): "
                 f"energy {res.energy_correction_per_site:+.6f} meV/site; "

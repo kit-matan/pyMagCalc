@@ -1223,6 +1223,11 @@ Logs `dE` (add to the classical energy) and `dS_i` (⟨S^z⟩ = S − dS), and s
 `corrections.npz`. Validated against Sunny and the textbook square-lattice Heisenberg
 antiferromagnet (`dE=−0.157947 J/site`, `dS=0.1966`).
 
+The energy converges on a coarse mesh, but the moment reduction needs a fine one
+(64 or more points per active axis) when the spectrum is gapless. The mesh is solved in
+batches on every core, so a 64³ mesh at 16 sites takes about 5 s. To leave cores free,
+set `corrections: {k_mesh: [64, 64, 64], n_threads: 4}`; the result does not depend on it.
+
 ---
 
 ## 5. Default Python Library Usage (Advanced)

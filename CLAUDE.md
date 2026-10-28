@@ -630,6 +630,13 @@ Validated against Sunny 0.8.1 AND the textbook S=1/2 square-lattice Heisenberg A
 Refuses (does not return a plausible number) when the structure is not a classical
 minimum: imaginary magnons, or H(q) non-positive-definite, both trigger a hard error.
 
+A fine mesh is affordable: the mesh is solved in batched chunks across every core
+(`corrections: {n_threads: N}` to limit that), 64^3 at 16 sites in about 5 s and under
+1 GB. Where the Cholesky of H2 succeeds the eigenvalues are provably real, so the general
+eigensolve runs only on a chunk where it fails; such a chunk takes the original per-k
+loop, so the refusal and warning above are unchanged (GAP_STATUS, "1/S corrections: the
+k-mesh batched").
+
 ## 5e. Magnetic CIF (mCIF) import
 
 ```yaml

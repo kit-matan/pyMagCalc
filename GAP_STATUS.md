@@ -976,6 +976,70 @@ the rule-value parser fix a87c8a8 below, magpipe at 283f694), 2026-10-22, idle m
 ALPS ones. The merge is also what makes `sqrt(3)*D1x/3`, the allowed kagome DM, pass this check: before the
 parser fix it reached the check as an unbound `sqrt3` and was refused as a conflict.
 
+### 1/S corrections: the k-mesh batched, 2026-10-28 — 25–27×, and bounded memory
+
+`corrections.compute_corrections` built H(q) for the WHOLE mesh in one stack, then
+looped over it in Python. At each k it ran a general eigensolve, `scipy.linalg.eigvals`,
+only to report |Im ω|, and then the Colpa transform: a Cholesky, a Hermitian eigensolve
+and an explicit inverse. At 16 sites that was 704 µs per k, and on the 64³ mesh §5d
+recommends for the moment reduction it meant about 185 s. The single stack
+also peaked near 8.6 GB there, more than half of this machine's 16 GB.
+
+Two changes, in `_chunk_sums`:
+
+* **No general eigensolve where the Cholesky succeeds.** With H₂ = K†K, g·H₂ = g·K†K is
+  similar to the Hermitian K g K† = W, so its eigenvalues are exactly real wherever the
+  Cholesky succeeds. |Im ω| can be nonzero only at a k where it fails.
+* **The Colpa transform runs batched, chunk by chunk, on threads.** The steps are a
+  Cholesky, the eigensolve of W, and one solve for the β† columns of T = K⁻¹UE, done
+  over chunks of about 8 MB of H(q). Chunks are spread over `n_threads` threads (the
+  default is every core; config key `corrections.n_threads`), since LAPACK releases the
+  GIL. Each H(q) chunk is built just before it is solved. The per-chunk sums are combined
+  in mesh order, so the thread count does not change the answer.
+
+Any chunk where that argument does not hold goes through the original loop, kept
+verbatim as `_chunk_sums_per_k`. That covers a Cholesky failing anywhere in the chunk,
+and an H₂ that is not Hermitian to 1e-10 relative (the old eigensolve ran on the raw H).
+The failure count, |Im ω|, the jitter retry, the warning and the refusal are therefore
+exactly what they were.
+
+**fMagCalc and K3 were not used, though OPEN_WORK proposed them.** `fmagcalc.run_dispersion`
+returns energies only, and the moment reduction needs the Bogoliubov eigenvectors. There
+is also no SU(N) corrections path for K3's `SunModel` to serve: `compute_corrections`
+takes the dipole `MagCalc`.
+
+**Oracles.** The physics pins are unchanged and now run through the batched path: the
+ferromagnet's exact zero, and the S = ½ square-lattice dE = −0.157947 J and dS → 0.1966.
+New tests in `tests/test_corrections.py`:
+
+* the batched sums equal the original loop's on an 8-site supercell (1e-12);
+* complex one-mode blocks are checked against the closed form ω = √(A² − |B|²),
+  ⟨a†a⟩ = (A/ω − 1)/2;
+* a chunk holding one unstable k reports the same failure count and |Im ω| as the old
+  loop, and so does a non-Hermitian chunk;
+* the thread count and the chunk size don't change the result (1e-14);
+* the runner passes `n_threads` through;
+* (slow) KFe3J, a 9-site non-collinear state with DM and complex H(q): the batched sums
+  match the loop to 1e-16 relative in the energy sum and 2e-13 in the densities.
+
+**Mutation-checked:** taking the β columns instead of the β† ones, solving with L instead
+of L†, or skipping the Hermiticity check each fails the new tests. The second also fails
+the textbook pins.
+
+**Timing** (10 cores, 2026-10-28, no pytest live; about three cores busy with desktop
+apps). The cell is the 2-site square-lattice antiferromagnet on a magnetic supercell,
+with the lambdify done before the clock starts:
+
+| cell, mesh | before | after | peak RSS before → after |
+|---|---|---|---|
+| 16 sites, 32³ | 23.1 s (704 µs/k) | **0.94 s** (25×; 4.3 s, 5.4×, on one thread) | 1.15 → 0.74 GB |
+| 16 sites, 64³ | ≈ 185 s, not run (≈ 8.6 GB) | **5.2 s** | → 0.73 GB |
+| 64 sites, 12³ | 39.6 s (22.9 ms/k) | **1.44 s** (27×) | 1.05 → 0.79 GB |
+
+The before and after results agree to 5e-15 in dE and dS.
+
+**Gate:** (2026-10-28, ended 09:00, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`, pyMagCalc `b7421b7` plus this change, rsMagCalc `ff463f3`, fMagCalc `eae20e3`, magpipe 283f694): **2295 passed, 3 failed, 2 skipped, 17 min 45 s**. The three failures were magpipe's live Materials Project tests (`magpipe/tests/test_mp.py`), each a DNS failure resolving api.materialsproject.org during the run; all three pass on rerun. That makes **2298 passing**, the previous 2292 plus this change's 6 tests. The two skips are the structural pair.
+
 ### Ewald dipolar sum: q-independent terms computed once, 2026-10-27 — 63–84× per q, A(q) pinned to Sunny
 
 `ewald.dipole_ewald_at_q` ran a Python double loop over every site pair at every q, and
