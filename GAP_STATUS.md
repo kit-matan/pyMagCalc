@@ -976,6 +976,38 @@ the rule-value parser fix a87c8a8 below, magpipe at 283f694), 2026-10-22, idle m
 ALPS ones. The merge is also what makes `sqrt(3)*D1x/3`, the allowed kagome DM, pass this check: before the
 parser fix it reached the check as an unbound `sqrt3` and was refused as a conflict.
 
+### mCIF import reads the ion; a bare `+` is a charge of one, 2026-10-28
+
+`read_mcif` never read `_atom_site_type_symbol`, so a structure imported from an mCIF
+had no magnetic form factor unless the caller named an ion: `from_mcif` without
+`mcif: {ion: ...}`, `magcalc mcif` without `--ion`, and magpipe's MAGNDATA ingest all
+computed S(Q,ω) with f(Q) = 1, even on a file that said `Tb3+`. Each site now carries
+`type` (the symbol as written) and `ion`. The ion is set when the symbol states an
+integer charge: `Mn3+`, sign-first `Fe+3`, and `Cu+` as Cu1+. A bare element, a
+label-like `Mn1`, a non-integer `Fe2.5+` or a placeholder gives none, since nothing
+guesses (`mcif.ion_from_type_symbol`). `mcif_to_config_fragment` uses the file's ion
+unless one is passed, which still wins for every site.
+
+**Swept over MAGNDATA's 2414 deposits** against the committed reader:
+
+* the same 68 refusals, and not one site position or moment changed;
+* 544 sites state a charge, 88 of them sign-first;
+* every one names the element its label does.
+
+28 014 of the 28 558 sites give only the element, so for most MAGNDATA files the ion
+still has to come from elsewhere: state it with `mcif: {ion: ...}` when intensities
+matter.
+
+**A separate one-line bug, found beside it.** `form_factors._normalize_ion('Cu+')`
+returned `Cu0`, the neutral atom's form factor: a sign with no digit fell through to
+charge 0. It is now `Cu1`.
+
+Pinned in `tests/test_mcif.py`: nine type-symbol cases, TbSb's six `Tb3+` sites, the
+fragment taking the file's ion unless one is given (read back through
+`GenericSpinModel.ion_list`), and a file without the column giving none. The bare-sign
+fix is pinned in `tests/test_form_factor.py`. Gate (workspace root, with magpipe's
+schema 0.6 alongside): **2392 passed, 2 skipped, 0 failed, 16 min 22 s**.
+
 ### Gapless and degenerate S(Q,ω) under `backend: fortran`, 2026-10-28 — two Fortran defects, pinned to Sunny and a closed form
 
 OPEN_WORK item 2 read: "fMagCalc zeroes the intensity of modes below 1e-3 meV and NumPy

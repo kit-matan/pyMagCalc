@@ -234,3 +234,12 @@ def test_charge_survives_the_wyckoff_expansion():
     doc = yaml.safe_load(open(os.path.join(
         HERE, "..", "examples", "materials", "FeI2", "config_fei2_sun.yaml")))
     assert set(GenericSpinModel(doc).ion_list()) == {"Fe2+"}
+
+
+def test_a_bare_plus_sign_is_a_charge_of_one():
+    """'Cu+' is Cu1+. It used to normalize to Cu0, the neutral atom's form factor."""
+    from magcalc.form_factors import _normalize_ion, get_form_factor
+
+    assert _normalize_ion("Cu+") == _normalize_ion("Cu1+") == "Cu1"
+    assert get_form_factor("Cu+", 2.0) == get_form_factor("Cu1+", 2.0)
+    assert get_form_factor("Cu+", 2.0) != get_form_factor("Cu", 2.0)

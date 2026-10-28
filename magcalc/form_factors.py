@@ -377,6 +377,10 @@ def _normalize_ion(ion: str) -> str:
     element, charge, sign, config = m.groups()
     if sign == "-":          # no anion entries are tabulated
         return ""
+    # A bare sign is a charge of ONE: 'Cu+' is Cu1+, not the neutral atom. It
+    # used to fall through to '0' and silently take Cu0's form factor.
+    if sign == "+" and not charge:
+        charge = "1"
     candidate = f"{element}{charge or '0'}{config}"
     return candidate if candidate in RADIAL_INTEGRAL_COEFFICIENTS else ""
 

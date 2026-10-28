@@ -213,3 +213,49 @@ def test_two_images_of_one_site_are_matched_by_distance_not_by_a_grid_bucket(tmp
 
     # (0,0,z) is fixed by -x,-y,z, so there is exactly ONE site, not two
     assert len(read_mcif(str(p))["sites"]) == 1
+
+
+# --------------------------------------------------------------------------- the ion
+# `_atom_site_type_symbol` was never read (2026-10-28): a structure imported from an
+# mCIF had no magnetic form factor unless the caller named an ion, even when the
+# file said 'Tb3+'. Swept over MAGNDATA's 2414 deposits the reader change alters no
+# site position or moment and no read verdict (68 refusals before and after); 544
+# sites state a charge, 'Fe+3' sign-first on 88 of them, and every one names the
+# element its label does.
+from magcalc.mcif import ion_from_type_symbol  # noqa: E402
+
+
+@pytest.mark.parametrize("symbol,ion", [
+    ("Mn3+", "Mn3+"), ("Fe+3", "Fe3+"), ("Cu+", "Cu1+"), ("Sb3-", "Sb3-"),
+    ("Fe", None), ("Mn1", None), ("Fe2.5+", None), ("?", None), (None, None),
+])
+def test_the_ion_a_type_symbol_states(symbol, ion):
+    assert ion_from_type_symbol(symbol) == ion
+
+
+def test_read_mcif_reports_each_sites_type_symbol_and_ion():
+    d = read_mcif(TBSB)
+    assert len(d["sites"]) == 6
+    assert {(s["type"], s["ion"]) for s in d["sites"]} == {("Tb3+", "Tb3+")}
+
+
+def test_the_fragment_takes_the_files_ion_unless_one_is_given():
+    from magcalc.generic_model import GenericSpinModel
+
+    frag = mcif_to_config_fragment(TBSB, spin_S=6.0)
+    assert {a.get("ion") for a in frag["crystal_structure"]["atoms_uc"]} == {"Tb3+"}
+    frag = mcif_to_config_fragment(TBSB, spin_S=6.0, ion="Dy3+")
+    assert {a.get("ion") for a in frag["crystal_structure"]["atoms_uc"]} == {"Dy3+"}
+    # and pyMagCalc's model reads it as the form-factor ion
+    cfg = dict(mcif_to_config_fragment(TBSB, spin_S=6.0),
+               interactions={"heisenberg": []}, parameters={}, parameter_order=[])
+    assert GenericSpinModel(cfg).ion_list() == ["Tb3+"] * 6
+
+
+def test_a_file_without_type_symbols_gives_no_ion(tmp_path):
+    text = open(TBSB).read()
+    p = tmp_path / "no_type.mcif"
+    p.write_text(text.replace("_atom_site_type_symbol\n", "").replace(" Tb3+  ", " ")
+                 .replace(" Sb3-  ", " "))
+    d = read_mcif(str(p))
+    assert len(d["sites"]) == 6 and {(s["type"], s["ion"]) for s in d["sites"]} == {(None, None)}

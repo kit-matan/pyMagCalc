@@ -227,6 +227,8 @@ Import a magnetic structure from an mCIF (magnetic space group):
 ```bash
 magcalc mcif structure.mcif -o config_from_mcif.yaml
 ```
+Each site's form-factor ion comes from the file's `_atom_site_type_symbol` when it
+states a charge (`Mn3+`, or sign-first `Fe+3`); `--ion` overrides it for every site.
 
 ### 6. Check Which Engine Is Running
 If behaviour is inexplicable — a fix "not applied", a documented key
@@ -414,12 +416,12 @@ pytest -m slow -k <name>    # one feature's deep validations
 pytest -m ""                # EVERYTHING -- the merge gate
 ```
 
-`pytest` alone runs the fast suite (1126 of 1335 tests), which is the iteration
+`pytest` alone runs the fast suite (1139 of 1348 tests), which is the iteration
 loop, **not** a merge gate: the `slow` marker holds the exact-diagonalization
 oracles, convergence sweeps and integration runs. Before merging to `master`, run
 `pytest -m "" -rs` and account for every skip. From the maintainer's workspace root
 that also collects the fMagCalc, rsMagCalc and magpipe tests; the last full gate there
-was **2353 passed, 2 skipped** (2026-10-28, 15 min), the two skips being structural
+was **2392 passed, 2 skipped** (2026-10-28, 16 min), the two skips being structural
 (`seekpath` absent, ALPS present). Tests run in parallel (pytest-xdist); use `-n0` for
 `-s` or pdb. Tests that involve a compiled companion run under both paths through the
 `kernels` (`numpy`/`rust`) and `backend` (`numpy`/`fortran`) fixtures, and skip by name

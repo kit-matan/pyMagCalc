@@ -230,6 +230,37 @@ def cartesian_to_moment(m_cart, lattice_vectors, basis: str = 'unit_axes') -> np
     return np.asarray(m_cart, dtype=float) @ np.linalg.inv(M)
 
 
+_TYPE_SYMBOL_ION_RE = re.compile(r'^([A-Z][a-z]?)(\d+(?:\.\d+)?)?([+-])$')
+# Sign first, 'Fe+3': 88 sites of MAGNDATA's corpus are written this way.
+_TYPE_SYMBOL_ION_SIGN_FIRST_RE = re.compile(r'^([A-Z][a-z]?)([+-])(\d+(?:\.\d+)?)$')
+
+
+def ion_from_type_symbol(symbol) -> "str | None":
+    """The form-factor ion an `_atom_site_type_symbol` states, or None.
+
+    'Mn3+' -> 'Mn3+', 'Fe+3' -> 'Fe3+' (sign first, as some deposits write it),
+    'Cu+' -> 'Cu1+' (a bare sign is a charge of one), 'Sb3-' -> 'Sb3-'. A symbol with no charge ('Fe', or a label-like 'Mn1'), a
+    non-integer charge ('Fe2.5+', which names no tabulated ion), a CIF
+    placeholder ('?', '.') and None all give None: the charge is either stated
+    or it is not, and nothing here guesses one.
+    """
+    if symbol is None:
+        return None
+    text = str(symbol).strip()
+    m = _TYPE_SYMBOL_ION_RE.match(text)
+    if m:
+        el, mag, sign = m.groups()
+    else:
+        m = _TYPE_SYMBOL_ION_SIGN_FIRST_RE.match(text)
+        if not m:
+            return None
+        el, sign, mag = m.groups()
+    n = float(mag) if mag else 1.0
+    if n != round(n) or n == 0:
+        return None
+    return f"{el}{int(round(n))}{sign}"
+
+
 # --------------------------------------------------------------------------- public API
 def read_mcif(path: str, tol: float = 1e-4,
               moment_basis: str = 'unit_axes') -> Dict:
@@ -237,7 +268,14 @@ def read_mcif(path: str, tol: float = 1e-4,
 
         lattice_vectors : (3,3) rows, Angstrom
         sites           : list of {label, pos (frac, in the MAGNETIC cell),
-                                    moment (Cartesian), direction (unit)}
+                                    moment (Cartesian), direction (unit),
+                                    type, ion}
+
+    `type` is the site's `_atom_site_type_symbol` as written (None if the file has
+    no such column), and `ion` the form-factor ion it states, e.g. 'Mn3+', or None
+    when it states no charge (`ion_from_type_symbol`). MAGNDATA files carry it;
+    until 2026-10-28 it was not read, so a structure imported from one had no
+    magnetic form factor unless the caller supplied an ion.
 
     Every magnetic-atom orbit is expanded by the magnetic space group. Non-magnetic
     atoms (no listed moment) are omitted -- LSWT only needs the magnetic sublattice.
@@ -283,6 +321,9 @@ def read_mcif(path: str, tol: float = 1e-4,
     oi = hpos.index('_atom_site_occupancy') if '_atom_site_occupancy' in hpos else None
     occ_by_label = {r[li]: (_cif_float(r[oi]) if oi is not None and oi < len(r) else 1.0)
                     for r in rpos}
+    ti = hpos.index('_atom_site_type_symbol') if '_atom_site_type_symbol' in hpos else None
+    type_by_label = {r[li]: (r[ti] if ti is not None and ti < len(r) else None)
+                     for r in rpos}
 
     # moments (by label)
     hm, rm = _find_loop(loops, '_atom_site_moment.label')
@@ -330,7 +371,9 @@ def read_mcif(path: str, tol: float = 1e-4,
                     d = np.linalg.norm(m_cart)
                     sites.append({
                         'label': label, 'pos': r_new, 'moment': m_cart,
-                        'direction': (m_cart / d) if d > 1e-9 else np.zeros(3)})
+                        'direction': (m_cart / d) if d > 1e-9 else np.zeros(3),
+                        'type': type_by_label.get(label),
+                        'ion': ion_from_type_symbol(type_by_label.get(label))})
                 else:
                     prev_label = sites[match]['label']
                     if prev_label != label:
@@ -370,14 +413,20 @@ def mcif_to_config_fragment(path: str, spin_S: float = 1.0,
     Merge into a `magcalc run` config, add `interactions`/`parameters`, and run. The
     magnetic cell and per-site spin DIRECTIONS come straight from the file; magnitudes
     are set by `spin_S` (LSWT uses the direction, not the mCIF moment length).
+
+    The form-factor ion is `ion` when given (it wins, for every site), else the one
+    the file's `_atom_site_type_symbol` states, else none. Before 2026-10-28 the
+    file's was never read, so an mCIF imported without `mcif: {ion: ...}` ran with
+    f(Q) = 1 even when the file said 'Mn3+'.
     """
     data = read_mcif(path)
     atoms, dirs = [], []
     for i, s in enumerate(data['sites']):
         a = {'label': f"{s['label']}_{i}", 'pos': [float(x) for x in s['pos']],
              'spin_S': spin_S}
-        if ion:
-            a['ion'] = ion
+        site_ion = ion or s.get('ion')
+        if site_ion:
+            a['ion'] = site_ion
         atoms.append(a)
         dirs.append([float(x) for x in s['direction']])
     return {

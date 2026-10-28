@@ -655,6 +655,14 @@ into the full magnetic cell -- lattice, per-site positions, and spin DIRECTIONS 
 only add `interactions`/`parameters`/`tasks`. An explicit `crystal_structure` in the same
 config overrides the mCIF-derived one.
 
+**The form-factor ion comes from the file** (since 2026-10-28): `read_mcif` returns each
+site's `_atom_site_type_symbol` as `type`, and as `ion` when it states an integer charge
+(`Mn3+`, `Fe+3` sign-first, `Cu+` = Cu1+). `mcif: {ion: ...}` still wins for every site.
+Before, the column was never read, so an mCIF imported without `mcif.ion` ran with
+f(Q) = 1 even when the file said `Tb3+`. Most MAGNDATA deposits give only the element
+(28014 of 28558 sites), so check the ion when intensities matter. Swept over the corpus,
+the change moved no position, moment or read verdict.
+
 CLI: `magcalc mcif file.mcif [--out frag.yaml] [--spin-s S] [--ion Fe2+]` prints the
 expanded sites, or writes a runnable config fragment. **The reverse direction exists as of
 2026-08-18**: `magcalc mcif-out config.yaml [-o out.mcif] [--minimize]` writes the config's
