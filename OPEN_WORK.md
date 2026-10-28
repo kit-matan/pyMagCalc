@@ -3,9 +3,9 @@
 **Current status (2026-10-28): nothing large is open.** The Rust kernels plan is
 finished. K1–K5 and a sparse exact KPM guard are in rsMagCalc, and K6 (mixed-spin
 dipole S(Q,ω)) is in fMagCalc. Everything is merged to `master` and pushed (pyMagCalc
-`b7421b7` before the batched corrections, fMagCalc `eae20e3`, rsMagCalc `ff463f3`, now
-public). Last full gate: **2298 passing, 2 skipped** (structural; 2026-10-28, see
-`GAP_STATUS.md`, "1/S corrections: the k-mesh batched"). Four small follow-ups were known; item 3 is done:
+`b35e804` before the compiled annealer, fMagCalc `eae20e3`, rsMagCalc `1d2532d`, now
+public). Last full gate: **2331 passed, 2 skipped** (structural; 2026-10-28, see
+`GAP_STATUS.md`, "anneal on K1's dense model"). Four small follow-ups were known; item 3 is done:
 
 1. **Large-cell SCGA.** At 128 sites, 2.8 s of `solve_lambda` is the SymPy zero-test
    loop in `scga._exchange_cache` (442k calls), which K5 left in Python.
@@ -20,11 +20,11 @@ public). Last full gate: **2298 passing, 2 skipped** (structural; 2026-10-28, se
    in 0.73 GB, where the old code needed about 185 s and 8.6 GB. The fMagCalc/K3 route
    proposed here did not apply: `run_dispersion` returns no eigenvectors, and there is no
    SU(N) corrections path (`GAP_STATUS.md`, "1/S corrections: the k-mesh batched").
-4. **`anneal` on large cells.** `annealing.anneal`, the recommended ground-state
-   search, is a per-spin Python Metropolis loop: 4.3 s per 2000-sweep run at 128 sites,
-   ×4 default starts. It has the shape of K1's `thermal_mc` sweep, already compiled in
-   rsMagCalc, so reuse that kernel with a cooling schedule. Small cells (0.4 s at 16
-   sites) gain nothing.
+4. **`anneal` on large cells. DONE 2026-10-28.** Under `kernels: rust` the annealer
+   and its steepest-descent polish run in rsMagCalc on K1's dense model, with all
+   `num_starts` runs in parallel. One 2000-sweep run went from 0.36 s to 2 ms at 16
+   sites and from 2.8 s to 0.15 s at 128. Four parallel runs at 128 sites take 0.18 s
+   instead of 10.9 s (`GAP_STATUS.md`, "anneal on K1's dense model").
 
 Items 3 and 4 come from the 2026-10-27 assessment of what is still worth compiling.
 Its third candidate, the Ewald dipolar sum, is done (`GAP_STATUS.md`, "Ewald dipolar

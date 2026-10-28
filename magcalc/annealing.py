@@ -35,11 +35,21 @@ Two drivers:
 
 Both are followed by an L-BFGS polish in `MagCalc.minimize_energy`, so the returned
 state is a true stationary point, not merely a low-temperature snapshot.
+
+`kernels="rust"` runs both in rsMagCalc on K1's dense model and move primitives
+(`rsmagcalc.anneal`, `rsmagcalc.steepest_descent`): the same move loop, proposal
+mix, schedule, best-state tracking and keep-if-better polish, and `anneal_runs`
+runs several starts in parallel. The steepest descent is deterministic and matches
+this loop to rounding; the anneal draws from a different random stream, so a rust
+run with the same seed is a different, equally valid sample. A kernel failure is
+logged and the NumPy loop runs instead.
 """
 import logging
-from typing import Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
+
+from . import kernels as _kernels
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +92,7 @@ def steepest_descent(
     n: int,
     max_iter: int = 500,
     tol: float = 1e-10,
+    kernels: str = "numpy",
 ) -> Tuple[np.ndarray, float]:
     """SpinW `optmagsteep`: repeatedly align each spin with its local field.
 
@@ -103,6 +114,14 @@ def steepest_descent(
     result to be no worse than what they handed in.
     """
     Sv = spin_lengths(S, n)
+    rs = _kernels.rust_for(_kernels.resolve(kernels))
+    if rs is not None:
+        try:
+            mb, eb = rs.steepest_descent(H, b, float(c), Sv, np.reshape(m, (n, 3)),
+                                         max_iter=max_iter, tol=tol)
+            return np.asarray(mb).ravel(), float(eb)
+        except Exception:
+            _kernels.fell_back("steepest_descent")
     m = m.copy()
     e_prev = energy(m, H, b, c)
     m_best, e_best = m.copy(), e_prev
@@ -128,6 +147,21 @@ def steepest_descent(
     return m_best, e_best
 
 
+def _schedule(H, b, Sv, T_start, T_end) -> Tuple[float, float]:
+    """(T_start, T_end) in meV, defaults from the energy scale of the couplings.
+
+    The scale is the typical local field a spin feels: hot enough to melt the
+    structure, not so hot the schedule wastes its budget in a paramagnet. The
+    LARGEST spin sets the hottest local field, so it sets the schedule -- a
+    temperature chosen from the smallest would never melt the big moments.
+    """
+    scale = float(np.abs(H).sum(axis=1).max() * np.max(Sv) + np.abs(b).max())
+    scale = max(scale, 1e-6)
+    T0 = float(T_start) if T_start is not None else scale
+    T1 = float(T_end) if T_end is not None else scale * 1e-6
+    return T0, max(T1, 1e-12)
+
+
 def anneal(
     H: np.ndarray,
     b: np.ndarray,
@@ -140,6 +174,7 @@ def anneal(
     seed: int = 0,
     m0: Optional[np.ndarray] = None,
     polish_steep: bool = True,
+    kernels: str = "numpy",
 ) -> Tuple[np.ndarray, float]:
     """Simulated annealing (Metropolis) for the classical ground state.
 
@@ -151,20 +186,19 @@ def anneal(
     Returns the BEST state seen (not the final one -- Metropolis can wander uphill
     at the end of a finite schedule).
     """
-    rng = np.random.default_rng(seed)
     Sv = spin_lengths(S, n)
+    T0, T1 = _schedule(H, b, Sv, T_start, T_end)
+    rs = _kernels.rust_for(_kernels.resolve(kernels))
+    if rs is not None:
+        try:
+            ms, es = rs.anneal(H, b, float(c), Sv, int(n_sweeps), T0, T1, [int(seed)],
+                               m0=None if m0 is None else np.reshape(m0, (n, 3)),
+                               polish=bool(polish_steep))
+            return np.asarray(ms[0]).ravel(), float(es[0])
+        except Exception:
+            _kernels.fell_back("anneal")
+    rng = np.random.default_rng(seed)
     m = random_spins(n, Sv, rng) if m0 is None else m0.copy()
-
-    # Energy scale: the typical local field a spin feels. This sets a temperature
-    # that is hot enough to melt the structure but not so hot the schedule wastes
-    # its whole budget in a paramagnet.
-    # The LARGEST spin sets the hottest local field, so it sets the schedule --
-    # a temperature chosen from the smallest would never melt the big moments.
-    scale = float(np.abs(H).sum(axis=1).max() * Sv.max() + np.abs(b).max())
-    scale = max(scale, 1e-6)
-    T0 = float(T_start) if T_start is not None else scale
-    T1 = float(T_end) if T_end is not None else scale * 1e-6
-    T1 = max(T1, 1e-12)
     cooling = (T1 / T0) ** (1.0 / max(n_sweeps - 1, 1))
 
     g = H @ m + b
@@ -233,6 +267,45 @@ def anneal(
             m_best, e_best = m_pol, e_pol
 
     return m_best, e_best
+
+
+def anneal_runs(
+    H: np.ndarray,
+    b: np.ndarray,
+    c: float,
+    S,
+    n: int,
+    seeds: Sequence[int],
+    n_sweeps: int = 2000,
+    T_start: Optional[float] = None,
+    T_end: Optional[float] = None,
+    m0: Optional[np.ndarray] = None,
+    polish_steep: bool = True,
+    kernels: str = "numpy",
+    n_workers: Optional[int] = None,
+) -> List[Tuple[np.ndarray, float]]:
+    """`anneal` once per seed; run 0 starts from `m0` when given.
+
+    The NumPy path loops over `anneal`. Under `kernels="rust"` all runs go to
+    rsMagCalc in ONE call and execute in parallel (`n_workers`, None = every core);
+    each run owns the stream of its seed, so the result is that of calling
+    `anneal(..., seed=s, kernels="rust")` once per seed, whatever the thread count.
+    """
+    seeds = [int(x) for x in seeds]
+    Sv = spin_lengths(S, n)
+    rs = _kernels.rust_for(_kernels.resolve(kernels))
+    if rs is not None:
+        try:
+            T0, T1 = _schedule(H, b, Sv, T_start, T_end)
+            ms, es = rs.anneal(H, b, float(c), Sv, int(n_sweeps), T0, T1, seeds,
+                               m0=None if m0 is None else np.reshape(m0, (n, 3)),
+                               polish=bool(polish_steep), n_workers=n_workers)
+            return [(np.asarray(m).ravel(), float(e)) for m, e in zip(ms, es)]
+        except Exception:
+            _kernels.fell_back("anneal")
+    return [anneal(H, b, c, Sv, n, n_sweeps=n_sweeps, T_start=T_start, T_end=T_end,
+                   seed=sd, m0=m0 if k == 0 else None, polish_steep=polish_steep)
+            for k, sd in enumerate(seeds)]
 
 
 def cartesian_to_angles(m: np.ndarray, n: int) -> np.ndarray:

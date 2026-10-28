@@ -976,6 +976,98 @@ the rule-value parser fix a87c8a8 below, magpipe at 283f694), 2026-10-22, idle m
 ALPS ones. The merge is also what makes `sqrt(3)*D1x/3`, the allowed kagome DM, pass this check: before the
 parser fix it reached the check as an unbound `sqrt3` and was refused as a conflict.
 
+### anneal on K1's dense model, 2026-10-28 — 19–185× per run, all starts in parallel
+
+`annealing.anneal`, the recommended ground-state search, was a per-spin Python
+Metropolis loop: 0.36 s per 2000-sweep run at 16 sites, 2.8 s at 128, times
+`num_starts`. Under `calculation: {kernels: rust}` it now runs in rsMagCalc
+(`rsmagcalc.anneal`), together with its steepest-descent polish
+(`rsmagcalc.steepest_descent`). `anneal_runs` sends every start in ONE call that runs
+them in parallel on every core. `_minimize_anneal` uses it, `minimize_energy` takes
+`kernels=`, and the runner passes `calculation.kernels` through.
+`minimization.n_workers` keeps its meaning for the multistart methods' process pool
+and is not used here.
+
+**It reuses K1's dense model, not K1's `sweep`.** The move energy, the accept-and-
+update-gradient step, the random spins and the per-site lengths are K1's. The move loop
+is the annealer's own, because it differs from `thermal_mc._sweep`:
+
+* a site drawn with replacement n times per temperature step;
+* Sunny's `LocalSampler` mix of 0.5 uniform, 0.1 flip and 0.4 delta moves, with the
+  delta width adapted toward 50 % acceptance after every step;
+* the geometric schedule from `_schedule`, now shared by both kernel sets;
+* tracking of the best state seen, with its energy recomputed from scratch at the end;
+* the keep-if-better polish.
+
+Calling `sweep` once per temperature would have dropped the delta move, which is what
+keeps acceptance up at the cold end, and the best-state tracking.
+
+**The NumPy path is bit-identical to before.** It was compared against the committed
+module for uniform and mixed spins, and `anneal_runs` returns exactly the per-seed
+`anneal` calls. The Rust anneal draws from a different stream, so a seed gives a
+different, equally valid sample, as for every K1 kernel. Run r owns the stream of
+`seeds[r]`, so a batch equals the per-seed calls whatever the thread count.
+
+**Oracles.** They now run under both kernel sets (the `kernels` fixture):
+
+* `tests/test_annealing.py`: the Néel chain's exact energy, |m_i| = S, all four methods
+  through `minimize_energy`, the guard check on the result, reproducibility across
+  seeds, the S06 closed-form canted minimum, the polish never raising the energy, and
+  steepest descent staying monotone with a large on-site term;
+* `tests/test_mixed_spin_classical.py`: the closed-triangle energy and law-of-cosines
+  angles of the (1, 1, ½) trimer, the per-site lengths, and a new 24-start
+  `minimize_energy` run;
+* the runner test, which now also asserts that `calculation.kernels` reaches the
+  annealer.
+
+New tests in rsMagCalc's `tests/test_classical_parity.py`:
+
+* `steepest_descent` matches the NumPy loop to 1e-12, with mixed spins and a large
+  random on-site block, and so does `max_iter`;
+* `anneal` is deterministic, batch-independent and thread-independent;
+* it honours `m0` (run 0 only), and with zero sweeps its polish equals the steepest
+  descent;
+* the mixed-spin trimer's closed form is reached on all 8 runs by the Metropolis loop
+  ALONE, with the polish off;
+* bad input is refused.
+
+pyMagCalc pins the fall-back: a raising kernel gives exactly the NumPy result, and the
+failure is logged.
+
+**Mutation-checked**, rebuilding each time:
+
+* an inverted acceptance rule fails the Metropolis-only trimer test;
+* a schedule that heats instead of cooling fails a test;
+* dropping the on-site term from the steepest-descent field fails 4.
+
+Forcing the polish to be taken unconditionally fails nothing, and that is correct: the
+polish starts from the annealed state and returns the best state it visits, so it can
+never come back higher. The keep-if-better check is redundant in both implementations.
+
+**Timing** (10 cores, 2026-10-28; about three cores busy with other desktop
+processes). The cell is an AFM chain built by `thermal_mc.build_supercell`, the runs
+are 2000 sweeps with the polish, and "before" is the committed NumPy annealer:
+
+| cell | one run, before → after | 4 runs, before → after (parallel) |
+|---|---|---|
+| 16 sites | 0.363 s → **2.0 ms** (185×) | 1.33 s → **2.8 ms** (478×) |
+| 128 sites | 2.84 s → **0.147 s** (19×) | 10.9 s → **0.184 s** (60×) |
+
+End to end, `examples/sunny_tutorials/S07_dipole_dipole/config.yaml` (16 sites, 12
+starts × 3000 sweeps) went from 51.7 s to 46.1 s wall, with the annealing step going
+from about 6 s to under 1 s by the log's timestamps. The rest is the SymPy build and
+the dispersion. Both runs reach E_min = −6.974504 meV, 7 of 12 starts under NumPy and
+4 of 12 under Rust. **Their bands along the Γ–X–W–L–K path differ by up to 0.093 meV,
+and that is a domain, not an error.** The dipole-selected pyrochlore state comes in
+cubic domains, the path picks out fixed directions, and the two random streams settle
+in different domains. Checked over all 48 operations g of O_h, using the runner's own
+two calculators: E_NumPy(g·q) equals E_Rust(q) to 2.5e-7 meV, which is the ground state's
+convergence, for g the three-fold rotation about [111]. 16 of the 48 operations agree to
+under 4e-7, a whole coset, as a domain relation implies. The other 32, the identity
+among them, all leave at least 9.3e-2.
+
+**Gate:** (2026-10-28, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`, pyMagCalc `b35e804` plus this change, rsMagCalc `1d2532d` (built from the same source), fMagCalc `eae20e3`, magpipe 283f694; about three cores busy with other desktop processes): **2331 passed, 2 skipped, 0 failed, 14 min 33 s**. The 33 added tests are the `rust` parametrizations of the annealer oracles, the new pyMagCalc tests and rsMagCalc's 7. The two skips are the structural pair.
+
 ### 1/S corrections: the k-mesh batched, 2026-10-28 — 25–27×, and bounded memory
 
 `corrections.compute_corrections` built H(q) for the WHOLE mesh in one stack, then

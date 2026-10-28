@@ -35,7 +35,7 @@
 *   **Symmetry Analyzer CLI:** `magcalc symmetry <config>` prints the space group, the symmetry-inequivalent bond orbits, and the symmetry-**allowed** exchange matrix per bond (the Sunny `print_symmetry_table` analogue) — the fast way to pick `ref_pair` bonds and see which matrix entries symmetry zeros or ties. `--cells` / `--species` / `--bz-path` add the crystal utilities (primitive cell, standardization, subcrystal, irreducible BZ paths).
 *   **Knowing Which Engine Ran:** `magcalc where` reports the `magcalc` package actually imported, its git HEAD, and any *other* importable copy — because `pip install -e .` does **not** win by default (its finder is appended to `sys.meta_path`, so anything on `sys.path` shadows it). Every `magcalc run` logs the same line first. An interpreter-startup check that fires even when a stale copy wins outright — which the in-package detector structurally cannot do — is **installed automatically on your first `magcalc` command** (`magcalc guard --install` / `--uninstall` to manage it by hand, `MAGCALC_SHADOW_GUARD=off` to opt out of both).
 *   **Data Fitting:** Fits the spin Hamiltonian to inelastic-neutron-scattering data — magnon dispersion `E(Q)`, single-crystal `I(Q, ω)`, or powder `I(|Q|, ω)` — via [lmfit](https://lmfit.github.io/) (bounds, tied/fixed parameters, uncertainties, choice of optimizer). Dispersion fits use a **compile-once fast evaluator** (`DispersionEvaluator`) that skips all per-iteration symbolic work, making fits of large magnetic cells orders of magnitude faster.
-*   **Optional compiled companions:** [fMagCalc](https://github.com/kit-matan/fMagCalc) (Fortran/OpenMP/LAPACK) runs the dipole engine's per-q diagonalization, S(Q,ω) and powder averages, mixed spin included, 18–100× faster than the NumPy pool on dense q-grids (`calculation: {backend: fortran}`). [rsMagCalc](https://github.com/kit-matan/rsMagCalc) (Rust/PyO3) runs the loops the Fortran path does not cover — the classical and CP^(N−1) samplers, SU(N)/entangled LSWT, KPM and SCGA (`calculation: {kernels: rust}`): for example 169 s → 3.3 s on a 128-trajectory classical average, and 1.4 s → 7.6 ms per q for KPM on a 900-site cell. Neither is required; a missing one logs a warning and the NumPy path runs, and every compiled result is pinned to the NumPy one.
+*   **Optional compiled companions:** [fMagCalc](https://github.com/kit-matan/fMagCalc) (Fortran/OpenMP/LAPACK) runs the dipole engine's per-q diagonalization, S(Q,ω) and powder averages, mixed spin included, 18–100× faster than the NumPy pool on dense q-grids (`calculation: {backend: fortran}`). [rsMagCalc](https://github.com/kit-matan/rsMagCalc) (Rust/PyO3) runs the loops the Fortran path does not cover — the classical and CP^(N−1) samplers, the annealing ground-state search, SU(N)/entangled LSWT, KPM and SCGA (`calculation: {kernels: rust}`): for example 169 s → 3.3 s on a 128-trajectory classical average, and 1.4 s → 7.6 ms per q for KPM on a 900-site cell. Neither is required; a missing one logs a warning and the NumPy path runs, and every compiled result is pinned to the NumPy one.
 *   **Data Export (CSV):** Export results to `.csv` or `.npz` files for external analysis.
 *   **Validated Configurations:** Supports declarative YAML configurations validated against a robust **Pydantic schema** for immediate error feedback.
 
@@ -414,13 +414,12 @@ pytest -m slow -k <name>    # one feature's deep validations
 pytest -m ""                # EVERYTHING -- the merge gate
 ```
 
-`pytest` alone runs the fast suite (1088 of 1297 tests), which is the iteration
+`pytest` alone runs the fast suite (1114 of 1323 tests), which is the iteration
 loop, **not** a merge gate: the `slow` marker holds the exact-diagonalization
 oracles, convergence sweeps and integration runs. Before merging to `master`, run
 `pytest -m "" -rs` and account for every skip. From the maintainer's workspace root
 that also collects the fMagCalc, rsMagCalc and magpipe tests; the last full gate there
-was **2298 passed, 2 skipped** (2026-10-28, 18 min, counting three live-API tests that
-hit a DNS outage and passed on rerun), the two skips being structural
+was **2331 passed, 2 skipped** (2026-10-28, 15 min), the two skips being structural
 (`seekpath` absent, ALPS present). Tests run in parallel (pytest-xdist); use `-n0` for
 `-s` or pdb. Tests that involve a compiled companion run under both paths through the
 `kernels` (`numpy`/`rust`) and `backend` (`numpy`/`fortran`) fixtures, and skip by name

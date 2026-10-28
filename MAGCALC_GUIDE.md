@@ -7,7 +7,7 @@ context can make a correct first change. It is a map, not the whole territory: t
 authoritative details live in the files it points to (§12), and when they disagree, the
 code and the tests win.
 
-*Last reviewed: 2026-10-28, against pyMagCalc `b7421b7` plus the batched 1/S corrections. This file is kept current with
+*Last reviewed: 2026-10-28, against pyMagCalc `b35e804` plus the compiled annealer. This file is kept current with
 every change that alters what it describes (§13).*
 
 ---
@@ -54,7 +54,7 @@ All live under the GitHub user **`kit-matan`**. pyMagCalc is the only required o
 |---|---|---|---|
 | [pyMagCalc](https://github.com/kit-matan/pyMagCalc) | Python | The engine: config, model building, every physics method, CLI, GUI server, tests. **Nearly all work happens here.** | yes |
 | [fMagCalc](https://github.com/kit-matan/fMagCalc) | Fortran, OpenMP, LAPACK | Compiled hot path for the **dipole** LSWT engine: per-q diagonalization, S(Q,ω), powder averaging, including mixed spin. Selected by `calculation: {backend: fortran}`. | no |
-| [rsMagCalc](https://github.com/kit-matan/rsMagCalc) | Rust, PyO3 | Compiled kernels for the loops that are Python-bound per site or per q **outside** the dipole path: classical and CP^(N−1) samplers, SU(N) LSWT, KPM, SCGA, the sparse KPM stability guard. Selected by `calculation: {kernels: rust}`. | no |
+| [rsMagCalc](https://github.com/kit-matan/rsMagCalc) | Rust, PyO3 | Compiled kernels for the loops that are Python-bound per site or per q **outside** the dipole path: classical and CP^(N−1) samplers, the annealing ground-state search, SU(N) LSWT, KPM, SCGA, the sparse KPM stability guard. Selected by `calculation: {kernels: rust}`. | no |
 | magpipe | Python | A materials-discovery pipeline built **on** MagCalc as a library: Materials Project screen → DFT energy mapping → ED/QMC thermodynamics → a MagCalc config and spectrum. Never reimplements physics MagCalc has. | no |
 
 The maintainer's workspace also holds a vendored **Sunny.jl 0.8.1** checkout, used only as
@@ -273,7 +273,7 @@ an exact identity, never by looking at a plot. So:
 ## 10. Tests
 
 ```bash
-pytest                       # fast suite: 1088 of 1297 tests; "-m 'not slow'" is the default
+pytest                       # fast suite: 1114 of 1323 tests; "-m 'not slow'" is the default
 pytest -m slow -k <name>     # one feature's deep validations
 pytest -m ""                 # everything: REQUIRED before merging to master
 pytest -n0 ...               # serial; needed for -s or pdb
@@ -282,8 +282,8 @@ pytest -n0 ...               # serial; needed for -s or pdb
 - Both `pytest.ini` files run in parallel (`-n auto --dist worksteal`, pytest-xdist is a
   required dev dependency).
 - From the maintainer's workspace root, plain `pytest` also collects fMagCalc's,
-  rsMagCalc's and magpipe's tests. The last full gate there was **2298 passed, 2 skipped**
-  (2026-10-28, three live-API tests passing on rerun after a DNS outage). The two skips are structural: `seekpath` absent, ALPS present.
+  rsMagCalc's and magpipe's tests. The last full gate there was **2331 passed, 2 skipped**
+  (2026-10-28). The two skips are structural: `seekpath` absent, ALPS present.
 - **Tests never open a GUI window.** `tests/conftest.py` forces the Agg backend and sets
   `MAGCALC_NO_GUI=1`. A bare `magcalc run` outside pytest is not guarded; prefix it with
   `MAGCALC_NO_GUI=1`.
@@ -380,12 +380,13 @@ iOS app).
 - **The 1/S corrections** solve the k-mesh in batched chunks on every core, 25–27×
   faster, and their memory no longer grows with the mesh: 64³ at 16 sites takes about
   5 s in under 1 GB (`GAP_STATUS.md`, "1/S corrections: the k-mesh batched").
+- **The annealing ground-state search** runs in rsMagCalc under `kernels: rust`, all
+  starts in parallel: 0.36 s → 2 ms per 2000-sweep run at 16 sites, 2.8 s → 0.15 s at
+  128 (`GAP_STATUS.md`, "anneal on K1's dense model").
 - **Known small follow-ups**, each with its oracle in `OPEN_WORK.md`:
   - large-cell SCGA is still dominated by a SymPy loop in the exchange-cache builder;
   - fMagCalc zeroes modes below 1e-3 meV and NumPy does not, so a **gapless** model's
     powder average differs between the two backends;
-  - `anneal` is a per-spin Python loop (4.3 s per run at 128 sites); reuse K1's
-    compiled sweep.
 - **Not supported:**
   - mixed spins in the classical dipole samplers: `thermal_mc` and
     `sampled_correlations` refuse them, while the SU(N) sampler accepts them;

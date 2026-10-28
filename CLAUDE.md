@@ -507,6 +507,10 @@ Methods:
   the energy** (see the warning below -- it used to be taken unconditionally).
   Crosses barriers, so it does not get trapped. Optional: `n_sweeps`, `T_start`,
   `T_end` (meV; defaults derived from the coupling scale), `polish`.
+  Under `calculation: {kernels: rust}` the runs execute in rsMagCalc, all
+  `num_starts` in parallel on every core, with the same move loop, schedule and
+  keep-if-better polish (a different random stream, so a different but equally
+  valid sample per seed; 0.36 s -> 2 ms per 2000-sweep run at 16 sites).
 * `steep` (= `optmagsteep`) -- iteratively align each spin with its local field
   (SpinW `optmagsteep`). Very fast. **Monotone: it cannot escape a local minimum**,
   so it is a polisher, not a global search. Good as a cheap first look.

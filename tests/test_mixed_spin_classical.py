@@ -61,9 +61,9 @@ def closed_triangle_angle(Si, Sj, Sk) -> float:
     return math.degrees(math.acos((Sk ** 2 - Si ** 2 - Sj ** 2) / (2 * Si * Sj)))
 
 
-def best_anneal(H, b, c, S, n, runs=8, sweeps=4000):
-    return min((anneal(H, b, c, S, n, n_sweeps=sweeps, seed=k) for k in range(runs)),
-               key=lambda r: r[1])
+def best_anneal(H, b, c, S, n, runs=8, sweeps=4000, kernels="numpy"):
+    return min((anneal(H, b, c, S, n, n_sweeps=sweeps, seed=k, kernels=kernels)
+                for k in range(runs)), key=lambda r: r[1])
 
 
 # ---------------------------------------------------------------------------
@@ -91,33 +91,33 @@ def test_random_spins_gives_each_site_its_own_radius():
     ([2.5, 2.5, 2.0], -0.5 * (2.5 ** 2 + 2.5 ** 2 + 2.0 ** 2)),
     ([1.0, 0.8, 0.6], -0.5 * (1.0 + 0.64 + 0.36)),
 ])
-def test_mixed_spin_trimer_finds_the_closed_triangle(S, expected_E):
+def test_mixed_spin_trimer_finds_the_closed_triangle(S, expected_E, kernels):
     """
     E = (J/2)(|sum m|^2 - sum|m_i|^2), minimised by sum m_i = 0. So the energy is
     -(J/2) sum |m_i|^2 exactly -- a closed form in the LENGTHS alone, with no
     reference to the search that has to find it.
     """
     H, b, c = trimer_quadratic()
-    m, E = best_anneal(H, b, c, S, 3)
+    m, E = best_anneal(H, b, c, S, 3, kernels=kernels)
     assert E == pytest.approx(expected_E, abs=1e-6)
     assert np.linalg.norm(m.reshape(3, 3).sum(0)) == pytest.approx(0.0, abs=1e-4)
 
 
-def test_the_minimiser_honours_each_sites_own_spin_length():
+def test_the_minimiser_honours_each_sites_own_spin_length(kernels):
     """The constraint itself: |m_i| = S_i, not S_ref for everyone."""
     S = [1.0, 1.0, 0.5]
-    m, _ = best_anneal(*trimer_quadratic(), S, 3)
+    m, _ = best_anneal(*trimer_quadratic(), S, 3, kernels=kernels)
     assert np.linalg.norm(m.reshape(3, 3), axis=1) == pytest.approx(S, abs=1e-6)
 
 
-def test_the_mixed_spin_angles_are_the_law_of_cosines_not_120_degrees():
+def test_the_mixed_spin_angles_are_the_law_of_cosines_not_120_degrees(kernels):
     """
     The sharp discriminator. A uniform-length search returns 120 degrees for any
     spins; the true answer for (1, 1, 1/2) is 151.045 / 104.478, which is what
     the moment triangle has to be to close.
     """
     S = np.array([1.0, 1.0, 0.5])
-    m = best_anneal(*trimer_quadratic(), S, 3)[0].reshape(3, 3)
+    m = best_anneal(*trimer_quadratic(), S, 3, kernels=kernels)[0].reshape(3, 3)
 
     def angle(i, j):
         return math.degrees(math.acos(
@@ -145,12 +145,12 @@ def test_the_uniform_length_answer_is_not_a_state_of_the_mixed_hamiltonian():
     assert E_120 > -1.125                        # strictly worse than the true GS
 
 
-def test_steepest_descent_also_honours_the_per_site_lengths():
+def test_steepest_descent_also_honours_the_per_site_lengths(kernels):
     """The `steep` / optmagsteep path shares the constraint and had the same bug."""
     S = np.array([1.0, 1.0, 0.5])
     H, b, c = trimer_quadratic()
     start = random_spins(3, S, np.random.default_rng(3))
-    m, E = steepest_descent(start, H, b, c, S, 3)
+    m, E = steepest_descent(start, H, b, c, S, 3, kernels=kernels)
     assert np.linalg.norm(m.reshape(3, 3), axis=1) == pytest.approx(S, abs=1e-9)
     assert E <= -1.0 + 1e-9                      # no worse than the 120 degree state
 
@@ -236,6 +236,14 @@ def test_minimize_energy_finds_the_mixed_spin_ground_state(method):
         method=method, num_starts=24, seed=0, **kw)
     assert res.fun == pytest.approx(TRUE_E, abs=1e-5)
     assert res.fun > UNIFORM_E                  # -1.5 is not a state of this model
+
+
+def test_minimize_energy_anneal_finds_the_mixed_spin_ground_state_under_kernels(kernels):
+    """The annealer through `minimize_energy`, under both kernel sets: all 24 starts
+    go to rsMagCalc in one call under `kernels="rust"`."""
+    res = _trimer_calc().minimize_energy(method="anneal", num_starts=24, seed=0,
+                                         n_sweeps=4000, kernels=kernels)
+    assert res.fun == pytest.approx(TRUE_E, abs=1e-5)
 
 
 def test_the_energy_audit_guard_accepts_the_true_mixed_spin_ground_state():

@@ -1641,7 +1641,7 @@ class MagCalc:
     def _minimize_anneal(
         self, H_q, b_q, c_q, S_vec, nspins, method="anneal", num_starts=1,
         x0=None, seed=0, n_sweeps=2000, T_start=None, T_end=None,
-        polish=True, **_ignored,
+        polish=True, kernels="numpy", **_ignored,
     ):
         """Ground state by simulated annealing (or pure steepest descent).
 
@@ -1662,7 +1662,7 @@ class MagCalc:
         from scipy.optimize import OptimizeResult
 
         from .annealing import (
-            anneal, cartesian_to_angles, random_spins, steepest_descent,
+            anneal_runs, cartesian_to_angles, random_spins, steepest_descent,
         )
 
         m0 = None
@@ -1679,17 +1679,22 @@ class MagCalc:
             f"{'' if steep_only else f', {n_sweeps} sweeps x {nspins} moves'})..."
         )
 
+        # The annealing runs are independent, so they go out together: under
+        # `kernels: rust` that is one rsMagCalc call running them in parallel.
+        if not steep_only:
+            annealed = anneal_runs(H_q, b_q, c_q, S_vec, nspins,
+                                   seeds=[(seed or 0) + r for r in range(n_runs)],
+                                   n_sweeps=n_sweeps, T_start=T_start, T_end=T_end,
+                                   m0=m0, kernels=kernels)
         for run in range(n_runs):
             rng = np.random.default_rng((seed or 0) + run)
             if steep_only:
                 start = m0 if (m0 is not None and run == 0) \
                     else random_spins(nspins, S_vec, rng)
-                m, e = steepest_descent(start, H_q, b_q, c_q, S_vec, nspins)
+                m, e = steepest_descent(start, H_q, b_q, c_q, S_vec, nspins,
+                                        kernels=kernels)
             else:
-                m, e = anneal(H_q, b_q, c_q, S_vec, nspins, n_sweeps=n_sweeps,
-                              T_start=T_start, T_end=T_end,
-                              seed=(seed or 0) + run,
-                              m0=m0 if run == 0 else None)
+                m, e = annealed[run]
 
             x = cartesian_to_angles(m, nspins)
             if polish:
@@ -2912,6 +2917,7 @@ class MagCalc:
         early_stopping: int = 10,
         seed: Optional[int] = 0,
         batched: bool = False,
+        kernels: str = "numpy",
         **kwargs,
     ) -> Any:
         logger.info(
@@ -2935,6 +2941,10 @@ class MagCalc:
                               If num_starts > 1 and x0 is provided, x0 is used as the first start.
             n_workers (int): Number of parallel workers for multistart (default: 1).
             early_stopping (int): Stop after N hits of the same minimum energy (default: 10).
+            kernels (str): 'numpy' (default) or 'rust'. Used by the 'anneal' /
+                'monte_carlo' / 'steep' / 'optmagsteep' methods only: 'rust' runs
+                the annealing (all starts in parallel, on every core) and the
+                steepest descent in rsMagCalc, falling back to NumPy if absent.
 
         Returns:
             OptimizeResult: The result of the optimization (best result found).
@@ -2982,7 +2992,7 @@ class MagCalc:
                 )
             return self._minimize_anneal(
                 *quad, S_vec, nspins, method=method, num_starts=num_starts,
-                x0=x0, seed=seed, **kwargs)
+                x0=x0, seed=seed, kernels=kernels, **kwargs)
 
         if quad is not None:
             H_q, b_q, c_q = quad

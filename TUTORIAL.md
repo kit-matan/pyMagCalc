@@ -658,6 +658,13 @@ The FFT and the neutron contraction stay in NumPy. Measured on the
 128-trajectory ferromagnet of `tests/test_classical_absolute_normalization.py`:
 169 s of Python became 3.3 s (see `GAP_STATUS.md`, "Rust kernels K1").
 
+The **ground-state search** (2026-10-28) uses the same compiled model:
+`minimization: {method: anneal}` (and `steep`) run in rsMagCalc, with all
+`num_starts` runs in parallel on every core. The move loop, the schedule and the
+polish are the NumPy annealer's; only the random stream differs. A 2000-sweep run
+takes 2 ms instead of 0.36 s at 16 sites and 0.15 s instead of 2.8 s at 128 (see
+`GAP_STATUS.md`, "anneal on K1's dense model").
+
 And the **CP^(N−1) sampler and dynamics** (K2) behind `sun_sampled_correlations`
 and the SU(N) quench: the Metropolis sweep on coherent states with its adaptive
 step size (the thermalization diagnostics — acceptance, drift, `equilibrated` — are
@@ -894,6 +901,7 @@ minimization:
   n_sweeps: 2000        # temperature steps (each = one attempted move per spin)
   seed: 0
   # optional: T_start / T_end (meV; default from the coupling scale), polish: true
+calculation: {kernels: rust}   # optional: the runs in rsMagCalc, in parallel (§4c2)
 ```
 
 | method | what it is | when |

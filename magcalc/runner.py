@@ -549,6 +549,7 @@ def run_calculation(config_file: str):
                     num_starts=num_starts, 
                     n_workers=n_workers, 
                     early_stopping=early_stopping,
+                    kernels=kernels,
                     **min_kwargs
                 )
                 
