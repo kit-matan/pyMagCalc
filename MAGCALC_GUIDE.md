@@ -7,7 +7,7 @@ context can make a correct first change. It is a map, not the whole territory: t
 authoritative details live in the files it points to (§12), and when they disagree, the
 code and the tests win.
 
-*Last reviewed: 2026-10-28, against pyMagCalc `9b70cf5` plus the bond-builder loop and the fMagCalc gapless/degenerate fixes. This file is kept current with
+*Last reviewed: 2026-10-28, against pyMagCalc `f5c052b` (and magpipe's schema-0.5 form-factor ion). This file is kept current with
 every change that alters what it describes (§13).*
 
 ---
@@ -282,7 +282,7 @@ pytest -n0 ...               # serial; needed for -s or pdb
 - Both `pytest.ini` files run in parallel (`-n auto --dist worksteal`, pytest-xdist is a
   required dev dependency).
 - From the maintainer's workspace root, plain `pytest` also collects fMagCalc's,
-  rsMagCalc's and magpipe's tests. The last full gate there was **2345 passed, 2 skipped**
+  rsMagCalc's and magpipe's tests. The last full gate there was **2353 passed, 2 skipped**
   (2026-10-28). The two skips are structural: `seekpath` absent, ALPS present.
 - **Tests never open a GUI window.** `tests/conftest.py` forces the Agg backend and sets
   `MAGCALC_NO_GUI=1`. A bare `magcalc run` outside pytest is not guarded; prefix it with
