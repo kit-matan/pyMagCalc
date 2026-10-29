@@ -2779,7 +2779,121 @@ class MagCalc:
         OUC->UC component sharing (each over-unit-cell spin is a copy of its
         unit-cell parent) is built into H, so the Hessian/gradient accumulate
         all bond contributions onto the unit-cell variables.
+
+        `calculation.classical_energy` picks how: `numeric` (default) sums the
+        bond-bilinear part from the interaction arrays and builds only the
+        on-site, Zeeman and biquadratic terms in SymPy; `symbolic` builds the
+        whole Hamiltonian in SymPy, as before 2026-10-29 (17 s of a 24 s warm
+        FeI2 run). Both probe the same identities. A numeric build that cannot
+        bind every coefficient falls back to the symbolic one. The result is
+        memoized on the spin model, which the runner's minimization and guard
+        MagCalc instances share, so the two calls per run cost one build.
         """
+        mode = self._classical_energy_mode()
+        key = self._classical_quad_key(mode, params, nspins, nspins_ouc, S_val)
+        memo = getattr(self.sm, "_classical_quad_memo", None)
+        if memo is None:
+            memo = {}
+            try:
+                setattr(self.sm, "_classical_quad_memo", memo)
+            except Exception:
+                pass
+        if key in memo:
+            quad = memo[key]
+        else:
+            quad = None
+            if mode == "numeric":
+                quad = self._classical_quadratic_numeric(params, nspins, nspins_ouc, S_val)
+                if quad is None:
+                    logger.info("Numeric classical energy unavailable for this model; "
+                                "building it symbolically.")
+            if quad is None:
+                quad = self._classical_quadratic_symbolic(params, nspins, nspins_ouc, S_val)
+            elif isinstance(quad, str):            # "nonquadratic": nothing to fall back to
+                quad = None
+            while len(memo) >= 8:
+                memo.pop(next(iter(memo)))
+            memo[key] = quad
+        if quad is None:
+            return None
+        H, b, c = quad[0].copy(), quad[1].copy(), quad[2]
+
+        # Long-range dipolar (Ewald) term. The minimizer MUST optimize the same
+        # Hamiltonian that LSWT diagonalizes -- otherwise it finds a ground state
+        # that is not a minimum of the actual model, and the spectrum comes out
+        # imaginary (exactly the g-tensor bug fixed earlier). A(q=0) is the full
+        # lattice sum between sites of the cell, so it adds straight into H.
+        try:
+            if self._ewald_spec() is not None:
+                from .ewald import exchange_from_A
+                J0 = exchange_from_A(self._ewald_A(np.zeros(3)), self._ewald_g())
+                for i in range(nspins):
+                    for j in range(nspins):
+                        H[3 * i:3 * i + 3, 3 * j:3 * j + 3] += np.real(J0[i, j])
+        except Exception as e:
+            logger.info(f"Quadratic energy extraction failed ({e}); using symbolic path.")
+            return None
+        return H, b, c
+
+    def _classical_energy_mode(self) -> str:
+        """`calculation.classical_energy`: 'numeric' (default) or 'symbolic'."""
+        cfg = getattr(self.sm, "config", None) or {}
+        calc = cfg.get("calculation") or {}
+        mode = str(calc.get("classical_energy", "numeric")).strip().lower()
+        if mode not in ("numeric", "symbolic"):
+            raise ValueError(
+                f"calculation.classical_energy must be 'numeric' or 'symbolic', not {mode!r}.")
+        return mode
+
+    def _classical_quad_key(self, mode, params, nspins, nspins_ouc, S_val):
+        """Memo key: everything the classical form depends on. The rotating-frame
+        structure enters because `spin_interactions` rotates the bonds into it."""
+        frame = None
+        if getattr(self.sm, "use_rotating_frame", False):
+            frame = json.dumps(getattr(self.sm, "mag_struct_cfg", None), sort_keys=True,
+                               default=str)
+        return (mode, repr(list(params)), int(nspins), int(nspins_ouc), float(S_val), frame)
+
+    @staticmethod
+    def _probe_quadratic(Ef, d, S_val):
+        """(H, b, c) of a function known to be at most quadratic, or None if a
+        check at random points says it is not."""
+        # Extract (H, b, c) by NUMERIC probing of Ef rather than a symbolic
+        # Hessian (which is the bulk of the setup cost). For an exact
+        # quadratic these identities hold with step h=1 (no truncation error):
+        #   c     = E(0)
+        #   b_i   = (E(e_i) - E(-e_i)) / 2
+        #   H_ii  = E(e_i) + E(-e_i) - 2c
+        #   H_ij  = E(e_i+e_j) - E(e_i) - E(e_j) + c     (i<j)
+        eye = np.eye(d)
+        c = float(Ef(*np.zeros(d)))
+        Ep = np.array([float(Ef(*eye[i])) for i in range(d)])
+        Em = np.array([float(Ef(*(-eye[i]))) for i in range(d)])
+        b = (Ep - Em) / 2.0
+        H = np.zeros((d, d))
+        H[np.diag_indices(d)] = Ep + Em - 2.0 * c
+        for i in range(d):
+            for j in range(i + 1, d):
+                Hij = float(Ef(*(eye[i] + eye[j]))) - Ep[i] - Ep[j] + c
+                H[i, j] = H[j, i] = Hij
+
+        # Verify the energy really is quadratic: the reconstruction must match
+        # a direct eval at random points. Mismatch => higher-order terms exist
+        # (not a standard bilinear spin model) => signal symbolic fallback.
+        rng = np.random.default_rng(0)
+        for _ in range(4):
+            mv = rng.uniform(-S_val, S_val, size=d)
+            analytic = 0.5 * (mv @ (H @ mv)) + b @ mv + c
+            if not np.isclose(analytic, float(Ef(*mv)), rtol=1e-7, atol=1e-7):
+                logger.info(
+                    "Classical energy is not quadratic in spin components; "
+                    "using symbolic path."
+                )
+                return None
+        return H, b, c
+
+    def _classical_quadratic_symbolic(self, params, nspins, nspins_ouc, S_val):
+        """The whole classical Hamiltonian in SymPy, lambdified and probed."""
         try:
             d = 3 * nspins
             comps = sp.symbols(f"_mc0:{d}", real=True)
@@ -2791,54 +2905,89 @@ class MagCalc:
             Ec = Ec.subs(self.S_sym, S_val).subs(list(zip(self.params_sym_flat, params)))
             Ec = Ec.as_real_imag()[0]
             Ef = lambdify(comps, Ec, modules="numpy", cse=True)
-
-            # Extract (H, b, c) by NUMERIC probing of Ef rather than a symbolic
-            # Hessian (which is the bulk of the setup cost). For an exact
-            # quadratic these identities hold with step h=1 (no truncation error):
-            #   c     = E(0)
-            #   b_i   = (E(e_i) - E(-e_i)) / 2
-            #   H_ii  = E(e_i) + E(-e_i) - 2c
-            #   H_ij  = E(e_i+e_j) - E(e_i) - E(e_j) + c     (i<j)
-            eye = np.eye(d)
-            c = float(Ef(*np.zeros(d)))
-            Ep = np.array([float(Ef(*eye[i])) for i in range(d)])
-            Em = np.array([float(Ef(*(-eye[i]))) for i in range(d)])
-            b = (Ep - Em) / 2.0
-            H = np.zeros((d, d))
-            H[np.diag_indices(d)] = Ep + Em - 2.0 * c
-            for i in range(d):
-                for j in range(i + 1, d):
-                    Hij = float(Ef(*(eye[i] + eye[j]))) - Ep[i] - Ep[j] + c
-                    H[i, j] = H[j, i] = Hij
-
-            # Verify the energy really is quadratic: the reconstruction must match
-            # a direct eval at random points. Mismatch => higher-order terms exist
-            # (not a standard bilinear spin model) => signal symbolic fallback.
-            rng = np.random.default_rng(0)
-            for _ in range(4):
-                mv = rng.uniform(-S_val, S_val, size=d)
-                analytic = 0.5 * (mv @ (H @ mv)) + b @ mv + c
-                if not np.isclose(analytic, float(Ef(*mv)), rtol=1e-7, atol=1e-7):
-                    logger.info(
-                        "Classical energy is not quadratic in spin components; "
-                        "using symbolic path."
-                    )
-                    return None
-            # Long-range dipolar (Ewald) term. The minimizer MUST optimize the same
-            # Hamiltonian that LSWT diagonalizes -- otherwise it finds a ground state
-            # that is not a minimum of the actual model, and the spectrum comes out
-            # imaginary (exactly the g-tensor bug fixed earlier). A(q=0) is the full
-            # lattice sum between sites of the cell, so it adds straight into H.
-            if self._ewald_spec() is not None:
-                from .ewald import exchange_from_A
-                J0 = exchange_from_A(self._ewald_A(np.zeros(3)), self._ewald_g())
-                for i in range(nspins):
-                    for j in range(nspins):
-                        H[3 * i:3 * i + 3, 3 * j:3 * j + 3] += np.real(J0[i, j])
-
-            return H, b, c
+            return self._probe_quadratic(Ef, d, S_val)
         except Exception as e:
             logger.info(f"Quadratic energy extraction failed ({e}); using symbolic path.")
+            return None
+
+    def _classical_quadratic_numeric(self, params, nspins, nspins_ouc, S_val):
+        """The bond-bilinear part from arrays, the rest symbolically.
+
+        E = sum_{i in cell, j in OUC} 0.5 m_i^T (J_ij I + [D_ij]x + K_ij) m_{j mod N}
+        + rest(m), with [D]x the matrix for which m_i^T [D]x m_j = D.(m_i x m_j)
+        and rest the single-ion, Zeeman and biquadratic terms. Writing the
+        bilinear sum as m^T A m gives H = A + A^T. Returns (H, b, c), the string
+        "nonquadratic" when rest is not quadratic (the symbolic path would say
+        the same), or None when a coefficient cannot be made numeric here.
+        """
+        sm = self.sm
+        if not isinstance(sm, GenericSpinModel):
+            return None
+        try:
+            from .generic_model import interactions_to_numpy
+
+            # Bind every symbol the symbolic path would: S first, then the
+            # parameters, then (by name) any config parameter left out of
+            # parameter_order, which `_apply_substitution_and_filter` binds.
+            vals = dict(zip(self.params_sym_flat, params))
+            vals[self.S_sym] = S_val
+            by_name = {s.name: v for s, v in vals.items()}
+            cfg_params = sm.config.get("parameters", sm.config.get("model_params", {})) or {}
+            for name, v in cfg_params.items():
+                if isinstance(v, (int, float)):
+                    by_name.setdefault(name, v)
+
+            def num(s):
+                return vals.get(s, s)
+
+            pr = [[num(s) for s in e] if isinstance(e, (list, tuple)) else num(e)
+                  for e in self.params_sym]
+
+            def bind(x):
+                fs = getattr(x, "free_symbols", None)
+                if fs:
+                    x = x.subs({s: by_name[s.name] for s in fs if s.name in by_name})
+                return x
+
+            d = 3 * nspins
+            comps = sp.symbols(f"_mc0:{d}", real=True)
+            Svec = [
+                sp.Matrix(comps[3 * (i % nspins): 3 * (i % nspins) + 3])
+                for i in range(nspins_ouc)
+            ]
+            Jex_s, DM_s, Kex_s, rest = sm.classical_parts(Svec, pr)
+            Jex, DM, Kex = interactions_to_numpy(
+                bind(Jex_s),
+                [[None if v is None else bind(v) for v in row] for row in DM_s],
+                [[None if v is None else bind(v) for v in row] for row in Kex_s])
+            if Jex.shape != (nspins, nspins_ouc):
+                return None
+
+            skew = np.zeros(DM.shape[:2] + (3, 3))
+            skew[..., 0, 1], skew[..., 1, 0] = DM[..., 2], -DM[..., 2]
+            skew[..., 2, 0], skew[..., 0, 2] = DM[..., 1], -DM[..., 1]
+            skew[..., 1, 2], skew[..., 2, 1] = DM[..., 0], -DM[..., 0]
+            blocks = Jex[..., None, None] * np.eye(3) + skew + Kex      # (N, N_ouc, 3, 3)
+            image_of = np.arange(nspins_ouc) % nspins
+            A = np.zeros((nspins, 3, nspins, 3))
+            for p in range(nspins):
+                A[:, :, p, :] += 0.5 * blocks[:, image_of == p].sum(axis=1)
+            A = A.reshape(d, d)
+            H = A + A.T
+
+            rest = bind(sp.sympify(rest).subs(self.S_sym, S_val))
+            if rest.free_symbols - set(comps):
+                return None
+            rest = rest.as_real_imag()[0]
+            if rest == 0:
+                return H, np.zeros(d), 0.0
+            q = self._probe_quadratic(lambdify(comps, rest, modules="numpy", cse=True),
+                                      d, S_val)
+            if q is None:
+                return "nonquadratic"
+            return H + q[0], q[1], q[2]
+        except Exception as e:
+            logger.info(f"Numeric classical energy failed ({e}); using the symbolic one.")
             return None
 
     def _minimize_batched(self, H, b, c, S, n, num_starts, seed,

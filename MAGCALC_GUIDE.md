@@ -7,7 +7,7 @@ context can make a correct first change. It is a map, not the whole territory: t
 authoritative details live in the files it points to (§12), and when they disagree, the
 code and the tests win.
 
-*Last reviewed: 2026-10-29, against pyMagCalc `e3bf813` plus the dimer-series Rust kernel (K7). This file is kept current with
+*Last reviewed: 2026-10-29, against pyMagCalc `ae66746` plus the numeric classical energy. This file is kept current with
 every change that alters what it describes (§13).*
 
 ---
@@ -146,7 +146,7 @@ separate model. Top-level blocks:
 | `magnetic_structure` | `pattern`, `single_k` (rotating-frame spiral), `multi_k`, `explicit`; or `from_mcif:` at top level |
 | `tasks` | which steps to run (§5) |
 | `q_path` | named points in **chemical** RLU plus `path` and `points_per_segment` |
-| `calculation` | `mode`, `backend`, `kernels`, `n_workers`, `temperature`, `domains`, `cross_section`, `cache_mode`, the guard tolerances, `anisotropy_renormalization`, `series_order` |
+| `calculation` | `mode`, `backend`, `kernels`, `n_workers`, `temperature`, `domains`, `cross_section`, `cache_mode`, the guard tolerances, `anisotropy_renormalization`, `classical_energy`, `series_order` |
 | per-task blocks | `minimization`, `scga`, `thermal_mc`, `sampled_correlations`, `kpm`, `corrections`, `powder_average`, `energy_cut`, `fitting`, … |
 | `output`, `plotting` | file names, `save_plot`, `show_plot`, resolution |
 
@@ -393,6 +393,11 @@ iOS app).
   and scans its grid in batches, 12–19× faster with the same k*: 47 s → 3.3 s on YIG,
   29 s → 2.5 s on α-Cu₂V₂O₇. It had been the largest Python cost of a plain dipole run
   (`GAP_STATUS.md`, "Luttinger–Tisza guard: J(k) from J(R)").
+- **The classical energy** the minimizer and the energy-audit guard use is assembled
+  from the bond arrays, with only the on-site, Zeeman and biquadratic terms in SymPy,
+  and built once per run instead of twice. A warm FeI₂ run goes from 24 s to 6.8 s.
+  `calculation: {classical_energy: symbolic}` keeps the old whole-SymPy build
+  (`GAP_STATUS.md`, "Classical energy from the bond arrays").
 - **The dimer series expansion** (K7, 2026-10-29) runs each cluster's perturbation
   theory in rsMagCalc under `kernels: rust`, threaded over each cluster size's
   topologies. On the six-dimer Rb₂Cu₃SnF₁₂ cell order 6 takes 21 s instead of 115 s

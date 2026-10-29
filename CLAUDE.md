@@ -442,6 +442,8 @@ calculation:
   imaginary_rel_tolerance: 5.0e-3  # fraction of the bandwidth  |  BOTH are exceeded
   energy_tolerance: 1.0e-6         # meV per cell (per SITE in SU(N) mode)
   h2_rel_tolerance: 1.0e-6         # guard 3 (kpm_sqw): min eig H2 / ||H2||
+  classical_energy: numeric        # numeric (default) | symbolic -- how the
+                                   # minimizer's and guard 2's E(m) is built
 ```
 
 1. **Imaginary-energy check** (`max_imaginary_energy`) -- a non-minimum with

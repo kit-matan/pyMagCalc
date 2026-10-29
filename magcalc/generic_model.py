@@ -1871,6 +1871,25 @@ class GenericSpinModel:
         
         return HM
 
+    def classical_parts(self, Sxyz: List[Any], pr: List[Any]):
+        """`Hamiltonian` split for numeric assembly of the classical energy.
+
+        Returns (Jex, DM, Kex, rest): the bond-bilinear interaction matrices that
+        `_compute_heisenberg_dm_terms` sums, and every other term `Hamiltonian`
+        adds (biquadratic, single-ion, Zeeman) as one expression, substituted as
+        `Hamiltonian` substitutes the total. `_apply_substitution_and_filter` is
+        linear on a classical expression (subs + expand; its boson filter needs
+        non-commuting symbols), so the two parts sum to `Hamiltonian(Sxyz, pr)`.
+        `MagCalc._classical_quadratic_numeric` uses it; the bilinear sum is the
+        part that costs seconds symbolically and nothing as arrays.
+        """
+        Jex, DM, Kex, p_rest, param_map = self._prepare_interaction_matrices(pr)
+        rest = sp.S.Zero + self._compute_biquadratic_terms(Sxyz, param_map)
+        rest += self._compute_sia_terms(Sxyz, p_rest, param_map)
+        rest += self._compute_zeeman_terms(Sxyz, p_rest, param_map,
+                                           GAMMA_ELECTRON, MU_B)
+        return Jex, DM, Kex, self._apply_substitution_and_filter(rest, pr)
+
     def _prepare_interaction_matrices(self, pr):
         """Prepare interaction matrices for Hamiltonian construction."""
         if self.config.get('parameters'):

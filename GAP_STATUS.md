@@ -978,6 +978,76 @@ the rule-value parser fix a87c8a8 below, magpipe at 283f694), 2026-10-22, idle m
 ALPS ones. The merge is also what makes `sqrt(3)*D1x/3`, the allowed kagome DM, pass this check: before the
 parser fix it reached the check as an unbound `sqrt3` and was refused as a conflict.
 
+### Classical energy from the bond arrays, 2026-10-29 — FeI₂ 18 s → 0.4 s per run, the SymPy build kept as an option
+
+A re-profile of every shipped example after K7 found pyMagCalc's own Python down to 15 s
+of 729 s; the rest was SymPy. Most of the SymPy is the Holstein–Primakoff build, which is
+cached. One SymPy build was not. `MagCalc._extract_classical_quadratic`, which gives the
+minimizer, the annealer and the energy-audit guard E(m) = ½ mᵀHm + bᵀm + c, built the
+whole classical Hamiltonian in SymPy on every run. It did so twice, because the runner's
+minimization and guard `MagCalc` instances each asked for it. On a warm FeI₂ run that
+was 17–18 s of 24 s.
+
+`calculation.classical_energy` now chooses how:
+
+* **`numeric`** (default): `GenericSpinModel.classical_parts` returns the bilinear
+  interaction matrices (Jex, DM, Kex) and every other term of `Hamiltonian`
+  (biquadratic, single-ion, Zeeman) as one expression. The bilinear sum
+  ½ Σ m_iᵀ(J_ij I + [D_ij]× + K_ij) m_{j mod N} is assembled as arrays, giving
+  H = A + Aᵀ. Only the remainder is lambdified and probed, with the same identities
+  and the same random-point quadratic check as before. Symbols are bound as the
+  symbolic path binds them: S, then the parameters, then by name any config parameter
+  outside `parameter_order`. If a coefficient still cannot be made numeric, it falls
+  back to the symbolic build; a non-quadratic remainder returns None, as the symbolic
+  path would.
+* **`symbolic`**: the whole classical Hamiltonian in SymPy, unchanged, as an option.
+
+Both are memoized on the spin model, which the two runner instances share. The memo is
+keyed on the mode, the parameters, the cell sizes, S and, in a rotating frame, the
+single-k structure, because `spin_interactions` rotates the bonds into it. It returns
+copies and keeps 8 entries.
+
+Wall time per run, `kernels: rust`, `backend: fortran`. Before means the symbolic build
+with the memo off, i.e. the old code path; the two were alternated twice:
+
+| config | classical form, before | after | whole run, before | after |
+|---|---|---|---|---|
+| FeI₂ (warm cache) | 17.4–18.0 s | 0.4 s | 24.1 s | 6.8 s |
+| SW28 biquadratic fcc | 3.9 s | 0.6 s | 36.7 s | 32.7 s |
+| SW20 Yb₂Ti₂O₇ in field | 2.0 s | < 0.2 s | 11.9 s | 10.0 s |
+| α-Cu₂V₂O₇ | 1.0 s | 0.2 s | 16.4 s | 15.7 s |
+| YIG | 0.7 s | 0.3 s | | |
+
+**Oracles** (`tests/test_classical_energy.py`):
+
+* the symbolic build on every shipped example config (slow, 57 configs): H, b and c
+  agree to 1e-12 relative, and the sweep measured 1.1e-14 at worst. A fast subset of 7
+  covers DM (KFe₃J), a full interaction matrix (SW09), easy-plane and easy-axis
+  single-ion terms, a field, the anisotropic pyrochlore exchange (SW20) and a
+  rotating-frame spiral (SW03);
+* SW29's two-site chain in closed form at random, not unit, m:
+  E = 2J m_A·m_B + K(m_Az² + m_Bz²) + 2μ_B B(m_Az + m_Bz);
+* the kagome q = 0 state: −(J1 + J2)S² per site on SW07. SW09's antisymmetric
+  exchange splits the two vector chiralities to −JS² ∓ √3|D|S² per site, a magnitude
+  that does not depend on the DM sign convention;
+* the option, an unknown mode refused, the fallback, and one build shared by two
+  instances, rebuilt when J changes.
+
+Mutants: a flipped DM sign fails KFe₃J's parity, and a memo key without the parameters
+fails the memo test. H = 2A in place of A + Aᵀ survives, and is equivalent here: bonds are
+listed in both directions with D_ji = −D_ij and K_ji = K_ijᵀ, so A is already symmetric.
+A + Aᵀ is kept because it is the Hessian without that assumption.
+
+A side effect to know about: `classical_energy` is part of the config, so switching it
+invalidates the symbolic LSWT cache keyed on that config. KFe₃J rebuilt it (11 s) on
+every switch while this was measured.
+
+**Gate** (2026-10-29, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`,
+pyMagCalc `ae66746` plus this change, fMagCalc `4a5ff4b`, rsMagCalc `9061710`, magpipe
+`e92b2c7`): **2509 passed, 2 skipped, 0 failed, 14 min 38 s**. The 71 added tests are
+`tests/test_classical_energy.py`'s (57 of them the slow every-example parity), and the two
+skips are the structural pair.
+
 ### Luttinger–Tisza guard: J(k) from J(R), the grid batched, 2026-10-29 — 12–19×, k* bit-identical
 
 A profile of every shipped example config under `kernels: rust` and `backend: fortran`

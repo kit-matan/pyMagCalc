@@ -953,6 +953,22 @@ The engine **fails the run** if the structure is not a minimum
 > the ground-state guards below are the second line of defence — which is why
 > running with `on_imaginary: warn|off` costs more than it looks.
 
+**How the classical energy is built (`calculation.classical_energy`).** Every method
+above, and the energy-audit guard, minimizes E(m) = ½ mᵀHm + bᵀm + c over the spin
+components. By default (`numeric`) the bond-bilinear part of H — exchange, DM and
+anisotropic exchange — is summed straight from the interaction arrays, and only the
+single-ion, Zeeman and biquadratic terms go through SymPy. `symbolic` builds the whole
+classical Hamiltonian in SymPy, the way every run did before 2026-10-29. The two agree
+to 1e-14 on every shipped example. The numeric form takes FeI₂ from 18 s to 0.4 s per
+run. Keep `symbolic` for cross-checking, or for a model whose coefficients the numeric
+form cannot bind; it falls back to `symbolic` by itself in that case. The form is
+built once per model and parameter set and reused by the minimizer and the guard.
+
+```yaml
+calculation:
+  classical_energy: numeric    # numeric (default) | symbolic
+```
+
 ---
 
 ## 4f. Modeling the Measurement (temperature, twins, resolution, cuts)
