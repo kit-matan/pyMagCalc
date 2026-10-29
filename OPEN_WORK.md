@@ -4,8 +4,8 @@
 finished. K1–K5 and a sparse exact KPM guard are in rsMagCalc, and K6 (mixed-spin
 dipole S(Q,ω)) is in fMagCalc. Everything is merged to `master` and pushed (pyMagCalc
 `9b70cf5` before the last two items, fMagCalc `4a5ff4b`, rsMagCalc `1d2532d`, now
-public). Last full gate: **2345 passed, 2 skipped** (structural; 2026-10-28, see
-`GAP_STATUS.md`, "Bond builders"). K7, the dimer series' per-cluster perturbation
+public). Last full gate: **2438 passed, 2 skipped** (structural; 2026-10-29, see
+`GAP_STATUS.md`, "Rust kernels K7"). K7, the dimer series' per-cluster perturbation
 theory, followed on 2026-10-29 from a profile of every shipped example under the
 compiled kernels (`GAP_STATUS.md`, "Rust kernels K7"). Four small follow-ups were
 known; item 3 is done:

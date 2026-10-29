@@ -1145,15 +1145,14 @@ is about two hours under `rust` against an overnight run with the pool, and memo
 RSS at order 7 already reached 4.3 GB in one run (it depends on how many of the largest clusters run at once), and
 this machine has 16 GB, so cap `n_workers` there.
 
-**Gate** (2026-10-29 10:34–10:48, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs` from a MIRROR of the workspace root:
-this branch's pyMagCalc and rsMagCalc worktrees first on `PYTHONPATH`, fMagCalc `4a5ff4b`, magpipe `e92b2c7`; the
-main checkouts were in use by another session): **2354 passed, 2 failed, 76 skipped, 13 min 38 s**. All 33 added
-tests pass, every `rust` case run (7 in `test_dimer_series.py`, 7 in `test_kernels_dimer_series.py`, 19 in rsMagCalc
-`test_dimer_series_parity.py`). Collected 2432 = the 2407 of the 2405-pass gate + 33 − 8, the 8 being four example
-configs untracked in the main checkout, each parametrizing two tests. The 2 failures are `test_install_provenance` and
-`test_shadow_guard`, which assert that exactly one `magcalc` is importable — false by construction with a second
-checkout on the path; 74 of the skips are the worktree's missing `gui/node_modules` (emitter, visualizer and GUI
-round-trip parity), the other 2 the structural pair. The gate from the real root, after merging, is still owed.
+**Gate** (2026-10-29 11:51–12:05, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`, after merging:
+pyMagCalc `ff5c014`, rsMagCalc `9061710` rebuilt and installed (`pip install -e . --no-build-isolation`, stroff
+8-aligned), fMagCalc `4a5ff4b`, magpipe `e92b2c7`): **2435 passed, 3 failed, 2 skipped, 13 min 37 s**. The three
+failures were magpipe's live Materials Project tests failing to resolve `api.materialsproject.org`, and all three
+pass on rerun, so **2438 pass**: the 2405 of the Luttinger–Tisza gate plus the 33 added here (7 in
+`test_dimer_series.py`, 7 in `test_kernels_dimer_series.py`, 19 in rsMagCalc `test_dimer_series_parity.py`). The
+two skips are the structural pair. Before merging, the same suite ran from a mirror of the root with the worktrees
+on `PYTHONPATH`; every added test passed there too.
 
 ### Gapless and degenerate S(Q,ω) under `backend: fortran`, 2026-10-28 — two Fortran defects, pinned to Sunny and a closed form
 
