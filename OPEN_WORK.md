@@ -1,6 +1,7 @@
 # Open work — pick-up notes
 
-**Current status (2026-10-29): one item is open, item 5 below.** The Rust kernels plan is
+**Current status (2026-10-29): one item is open, item 6 below**, found while closing
+item 5 the same day. The Rust kernels plan is
 finished. K1–K5 and a sparse exact KPM guard are in rsMagCalc, and K6 (mixed-spin
 dipole S(Q,ω)) is in fMagCalc. Everything is merged to `master` and pushed (pyMagCalc
 `9b70cf5` before the last two items, fMagCalc `4a5ff4b`, rsMagCalc `1d2532d`, now
@@ -32,24 +33,41 @@ known; item 3 is done:
    sites and from 2.8 s to 0.15 s at 128. Four parallel runs at 128 sites take 0.18 s
    instead of 10.9 s (`GAP_STATUS.md`, "anneal on K1's dense model").
 
-5. **OPEN: the energy audit (guard 2) skips every model with a quartic term.** Found
-   2026-10-29 while pinning the non-collinear biquadratic to Sunny (`GAP_STATUS.md`,
-   "Biquadratic off the collinear axis").
-   - **What happens.** `MagCalc._extract_classical_quadratic` returns None when the
-     classical energy is not quadratic in the spin components: any `biquadratic`, or a
-     `stevens` term of rank ≥ 4. `relax_from_current` then returns None, and the runner
-     (`if relax is not None:`) skips the audit without a log line. The imaginary-mode
-     check still runs, but a stationary maximum is exactly what that check cannot see,
-     so such a model has no protection against it.
-   - **Injection point.** `relax_from_current` relaxes on the quadratic form
-     (H, b, c). For a non-quadratic energy it needs the energy itself and its gradient.
-     The minimizer already has a symbolic, lambdified route for these models
-     (`_classical_energy_func` and the `minimize_energy` fallback), so the audit can
-     reuse it. At the least, log that the audit was skipped and why.
-   - **Oracle.** The 120° triangular AFM with B = 0.06
-     (`tests/data_biquadratic_noncollinear_sunny.json`). E/site =
-     3(J s² cos 120° + B s⁴ cos² 120°) = −1.455 meV exactly, Sunny's relaxation lowers
-     nothing, and a ferromagnetic structure supplied for it must be refused.
+5. **The energy audit (guard 2) skipped every model with a quartic term. DONE
+   2026-10-29.** Found while pinning the non-collinear biquadratic to Sunny
+   (`GAP_STATUS.md`, "Biquadratic off the collinear axis"). `relax_from_current`
+   relaxed on the quadratic form (H, b, c) only, so for a `biquadratic` or a rank ≥ 4
+   `stevens` term it returned None and the runner skipped the audit without a log line,
+   leaving a supplied stationary maximum unguarded. It now relaxes on E(m) and ∇E(m)
+   from `MagCalc._classical_energy_general`, built from the same parts the quadratic
+   probe rejected; quadratic models keep the (H, b, c) path unchanged, and a skip that
+   remains is a runner WARNING. Pinned to the 120° triangular AFM with B = 0.06
+   (E/site = −1.455 meV exactly; Sunny's state passes, the ferromagnet is refused) and
+   to a B₄⁰ spin's closed form (`GAP_STATUS.md`, "Energy audit on a non-quadratic
+   classical energy").
+
+6. **OPEN: `minimize_energy` puts every site on the reference sphere when the energy
+   is not quadratic.** Found 2026-10-29 while closing item 5.
+   - **What happens.** For a `biquadratic` or rank ≥ 4 `stevens` model the quadratic
+     form is unavailable, so the multistart path builds its angle-based SymPy energy
+     (the `("sym", ...)` payload). Its spin vectors are `S_sym·(sin θ cos φ, ...)` with
+     `S_sym` bound to the REFERENCE spin, i.e. |m_i| = S_ref on every site. That is the
+     mixed-spin bug `_classical_spin_lengths` fixed for quadratic models on 2026-08-18,
+     still live on this path. Measured on a two-site (1, ½) Néel chain with J = 1 and
+     B = 0.05 on the intracell bond: the minimizer reports −1.95 meV; the true energy
+     of the state it returns, and the exact Néel value, is −0.9875 meV. Uniform-spin
+     models are unaffected. `anneal`/`steep` refuse these models outright.
+   - **Injection point.** `MagCalc._classical_energy_general` (item 5) already gives
+     E(m) and ∇E(m) on |m_i| = S_i. The multistart path could relax on it through
+     `_general_energy_np` / `_general_grad_np`; the catch is that its closures do not
+     pickle to the `n_workers > 1` pool, which the `("sym", ...)` payload gets around
+     by lambdifying inside each worker.
+   - **Oracle.** The (1, ½) chain's −0.9875 meV
+     (`tests/test_energy_audit_quartic.py::test_audit_moves_on_per_site_lengths` pins
+     the audit's side of it), and the mixed-spin trimer of
+     `tests/test_mixed_spin_classical.py` with a small biquadratic added.
+   - **Guarded meanwhile:** guard 2 moves on the true lengths, so a structure this path
+     gets wrong because of the lengths is refused downstream rather than passed.
 
 Items 3 and 4 come from the 2026-10-27 assessment of what is still worth compiling.
 Its third candidate, the Ewald dipolar sum, is done (`GAP_STATUS.md`, "Ewald dipolar
@@ -206,7 +224,7 @@ add it rather than folding it into whatever you are doing.
 
 | # | Item | Status |
 |---|---|---|
-| — | nothing open | — |
+| 6 | `minimize_energy` uses one spin length for a non-quadratic mixed-spin energy (2026-10-29; pick-up notes at the top of this file) | **OPEN** |
 
 ### Closed 2026-08-16
 

@@ -263,8 +263,11 @@ order, raises — it is never silently dropped.
 raises on it; there, write a polynomial in S_i·S_j as `heisenberg` (n = 1) plus
 `biquadratic` (n = 2). `biquadratic` is the genuine operator in dipole mode and holds
 for non-collinear structures, pinned to Sunny's `:dipole_uncorrected` on the 120°
-triangular antiferromagnet. The dipole energy-audit guard cannot yet run on a
-biquadratic or rank ≥ 4 Stevens model and is skipped for it (`OPEN_WORK.md`).
+triangular antiferromagnet. The energy-audit guard runs on these quartic models too
+(since 2026-10-29; it used to skip them without a word). A multistart minimization of
+one with MIXED spins is still wrong: it gives every site the reference length
+(`OPEN_WORK.md` item 6). Supply the structure, and the audit, which uses the true
+lengths, will check it.
 
 > **Anisotropy renormalization.** Dipole mode replaces an on-site operator by its
 > classical (s → ∞) polynomial, which overestimates a rank-k term at finite s.
@@ -962,7 +965,9 @@ The engine **fails the run** if the structure is not a minimum
 
 **How the classical energy is built (`calculation.classical_energy`).** Every method
 above, and the energy-audit guard, minimizes E(m) = ½ mᵀHm + bᵀm + c over the spin
-components. By default (`numeric`) the bond-bilinear part of H — exchange, DM and
+components. A biquadratic or a rank ≥ 4 Stevens term is not of that form: the audit then
+relaxes on E(m) and its gradient directly, with the bilinear part still a matrix and only
+the rest lambdified. By default (`numeric`) the bond-bilinear part of H — exchange, DM and
 anisotropic exchange — is summed straight from the interaction arrays, and only the
 single-ion, Zeeman and biquadratic terms go through SymPy. `symbolic` builds the whole
 classical Hamiltonian in SymPy, the way every run did before 2026-10-29. The two agree

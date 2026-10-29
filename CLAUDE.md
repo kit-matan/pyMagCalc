@@ -306,8 +306,9 @@ interactions:
   # Both bond directions, like heisenberg. Until 2026-10-29 the dipole build
   # dropped part of it, with only a WARNING, on a bond with no bilinear term and on
   # a non-collinear intercell bond; now pinned to Sunny on the 120-degree triangle
-  # (tests/test_biquadratic_noncollinear.py). NB: guard 2, the energy audit, cannot
-  # run on a quartic energy and is skipped (OPEN_WORK.md item 5).
+  # (tests/test_biquadratic_noncollinear.py). Guard 2, the energy audit, runs on
+  # this quartic energy since 2026-10-29 (it used to be skipped without a word);
+  # a multistart minimization with MIXED spins is still wrong (OPEN_WORK.md item 6).
   biquadratic:
   - {pair: [A, B], rij_offset: [0, 0, 0], value: -0.037}
 
@@ -467,6 +468,11 @@ calculation:
    antiferromagnet) keeps the Bogoliubov problem diagonal, so `process_calc_disp`
    sorts the ±ω pairs, returns the upper half, and hands back a real, positive,
    entirely plausible spectrum. Neither guard alone is sufficient.
+   A quartic energy (`biquadratic`, `stevens` rank ≥ 4) has no quadratic form, and
+   until 2026-10-29 the audit was skipped for it WITHOUT A LOG LINE -- a ferromagnet
+   supplied for the biquadratic triangular AFM ran. It now relaxes on E(m) and ∇E(m)
+   (`MagCalc._classical_energy_general`; `tests/test_energy_audit_quartic.py`), and
+   any case where it still cannot run is a WARNING from the runner.
    SU(N) mode runs its OWN energy audit (`sun/adapter.py`) off the same
    `energy_tolerance` key but in meV **per site** -- it is the only thing that can
    catch a dipole-derived state pasted under `mode: SUN` (§5c).

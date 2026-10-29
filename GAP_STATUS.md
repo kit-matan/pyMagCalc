@@ -988,6 +988,59 @@ the rule-value parser fix a87c8a8 below, magpipe at 283f694), 2026-10-22, idle m
 ALPS ones. The merge is also what makes `sqrt(3)*D1x/3`, the allowed kagome DM, pass this check: before the
 parser fix it reached the check as an unbound `sqrt3` and was refused as a conflict.
 
+### Energy audit on a non-quadratic classical energy, 2026-10-29 — guard 2 no longer skips biquadratic and rank ≥ 4 Stevens models
+
+Guard 2 (`MagCalc.relax_from_current`) relaxed the supplied structure on the quadratic
+form E(m) = ½ mᵀHm + bᵀm + c. A `biquadratic`, or a `stevens` term of rank ≥ 4, has no
+such form: `_extract_classical_quadratic` returned None, so did `relax_from_current`,
+and the runner (`if relax is not None:`) skipped the audit without a log line. The
+imaginary-mode check still ran, but a stationary maximum is exactly what it cannot see
+(the ±ω pairs stay real and are sorted), so on these models a ferromagnet supplied for
+an antiferromagnet produced a spectrum and no complaint. Measured before the fix: a
+B₄⁰ spin supplied along z, a stationary maximum, ran to completion.
+
+Fix. The quadratic probe's rejected parts are no longer thrown away:
+`_classical_quadratic_numeric` (and the `symbolic` builder) return a
+`_NonQuadraticEnergy` — the array-summed bond bilinear H and the remainder as an
+expression in the 3N components — memoized on the spin model like (H, b, c).
+`MagCalc._classical_energy_general` turns it into E(m) and ∇E(m): H stays a matrix
+product, the remainder (on-site, Zeeman, biquadratic) is lambdified with its gradient
+differentiated symbolically in the components, and an Ewald A(0) is added as on the
+quadratic path. `relax_from_current` relaxes on those with the same nudges, L-BFGS-B
+and tolerances, moving on |m_i| = S_i per site. The minimizer's angle-based symbolic
+fallback was not reused: it gives every site the reference length, which is wrong for
+mixed spins, and differentiates in angles rather than components.
+
+**Quadratic models are untouched.** They still take `_classical_energy_np` /
+`_classical_grad_np` on (H, b, c); only the chain rule from ∂E/∂m to the angles was
+factored out (`_angle_gradient`), with identical arithmetic. A test fails if a quadratic
+model reaches the general energy.
+
+When the audit still cannot run (the energy cannot be built, or the rotations are not
+numeric), the runner now says so at WARNING, naming what is left unguarded.
+
+**Oracles** (`tests/test_energy_audit_quartic.py`; 8 of its 9 fast tests fail on the
+previous engine, two of them only because the functions they call are new. The ninth
+runs the stable cone, which a skipped audit passes too):
+
+* **The 120° triangular AFM with a biquadratic**, J = 1, B = 0.06, s = 1, 3×3 supercell —
+  the state Sunny 0.8.1 relaxes to and cannot lower
+  (`tests/data_biquadratic_noncollinear_sunny.json`). The audit scores it at
+  E/site = 3(J s² cos 120° + B s⁴ cos² 120°) = −1.455 meV to 1e-10 and lowers nothing.
+  The ferromagnet on the same build, 3(J + B) = 3.18 meV/site, relaxes downhill, and a
+  run supplying it is refused by the runner (both `slow`: the 9-site symbolic build).
+* **One spin under B₄⁰ O₄⁰** (s = 2, B = 0.01, on a ferromagnetic chain whose bond energy
+  is the same for every uniform state): the classical polynomial is
+  s⁴(35c⁴ − 30c² + 3), c = cos θ. Along z it is a stationary maximum at 8Bs⁴; the audit
+  relaxes it to the cone c² = 3/7 at −24/7·Bs⁴ (to 1e-7), under both
+  `classical_energy` builds, and the runner refuses it. The cone itself passes and runs.
+* **A (1, ½) Néel chain** with B = 0.05 on the intracell bond: per cell
+  E = −2J s_A s_B + B(s_A s_B)² = −0.9875 meV exactly, so the audit moves on the per-site
+  lengths. The minimizer's own symbolic fallback scores the same state at −1.95, one
+  length for both sites: `OPEN_WORK.md` item 6, left open.
+* ∇E against central differences of E; the runner's WARNING when the energy cannot be
+  built.
+
 ### Biquadratic off the collinear axis, and `pair_operator` in dipole mode, 2026-10-29 — three silent drops, pinned to Sunny and two exact identities
 
 A feasibility study of building the dipole H(q) numerically found these. It compared
@@ -1047,11 +1100,9 @@ previous engine):
 * The build raises instead of dropping (the lookup completion disabled); `pair_operator`
   raises from the runner and from a direct `MagCalc` build.
 
-**Still open, found while writing these:** guard 2, the energy audit, cannot run on a
-model with a quartic term. `_extract_classical_quadratic` returns None when the
-classical energy is not quadratic in the spin components (biquadratic, Stevens rank
-≥ 4), `relax_from_current` then returns None, and the runner skips the audit without a
-word. The imaginary-mode check still runs. `OPEN_WORK.md` item 5.
+**Found while writing these, and closed the same day:** guard 2, the energy audit,
+could not run on a model with a quartic term and was skipped without a word. See
+"Energy audit on a non-quadratic classical energy" above (`OPEN_WORK.md` item 5).
 
 **Gate:** (2026-10-29, pyMagCalc worktree on `a018908` plus this change, `MAGCALC_NO_GUI=1 pytest -m "" -rs` inside pyMagCalc, machine heavily loaded by other sessions at load 200–250): **1368 passed, 2 failed, 75 skipped, 12 min 49 s.** The 2 failures are the shadow-guard tests (`test_no_second_magcalc_package_is_importable`, `test_guard_reports_a_stale_copy_that_wins_outright`), which fail by construction while a second checkout is importable. 74 of the skips are the GUI and native-emitter tests, which need `gui/node_modules` and the Xcode emitter that a worktree lacks; the other is `seekpath`. `test_config_smoke` passed on every example, so no shipped config hits the new raise. After the fast-forward merge to master (`b5865c0`), the workspace-root gate (`MAGCALC_NO_GUI=1 pytest -m "" -rs` from the workspace root; fMagCalc `4a5ff4b`, rsMagCalc `9061710`, magpipe `e92b2c7`) read **2516 passed, 2 skipped, 0 failed, 23 min 15 s**. That is the previous 2509 plus the 7 new tests, with the two structural skips (`seekpath` absent, ALPS present). The time is inflated: the machine ran at load 230–380 under other sessions, and no xdist worker was lost.
 

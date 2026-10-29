@@ -39,7 +39,7 @@ import json  # For metadata
 # Type Hinting Imports
 import types  # Added for ModuleType hint
 import numpy.typing as npt
-from typing import List, Tuple, Dict, Any, Optional, Union
+from typing import List, NamedTuple, Tuple, Dict, Any, Optional, Union
 
 # --- Modularized Imports ---
 from .symbolic import gen_HM
@@ -130,6 +130,16 @@ def _classical_spin_components(x, S, n):
     return m, st, ct, sp_, cp
 
 
+class _NonQuadraticEnergy(NamedTuple):
+    """A classical energy that failed the quadratic-form probe, kept so the energy
+    audit can still evaluate it: E(m) = 0.5 m^T H m + expr(m). `H` is the part
+    already summed as arrays (the bond bilinear on the numeric path, zero on the
+    symbolic one) and `expr` is everything else, in the components `comps`."""
+    H: np.ndarray
+    expr: Any
+    comps: tuple
+
+
 def _classical_energy_np(x, H, b, c, S, n):
     m, *_ = _classical_spin_components(x, S, n)
     return float(0.5 * (m @ (H @ m)) + b @ m + c)
@@ -137,7 +147,23 @@ def _classical_energy_np(x, H, b, c, S, n):
 
 def _classical_grad_np(x, H, b, c, S, n):
     m, st, ct, sp_, cp = _classical_spin_components(x, S, n)
-    gm = H @ m + b  # dE/dm (H is the symmetric Hessian)
+    return _angle_gradient(H @ m + b, S, n, st, ct, sp_, cp)  # H is the symmetric Hessian
+
+
+def _general_energy_np(x, E, G, S, n):
+    """`_classical_energy_np` for an energy that is not a quadratic form: E(m) and
+    its Cartesian gradient G(m) are callables (`MagCalc._classical_energy_general`)."""
+    m, *_ = _classical_spin_components(x, S, n)
+    return float(E(m))
+
+
+def _general_grad_np(x, E, G, S, n):
+    m, st, ct, sp_, cp = _classical_spin_components(x, S, n)
+    return _angle_gradient(G(m), S, n, st, ct, sp_, cp)
+
+
+def _angle_gradient(gm, S, n, st, ct, sp_, cp):
+    """dE/d(theta_i, phi_i) from dE/dm by the chain rule through m(theta, phi)."""
     dth = np.empty(3 * n)
     dph = np.empty(3 * n)
     dth[0::3] = S * ct * cp
@@ -1733,7 +1759,7 @@ class MagCalc:
     ) -> Optional[Tuple[float, float]]:
         """Energy of the CURRENT magnetic structure vs. the energy after a local
         downhill relaxation from it. Returns (E_now, E_relaxed), or None if the
-        classical energy is not available.
+        classical energy is not available (the reason is logged; the runner warns).
 
         This is the second, independent ground-state guard. It catches the case the
         imaginary-energy check CANNOT see: a stationary point that is a maximum or
@@ -1755,10 +1781,23 @@ class MagCalc:
         # `_classical_spin_lengths`.
         S_val = float(self.spin_magnitude)
         S_vec = self._classical_spin_lengths(nspins)
+        # A quadratic energy relaxes on (H, b, c) exactly as it always has. A
+        # biquadratic, or a Stevens term of rank >= 4, is not a quadratic form;
+        # until 2026-10-29 this returned None there and the runner skipped the
+        # audit without a word, so a stationary MAXIMUM supplied for such a model
+        # went through. It now relaxes on the energy itself and its gradient.
         quad = self._extract_classical_quadratic(params, nspins, nspins_ouc, S_val)
-        if quad is None:
-            return None
-        H_q, b_q, c_q = quad
+        if quad is not None:
+            fun, jac, args = _classical_energy_np, _classical_grad_np, quad
+        else:
+            general = self._classical_energy_general(params, nspins, nspins_ouc, S_val)
+            if general is None:
+                logger.info("relax_from_current: the classical energy of this model "
+                            "could not be built.")
+                return None
+            fun, jac, args = _general_energy_np, _general_grad_np, general
+            logger.info("Energy audit on the non-quadratic classical energy "
+                        "(biquadratic / Stevens rank >= 4).")
 
         # Current spin directions, as angles. mpr() may hand back SYMBOLIC rotation
         # matrices (models with a `transformations` block build them from the
@@ -1775,7 +1814,7 @@ class MagCalc:
                     R_i = R_i.subs(subs)
                 R = np.array(R_i, dtype=float)
             except (TypeError, ValueError):
-                logger.debug(
+                logger.info(
                     "relax_from_current: rotation matrices are not numeric "
                     "(symbolic model); skipping the classical-energy ground-state guard."
                 )
@@ -1784,7 +1823,7 @@ class MagCalc:
             x0[2 * i] = np.arccos(np.clip(z[2], -1.0, 1.0))
             x0[2 * i + 1] = np.arctan2(z[1], z[0])
 
-        e_now = _classical_energy_np(x0, H_q, b_q, c_q, S_vec, nspins)
+        e_now = fun(x0, *args, S_vec, nspins)
 
         # Relax from SLIGHTLY PERTURBED copies, not from x0 itself. A maximum or
         # saddle (e.g. a ferromagnetic state with antiferromagnetic exchange) is a
@@ -1797,9 +1836,8 @@ class MagCalc:
         e_best = e_now
         for _ in range(5):
             xp = x0 + rng.normal(0.0, 0.05, size=x0.shape)
-            res = minimize(_classical_energy_np, xp,
-                           args=(H_q, b_q, c_q, S_vec, nspins),
-                           jac=_classical_grad_np, method="L-BFGS-B",
+            res = minimize(fun, xp, args=(*args, S_vec, nspins),
+                           jac=jac, method="L-BFGS-B",
                            options={"maxiter": 500, "ftol": tol})
             e_best = min(e_best, float(res.fun))
         return float(e_now), float(e_best)
@@ -2775,7 +2813,8 @@ class MagCalc:
 
         Returns (H (3N,3N), b (3N,), c (scalar)) as NumPy arrays, or None if the
         energy is NOT quadratic in the components (verified numerically), in
-        which case the caller falls back to the symbolic lambdify path. The
+        which case the minimizer falls back to its symbolic lambdify path and the
+        energy audit to `_classical_energy_general`. The
         OUC->UC component sharing (each over-unit-cell spin is a copy of its
         unit-cell parent) is built into H, so the Hessian/gradient accumulate
         all bond contributions onto the unit-cell variables.
@@ -2787,8 +2826,24 @@ class MagCalc:
         FeI2 run). Both probe the same identities. A numeric build that cannot
         bind every coefficient falls back to the symbolic one. The result is
         memoized on the spin model, which the runner's minimization and guard
-        MagCalc instances share, so the two calls per run cost one build.
+        MagCalc instances share, so the two calls per run cost one build. A
+        non-quadratic energy is memoized too, for `_classical_energy_general`.
         """
+        quad = self._classical_form_memoized(params, nspins, nspins_ouc, S_val)
+        if quad is None or isinstance(quad, _NonQuadraticEnergy):
+            return None
+        H, b, c = quad[0].copy(), quad[1].copy(), quad[2]
+        ewald = self._ewald_quadratic(nspins)
+        if ewald is False:
+            return None
+        if ewald is not None:
+            H += ewald
+        return H, b, c
+
+    def _classical_form_memoized(self, params, nspins, nspins_ouc, S_val):
+        """(H, b, c), a `_NonQuadraticEnergy`, or None, memoized on the spin model,
+        which the runner's minimization and guard MagCalc instances share, so the
+        calls per run cost one build. No Ewald term: callers add it."""
         mode = self._classical_energy_mode()
         key = self._classical_quad_key(mode, params, nspins, nspins_ouc, S_val)
         memo = getattr(self.sm, "_classical_quad_memo", None)
@@ -2799,41 +2854,85 @@ class MagCalc:
             except Exception:
                 pass
         if key in memo:
-            quad = memo[key]
-        else:
-            quad = None
-            if mode == "numeric":
-                quad = self._classical_quadratic_numeric(params, nspins, nspins_ouc, S_val)
-                if quad is None:
-                    logger.info("Numeric classical energy unavailable for this model; "
-                                "building it symbolically.")
+            return memo[key]
+        quad = None
+        if mode == "numeric":
+            quad = self._classical_quadratic_numeric(params, nspins, nspins_ouc, S_val)
             if quad is None:
-                quad = self._classical_quadratic_symbolic(params, nspins, nspins_ouc, S_val)
-            elif isinstance(quad, str):            # "nonquadratic": nothing to fall back to
-                quad = None
-            while len(memo) >= 8:
-                memo.pop(next(iter(memo)))
-            memo[key] = quad
+                logger.info("Numeric classical energy unavailable for this model; "
+                            "building it symbolically.")
         if quad is None:
-            return None
-        H, b, c = quad[0].copy(), quad[1].copy(), quad[2]
+            quad = self._classical_quadratic_symbolic(params, nspins, nspins_ouc, S_val)
+        while len(memo) >= 8:
+            memo.pop(next(iter(memo)))
+        memo[key] = quad
+        return quad
 
-        # Long-range dipolar (Ewald) term. The minimizer MUST optimize the same
-        # Hamiltonian that LSWT diagonalizes -- otherwise it finds a ground state
-        # that is not a minimum of the actual model, and the spectrum comes out
-        # imaginary (exactly the g-tensor bug fixed earlier). A(q=0) is the full
-        # lattice sum between sites of the cell, so it adds straight into H.
+    def _ewald_quadratic(self, nspins):
+        """The long-range dipolar (Ewald) term as a (3N, 3N) Hessian block, None when
+        the model has none, False when it cannot be built.
+
+        The minimizer MUST optimize the same Hamiltonian that LSWT diagonalizes --
+        otherwise it finds a ground state that is not a minimum of the actual model,
+        and the spectrum comes out imaginary (exactly the g-tensor bug fixed
+        earlier). A(q=0) is the full lattice sum between sites of the cell, so it
+        adds straight into H."""
         try:
-            if self._ewald_spec() is not None:
-                from .ewald import exchange_from_A
-                J0 = exchange_from_A(self._ewald_A(np.zeros(3)), self._ewald_g())
-                for i in range(nspins):
-                    for j in range(nspins):
-                        H[3 * i:3 * i + 3, 3 * j:3 * j + 3] += np.real(J0[i, j])
+            if self._ewald_spec() is None:
+                return None
+            from .ewald import exchange_from_A
+            J0 = exchange_from_A(self._ewald_A(np.zeros(3)), self._ewald_g())
+            H = np.zeros((3 * nspins, 3 * nspins))
+            for i in range(nspins):
+                for j in range(nspins):
+                    H[3 * i:3 * i + 3, 3 * j:3 * j + 3] += np.real(J0[i, j])
+            return H
         except Exception as e:
             logger.info(f"Quadratic energy extraction failed ({e}); using symbolic path.")
+            return False
+
+    def _classical_energy_general(self, params, nspins, nspins_ouc, S_val):
+        """The classical energy as callables (E(m), dE/dm(m)) on the stacked 3N
+        Cartesian components, for ANY model -- including one whose energy is not a
+        quadratic form (`biquadratic`, a `stevens` term of rank >= 4). None if it
+        cannot be built.
+
+        A quadratic model gets the (H, b, c) form back as callables, so this is the
+        same function `_extract_classical_quadratic` describes. Otherwise the parts
+        the quadratic probe rejected are reused: the array-summed bond bilinear stays
+        a matrix product and only the remainder (on-site, Zeeman, biquadratic) is
+        lambdified, with its gradient differentiated symbolically in the components.
+        The spin lengths are NOT in here -- the caller moves on |m_i| = S_i, so a
+        mixed-spin model is handled exactly as on the quadratic path.
+        """
+        quad = self._extract_classical_quadratic(params, nspins, nspins_ouc, S_val)
+        if quad is not None:
+            H, b, c = quad
+            return (lambda m: 0.5 * (m @ (H @ m)) + b @ m + c), (lambda m: H @ m + b)
+        form = self._classical_form_memoized(params, nspins, nspins_ouc, S_val)
+        if not isinstance(form, _NonQuadraticEnergy):
             return None
-        return H, b, c
+        ewald = self._ewald_quadratic(nspins)
+        if ewald is False:
+            return None
+        H = form.H if ewald is None else form.H + ewald
+        try:
+            Ef = lambdify(form.comps, form.expr, modules="numpy", cse=True)
+            Gf = lambdify(form.comps, [sp.diff(form.expr, v) for v in form.comps],
+                          modules="numpy", cse=True)
+        except Exception as e:
+            logger.info(f"Non-quadratic classical energy could not be lambdified ({e}).")
+            return None
+
+        def energy(m):
+            return 0.5 * (m @ (H @ m)) + float(Ef(*m))
+
+        def gradient(m):
+            # A component the remainder does not contain differentiates to a bare
+            # 0, so the list comes back ragged in type; one float array fixes it.
+            return H @ m + np.asarray(Gf(*m), dtype=float)
+
+        return energy, gradient
 
     def _classical_energy_mode(self) -> str:
         """`calculation.classical_energy`: 'numeric' (default) or 'symbolic'."""
@@ -2893,7 +2992,8 @@ class MagCalc:
         return H, b, c
 
     def _classical_quadratic_symbolic(self, params, nspins, nspins_ouc, S_val):
-        """The whole classical Hamiltonian in SymPy, lambdified and probed."""
+        """The whole classical Hamiltonian in SymPy, lambdified and probed: (H, b, c),
+        a `_NonQuadraticEnergy` carrying the expression, or None on failure."""
         try:
             d = 3 * nspins
             comps = sp.symbols(f"_mc0:{d}", real=True)
@@ -2905,7 +3005,10 @@ class MagCalc:
             Ec = Ec.subs(self.S_sym, S_val).subs(list(zip(self.params_sym_flat, params)))
             Ec = Ec.as_real_imag()[0]
             Ef = lambdify(comps, Ec, modules="numpy", cse=True)
-            return self._probe_quadratic(Ef, d, S_val)
+            q = self._probe_quadratic(Ef, d, S_val)
+            if q is None:
+                return _NonQuadraticEnergy(np.zeros((d, d)), Ec, tuple(comps))
+            return q
         except Exception as e:
             logger.info(f"Quadratic energy extraction failed ({e}); using symbolic path.")
             return None
@@ -2917,8 +3020,8 @@ class MagCalc:
         + rest(m), with [D]x the matrix for which m_i^T [D]x m_j = D.(m_i x m_j)
         and rest the single-ion, Zeeman and biquadratic terms. Writing the
         bilinear sum as m^T A m gives H = A + A^T. Returns (H, b, c), the string
-        "nonquadratic" when rest is not quadratic (the symbolic path would say
-        the same), or None when a coefficient cannot be made numeric here.
+        a `_NonQuadraticEnergy` when rest is not quadratic (the symbolic path would
+        say the same), or None when a coefficient cannot be made numeric here.
         """
         sm = self.sm
         if not isinstance(sm, GenericSpinModel):
@@ -2984,7 +3087,7 @@ class MagCalc:
             q = self._probe_quadratic(lambdify(comps, rest, modules="numpy", cse=True),
                                       d, S_val)
             if q is None:
-                return "nonquadratic"
+                return _NonQuadraticEnergy(H, rest, tuple(comps))
             return H + q[0], q[1], q[2]
         except Exception as e:
             logger.info(f"Numeric classical energy failed ({e}); using the symbolic one.")

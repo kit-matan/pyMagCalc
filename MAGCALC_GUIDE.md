@@ -7,7 +7,7 @@ context can make a correct first change. It is a map, not the whole territory: t
 authoritative details live in the files it points to (§12), and when they disagree, the
 code and the tests win.
 
-*Last reviewed: 2026-10-29, against pyMagCalc `a018908` plus the biquadratic and `pair_operator` fixes. This file is kept current with
+*Last reviewed: 2026-10-29, against pyMagCalc `b5865c0` (the biquadratic and `pair_operator` fixes) plus the quartic energy audit. This file is kept current with
 every change that alters what it describes (§13).*
 
 ---
@@ -255,7 +255,9 @@ an exact identity, never by looking at a plot. So:
    meaningless but plausible spectrum. That has historically been the #1 source of silent
    wrongness. The guards are:
    - an imaginary-mode check, which ANDs an absolute and a relative tolerance;
-   - an energy audit, which catches a stationary *maximum* the first cannot see;
+   - an energy audit, which catches a stationary *maximum* the first cannot see (on
+     every dipole model, quartic energies included, since 2026-10-29; when it cannot
+     run the runner says so at WARNING);
    - for KPM, which never diagonalizes, H₂(q) ⪰ 0 at every q.
 
    `on_imaginary: warn` is only for an instability that is understood, with a comment
@@ -411,8 +413,13 @@ iOS app).
   started. Both are fixed and pinned to Sunny, a dropped term now raises, and
   `pair_operator`, which dipole mode had ignored without a word, now raises there
   (`GAP_STATUS.md`, "Biquadratic off the collinear axis").
-- **One item is open** in `OPEN_WORK.md`: the energy-audit guard skips every model
-  with a quartic term (biquadratic, Stevens rank ≥ 4).
+- **The energy audit runs on quartic models** (2026-10-29). It used to skip any model
+  with a biquadratic or a rank ≥ 4 Stevens term without a word, leaving a supplied
+  stationary maximum unguarded. It now relaxes on the energy itself and its gradient,
+  pinned to the 120° triangular AFM with a biquadratic and to a B₄⁰ spin's closed form
+  (`GAP_STATUS.md`, "Energy audit on a non-quadratic classical energy").
+- **One item is open** in `OPEN_WORK.md`: on those same models `minimize_energy`'s
+  multistart gives every site the reference spin length, which is wrong for mixed spins.
 - **Not supported:**
   - mixed spins in the classical dipole samplers: `thermal_mc` and
     `sampled_correlations` refuse them, while the SU(N) sampler accepts them;

@@ -706,7 +706,13 @@ def run_calculation(config_file: str):
         # comes back real and positive because the +/- omega pairs are sorted and
         # the upper half returned.
         relax = calculator.relax_from_current()
-        if relax is not None:
+        if relax is None:
+            logger.warning(
+                "Energy audit (ground-state guard 2) did NOT run: the classical energy "
+                "could not be evaluated for this model (reason logged above). A supplied "
+                "structure that is a stationary maximum or saddle would not be caught, "
+                "and the imaginary-mode check below cannot see one.")
+        else:
             e_now, e_relaxed = relax
             e_tol = float(calc_config.get('energy_tolerance', 1e-6))
             scale = max(abs(e_now), 1.0)
