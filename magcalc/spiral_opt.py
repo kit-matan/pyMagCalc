@@ -302,6 +302,32 @@ class _SpiralEnergy:
         return E
 
 
+def _fourier_exchange(J_full, offsets, ouc_map):
+    """J(k) = sum_R J(R) exp(2 pi i k.R), the 3N x 3N Fourier exchange matrix.
+
+    The OUC bonds are compressed once into one dense 3N x 3N block J(R) per
+    distinct cell translation R (a handful: 9 on CoRh2O4, 17 on aCVO), so each
+    k costs one phase vector and a small tensordot instead of a Python loop
+    over N^2 site pairs. Returns J_of_k: a (3,) k gives one Hermitian
+    (3N, 3N) matrix, an (nk, 3) stack gives (nk, 3N, 3N).
+    """
+    N, N_ouc = J_full.shape[:2]
+    live = np.flatnonzero(np.abs(J_full).reshape(N, N_ouc, 9).max(axis=(0, 2)) > 0)
+    Rs, inv = np.unique(np.asarray(offsets, dtype=float)[live], axis=0, return_inverse=True)
+    JR = np.zeros((len(Rs), N, 3, N, 3))
+    for o, r in zip(live, inv.ravel()):
+        JR[r, :, :, ouc_map[o], :] += J_full[:, o]
+    JR = JR.reshape(len(Rs), 3 * N, 3 * N)
+
+    def J_of_k(k):
+        K = np.atleast_2d(np.asarray(k, dtype=float))
+        Jk = np.tensordot(np.exp(2j * np.pi * (K @ Rs.T)), JR, axes=(1, 0))
+        Jk = 0.5 * (Jk + Jk.conj().transpose(0, 2, 1))
+        return Jk[0] if np.ndim(k) == 1 else Jk
+
+    return J_of_k
+
+
 def luttinger_tisza_guess(J_full, offsets, ouc_map, k_grid=16, refine=True):
     """Coarse-grid + local minimization of eigmin(J(k)) (Sunny LuttingerTisza.jl).
 
@@ -316,16 +342,7 @@ def luttinger_tisza_guess(J_full, offsets, ouc_map, k_grid=16, refine=True):
     bond_offsets = offsets[bonded] if np.any(bonded) else offsets
     active = [d for d in range(3) if np.any(np.abs(bond_offsets[:, d]) > 0.5)]
 
-    def J_of_k(k):
-        ph = np.exp(2j * np.pi * (offsets @ k))        # (N_ouc,)
-        Jk = np.zeros((3 * N, 3 * N), dtype=complex)
-        for i in range(N):
-            blocks = J_full[i] * ph[:, None, None]     # (N_ouc, 3, 3)
-            for j in range(N):
-                sel = (ouc_map == j)
-                if np.any(sel):
-                    Jk[3 * i:3 * i + 3, 3 * j:3 * j + 3] += blocks[sel].sum(axis=0)
-        return 0.5 * (Jk + Jk.conj().T)
+    J_of_k = _fourier_exchange(J_full, offsets, ouc_map)
 
     def lt_energy(k, eta=0.0):
         w, V = la.eigh(J_of_k(k))
@@ -334,14 +351,21 @@ def luttinger_tisza_guess(J_full, offsets, ouc_map, k_grid=16, refine=True):
         ws = np.exp(-(w - w[0]) / eta)
         return float(np.sum(ws * w) / np.sum(ws)), V[:, 0]
 
-    best_k, best_e, best_v = np.zeros(3), np.inf, None
+    # The grid is scanned in batches of ~32 MB of matrices through one stacked
+    # eigvalsh; the selection below keeps the per-point loop's rule exactly
+    # (first point in product order that beats the best by more than 1e-12).
     grid = np.arange(k_grid) / float(k_grid)
     axes_vals = [grid if d in active else np.array([0.0]) for d in range(3)]
-    for kx, ky, kz in product(*axes_vals):
-        k = np.array([kx, ky, kz])
-        e, v = lt_energy(k)
+    K = np.array(list(product(*axes_vals)), dtype=float)
+    chunk = max(1, (1 << 21) // (3 * N) ** 2)
+    wmin = np.concatenate([la.eigvalsh(J_of_k(K[s:s + chunk]))[:, 0]
+                           for s in range(0, len(K), chunk)])
+    best_e, best_i = np.inf, 0
+    for i, e in enumerate(wmin):
         if e < best_e - 1e-12:
-            best_e, best_k, best_v = e, k, v
+            best_e, best_i = e, i
+    best_k = K[best_i]
+    best_e, best_v = lt_energy(best_k)
 
     if refine and active:
         res = minimize(lambda k: lt_energy(k, eta=1e-8)[0], best_k, method='Nelder-Mead',
@@ -388,19 +412,10 @@ def ordering_wavevector(model: GenericSpinModel, p_num, k_grid: int = 24) -> Dic
 
     # eigmin(J(k)) at k* and at 0, to quantify how much a q!=0 modulation lowers the
     # classical energy relative to the k=0 state.
-    N = J_full.shape[0]
+    J_of_k = _fourier_exchange(J_full, offsets, ouc_map)
 
     def _eigmin(k):
-        ph = np.exp(2j * np.pi * (offsets @ np.asarray(k, float)))
-        Jk = np.zeros((3 * N, 3 * N), dtype=complex)
-        for i in range(N):
-            blocks = J_full[i] * ph[:, None, None]
-            for j in range(N):
-                sel = (ouc_map == j)
-                if np.any(sel):
-                    Jk[3 * i:3 * i + 3, 3 * j:3 * j + 3] += blocks[sel].sum(axis=0)
-        Jk = 0.5 * (Jk + Jk.conj().T)
-        return float(la.eigvalsh(Jk)[0])
+        return float(la.eigvalsh(J_of_k(np.asarray(k, float)))[0])
 
     lam_star = _eigmin(k_star)
     lam_zero = _eigmin(np.zeros(3))

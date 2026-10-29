@@ -976,6 +976,58 @@ the rule-value parser fix a87c8a8 below, magpipe at 283f694), 2026-10-22, idle m
 ALPS ones. The merge is also what makes `sqrt(3)*D1x/3`, the allowed kagome DM, pass this check: before the
 parser fix it reached the check as an unbound `sqrt3` and was refused as a conflict.
 
+### Luttinger–Tisza guard: J(k) from J(R), the grid batched, 2026-10-29 — 12–19×, k* bit-identical
+
+A profile of every shipped example config under `kernels: rust` and `backend: fortran`
+found the q≠0 guard (#13) to be the largest Python cost left in a plain dipole run.
+`ordering_wavevector` built the 3N × 3N Fourier exchange matrix with a Python loop over
+N² site pairs, at every point of a 24³ grid plus the Nelder–Mead refine: about 14 000
+builds, 1.7 ms each at 16 sites.
+
+`spiral_opt._fourier_exchange` now compresses the OUC bonds once into one dense block
+J(R) per distinct cell translation, J(k) = Σ_R J(R) e^{2πik·R}: 9 translations on
+CoRh₂O₄, 17 on α-Cu₂V₂O₇. It evaluates a whole stack of k with one phase matrix and a
+`tensordot`. The grid is scanned in ~32 MB batches through one stacked `eigvalsh`, and
+the pick keeps the loop's rule exactly: the first point in product order that beats the
+best by more than 1e-12. `luttinger_tisza_guess` (also the spiral optimizer's initial
+guess) and `ordering_wavevector`'s `_eigmin` both use it. This is NumPy, not a compiled
+kernel: the loop was Python-bound only because it was written per pair.
+
+`ordering_wavevector`, old against new in one process on a loaded machine (best of two):
+
+| model | sites | before | after |
+|---|---|---|---|
+| YIG (SW21) | 20 | 46.6 s | 3.3 s |
+| α-Cu₂V₂O₇ | 16 | 29.4 s | 2.5 s |
+| S07 pyrochlore | 16 | 34.0 s | 2.2 s |
+| CoRh₂O₄ (S01) | 8 | 6.5 s | 0.34 s |
+| KFe₃J (2-D grid) | 9 | 0.54 s | 0.12 s |
+
+On ten example models (those five, ZnCVO and SW03/04/07/09), k*, λ_min, λ(0) and the gain
+`ordering_wavevector` returns are bit-identical before and after. The raw, unsnapped
+`luttinger_tisza_guess` k moves by 1e-8 to 2e-5 on six of them. That is Nelder–Mead
+landing elsewhere on a flat minimum, or on an axis with no bonds, after rounding-level
+changes in J(k); `ordering_wavevector` already snaps it at 1e-3.
+
+**Oracles** (`tests/test_luttinger_tisza.py`, fast suite):
+
+* the per-pair loop, kept verbatim in the test: J(k) to 1e-13 at 40 random k, as a stack
+  and singly, on CoRh₂O₄ (8 sites, 216 OUC images), the DM kagome SW09 and the SW03 chain.
+  On the same three, the unrefined grid pick equals the loop's point exactly;
+* the triangular antiferromagnet, eigmin J(k) = −3 J_aa at K = (1/3, 1/3), with
+  isotropic, easy-plane and easy-axis exchange;
+* the DM chain, whose in-plane block 2J cos q ± 2D sin q has its minimum
+  −2√(J² + D²) at q = π − atan|D/J|. This is the one check on the antisymmetric, complex
+  part of J(k).
+
+Two mutants were checked: the conjugate phase e^{−2πik·R}, and J(R) blocks stored
+transposed. Both fail the file.
+
+**Gate** (2026-10-29, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`,
+pyMagCalc `bbadb64` plus this change, fMagCalc `4a5ff4b`, rsMagCalc `1d2532d`, magpipe
+`e92b2c7`): **2405 passed, 2 skipped, 0 failed, 15 min 38 s**. The 13 added tests are
+`tests/test_luttinger_tisza.py`'s, and the two skips are the structural pair.
+
 ### mCIF import reads the ion; a bare `+` is a charge of one, 2026-10-28
 
 `read_mcif` never read `_atom_site_type_symbol`, so a structure imported from an mCIF

@@ -7,7 +7,7 @@ context can make a correct first change. It is a map, not the whole territory: t
 authoritative details live in the files it points to (§12), and when they disagree, the
 code and the tests win.
 
-*Last reviewed: 2026-10-28, against pyMagCalc `fc22141` plus the mCIF type-symbol ion. This file is kept current with
+*Last reviewed: 2026-10-29, against pyMagCalc `bbadb64` plus the vectorised Luttinger–Tisza guard. This file is kept current with
 every change that alters what it describes (§13).*
 
 ---
@@ -368,7 +368,7 @@ iOS app).
 
 ---
 
-## 14. Where things stand (2026-10-28)
+## 14. Where things stand (2026-10-29)
 
 - **Every planned Rust kernel is in** (K1–K5, plus a sparse exact KPM guard). The sixth,
   mixed-spin dipole S(Q,ω), went into fMagCalc instead of Rust, because fMagCalc already
@@ -389,6 +389,10 @@ iOS app).
   eight. Both are fixed (`GAP_STATUS.md`, "Gapless and degenerate S(Q,ω)").
 - **The real-space bond builders** (SCGA, thermal MC, entangled, dimer series) no longer
   test every (site, image) pair in SymPy: 9× on SCGA's exchange cache at 128 sites.
+- **The Luttinger–Tisza q≠0 guard** builds J(k) from one block per cell translation
+  and scans its grid in batches, 12–19× faster with the same k*: 47 s → 3.3 s on YIG,
+  29 s → 2.5 s on α-Cu₂V₂O₇. It had been the largest Python cost of a plain dipole run
+  (`GAP_STATUS.md`, "Luttinger–Tisza guard: J(k) from J(R)").
 - **Nothing is open** in `OPEN_WORK.md`.
 - **Not supported:**
   - mixed spins in the classical dipole samplers: `thermal_mc` and
