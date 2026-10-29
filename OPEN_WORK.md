@@ -1,6 +1,6 @@
 # Open work — pick-up notes
 
-**Current status (2026-10-29): nothing is open.** The Rust kernels plan is
+**Current status (2026-10-29): one item is open, item 5 below.** The Rust kernels plan is
 finished. K1–K5 and a sparse exact KPM guard are in rsMagCalc, and K6 (mixed-spin
 dipole S(Q,ω)) is in fMagCalc. Everything is merged to `master` and pushed (pyMagCalc
 `9b70cf5` before the last two items, fMagCalc `4a5ff4b`, rsMagCalc `1d2532d`, now
@@ -31,6 +31,25 @@ known; item 3 is done:
    `num_starts` runs in parallel. One 2000-sweep run went from 0.36 s to 2 ms at 16
    sites and from 2.8 s to 0.15 s at 128. Four parallel runs at 128 sites take 0.18 s
    instead of 10.9 s (`GAP_STATUS.md`, "anneal on K1's dense model").
+
+5. **OPEN: the energy audit (guard 2) skips every model with a quartic term.** Found
+   2026-10-29 while pinning the non-collinear biquadratic to Sunny (`GAP_STATUS.md`,
+   "Biquadratic off the collinear axis").
+   - **What happens.** `MagCalc._extract_classical_quadratic` returns None when the
+     classical energy is not quadratic in the spin components: any `biquadratic`, or a
+     `stevens` term of rank ≥ 4. `relax_from_current` then returns None, and the runner
+     (`if relax is not None:`) skips the audit without a log line. The imaginary-mode
+     check still runs, but a stationary maximum is exactly what that check cannot see,
+     so such a model has no protection against it.
+   - **Injection point.** `relax_from_current` relaxes on the quadratic form
+     (H, b, c). For a non-quadratic energy it needs the energy itself and its gradient.
+     The minimizer already has a symbolic, lambdified route for these models
+     (`_classical_energy_func` and the `minimize_energy` fallback), so the audit can
+     reuse it. At the least, log that the audit was skipped and why.
+   - **Oracle.** The 120° triangular AFM with B = 0.06
+     (`tests/data_biquadratic_noncollinear_sunny.json`). E/site =
+     3(J s² cos 120° + B s⁴ cos² 120°) = −1.455 meV exactly, Sunny's relaxation lowers
+     nothing, and a ferromagnetic structure supplied for it must be refused.
 
 Items 3 and 4 come from the 2026-10-27 assessment of what is still worth compiling.
 Its third candidate, the Ewald dipolar sum, is done (`GAP_STATUS.md`, "Ewald dipolar

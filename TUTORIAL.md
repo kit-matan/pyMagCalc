@@ -259,6 +259,13 @@ Zeeman term `μ_B B·g_i·S_i`.
 An on-site or bond term that matches **no** bonds, or an unsupported Stevens
 order, raises — it is never silently dropped.
 
+`pair_operator` is built only by `mode: SUN` and `mode: entangled`. The dipole engine
+raises on it; there, write a polynomial in S_i·S_j as `heisenberg` (n = 1) plus
+`biquadratic` (n = 2). `biquadratic` is the genuine operator in dipole mode and holds
+for non-collinear structures, pinned to Sunny's `:dipole_uncorrected` on the 120°
+triangular antiferromagnet. The dipole energy-audit guard cannot yet run on a
+biquadratic or rank ≥ 4 Stevens model and is skipped for it (`OPEN_WORK.md`).
+
 > **Anisotropy renormalization.** Dipole mode replaces an on-site operator by its
 > classical (s → ∞) polynomial, which overestimates a rank-k term at finite s.
 > That is SpinW's convention and Sunny's `:dipole_uncorrected`, and it is

@@ -303,11 +303,17 @@ interactions:
 
   # Biquadratic B (S_i.S_j)^2. Genuine operator -- valid for NON-collinear
   # structures too (unlike SW28's collinear J_eff = J +/- dJ workaround).
-  # Both bond directions, like heisenberg.
+  # Both bond directions, like heisenberg. Until 2026-10-29 the dipole build
+  # dropped part of it, with only a WARNING, on a bond with no bilinear term and on
+  # a non-collinear intercell bond; now pinned to Sunny on the 120-degree triangle
+  # (tests/test_biquadratic_noncollinear.py). NB: guard 2, the energy audit, cannot
+  # run on a quartic energy and is skipped (OPEN_WORK.md item 5).
   biquadratic:
   - {pair: [A, B], rij_offset: [0, 0, 0], value: -0.037}
 
   # Arbitrary two-site coupling (SU(N)/entangled only; Sunny `set_pair_coupling!`).
+  # Dipole mode RAISES on it (it used to drop it without a word); for a polynomial
+  # in S_i.S_j there use heisenberg (n = 1) + biquadratic (n = 2).
   # `poly` is sum_n c_n (S_i.S_j)^n -- c1 = Heisenberg, c2 = biquadratic, higher n
   # = ring-exchange-like. `matrix:` takes an explicit (2S+1)^2 Hermitian operator on
   # the product space instead. Decomposed into sum_k A_k (x) B_k internally.

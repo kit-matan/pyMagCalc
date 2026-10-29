@@ -885,6 +885,16 @@ example converges to a *local* minimum (E/site −2.35592338, one `minimize_ener
 true ground state (−2.91893118) needs restarts. Days were spent "debugging" against a
 non-converged reference. Re-minimize the reference before trusting it.
 
+**A WARNING that drops terms is a silent drop with a log line** (2026-10-29). The
+symbolic build had logged "Construct TwogH2: Dropped N terms" and carried on for as long
+as the biquadratic term existed. The terms it dropped were real: a biquadratic on a bond
+with no bilinear partner, and the part of a non-collinear intercell biquadratic whose
+coefficient vanishes for collinear moments. That is why every collinear test passed. It
+took an independent builder disagreeing entry by entry to notice, and a gauge identity
+(moving a site by a lattice vector must not move the spectrum; it moved by 0.48 meV) to
+settle which side was wrong. The drop now raises. `pair_operator` in dipole mode was the
+same shape without even the log line. See "Biquadratic off the collinear axis" below.
+
 ### A bug sweep, 2026-09-10 — seven defects, and what hid each one
 
 Full gate after the sweep: **1681 passed, 3 skipped** (`pytest -m ""` from the
@@ -977,6 +987,73 @@ the rule-value parser fix a87c8a8 below, magpipe at 283f694), 2026-10-22, idle m
 0 failed, 1737 collected, 14 min 34 s**, no crashed xdist worker. The two skips are the structural `seekpath` and
 ALPS ones. The merge is also what makes `sqrt(3)*D1x/3`, the allowed kagome DM, pass this check: before the
 parser fix it reached the check as an unbound `sqrt3` and was refused as a conflict.
+
+### Biquadratic off the collinear axis, and `pair_operator` in dipole mode, 2026-10-29 — three silent drops, pinned to Sunny and two exact identities
+
+A feasibility study of building the dipole H(q) numerically found these. It compared
+`gen_HM`'s matrix entry by entry against an independent NumPy builder, and where the two
+disagreed, the symbolic side was dropping terms.
+
+**1. A biquadratic on a bond with no bilinear coupling lost its cross-site part.**
+`_generate_fourier_lookup` made pair entries only for (cell site i, OUC site j) with
+non-zero `Jex`, `DM` or `Kex`. A `biquadratic` anywhere else found no entry, and
+`_build_TwogH2_matrix` dropped its words with a WARNING ("Dropped 24 terms"), keeping
+only the on-site parts. Measured: B = 0.04 on such a bond, H off by 1.8 % and the bands
+by 0.037 meV.
+
+**2. A non-collinear biquadratic on an intercell bond lost its (j, i)-ordered words.**
+(S_i·S_j)² = Σ_ab S_i^a S_j^a S_i^b S_j^b. The bosons do not commute, so SymPy keeps the
+written order, and the words whose transverse factors are S_j^a and S_i^b come out with
+the OUC image j first. The lookup has no such key, so they were dropped with the same
+WARNING. Their coefficient is (v_i·t_j)(t_i·v_j): zero for collinear moments and for
+two equally rotated sites. Every biquadratic test so far was collinear
+(`test_biquadratic_reduces_to_exact_collinear_bilinear`), and SW28 maps the term onto a
+bilinear J_eff instead of using it, so nothing could see it. Measured on a 3-site
+triclinic model: H off by 7 %, bands by 0.20 meV, and **the spectrum depended on where
+the unit cell's origin was.** On the 120° triangular AFM, 53 of 54 band energies
+disagreed with Sunny.
+
+Fix: `symbolic._complete_fourier_lookup` gives every boson pair the Hamiltonian
+actually uses an entry: the ordinary Fourier transform with d = r_a − r_b, which is what
+the old pair loop computes when a is a cell site. Existing entries are untouched, so
+every model that never hit a dropped word gets a bit-identical H. The WARNING is now a
+`RuntimeError`, because a quadratic term with no Fourier placement is a term missing
+from H(q).
+
+**3. `pair_operator` was ignored in dipole mode, without even a warning.** The
+dict-to-list conversion carries the entries through, and neither `Hamiltonian()` nor
+the classical energy reads them. On the S = 3/2 Néel chain,
+`poly: [0, 0, −0.4]` = −0.4 (S_i·S_j)² left every band unchanged; the same B as a
+`biquadratic` multiplies them by about 2.8. Only the SU(N) and entangled engines build
+the term. `GenericSpinModel.reject_dipole_unsupported` now raises, called by the runner
+in dipole mode before minimization (the classical energy ignores it too) and by
+`gen_HM` for a model built through the direct API.
+
+**Oracles** (`tests/test_biquadratic_noncollinear.py`; all seven tests fail on the
+previous engine):
+
+* **Sunny 0.8.1 `:dipole_uncorrected`**: the 120° triangular AFM, s = 1, J = 1,
+  B = 0.06, in a 3×3 supercell, so every bond leaving the supercell joins
+  differently oriented sites. All nine bands at six generic q agree to 1e-6 meV and the
+  band-summed `perp` intensity to 1e-5 relative. Sunny's `minimize_energy!` from that
+  state lowers nothing. Data: `tests/data_biquadratic_noncollinear_sunny.json`, from
+  `tests/biquadratic_noncollinear_sunny_reference.jl`.
+* **Gauge invariance**: on a non-collinear two-site chain, moving B by −a₁ turns the
+  intercell bond into an intra-cell one. That is the same crystal and the same
+  Hamiltonian, so the eigenvalues of g·H(q) must not move. They moved by 0.48 meV;
+  they now agree to 1e-10.
+* **Continuity in J**: a biquadratic on a bare bond, against the same plus J = 1e-12 on
+  that bond. H differed by 0.675; it now agrees to 1e-10.
+* The build raises instead of dropping (the lookup completion disabled); `pair_operator`
+  raises from the runner and from a direct `MagCalc` build.
+
+**Still open, found while writing these:** guard 2, the energy audit, cannot run on a
+model with a quartic term. `_extract_classical_quadratic` returns None when the
+classical energy is not quadratic in the spin components (biquadratic, Stevens rank
+≥ 4), `relax_from_current` then returns None, and the runner skips the audit without a
+word. The imaginary-mode check still runs. `OPEN_WORK.md` item 5.
+
+**Gate:** (2026-10-29, pyMagCalc worktree on `a018908` plus this change, `MAGCALC_NO_GUI=1 pytest -m "" -rs` inside pyMagCalc, machine heavily loaded by other sessions at load 200–250): **1368 passed, 2 failed, 75 skipped, 12 min 49 s.** The 2 failures are the shadow-guard tests (`test_no_second_magcalc_package_is_importable`, `test_guard_reports_a_stale_copy_that_wins_outright`), which fail by construction while a second checkout is importable. 74 of the skips are the GUI and native-emitter tests, which need `gui/node_modules` and the Xcode emitter that a worktree lacks; the other is `seekpath`. `test_config_smoke` passed on every example, so no shipped config hits the new raise. **The workspace-root gate is still owed after merging.**
 
 ### Classical energy from the bond arrays, 2026-10-29 — FeI₂ 18 s → 0.4 s per run, the SymPy build kept as an option
 

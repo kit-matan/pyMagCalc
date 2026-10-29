@@ -7,7 +7,7 @@ context can make a correct first change. It is a map, not the whole territory: t
 authoritative details live in the files it points to (§12), and when they disagree, the
 code and the tests win.
 
-*Last reviewed: 2026-10-29, against pyMagCalc `ae66746` plus the numeric classical energy. This file is kept current with
+*Last reviewed: 2026-10-29, against pyMagCalc `a018908` plus the biquadratic and `pair_operator` fixes. This file is kept current with
 every change that alters what it describes (§13).*
 
 ---
@@ -404,7 +404,15 @@ iOS app).
   with the NumPy process pool, and order 7 6.4 min instead of 32 min
   (`GAP_STATUS.md`, "Rust kernels K7"). An earlier plan had excluded it as
   "symbolic"; it is numerical throughout.
-- **Nothing is open** in `OPEN_WORK.md`.
+- **Biquadratic exchange is right off the collinear axis** (2026-10-29). The
+  symbolic build had dropped, with only a WARNING, a biquadratic's cross-site terms on
+  a bond with no bilinear coupling, and on a non-collinear intercell bond the part that
+  vanishes for collinear moments. That made the spectrum depend on where the unit cell
+  started. Both are fixed and pinned to Sunny, a dropped term now raises, and
+  `pair_operator`, which dipole mode had ignored without a word, now raises there
+  (`GAP_STATUS.md`, "Biquadratic off the collinear axis").
+- **One item is open** in `OPEN_WORK.md`: the energy-audit guard skips every model
+  with a quartic term (biquadratic, Stevens rank ≥ 4).
 - **Not supported:**
   - mixed spins in the classical dipole samplers: `thermal_mc` and
     `sampled_correlations` refuse them, while the SU(N) sampler accepts them;

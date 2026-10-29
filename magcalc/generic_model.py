@@ -1871,6 +1871,25 @@ class GenericSpinModel:
         
         return HM
 
+    def reject_dipole_unsupported(self):
+        """Raise if the model carries a term the dipole engine has no route for.
+
+        `pair_operator` (alias `pair_coupling`) is an arbitrary two-site operator on
+        the (2S+1)^2 product space; only the SU(N) and entangled engines build it
+        (`sun/lswt.py`). `Hamiltonian` and the classical energy never read it, so in
+        dipole mode it was dropped without a word until 2026-10-29: -0.4 (S_i.S_j)^2
+        on a Neel chain left every band unchanged. A dispatch over a closed set of
+        types needs an `else` that raises (GAP_STATUS, the kitaev entry).
+        """
+        bad = [i for i in (getattr(self, 'interactions_config', None) or [])
+               if isinstance(i, dict) and i.get('type') in ('pair_operator', 'pair_coupling')]
+        if bad:
+            raise ValueError(
+                f"`pair_operator` is supported only in `calculation: {{mode: SUN}}` or "
+                f"`mode: entangled`; the dipole engine has no route for it and would drop "
+                f"it from the Hamiltonian. For a polynomial in (S_i.S_j) use `heisenberg` "
+                f"(n = 1) and `biquadratic` (n = 2) instead. Offending entry: {bad[0]}")
+
     def classical_parts(self, Sxyz: List[Any], pr: List[Any]):
         """`Hamiltonian` split for numeric assembly of the classical energy.
 

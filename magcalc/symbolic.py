@@ -1,5 +1,5 @@
 import sympy as sp
-from sympy import I, Add
+from sympy import I, Add, Mul
 import numpy as np
 import timeit
 import logging
@@ -332,6 +332,71 @@ def _generate_fourier_lookup(
     return ft_lookup
 
 
+def _complete_fourier_lookup(
+    ft_lookup: Dict[Tuple[str, str], sp.Expr],
+    hamiltonian_sym: sp.Expr,
+    k_sym: List[sp.Symbol],
+    atom_positions_ouc,
+    nspins: int,
+    c_ops: List[sp.Symbol],
+    cd_ops: List[sp.Symbol],
+    ck_ops: List[sp.Symbol],
+    ckd_ops: List[sp.Symbol],
+    cmk_ops: List[sp.Symbol],
+    cmkd_ops: List[sp.Symbol],
+) -> None:
+    """Add a Fourier entry for every cross-site operator pair the Hamiltonian uses.
+
+    `_generate_fourier_lookup` keys its pair entries on (cell site i, OUC site j) for
+    pairs where Jex, DM or Kex is non-zero. Two kinds of word fall outside that, and
+    `_build_TwogH2_matrix` used to drop them with only a WARNING (2026-10-29):
+
+    * any word on a bond that carries a biquadratic term but no bilinear one;
+    * words whose FIRST operator sits on an OUC image. Non-commuting bosons keep the
+      written order, and (S_i.S_j)^2 = sum_ab S_i^a S_j^a S_i^b S_j^b puts S_j^a's
+      transverse part before S_i^b's. The coefficient (v_i.t_j)(t_i.v_j) vanishes
+      for collinear moments and for a bond between equally rotated sites, so only a
+      non-collinear intercell bond lost weight -- and its spectrum then depended on
+      where the unit cell's origin was.
+
+    The entry is the ordinary Fourier transform for sites a, b at r_a, r_b, i.e. the
+    pair-loop forms with d = r_a - r_b, which is exactly what that loop computes
+    when a is a cell site (`atom_pos_ouc` starts with the cell). Existing entries are
+    left untouched, so every model that never hit a dropped word is unchanged.
+    """
+    op_site = {}
+    for j, (c, cd) in enumerate(zip(c_ops, cd_ops)):
+        op_site[c] = ("c", j)
+        op_site[cd] = ("d", j)
+    seen = set()
+    for term in Add.make_args(hamiltonian_sym):
+        nc = [f for f in Mul.make_args(term) if not f.is_commutative]
+        if len(nc) != 2 or nc[0] not in op_site or nc[1] not in op_site:
+            continue
+        key = (nc[0].name, nc[1].name)
+        if key in ft_lookup or key in seen:
+            continue
+        seen.add(key)
+        (t1, a), (t2, b) = op_site[nc[0]], op_site[nc[1]]
+        u, w = a % nspins, b % nspins
+        disp_vec = atom_positions_ouc[a, :] - atom_positions_ouc[b, :]
+        k_dot_dr = sum(k * dr for k, dr in zip(k_sym, disp_vec))
+        e_p = sp.exp(I * k_dot_dr).rewrite(sp.sin)
+        e_m = sp.exp(-I * k_dot_dr).rewrite(sp.sin)
+        if t1 == "d" and t2 == "d":
+            val = 1/2 * (ckd_ops[u] * cmkd_ops[w] * e_m + cmkd_ops[u] * ckd_ops[w] * e_p)
+        elif t1 == "c" and t2 == "c":
+            val = 1/2 * (ck_ops[u] * cmk_ops[w] * e_p + cmk_ops[u] * ck_ops[w] * e_m)
+        elif t1 == "d":
+            val = 1/2 * (ckd_ops[u] * ck_ops[w] * e_m + cmkd_ops[u] * cmk_ops[w] * e_p)
+        else:
+            val = 1/2 * (ck_ops[u] * ckd_ops[w] * e_p + cmk_ops[u] * cmkd_ops[w] * e_m)
+        ft_lookup[key] = val
+    if seen:
+        logger.info(f"Fourier lookup completed with {len(seen)} operator pairs outside "
+                    f"the bilinear bond table (biquadratic words).")
+
+
 def _fourier_transform_terms(
     args: Tuple[sp.Expr, Dict[Tuple[str, str], sp.Expr]],
 ) -> sp.Expr:
@@ -546,7 +611,14 @@ def _build_TwogH2_matrix(
                  continue
 
     if dropped_count > 0:
-        logger.warning(f"Construct TwogH2: Dropped {dropped_count} terms. First few: {dropped_log[:5]}")
+        # This used to be a WARNING, and the terms vanished from H: a biquadratic on a
+        # bond without bilinear coupling, or on a non-collinear intercell bond, lost
+        # its cross-site words that way. _complete_fourier_lookup now gives every
+        # boson pair an entry, so anything left here is a term the build does not
+        # understand -- refuse rather than diagonalize a Hamiltonian missing it.
+        raise RuntimeError(
+            f"Construct TwogH2: {dropped_count} quadratic terms have no Fourier "
+            f"placement and would be dropped from H(q). First few: {dropped_log[:5]}")
     
     g_list = [1] * nspins + [-1] * nspins
     TwogH2 = sp.zeros(n_dim, n_dim)
@@ -600,6 +672,8 @@ def gen_HM(
         raise RuntimeError("Failed to get model info for gen_HM.") from e
 
     logger.info(f"Number of spins in the unit cell: {nspins}")
+    if hasattr(spin_model_module, "reject_dipole_unsupported"):
+        spin_model_module.reject_dipole_unsupported()
 
     # --- Per-site spin magnitudes (mixed-spin support) ---
     # Site i uses magnitude S_i = ratio_i * S_sym, with ratio_i = S_i / S_ref.
@@ -652,6 +726,10 @@ def gen_HM(
         cmk_ops,
         cmkd_ops,
         params_sym,
+    )
+    _complete_fourier_lookup(
+        fourier_lookup, hamiltonian_sym, k_sym, np.asarray(atom_positions_ouc, float),
+        nspins, c_ops, cd_ops, ck_ops, ckd_ops, cmk_ops, cmkd_ops,
     )
 
     # --- Apply Substitutions & Normal Ordering ---

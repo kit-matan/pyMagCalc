@@ -339,6 +339,10 @@ def run_calculation(config_file: str):
     
     # Initialize MagCalc
     calc_config = final_config.get('calculation', {})
+    # Before minimization: the classical energy ignores these terms too.
+    if str(calc_config.get('mode', 'dipole')).upper() == 'DIPOLE' and \
+            hasattr(spin_model, 'reject_dipole_unsupported'):
+        spin_model.reject_dipole_unsupported()
     # Default to 'auto' for better performance in iterative GUI/CLI usage
     cache_mode = calc_config.get('cache_mode', 'auto')
     cache_base = calc_config.get('cache_file_base', 'magcalc_run_cache')
