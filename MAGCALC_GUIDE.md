@@ -7,7 +7,7 @@ context can make a correct first change. It is a map, not the whole territory: t
 authoritative details live in the files it points to (§12), and when they disagree, the
 code and the tests win.
 
-*Last reviewed: 2026-10-29, against pyMagCalc `bbadb64` plus the vectorised Luttinger–Tisza guard. This file is kept current with
+*Last reviewed: 2026-10-29, against pyMagCalc `e3bf813` plus the dimer-series Rust kernel (K7). This file is kept current with
 every change that alters what it describes (§13).*
 
 ---
@@ -54,7 +54,7 @@ All live under the GitHub user **`kit-matan`**. pyMagCalc is the only required o
 |---|---|---|---|
 | [pyMagCalc](https://github.com/kit-matan/pyMagCalc) | Python | The engine: config, model building, every physics method, CLI, GUI server, tests. **Nearly all work happens here.** | yes |
 | [fMagCalc](https://github.com/kit-matan/fMagCalc) | Fortran, OpenMP, LAPACK | Compiled hot path for the **dipole** LSWT engine: per-q diagonalization, S(Q,ω), powder averaging, including mixed spin. Selected by `calculation: {backend: fortran}`. | no |
-| [rsMagCalc](https://github.com/kit-matan/rsMagCalc) | Rust, PyO3 | Compiled kernels for the loops that are Python-bound per site or per q **outside** the dipole path: classical and CP^(N−1) samplers, the annealing ground-state search, SU(N) LSWT, KPM, SCGA, the sparse KPM stability guard. Selected by `calculation: {kernels: rust}`. | no |
+| [rsMagCalc](https://github.com/kit-matan/rsMagCalc) | Rust, PyO3 | Compiled kernels for the loops that are Python-bound per site or per q **outside** the dipole path: classical and CP^(N−1) samplers, the annealing ground-state search, SU(N) LSWT, KPM, SCGA, the sparse KPM stability guard, the dimer series' per-cluster perturbation theory. Selected by `calculation: {kernels: rust}`. | no |
 | magpipe | Python | A materials-discovery pipeline built **on** MagCalc as a library: Materials Project screen → DFT energy mapping → ED/QMC thermodynamics → a MagCalc config and spectrum. Never reimplements physics MagCalc has. | no |
 
 The maintainer's workspace also holds a vendored **Sunny.jl 0.8.1** checkout, used only as
@@ -393,6 +393,12 @@ iOS app).
   and scans its grid in batches, 12–19× faster with the same k*: 47 s → 3.3 s on YIG,
   29 s → 2.5 s on α-Cu₂V₂O₇. It had been the largest Python cost of a plain dipole run
   (`GAP_STATUS.md`, "Luttinger–Tisza guard: J(k) from J(R)").
+- **The dimer series expansion** (K7, 2026-10-29) runs each cluster's perturbation
+  theory in rsMagCalc under `kernels: rust`, threaded over each cluster size's
+  topologies. On the six-dimer Rb₂Cu₃SnF₁₂ cell order 6 takes 21 s instead of 115 s
+  with the NumPy process pool, and order 7 6.4 min instead of 32 min
+  (`GAP_STATUS.md`, "Rust kernels K7"). An earlier plan had excluded it as
+  "symbolic"; it is numerical throughout.
 - **Nothing is open** in `OPEN_WORK.md`.
 - **Not supported:**
   - mixed spins in the classical dipole samplers: `thermal_mc` and

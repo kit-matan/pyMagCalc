@@ -140,9 +140,11 @@ runnable configs, 54 of them tracked — see the coverage audit below.)
   order 1, λ^(n+1) error scaling vs exact diagonalization. On the Rb2Cu3SnF12
   pinwheel (J2=0.95 J1, dz=0.18, bond families assigned by Cu-F-Cu angle from the
   CIF — 138.3°/123.3° matching the papers' 138°/124°): the Γ doublet lands at
-  2.2±1.0 meV (order 4, Dlog-Padé) vs the measured 2.35 meV; the papers' order 8
-  remains the converged answer. `tests/test_dimer_series.py`,
-  `examples/entangled/Rb2Cu3SnF12/series_dispersion.py`.
+  2.2±1.0 meV (order 4, Dlog-Padé) vs the measured 2.35 meV, and the series has been
+  run to the papers' order 8 (the order-by-order table is in
+  `examples/entangled/Rb2Cu3SnF12/README.md`). `tests/test_dimer_series.py`,
+  `examples/entangled/Rb2Cu3SnF12/series_dispersion.py`. Under `kernels: rust` each
+  cluster's PT runs in rsMagCalc ("Rust kernels K7" below).
 - **Monte-Carlo / annealing ground-state minimizer** (`magcalc/annealing.py`): SpinW
   `anneal` (Metropolis + cooling, Sunny `LocalSampler` proposal mix) and `optmagsteep`
   (`method: steep`). On SW20-in-field, multistart L-BFGS hit the true minimum in only
@@ -1059,6 +1061,99 @@ fragment taking the file's ion unless one is given (read back through
 `GenericSpinModel.ion_list`), and a file without the column giving none. The bare-sign
 fix is pinned in `tests/test_form_factor.py`. Gate (workspace root, with magpipe's
 schema 0.6 alongside): **2392 passed, 2 skipped, 0 failed, 16 min 22 s**.
+
+### Rust kernels K7, 2026-10-29 — the dimer series' cluster PT behind `kernels: rust`
+
+Not one of the planned six: the plan had excluded `sun/dimer_series.py` as "symbolic", which it never was. The
+2026-10-28 profile of all 23 shipped example configs under `kernels: rust` + `backend: fortran` found it the one loop
+left that was Python-bound. rsMagCalc `9061710` (`src/dimer_series.rs`) carries `block_effective_series` (the Bloch
+recursion with column-dependent resolvents and the des Cloizeaux Hermitization) and `_cluster_pt` as
+`cluster_pt_batch`: the pair operators embedded in the cluster's nloc^m product space, the ground state and each
+one-particle total-Sz sector run separately, rayon over the clusters of one batch. `hopping_series` under
+`kernels="rust"` hands each cluster size's new topologies to it in one batch, for every size, in place of the spawn
+pool. The enumeration, `_struct`, the linked-cluster subtraction, `eigenvalue_series` and Dlog-Padé stay in Python.
+`DimerSeriesModel(..., kernels=, n_workers=)` and its two constructors take the selection; `mode: entangled` with
+`series_order` passes `calculation.kernels` and `calculation.n_workers` through (before, `n_workers` never reached the
+series, whose NumPy pool always took cores − 1). A kernel that raises is logged once by `kernels.fell_back` and the
+NumPy PT answers for the rest of that model.
+
+**Profiled before it was written** (cProfile, Rb₂Cu₃SnF₁₂ order 5, `hopping_series`, `os.cpu_count` patched to 2 so
+the NumPy path is serial; pyMagCalc `bbadb64`): 38.4 s under the profiler, of which `_cluster_pt` 32.7 s (85 %).
+Inside it the compiled part was scipy's sparse products, ~11 s (`csr_matvecs` 8.3 s, CSR additions and conversions
+~2.5 s); the rest — `block_effective_series`' many small dense products, `_embed_pair_op`, the sector slicing — was
+Python-bound: **~70 % of the run**, above the stop-at-half bar.
+
+**Two Python-side changes, under both kernel sets, exact.** With the PT compiled, the bookkeeping came next (order 6:
+kernel 24 s, Python 22 s). `_struct` is memoized per form: the subtraction asks for every connected subcluster of
+every cluster, and at order 5 41 789 asks name only 3 501 distinct forms. The subtraction of a subcluster's weight is
+one fancy-indexed operation over all orders instead of an `np.ix_` per order — the same subtraction of the same
+numbers, element by element. NumPy's hoppings and band series are bit-identical to `bbadb64`'s (`==`, orders 5–7).
+After both, order 6 under `rust` takes 21.7 s: 15.2 s in the kernel, 1.3 s in `_struct`, 0.2 s in the
+enumeration and 5.1 s in the rest of the Python (the subtraction and the assembly). At 30 % Python, the
+bookkeeping stays in Python, as scoped.
+
+**Exactness.** The kernel's arithmetic is NumPy's term by term, with savings that change no number: V·Ω_m computed
+once per m and reused (NumPy recomputes it inside every M_k), Ω_0^†X as a row gather (Ω_0 is the model-space
+injection, and Ω_0^†Ω_{i≥1} vanishes exactly), the Gram terms of S_k and of M_k's diagonal part summed in adjoint
+pairs, one sparse V per Sz sector built directly on that sector's states, the all-zero rows of the low-order Ω
+skipped. Rounding is another matter, and was measured rather than assumed. The yardstick is NumPy against ITSELF
+with a cluster's nodes relabelled (the same physics, every sum in another order): on 40 order-6 six-link clusters of
+Rb₂Cu₃SnF₁₂ that spread is 3e-14 on deltas of size ~1.3. A first kernel, with one running sum over the thousands of
+rows of each Gram term, sat 1.6e-13 from NumPy (up to 5× the spread); summed in blocks of 64 rows, as BLAS does, it
+sits 5e-14 (1.3×), at no cost in speed. That is not a general accuracy claim — on a synthetic 20 000-state problem
+both variants lie inside NumPy's own spread — only that the kernel is now as close to NumPy as NumPy is to itself.
+
+The subtraction then amplifies whatever rounding there is: a six-link cluster's linked weight at order 6 is ~100×
+smaller than its raw PT weight, and each hopping sums thousands of them. So the hoppings agree to 2e-12 at orders
+≤ 5 and to 2e-11 at order 6 (scale 1.6, i.e. 1.3e-11 relative); the Γ band series of the pinwheel against unmodified
+NumPy, per order λ⁰…λ⁷ at order 7: 0, 0, 1e-14, 3e-14, 3e-13, 2e-12, 2e-11, 6.5e-11 (the first kernel: 5.6e-10 at
+λ⁷). Every resummed Γ number of the example's README table is reproduced: order 6 doublet Dlog-Padé 1.59 / sum
+−0.23, order 7 2.395 / 2.801 (README: 1.6; 2.40 / 2.80). With and without Sz sectors the kernel's hoppings are
+bit-identical (NumPy's differ by 5e-12 at order 6).
+
+**Pinned to.** `tests/test_dimer_series.py` runs every oracle under both kernel sets through the `kernels` fixture,
+and each `rust` case asserts the kernel ran rather than fell back: the PT engine against exact diagonalization
+(error ratio between two λ inside (2ⁿ, 2ⁿ⁺²) at order 5), the chain's analytic first order, momentum-resolved ED of
+the alternating chain at J'/J = 0.4 (order 6, < 5e-4 J; slow) and 0.8 (order 7 + Dlog-Padé, gap within 8 %; slow),
+PRR 8, 013247 Eq. (A11) on Cu₅SbO₆ through GenericSpinModel, plus one new FAST pipeline oracle: the order-4 series
+of a 6-dimer ring against its ED at λ = 0.1 and 0.05 must shrink by 2⁵ (ratio inside (2⁴, 2⁶)); a 6-dimer ring is
+exact for the infinite chain below order 6, so it runs in 0.3 s. `tests/test_kernels_dimer_series.py` (7, fast):
+cluster parity at 1e-12 on the chain and Rb₂Cu₃SnF₁₂, with and without sectors; the whole Rb₂Cu₃SnF₁₂ hopping series
+and ground-state energy at order 4 at 1e-12, with a spy confirming one kernel PT per topology; a raising kernel logged
+once with NumPy's series returned bit-identically; `mode: entangled` passing `kernels` and `n_workers` through, the
+dispersion independent of the kernel set to 1e-10 and resummed as
+`series_resum` asks — which retires that key's entry in the key-coverage audit's allow-list. rsMagCalc `tests/test_dimer_series_parity.py` (19): the PT engine
+at 1e-12 on quasi-degenerate, multi-order (eigenvalue_series' use), p = 1, scipy-sparse and excited-model-space
+problems; `cluster_pt_batch` at 1e-12 on the chain's, Rb₂Cu₃SnF₁₂'s and random nloc = 3 clusters (complex Hermitian
+pair operators, a link with pa > pb); order-6 rounding within 3× NumPy's relabelling spread; n_workers = 1 and the
+full pool bit-identical; the degenerate-model-space refusal and malformed inputs raising ValueError.
+
+**Timing** (M1 Pro, 10 cores, 2026-10-29 08:51–10:31, no pytest or other compute job running; `hopping_series` of
+`examples/entangled/Rb2Cu3SnF12/series_dispersion.py`'s model, wall time, `<this session's scratch>/bench.py ORDER
+serial|pool|rust`). "serial" patches `os.cpu_count` to 2, so the NumPy path takes no pool; "pool" is the NumPy
+default (spawn pool of cores − 1 for cluster sizes ≥ 4); "before" is pyMagCalc `bbadb64`, "after" this change:
+
+| order | NumPy serial, before | NumPy pool, before | NumPy pool, after | `kernels: rust` | rust vs pool | peak RSS (rust) |
+|---|---|---|---|---|---|---|
+| 5 | 30.3 s | 11.0 s | 8.2 s | **1.6 s** | 7× | 0.33 GB |
+| 6 | 566 s (after) | 115 s | 111 s | **21 s** | 5.4× | 1.1–1.35 GB |
+| 7 | — | 1945 s (32 min) | — | **385 s (6.4 min)** | 5.1× | 1.6–4.3 GB |
+
+One order-6 six-link cluster (400 of the 8152 topologies): NumPy 66 ms, the kernel 13.8 ms on one thread and 1.9 ms
+on all ten. The cost grows 13–18× per order under either kernel set. Order 8, the papers', was not run here: extrapolated it
+is about two hours under `rust` against an overnight run with the pool, and memory is the thing to watch — the peak
+RSS at order 7 already reached 4.3 GB in one run (it depends on how many of the largest clusters run at once), and
+this machine has 16 GB, so cap `n_workers` there.
+
+**Gate** (2026-10-29 10:34–10:48, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs` from a MIRROR of the workspace root:
+this branch's pyMagCalc and rsMagCalc worktrees first on `PYTHONPATH`, fMagCalc `4a5ff4b`, magpipe `e92b2c7`; the
+main checkouts were in use by another session): **2354 passed, 2 failed, 76 skipped, 13 min 38 s**. All 33 added
+tests pass, every `rust` case run (7 in `test_dimer_series.py`, 7 in `test_kernels_dimer_series.py`, 19 in rsMagCalc
+`test_dimer_series_parity.py`). Collected 2432 = the 2407 of the 2405-pass gate + 33 − 8, the 8 being four example
+configs untracked in the main checkout, each parametrizing two tests. The 2 failures are `test_install_provenance` and
+`test_shadow_guard`, which assert that exactly one `magcalc` is importable — false by construction with a second
+checkout on the path; 74 of the skips are the worktree's missing `gui/node_modules` (emitter, visualizer and GUI
+round-trip parity), the other 2 the structural pair. The gate from the real root, after merging, is still owed.
 
 ### Gapless and degenerate S(Q,ω) under `backend: fortran`, 2026-10-28 — two Fortran defects, pinned to Sunny and a closed form
 

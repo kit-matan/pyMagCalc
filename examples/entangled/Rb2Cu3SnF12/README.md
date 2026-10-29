@@ -109,9 +109,12 @@ this implementation and the papers'. A global sign flip of the DM pattern leaves
 every series coefficient invariant (checked to 0.0), as the mirror symmetry
 requires.
 
-Run `python series_dispersion.py [order]`. After the Sz-sector + structural-dedup +
-multiprocessing optimization: order 5 ≈ 10 s, order 6 ≈ 2 min, order 7 ≈ 30 min,
-order 8 ≈ overnight (was an extrapolated ~9 days before the optimization). The
+Run `python series_dispersion.py [order] [numpy|rust]`. After the Sz-sector +
+structural-dedup + multiprocessing optimization: order 5 ≈ 10 s, order 6 ≈ 2 min,
+order 7 ≈ 30 min, order 8 ≈ overnight (was an extrapolated ~9 days before the
+optimization). With the optional Rust kernels (`rust`, rsMagCalc K7; measured
+2026-10-29 on a 10-core M1 Pro): order 5 1.6 s, order 6 21 s, order 7 6.4 min,
+with the same series to rounding (6.5e-11 on the λ⁷ coefficient), and the same table. The
 engine itself is validated against exact diagonalization of the alternating chain at
 strong coupling (`tests/test_dimer_series.py`) — the pinwheel numbers inherit that
 trust; only the ORDER is the limitation, exactly as in the papers.

@@ -10,12 +10,18 @@ the one-triplon dispersion by the linked-cluster dimer series expansion with
 Dlog-Pade resummation -- the method of Matan et al., Nat. Phys. 6, 865 (2010)
 and PRB 89, 024414 (2014).
 
-    python series_dispersion.py [order]
+    python series_dispersion.py [order] [numpy|rust]
+
+`rust` runs the per-cluster perturbation theory in rsMagCalc (the optional Rust
+kernels, `calculation: {kernels: rust}` in a config), threaded over each cluster
+size's topologies; `numpy` (the default) uses the multiprocessing pool.
 
 Experimental gaps at the 2D zone centre: Delta_1 = 2.35(7) / 2.4(3) meV
 (Stot^z = +/-1 doublet) and Delta_2 = 7.3(3) / 6.9(3) meV (Stot^z = 0).
 The papers needed the series to EIGHTH order; run the highest order you can
-afford (order 5 is minutes; order 6 is hours) and watch the convergence trend.
+afford and watch the convergence trend. The hopping series alone, on a 10-core M1
+Pro (2026-10-29): order 5 11 s / 1.6 s, order 6 115 s / 21 s, order 7
+32 min / 6.4 min (`numpy` process pool / `rust`).
 """
 import sys
 import time
@@ -144,7 +150,7 @@ def assign_families(bonds):
     return table
 
 
-def build_model(order_hint=None):
+def build_model(order_hint=None, kernels="numpy"):
     lat, layer, bonds = build_layer()
     fam = assign_families(bonds)
 
@@ -201,13 +207,15 @@ def build_model(order_hint=None):
 
     spins = [0.5] * 12
     pos_frac = layer.copy()
-    dsm = DimerSeriesModel.from_spin_arrays(lat, spins, pos_frac, directed, units)
+    dsm = DimerSeriesModel.from_spin_arrays(lat, spins, pos_frac, directed, units,
+                                            kernels=kernels)
     return dsm, lat
 
 
 def main():
     order = int(sys.argv[1]) if len(sys.argv) > 1 else 4
-    dsm, lat = build_model()
+    kernels = sys.argv[2] if len(sys.argv) > 2 else "numpy"
+    dsm, lat = build_model(kernels=kernels)
     B = 2 * np.pi * np.linalg.inv(lat).T
     qpts = {"Gamma": np.zeros(3), "M": np.array([0.5, 0, 0]) @ B,
             "K": np.array([1 / 3., 1 / 3., 0]) @ B}

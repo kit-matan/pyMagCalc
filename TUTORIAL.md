@@ -601,10 +601,11 @@ powder = calc.calculate_powder_average(q_mags, num_samples=200, backend="fortran
 companion, for a different set of loops than fMagCalc: the ones that are
 Python-bound per site or per q in the classical and SU(N) **samplers**
 (`thermal_mc`, `sampled_correlations`, `sun_sampled_correlations`), SU(N) LSWT
-assembly, KPM and SCGA. It is written in Rust and loaded through PyO3. It is
-**not** a port of pyMagCalc, and it does not touch the dipole LSWT path, which
-stays with fMagCalc. What each kernel covers, the oracle it is pinned to and its
-measured speed-up are recorded in `GAP_STATUS.md` under "Rust kernels K1" to "K5".
+assembly, KPM, SCGA and the dimer series expansion. It is written in Rust and
+loaded through PyO3. It is **not** a port of pyMagCalc, and it does not touch the
+dipole LSWT path, which stays with fMagCalc. What each kernel covers, the oracle it
+is pinned to and its measured speed-up are recorded in `GAP_STATUS.md` under "Rust
+kernels K1" to "K5" and "K7".
 
 The contract is fMagCalc's. pyMagCalc never *requires* it: a `kernels: rust`
 request with the package missing (or built without its compiled core) logs a
@@ -651,7 +652,7 @@ deterministic for a given `seed` under either kernel set, but the two do **not**
 share a random stream: a `kernels: rust` run with the same seed is a different,
 equally valid sample.
 
-### What the kernels cover (K1–K5, 2026-10-26/27)
+### What the kernels cover (K1–K5, 2026-10-26/27; K7, 2026-10-29)
 
 `kernels: rust` currently accelerates the **classical samplers** (K1): the Metropolis
 sweep (uniform and `propose: flip`) behind `thermal_mc`, `static_correlations` and
@@ -717,6 +718,18 @@ milliseconds either way, while on a 16-site pyrochlore cell with a 16³ mesh
 `solve_lambda` went from 3.9 s to 0.17 s and a 1681-point map from 2.5 s to 27 ms
 (`GAP_STATUS.md`, "Rust kernels K5").
 
+And the **dimer series expansion** (K7) of `calculation: {mode: entangled,
+series_order: N}` (§4g): the perturbation theory of each cluster — the pair
+operators embedded in the cluster's product space, the Bloch recursion and the
+des Cloizeaux Hermitization, per total-Sz sector — runs in rsMagCalc, in parallel
+over each cluster size's new topologies (in place of the NumPy path's process
+pool). The cluster enumeration, the linked-cluster subtraction and the Dlog-Padé
+resummation stay in Python, and the hoppings agree with the NumPy path to ~1e-12 (2e-11 at order 6, where
+the linked-cluster subtraction amplifies rounding in both).
+On the Rb₂Cu₃SnF₁₂ pinwheel order 5 went from 11.0 s (NumPy, process pool; 30 s
+serial) to 1.6 s, order 6 from 115 s (566 s serial) to 21 s, and order 7 from
+32 min to 6.4 min (`GAP_STATUS.md`, "Rust kernels K7").
+
 Three blocks take an `n_workers` for the Rust thread pool (default: every core):
 
 ```yaml
@@ -726,13 +739,16 @@ sun_sampled_correlations: {temperature: 0.5, n_traj: 16, therm_sweeps: 2000, n_w
 scga:                     {temperature: 1.5, mesh_density: 20, n_workers: 4}   # else calculation.n_workers
 ```
 
-and the SU(N)/entangled LSWT and KPM kernels read it from the `calculation` block:
+and the SU(N)/entangled LSWT, KPM and dimer-series kernels read it from the
+`calculation` block:
 
 ```yaml
 calculation: {mode: SUN, kernels: rust, n_workers: 4}
 ```
 
-Under `kernels: numpy` these keys are ignored (the NumPy loops are serial). If a
+Under `kernels: numpy` these keys are ignored (the NumPy loops are serial), except
+by the dimer series, whose NumPy path sizes its process pool with
+`calculation.n_workers` (default: one fewer than the cores). If a
 kernel raises at run time, the exception is logged and that call is redone in
 NumPy -- the run completes either way, and the log says which code produced
 what. The same functions take `kernels="rust"` from Python
@@ -1092,7 +1108,10 @@ calculation: {mode: entangled, series_order: 5, series_resum: dlog_pade}
 `series_order: N` switches the dispersion to a linked-cluster expansion to order N in
 all inter-dimer couplings, resummed per band with Dlog-Padé (the method of Matan
 *et al.* / the Rb₂Cu₃SnF₁₂ analysis). See
-`examples/entangled/Rb2Cu3SnF12/series_dispersion.py`.
+`examples/entangled/Rb2Cu3SnF12/series_dispersion.py`. The cost grows 10–20× per
+order; add `kernels: rust` (§4c2) to run each cluster's perturbation theory in
+rsMagCalc — on the six-dimer Rb₂Cu₃SnF₁₂ cell, order 6 takes 21 s instead of 115 s
+and order 7 6.4 min instead of 32 min.
 
 ## 4h. Beyond LSWT: diffuse, thermal, and dynamical methods
 

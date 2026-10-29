@@ -162,7 +162,8 @@ See **TUTORIAL.md §4c** for details and troubleshooting.
 
 [rsMagCalc](https://github.com/kit-matan/rsMagCalc) compiles the loops that stay in
 Python outside the dipole path: the classical and CP^(N−1) Monte-Carlo samplers and
-spin dynamics, SU(N) and entangled-unit LSWT, KPM, and SCGA. It needs a Rust
+spin dynamics, SU(N) and entangled-unit LSWT, KPM, SCGA, and the per-cluster
+perturbation theory of the dimer series expansion. It needs a Rust
 toolchain (`rustup`) and maturin:
 
 ```bash

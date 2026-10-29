@@ -416,7 +416,8 @@ class EntangledCalculator:
             logger.info("Building dimer series model (order %d, resum=%s)...",
                         self.series_order, self.series_resum)
             self._series = DimerSeriesModel.from_generic_model(
-                self.sm, self.hamiltonian_params, units=self._units)
+                self.sm, self.hamiltonian_params, units=self._units,
+                kernels=self.kernels, n_workers=self.n_workers)
         return self._series
 
     def calculate_dispersion(self, q_vectors, backend="numpy", satellites=None, **_):

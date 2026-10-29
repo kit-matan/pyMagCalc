@@ -24,6 +24,11 @@ Structure (all validated against independent oracles -- see tests/test_dimer_ser
     block by the PT engine, subtract proper connected subclusters (the linked-cluster
     theorem: the subtracted weight of an L-link cluster starts at order L -- asserted
     numerically), and Fourier-sum into H_eff(k) per order.
+  * `kernels="rust"` (`calculation.kernels`) runs the per-cluster PT -- `_cluster_pt`
+    and the `block_effective_series` inside it -- in rsMagCalc, in parallel over each
+    cluster size's new topologies. Everything else (enumeration, isomorphism keys,
+    the subtraction, resummation) stays here, and the NumPy PT is the fallback and the
+    parity reference (tests/test_dimer_series.py runs its oracles under both).
   * `pade` / `dlog_pade_estimates` / `resummed` -- Pade and Dlog-Pade resummation;
     Dlog-Pade returns the family of near-diagonal approximants (defective ones with a
     real pole in (0, lambda] are discarded) and the spread is the uncertainty, as in
@@ -397,7 +402,7 @@ class DimerSeriesModel:
     """Linked-cluster dimer series expansion for a lattice of entangled units."""
 
     def __init__(self, lat, levels, positions, link_types, nloc, sz_levels=None,
-                 n_workers=None):
+                 n_workers=None, kernels="numpy"):
         self.lat = np.asarray(lat, dtype=float)
         self.levels = [np.asarray(l, dtype=float) for l in levels]   # per dimer (nloc,)
         self.pos = np.asarray(positions, dtype=float)                # cartesian centroids
@@ -409,12 +414,15 @@ class DimerSeriesModel:
         self.sz_levels = ([np.asarray(s, float) for s in sz_levels]
                           if sz_levels is not None else None)
         self.n_workers = n_workers        # None = auto (cpu_count) for big orders
+        self.kernels = str(kernels)       # "rust": the cluster PT runs in rsMagCalc
+        self._rust_failed = False         # a kernel error -> NumPy for the rest
         self._touch = defaultdict(list)   # d -> [(t, shift)]: node (d,c) in inst (t, c-shift)
         for t, (u, v, off, _V) in enumerate(self.link_types):
             self._touch[u].append((t, (0, 0, 0)))
             self._touch[v].append((t, off))
         self._t_cache = {}                # order -> hopping dict
         self._w_memo = {}                 # (struct key, order) -> subtracted weight
+        self._s_memo = {}                 # form -> (struct key, node order)
         # structural hashes for the isomorphism dedup (strong digests: a hash
         # collision here would be silently wrong physics)
         import hashlib
@@ -434,17 +442,20 @@ class DimerSeriesModel:
 
     # ------------------------------------------------------------- constructors
     @classmethod
-    def from_spin_arrays(cls, lat, spin_S, pos_frac, bonds, units, field=None):
+    def from_spin_arrays(cls, lat, spin_S, pos_frac, bonds, units, field=None,
+                         kernels="numpy", n_workers=None):
         """Direct constructor. `bonds`: [(i, j, off3, M(3x3))], each physical spin pair
         ONCE (i -> j at cell offset off).  `units`: as in mode entangled -- lists of
         site indices, per-member cell offsets allowed via [i, [j, [ox,oy,oz]]]."""
         directed = [(int(i), int(j), tuple(int(x) for x in off), np.asarray(M, float), 1.0)
                     for (i, j, off, M) in bonds]
         return cls._build(np.asarray(lat, float), [float(s) for s in spin_S],
-                          np.asarray(pos_frac, float), directed, units, field)
+                          np.asarray(pos_frac, float), directed, units, field,
+                          kernels=kernels, n_workers=n_workers)
 
     @classmethod
-    def from_generic_model(cls, model, params=None, units=None):
+    def from_generic_model(cls, model, params=None, units=None, kernels="numpy",
+                           n_workers=None):
         """Build from a GenericSpinModel exactly as `mode: entangled` does."""
         params = list(params if params is not None else [])
         Jex, DM, Kex = model.spin_interactions(params)
@@ -469,10 +480,12 @@ class DimerSeriesModel:
             field = _so._resolve_field(model, params)
         except Exception:
             field = None
-        return cls._build(lat, spins, pos_frac, directed, units, field)
+        return cls._build(lat, spins, pos_frac, directed, units, field,
+                          kernels=kernels, n_workers=n_workers)
 
     @classmethod
-    def _build(cls, lat, spins, pos_frac, directed, units, field):
+    def _build(cls, lat, spins, pos_frac, directed, units, field, kernels="numpy",
+               n_workers=None):
         if units is None:
             raise ValueError("DimerSeriesModel needs a `units` partition.")
 
@@ -583,7 +596,8 @@ class DimerSeriesModel:
                     "Sz sectors %s.", U, nloc, len(link_types),
                     "ON" if sz_ok else "off")
         return cls(lat, levels, np.array(centroids), link_types, nloc,
-                   sz_levels=sz_levels if sz_ok else None)
+                   sz_levels=sz_levels if sz_ok else None, n_workers=n_workers,
+                   kernels=kernels)
 
     # -------------------------------------------------------------- enumeration
     def _inst_nodes(self, inst):
@@ -650,6 +664,31 @@ class DimerSeriesModel:
         return levels
 
     # ------------------------------------------------------------------ weights
+    def _rust_pt(self, clusters, order):
+        """`_cluster_pt` for each (levels_list, links_local, sz_list), by rsMagCalc
+        when `self.kernels` is "rust" and it is importable, else None. A kernel
+        failure is logged once and returns None from then on, so the caller runs
+        the NumPy PT instead."""
+        from .. import kernels as _kernels
+
+        rs = _kernels.rust_for(self.kernels)
+        if rs is None or self._rust_failed:
+            return None
+        try:
+            return [(np.asarray(g), np.asarray(d))
+                    for g, d in rs.cluster_pt_batch(clusters, order, self.n_workers)]
+        except Exception:
+            _kernels.fell_back("dimer-series cluster PT")
+            self._rust_failed = True
+            return None
+
+    def _node_levels(self, node_order):
+        """(levels_list, sz_list) of the cluster nodes in `node_order`."""
+        lv = [self.levels[d] for (d, _c) in node_order]
+        sz = ([self.sz_levels[d] for (d, _c) in node_order]
+              if self.sz_levels is not None else None)
+        return lv, sz
+
     def _local_links(self, form, node_order):
         """links of `form` with endpoint positions in the given node ordering."""
         node_pos = {n: i for i, n in enumerate(node_order)}
@@ -676,7 +715,15 @@ class DimerSeriesModel:
         returned node ordering, so their PT weights are equal block-permutations of
         one another. Equal keys are SAFE by construction (the key encodes the full
         structure); isomorphic clusters that hash differently merely miss the dedup.
+        Memoized per form: the subtraction asks again for every subcluster of every
+        cluster, and >90 % of those asks repeat (Rb2Cu3SnF12, order 5).
         """
+        hit = self._s_memo.get(form)
+        if hit is None:
+            hit = self._s_memo[form] = self._struct_uncached(form)
+        return hit
+
+    def _struct_uncached(self, form):
         nodes = sorted({n for inst in form for n in self._inst_nodes(inst)})
         node_ids = {n: i for i, n in enumerate(nodes)}
         m = len(nodes)
@@ -733,12 +780,11 @@ class DimerSeriesModel:
             gs_w, Lc0, delta_trim = self._w_memo[memo_key]
             return node_order, gs_w, Lc0, delta_trim
 
-        lv = [self.levels[d] for (d, _c) in node_order]
-        sz = ([self.sz_levels[d] for (d, _c) in node_order]
-              if self.sz_levels is not None else None)
+        lv, sz = self._node_levels(node_order)
         if raw is None:
-            gs_raw, delta_raw = _cluster_pt(lv, self._local_links(form, node_order),
-                                            order, sz)
+            links = self._local_links(form, node_order)
+            out = self._rust_pt([(lv, links, sz)], order)
+            gs_raw, delta_raw = out[0] if out else _cluster_pt(lv, links, order, sz)
         else:
             gs_raw, delta_raw = raw
         gs_raw = gs_raw.copy()
@@ -757,10 +803,8 @@ class DimerSeriesModel:
                 idx_map = [node_pos[n] for n in s_order]
                 rows = np.concatenate([[i * nexc + a for a in range(nexc)]
                                        for i in idx_map])
-                srows = np.arange(len(s_order) * nexc)
-                for k in range(s_L, order + 1):
-                    delta_raw[k][np.ix_(rows, rows)] -= \
-                        s_trim[k - s_L][np.ix_(srows, srows)]
+                # every order k >= s_L at once: s_trim[k - s_L] is order k
+                delta_raw[s_L:, rows[:, None], rows] -= s_trim
 
         low = max((np.abs(delta_raw[k]).max() for k in range(min(Lc, order + 1))),
                   default=0.0)
@@ -779,7 +823,8 @@ class DimerSeriesModel:
         plus the order-0 local splittings handled in h_series_at. Cached per order.
 
         Clusters are deduplicated by STRUCTURE (each topology's PT runs once) and the
-        raw PT of each level's new topologies runs in a multiprocessing pool.
+        raw PT of each level's new topologies runs in a multiprocessing pool -- or,
+        under `kernels="rust"`, in rsMagCalc's thread pool, for every level.
         """
         if order in self._t_cache:
             return self._t_cache[order]
@@ -807,13 +852,20 @@ class DimerSeriesModel:
 
             # parallel raw PT for the new topologies (worth it for big clusters)
             raws = {}
-            if reps and size >= 4 and n_workers > 1 and len(reps) > 2 * n_workers:
+            if reps and self.kernels == "rust":
+                tasks = []
+                for (form, node_order) in reps.values():
+                    lv, sz = self._node_levels(node_order)
+                    tasks.append((lv, self._local_links(form, node_order), sz))
+                out = self._rust_pt(tasks, order)
+                if out is not None:
+                    raws = dict(zip(reps, out))
+            if reps and not raws and size >= 4 and n_workers > 1 \
+                    and len(reps) > 2 * n_workers:
                 import multiprocessing as mp
                 tasks = []
                 for skey, (form, node_order) in reps.items():
-                    lv = [self.levels[d] for (d, _c) in node_order]
-                    sz = ([self.sz_levels[d] for (d, _c) in node_order]
-                          if self.sz_levels is not None else None)
+                    lv, sz = self._node_levels(node_order)
                     tasks.append((skey, lv, self._local_links(form, node_order),
                                   order, sz))
                 ctx = mp.get_context("spawn")

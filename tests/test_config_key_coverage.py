@@ -35,11 +35,6 @@ ALLOWED = {
         "cone_angle_deg": "magnetic_structure sub-key, mis-attributed by the scan",
         "explicit_list": "domains sub-key, mis-attributed by the scan",
     },
-    "calculation": {
-        "series_resum": "dimer-series resummation; its only config is in "
-                        "test_config_smoke.SKIP (batch run). Exercised via "
-                        "sun/dimer_series tests through the Python API, not the key.",
-    },
     "fitting": {
         "fit_kws": "pass-through to lmfit.minimize; nothing here to verify beyond "
                    "'it is forwarded'.",
