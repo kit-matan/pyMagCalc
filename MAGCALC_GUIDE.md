@@ -7,7 +7,7 @@ context can make a correct first change. It is a map, not the whole territory: t
 authoritative details live in the files it points to (§12), and when they disagree, the
 code and the tests win.
 
-*Last reviewed: 2026-10-30, against pyMagCalc `449ed61` plus `calculate_sqw` on Colpa's method (`sqw_amplitudes`, `contract_cross_section_batch`, `calculation.sqw_method`). This file is kept current with
+*Last reviewed: 2026-10-30, against pyMagCalc `d8bd01a` plus neutron-data phase 2's energy resolution (`magcalc/resolution.py`, the `fraction` protocol in `ForwardModel`). This file is kept current with
 every change that alters what it describes (§13).*
 
 ---
@@ -318,7 +318,8 @@ pytest -n0 ...               # serial; needed for -s or pdb
 | `stevens.py`, `ewald.py`, `form_factors.py`, `constants.py` | Stevens operators, Ewald dipolar sums, magnetic form factors, the one definition of each physical constant |
 | `diffraction.py`, `binning.py` | elastic magnetic intensities; histogram binning and NeXus input |
 | `neutron_data.py` | reduced INS data on its own bins: `BinnedData` (counts, exposure, true energy edges, the bin → Q cell → sample quadrature), `QFrame`, `T0EnergyMap`, the MDNorm and count-cell readers, a versioned native `.npz` |
-| `forward.py` | `ForwardModel`: the expected count μ per data bin (exact erf energy integral with the width at the mode energy, crystals with mosaic, Q smearing, Bose factor); `poisson_deviance` |
+| `forward.py` | `ForwardModel`: the expected count μ per data bin (exact energy integral over each bin through the resolution's `fraction(lo, hi, centre)`, crystals with mosaic, Q smearing, Bose factor); `GaussianEnergyResolution`; `poisson_deviance` |
+| `resolution.py` | an instrument's energy resolution from its moderator pulse, choppers and flight paths: `ChopperSpectrometer`, `DiskChopper`, pulse shapes (`IkedaCarpenter`, `read_sns_source_table`), `cncs(...)`; `ChopperEnergyResolution.fraction` for `ForwardModel` |
 | `fitting.py` | lmfit wrapper for dispersion, S(Q,ω) and powder data |
 | `plotting.py` | figures; `show_plot_if_possible` honours `MAGCALC_NO_GUI` |
 | `kernels.py` | selection of the Rust kernels: `resolve`, `rust_for`, `fell_back`, `make_rng` |
@@ -396,6 +397,15 @@ iOS app).
   closed form, integrated by SciPy quadrature, is reached to 8e-7. It is a Python API
   only: there is no config block yet, and no fitting
   (`GAP_STATUS.md`, "Neutron data and the forward model, phase 1").
+
+- **Phase 2 of the neutron-data layer, the energy resolution** (2026-10-30).
+  `magcalc/resolution.py` builds a chopper spectrometer's energy line shape from its
+  moderator pulse, chopper openings and flight paths, exactly rather than as a Gaussian,
+  and `ForwardModel` integrates any line shape over each bin through `fraction(lo, hi,
+  centre)`. `GaussianEnergyResolution` is unchanged, bit for bit. Given PyChop's own time
+  widths, the propagation reproduces PyChop's CNCS widths to 3e-14. CNCS is built in;
+  AMATERAS waits for its chopper geometry. Q resolution is next
+  (`GAP_STATUS.md`, "phase 2, the energy resolution"; `OPEN_WORK.md` item 8).
 
 - **Every planned Rust kernel is in** (K1–K5, plus a sparse exact KPM guard). The sixth,
   mixed-spin dipole S(Q,ω), went into fMagCalc instead of Rust, because fMagCalc already

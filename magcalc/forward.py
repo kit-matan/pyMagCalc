@@ -14,6 +14,12 @@ dataset's own (see `magcalc.neutron_data`). The energy integral over the bin is 
 (an erf difference), not a sample at the bin centre, so a mode at a bin edge splits in
 half and a sharp mode inside one bin stays there.
 
+The erf difference is the Gaussian case of the resolution protocol
+`fraction(lo, hi, centre)`, the probability that a mode at `centre` is recorded in
+[lo, hi]. Any resolution with that method can replace it, keeping the exact bin
+integral: `magcalc.resolution.ChopperEnergyResolution` gives an instrument's own line
+shape (moderator, choppers, flight paths) that way.
+
 Nothing here is fitted: no amplitude, no background. Those belong to the fitting layer.
 """
 from __future__ import annotations
@@ -66,6 +72,11 @@ class GaussianEnergyResolution:
             raise ValueError("the resolution FWHM is negative at some mode energy "
                              f"(min {np.min(f):.3g} meV); check the law's range")
         return np.sqrt((f / FWHM_PER_SIGMA) ** 2 + self.extra_sigma ** 2)
+
+    def fraction(self, lo, hi, centre):
+        """Probability that a mode at `centre` is recorded in [lo, hi]: the resolution
+        protocol `ForwardModel` uses (see `magcalc.resolution`)."""
+        return _bin_fraction(lo, hi, centre, self.sigma(centre))
 
 
 @dataclass
@@ -141,7 +152,8 @@ def poisson_deviance(n, mu):
 class ForwardModel:
     """Expected counts mu_b for `data` under the dipole model `calc` (a MagCalc).
 
-    resolution: a GaussianEnergyResolution.
+    resolution: anything with fraction(lo, hi, centre) -- a GaussianEnergyResolution, or
+        a `resolution.ChopperEnergyResolution` -- or, failing that, sigma(E) (Gaussian).
     crystals: list of Crystal (default: one, unrotated, weight 1).
     temperature: K for the Bose factor; default data.meta['temperature'], else T = 0.
     q_smear: Gaussian Q smearing sigma (3,) in DATA-frame r.l.u., applied through each
@@ -224,6 +236,14 @@ class ForwardModel:
         self.last_timing["sqw_points"] = len(q) * len(out)
         return out
 
+    def _fraction_function(self):
+        """fraction(lo, hi, centre) of the resolution: its own method (the protocol), or,
+        for an object that has only sigma(E), the Gaussian bin integral with that width."""
+        res = self.resolution
+        if hasattr(res, "fraction"):
+            return res.fraction
+        return lambda lo, hi, c: _bin_fraction(lo, hi, c, res.sigma(c))
+
     def _line_weights(self, E):
         """(stokes, gain) Bose weights per mode; gain is None at T = 0."""
         T = self.temperature
@@ -249,20 +269,19 @@ class ForwardModel:
         t = time.perf_counter()
         act = self._active[self._e_bin]
         eb, es, ew = self._e_bin[act], self._e_samp[act], self._e_w[act]
+        fraction = self._fraction_function()
         for w_node, E, I in spectra:
-            sg = self.resolution.sigma(E)
             stokes, gain = self._line_weights(E)
             amp = I * stokes
             if gain is not None:
-                sg_g = self.resolution.sigma(-E)
                 amp_g = I * gain
             for c0 in range(0, len(eb), self.entry_chunk):
                 b = eb[c0:c0 + self.entry_chunk]
                 s = es[c0:c0 + self.entry_chunk]
                 l, h = lo[b][:, None], hi[b][:, None]
-                val = np.sum(amp[s] * _bin_fraction(l, h, E[s], sg[s]), axis=1)
+                val = np.sum(amp[s] * fraction(l, h, E[s]), axis=1)
                 if gain is not None:
-                    val += np.sum(amp_g[s] * _bin_fraction(l, h, -E[s], sg_g[s]), axis=1)
+                    val += np.sum(amp_g[s] * fraction(l, h, -E[s]), axis=1)
                 sig += w_node * np.bincount(b, weights=ew[c0:c0 + self.entry_chunk] * val,
                                             minlength=nb)
         self.last_timing["bin_seconds"] = time.perf_counter() - t

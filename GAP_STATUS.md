@@ -1128,6 +1128,72 @@ machine and model (4,000 q in 12.2 s): 87×.
 idle machine): **2584 passed, 2 skipped, 0 failed, 15 min 01 s**, the previous 2535 plus
 these 49. The two skips are the structural `seekpath` and ALPS ones.
 
+### Neutron data, phase 2, the energy resolution, 2026-10-30 — an instrument's own line shape, exact over each bin
+
+`magcalc/resolution.py` (Python API, no config block). A neutron is labelled by its
+emission time and inverse speed (τ, μ). Its recorded-minus-mode energy is, to first
+order, dE = α τ + β μ, with α = 2E_f v_f/L₂ and β = 2E_i v_i + α L₁ at the **mode**
+energy (the phase-1 convention). The transmitted (τ, μ) have the density M(τ) Π_c
+W_c(τ + x_c μ):
+- M is the moderator pulse about the time the choppers are phased to: flat,
+  Ikeda–Carpenter, Gaussian of a measured FWHM(λ), or a tabulated SNS/McStas
+  emission-time file.
+- W_c are the openings of the one or two choppers that set the resolution: a disk's
+  slot ⊗ beam trapezoid, a Fermi chopper's triangle, or any density.
+
+The distribution of dE, plus a uniform detector depth and an optional Gaussian, is
+computed exactly (a 2-D quadrature deposited on a fine grid, no Gaussian assumption). It
+is tabulated once per Ei on 64 mode energies in units of σ(E), and read by linear
+interpolation; building one takes about 0.1 s. When every part is Gaussian the code
+takes the closed form instead: the erf with σ(E) from the precision Σ_c a_c a_cᵀ/σ_c².
+The mean is removed, because the reduction's Ei and time zero are calibrated on the
+transmitted beam and `T0EnergyMap` re-centres what is left.
+
+`ForwardModel` now asks its resolution for `fraction(lo, hi, centre)`.
+`GaussianEnergyResolution.fraction` is phase 1's `_bin_fraction(σ(ε))`, bit for bit, and
+an object with only `sigma(E)` still gets that path.
+
+**Oracles** (`tests/test_resolution.py` 24, `tests/test_forward_model.py` +2):
+- **Mantid PyChop, exact.** PyChop's moderator/first-chopper width, final-chopper
+  width and detector term go through this code's propagation as Gaussians, and give
+  PyChop's own CNCS vanadium FWHM, its sample term removed, to **2.6e-14 relative**:
+  48 settings (three slots, four Ei, four frequency pairs) × 15 energy transfers. The
+  reference is `tests/data_pychop_cncs_reference.json` (Mantid 6.16.1.2), made by
+  `tests/pychop_cncs_reference.py`. Its two time coefficients are PyChop's `modfac` and
+  `chpfac` exactly.
+- **Closed forms.** Two Gaussian choppers give Windsor's σ(E) to 1e-12, and one
+  chopper with a Gaussian pulse gives its closed form. Gaussian ⊗ box and Gaussian ⊗
+  trapezoid (the first and second integrals of Φ), with an extra width in meV and a
+  detector depth, are matched by the table to 2e-5 in the CDF.
+- **Direct Monte Carlo.** An Ikeda–Carpenter pulse through two disks, sampled directly
+  (400,000 draws), gives σ to 0.5% and the CDF to 4e-3. The profile is visibly skewed.
+- **Exact limits and identities.**
+  - All parts Gaussian → the erf, also through the forced table (2e-5).
+  - Widths → 0 → the step, ½ on an edge.
+  - At fixed openings and a flat pulse the width scales exactly as E_i^{3/2} (the
+    multi-E_i identity).
+  - Fractions over covering bins sum to 1 (1e-12); `ForwardModel`'s energy sum rule
+    holds under the full line shape (1e-12).
+  - The Ikeda–Carpenter mean and variance match their closed forms.
+- **Mutation check.** Shifting β's L₁ by 1 m fails 9 of the 19 original tests.
+
+**CNCS.** `cncs(variant, f_res, f1)` uses PyChop's CNCS geometry, slot and guide widths,
+and measured pulse widths, with chopper 1 as a straight-slit Fermi chopper (SNS's CNCS
+McStas model).
+- **High Resolution.** The 9.86 mm slot against a 12 mm guide is nearly a triangle, and
+  the result is within 12% of PyChop for |E| ≤ E_i/2.
+- **Intermediate and High Flux** come out 10–20% and about 1.7× wider than PyChop. That
+  is a convention, not a defect: PyChop takes a trapezoidal opening as a Gaussian of
+  FWHM (slot + guide)/2 (61 mm for High Flux's 110 mm slot and 12 mm guide), where the
+  trapezoid's own FWHM is the full slot. The vanadium line decides it, not PyChop.
+- **Two numbers to confirm** with the CNCS team: the McStas model's beam at chopper 4
+  (about 21 mm) against PyChop's 12 mm guide width; and PyChop's Intermediate and High
+  Flux slot widths (32 and 110 mm), which do not equal its quoted 4.4° and 9° × R.
+
+**Not done yet.** Q resolution and the Q–E correlation; AMATERAS, whose chopper
+radius, the FDC#3 slit and beam widths are needed; calibration on vanadium and
+incoherent elastic lines; Fermi-chopper instruments. See `OPEN_WORK.md` item 8.
+
 ### calculate_sqw on Colpa's method, 2026-10-30 — every cross-section and single-k, 69–100× the per-q pool
 
 **What changed.** The dipole engine's `calculate_sqw` used a per-q process pool

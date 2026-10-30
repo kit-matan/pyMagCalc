@@ -1239,8 +1239,56 @@ The same caution as §7 of the guide applies: a hand-built `MagCalc` skips the
 runner's ground-state guards. Build the model through a run, or check
 `calc.relax_from_current()`, before trusting a μ map.
 
+### An instrument's own energy resolution
+
+`ForwardModel` takes any resolution object with `fraction(lo, hi, centre)`: the
+probability that a mode at `centre` is recorded in [lo, hi]. `GaussianEnergyResolution`
+is one (the erf, unchanged). `magcalc.resolution` builds another from the instrument
+itself:
+
+```python
+from magcalc.resolution import (cncs, ChopperSpectrometer, DiskChopper, IkedaCarpenter,
+                                read_sns_source_table)
+
+res = cncs("Intermediate", f_res=300.0, f1=60.0).resolution(12.0)    # CNCS, Ei = 12 meV
+res.sigma(3.0), res.fwhm(3.0)          # width at a mode energy of 3 meV
+fm = ForwardModel(calc, a, res, temperature=4.0)
+
+# any disk-chopper instrument: the choppers that set the resolution, L1, L2, a pulse
+ic = IkedaCarpenter(alpha=1 / 25e-6, beta=1 / 120e-6, R=0.5)
+spec = ChopperSpectrometer(
+    "my instrument", l1=30.0, l2=4.0,
+    choppers=[DiskChopper("pulse shaper", 14.2, 300.0, slot_width=0.03, radius=0.30),
+              DiskChopper("monochromator", 28.4, 300.0, slot_width=0.03, radius=0.30,
+                          beam_width=0.01, counter_rotating=True)],
+    moderator=IkedaCarpenter(ic.alpha, ic.beta, ic.R, shift=-ic.peak()),
+    detector_depth=0.022)
+res = spec.resolution(7.7)
+```
+
+- **What it models.** A neutron's emission time and speed, the openings of the one or
+  two choppers that set the resolution (a disk's trapezoid, a Fermi chopper's
+  triangle, or any density), the moderator pulse about the time the choppers are phased
+  to, the detector depth, and an optional extra Gaussian width. The recorded-minus-mode
+  energy is linear in those, with coefficients at the mode energy. Its distribution is
+  computed exactly, not assumed Gaussian, and tabulated once per Ei (about 0.1 s).
+- **When everything is Gaussian it is the erf.** Then `fraction` is the same exact bin
+  integral as `GaussianEnergyResolution`, with σ(E) in closed form.
+- **CNCS.** `cncs(variant, f_res, f1)` with `variant` 'High Flux', 'Intermediate' or
+  'High Resolution' (the double-disk slot; `DoubleDiskMode` 1 and 3 in the run logs
+  are High Flux and Intermediate). The geometry is PyChop's CNCS model, and chopper 1
+  is a straight-slit Fermi chopper. The moderator is a Gaussian of PyChop's measured
+  FWHM(λ) unless you pass `moderator=read_sns_source_table(path)`, an SNS/McStas
+  emission-time file, for the pulse shape itself. `geometry={...}` overrides any number.
+- **It does not yet move Q.** This is the energy part only. The Q resolution and the
+  Q–E correlation come next (`OPEN_WORK.md` item 8), so keep `q_smear` and `Crystal`
+  mosaic for Q.
+- **Calibrate before trusting a width.** The incoherent elastic line of the sample or a
+  vanadium run checks the line shape at E = 0. For the wide CNCS slots this model and
+  PyChop disagree by design (`GAP_STATUS.md`).
+
 How each piece is validated (Sunny, a closed-form chain, exact identities) is recorded in
-`GAP_STATUS.md`, "Neutron data and the forward model, phase 1".
+`GAP_STATUS.md`, "Neutron data and the forward model, phase 1" and "phase 2, the energy resolution".
 
 ---
 

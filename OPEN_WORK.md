@@ -85,7 +85,24 @@ known; item 3 is done:
    API only) is done. Next:
    - **Phase 2: instrument resolution per TOF instrument.** Disk-chopper (CNCS,
      AMATERAS) and Fermi-chopper (HRC, 4SEASONS) models, calibrated on vanadium and
-     elastic widths, in place of the Gaussian width law.
+     elastic widths, in place of the Gaussian width law. **The energy part is in**
+     (2026-10-30, `magcalc/resolution.py`; GAP_STATUS "phase 2, the energy
+     resolution"). It gives an exact line shape from the pulse, choppers and flight
+     paths, integrated over each bin through `fraction(lo, hi, centre)`, and
+     reproduces PyChop's propagation to 3e-14. CNCS is built in. Still to do, in order:
+     - an independent ray-tracing Monte Carlo of the spectrometer, to check the
+       linearisation itself;
+     - **Q resolution and the Q–E correlation**: divergence, sample size and position
+       (two crystals), pixel size, and the chopper times' shift of |k_i| and |k_f|.
+       These enter through the sample quadrature: a per-sample δQ plus a conditional
+       energy shift and width (exact for a Gaussian kernel). A second level draws the
+       geometry from its true distributions, with the chopper times projected through
+       the mode's group velocity. Count cells need the pixel (run ψ or detector ID);
+       MDNorm data need the two ψ branches;
+     - AMATERAS, once its disk radius, FDC#3 slit and beam widths are confirmed;
+     - calibration against vanadium and the incoherent elastic line;
+     - Fermi-chopper instruments (HRC, 4SEASONS): a triangle opening and an
+       Ikeda–Carpenter pulse, through the same interface.
    - **Phase 3: backgrounds.**
    - **Phase 4: a Poisson fitting layer.** Multi-dataset fits, the ground state
      re-minimized per field (`ForwardModel.expected(params)` deliberately does not),

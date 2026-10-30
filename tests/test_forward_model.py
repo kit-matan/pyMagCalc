@@ -92,6 +92,43 @@ def test_energy_sum_rule_at_zero_temperature(chain, tmp_path):
         assert (mu[bins] / d.exposure[bins]).sum() == pytest.approx(Ic, rel=1e-12)
 
 
+
+def test_energy_sum_rule_with_an_instrument_line_shape(chain, tmp_path):
+    """The same sum rule with a chopper spectrometer's non-Gaussian profile (trapezoid
+    openings, Ikeda-Carpenter tail, detector depth): resolution only redistributes."""
+    from magcalc.resolution import ChopperSpectrometer, DiskChopper, IkedaCarpenter
+    ic = IkedaCarpenter(1 / 25e-6, 1 / 120e-6, 0.5)
+    spec = ChopperSpectrometer("toy", 30.0, 4.0, [
+        DiskChopper("P", 7.0, 150.0, 0.03, 0.35, 0.03, True),
+        DiskChopper("M", 28.3, 300.0, 0.02, 0.35, 0.01, True)],
+        moderator=IkedaCarpenter(ic.alpha, ic.beta, ic.R, shift=-ic.peak()),
+        detector_depth=0.02)
+    res = spec.resolution(25.0)
+    assert not res.gaussian
+    p = tmp_path / "m.npz"
+    write_mdnorm(p, dims=["[H,0,0]|0.1|0.4|3", "[0,K,0]|-0.1|0.1|1",
+                          "[0,0,L]|0.2|0.4|1", "DeltaE|-10|20|60"],
+                 shape=(3, 1, 1, 60), empty_cell=False)
+    d = read_mdnorm_npz(p, "Z", samples_per_cell=32)
+    fm = ForwardModel(chain, d, res, temperature=0)
+    mu = fm.expected()
+    _, I = chain.sqw_batch(d.sample_cartesian(fm.b_matrix))
+    for c in range(d.n_cells):
+        bins = np.flatnonzero(d.bin_cells == c)
+        Ic = I[d.cell_ptr[c]:d.cell_ptr[c + 1]].sum(axis=1).mean()
+        assert (mu[bins] / d.exposure[bins]).sum() == pytest.approx(Ic, rel=1e-12)
+
+
+def test_a_resolution_with_only_sigma_takes_the_gaussian_path(chain):
+    """An object with sigma(E) but no fraction() gets the phase-1 erf: identical numbers."""
+    class SigmaOnly:
+        def sigma(self, e):
+            return RES.sigma(e)
+    d = _point_data([0.2, 0.0, 0.3], np.linspace(-6, 6, 49))
+    a = ForwardModel(chain, d, RES, temperature=20.0).expected()
+    b = ForwardModel(chain, d, SigmaOnly(), temperature=20.0).expected()
+    assert np.array_equal(a, b)
+
 def test_mode_on_a_bin_edge_splits_in_half(chain):
     h = 0.2
     w = _omega(h)
