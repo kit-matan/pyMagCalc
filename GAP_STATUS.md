@@ -1041,6 +1041,8 @@ runs the stable cone, which a skipped audit passes too):
 * ∇E against central differences of E; the runner's WARNING when the energy cannot be
   built.
 
+**Gate** (2026-10-29, pyMagCalc `58300fa` on master after the biquadratic fix, fMagCalc `4a5ff4b`, rsMagCalc `9061710`, magpipe `e92b2c7`; `MAGCALC_NO_GUI=1 pytest -m "" -rs` from the workspace root): **2527 passed, 2 skipped, 0 failed, 16 min 03 s**, the previous 2516 plus this file's 11 tests; the two skips are the structural pair (`seekpath` absent, ALPS present).
+
 ### Biquadratic off the collinear axis, and `pair_operator` in dipole mode, 2026-10-29 — three silent drops, pinned to Sunny and two exact identities
 
 A feasibility study of building the dipole H(q) numerically found these. It compared
