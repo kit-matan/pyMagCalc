@@ -1251,6 +1251,13 @@ default is a Gaussian of FWHM ∝ λ through it, to be calibrated on an elastic 
 - **Against the facility's measured elastic widths:** every model, the paper's included,
   is 15–29% narrow, unshaped settings too. The paper attributes that for unshaped
   settings to the non-Gaussian pulse. The real pulse shape is the open input.
+- **On a measured incoherent elastic line** (a 2021 dataset at 15.1, 7.7 and 4.7 meV, the
+  pulse shaped by #3 at 300 Hz; amplitude, centre and background free, no free width):
+  - the nominal model is 7–10% narrow (χ² 71k);
+  - a pulse acting ~4× wider than a Gaussian of the published FWHM, plus a 29 mm path
+    spread, brings the widths to +2 to +5% of the measurement (χ² 21.7k);
+  - the real pulse's tail passes #3's ~130 µs opening, so #3, not the pulse, shapes it;
+  - calibrate with `amateras(geometry={"pulse_fwhm_at_5p9": ...}, detector_depth=...)`.
 
 **Not done yet.** Q resolution and the Q–E correlation are now Level 1 (next section); the
 AMATERAS pulse calibration; calibration against vanadium and incoherent elastic lines on
