@@ -120,6 +120,61 @@ def Uniform(width, centre=0.0):
     return Trapezoid(width, 0.0, centre)
 
 
+class CounterRotatingOpening(Distribution):
+    """Opening in time of a counter-rotating pair of disks: slots of linear widths w1, w2
+    moving in opposite directions at speed v each, across a beam of width b. A neutron at
+    transverse position y passes at time t if |y - v t| < w1/2, |y + v t| < w2/2 and
+    |y| < b/2, so for a beam uniform in y the density is the length of that y-interval:
+
+        L(t) = max(0, min(b/2, w1/2 + v t, w2/2 - v t) - max(-b/2, v t - w1/2, -v t - w2/2)).
+
+    b = w1 = w2 gives a triangle of FWHM w/(2v) (the pair halves a single disk's burst);
+    b -> 0 gives a box of width min(w1, w2)/v (it does not). b = 0 is that box."""
+
+    def __init__(self, w1, w2, b, v):
+        if min(w1, w2) <= 0 or b < 0 or v <= 0:
+            raise ValueError("slot widths and speed must be positive")
+        self.w1, self.w2, self.b, self.v = float(w1), float(w2), float(b), float(v)
+        if self.b == 0:
+            self._box = Uniform(min(w1, w2) / v)
+        else:
+            self._box = None
+            hi = (self.w1 + self.w2) / (4 * self.v)
+            t = np.linspace(-hi, hi, 40001)
+            self._norm = float(np.trapezoid(self._length(t), t))
+            self._t = t
+
+    def _length(self, t):
+        vt = self.v * np.asarray(t, float)
+        top = np.minimum(np.minimum(self.b / 2, self.w1 / 2 + vt), self.w2 / 2 - vt)
+        bot = np.maximum(np.maximum(-self.b / 2, vt - self.w1 / 2), -vt - self.w2 / 2)
+        return np.maximum(top - bot, 0.0)
+
+    def pdf(self, t):
+        if self._box is not None:
+            return self._box.pdf(t)
+        return self._length(t) / self._norm
+
+    def support(self):
+        if self._box is not None:
+            return self._box.support()
+        h = (self.w1 + self.w2) / (4 * self.v)
+        return -h, h
+
+    def mean(self):
+        if self._box is not None:
+            return 0.0
+        t = self._t
+        return float(np.trapezoid(t * self.pdf(t), t))
+
+    def var(self):
+        if self._box is not None:
+            return self._box.var()
+        t = self._t
+        m = self.mean()
+        return float(np.trapezoid((t - m) ** 2 * self.pdf(t), t))
+
+
 @dataclass
 class IkedaCarpenter(Distribution):
     """Ikeda & Carpenter (1985) moderator pulse, t >= 0 (s); alpha, beta in 1/s:
@@ -199,9 +254,11 @@ class Tabulated(Distribution):
 class DiskChopper:
     """A disk chopper `distance` m from the moderator, at `frequency` Hz, with a slot of
     linear width `slot_width` (m) at the beam radius `radius` (m) and a beam of width
-    `beam_width` (m, along the slot's motion) there. A counter-rotating pair
-    (`counter_rotating`) opens at twice the relative speed. Its opening in time is
-    Trapezoid(slot/V, beam/V), V = 2 pi radius frequency (x 2 for a pair)."""
+    `beam_width` (m, along the slot's motion) there. Its opening in time is
+    Trapezoid(slot/v, beam/v), v = 2 pi radius frequency. A counter-rotating pair
+    (`counter_rotating`; the second disk's slot `slot_width2`, default the same) opens
+    where the two slots overlap: `CounterRotatingOpening`, which halves the burst only
+    when the beam fills the slot."""
     name: str
     distance: float
     frequency: float
@@ -209,20 +266,26 @@ class DiskChopper:
     radius: float
     beam_width: float = 0.0
     counter_rotating: bool = False
+    slot_width2: Optional[float] = None
 
     @classmethod
     def from_slot_angle(cls, name, distance, frequency, slot_angle_deg, radius,
-                        beam_width=0.0, counter_rotating=False):
+                        beam_width=0.0, counter_rotating=False, slot_angle2_deg=None):
+        w2 = None if slot_angle2_deg is None else radius * np.radians(slot_angle2_deg)
         return cls(name, distance, frequency, radius * np.radians(slot_angle_deg), radius,
-                   beam_width, counter_rotating)
+                   beam_width, counter_rotating, w2)
 
     @property
     def speed(self):
-        return 2 * np.pi * self.radius * self.frequency * (2 if self.counter_rotating else 1)
+        """Speed of one disk at the beam (m/s)."""
+        return 2 * np.pi * self.radius * self.frequency
 
     def window(self) -> Distribution:
         if self.frequency <= 0:
             raise ValueError(f"chopper {self.name} is not running")
+        if self.counter_rotating:
+            w2 = self.slot_width if self.slot_width2 is None else self.slot_width2
+            return CounterRotatingOpening(self.slot_width, w2, self.beam_width, self.speed)
         return Trapezoid(self.slot_width / self.speed, self.beam_width / self.speed)
 
 
@@ -577,16 +640,22 @@ def read_sns_source_table(path, phase="peak"):
 
 
 # --------------------------------------------------------------------------- instruments
-# CNCS (SNS BL5): Mantid PyChop's CNCS model (scripts/pychop/cncs.yaml) for distances,
-# disk radius, slot and guide widths and the moderator FWHM(lambda); chopper 1 is a
-# straight-slit Fermi chopper (30 channels in 50 mm, 17 mm long, 0.15 mm walls) as in
-# the SNS CNCS McStas model. Every number can be overridden; see GAP_STATUS.md.
+# CNCS (SNS BL5). Distances, the chopper-4 disk radius and the moderator FWHM(lambda) are
+# Mantid PyChop's CNCS model (scripts/pychop/cncs.yaml). Chopper 4 is a counter-rotating
+# pair whose slot is 9, 4.4 or 2 deg on each disk ('High Flux', 'Intermediate', 'High
+# Resolution': the angles PyChop's comments and the SNS CNCS McStas model give; PyChop's own
+# slot widths are effective values for its Gaussian formula, not the slot), seen by the beam
+# at radius 0.25 m (the 0.2825 m disk less half its 65 mm slot height) with the 21 mm beam
+# width of the McStas guide ends. Chopper 1 is a straight-slit Fermi chopper (30 channels in
+# 50 mm, 17 mm long, 0.15 mm walls) as in the McStas model. Every number can be
+# overridden; on real data, calibrate the openings on the incoherent elastic line
+# (GAP_STATUS.md, "phase 2, the energy resolution").
 CNCS_GEOMETRY = {
     "x_chopper1": 6.413, "x_chopper4": 34.785, "chop_sam": 1.48, "sam_det": 3.5,
-    "chopper4_radius": 0.2825, "chopper4_guide": 0.012,
-    "chopper4_slot": {"High Flux": 0.110, "Intermediate": 0.032, "High Resolution": 0.00986},
+    "chopper4_beam_radius": 0.25, "chopper4_beam_width": 0.021,
+    "chopper4_slot_deg": {"High Flux": 9.0, "Intermediate": 4.4, "High Resolution": 2.0},
     "fermi_channel": (0.05 - 31 * 0.00015) / 30, "fermi_length": 0.017,
-    "detector_depth": 0.025,
+    "fermi_scale": 1.0, "detector_depth": 0.025,
 }
 CNCS_MODERATOR_FWHM = (     # lambda (A), FWHM (us): PyChop cncs.yaml measured_width
     [0.90445614, 0.97050943, 1.04138664, 1.11744009, 1.19904779, 1.28661538, 1.38057811,
@@ -606,22 +675,26 @@ CNCS_MODERATOR_FWHM = (     # lambda (A), FWHM (us): PyChop cncs.yaml measured_w
 
 def cncs(variant="Intermediate", f_res=300.0, f1=60.0, *, moderator=None, geometry=None,
          detector_depth=None, extra_sigma=0.0) -> ChopperSpectrometer:
-    """CNCS with the double-disk chopper 4 (`variant`: 'High Flux', 'Intermediate' or
-    'High Resolution', at `f_res` Hz) and the Fermi chopper 1 (`f1` Hz).
+    """CNCS with the counter-rotating chopper 4 (`variant`: 'High Flux', 'Intermediate' or
+    'High Resolution', i.e. DoubleDiskMode 1, 3 or the narrow slot, at `f_res` Hz) and the
+    Fermi chopper 1 (`f1` Hz).
 
     moderator: default a Gaussian pulse with PyChop's measured FWHM(lambda); pass
     `read_sns_source_table(...)` for the emission-time shape itself. geometry: overrides
-    of CNCS_GEOMETRY. detector_depth: the full width (m) of a uniform spread in L2,
-    default the tube diameter."""
+    of CNCS_GEOMETRY (e.g. calibrated slot angles, or `fermi_scale` to widen chopper 1's
+    opening). detector_depth: the full width (m) of a uniform spread in L2, default the
+    tube diameter."""
     g = dict(CNCS_GEOMETRY)
     g.update(geometry or {})
-    if variant not in g["chopper4_slot"]:
-        raise ValueError(f"variant must be one of {list(g['chopper4_slot'])}")
+    if variant not in g["chopper4_slot_deg"]:
+        raise ValueError(f"variant must be one of {list(g['chopper4_slot_deg'])}")
+    fw = fermi_straight_window(f1, g["fermi_channel"], g["fermi_length"])
     c1 = TimeWindow("chopper 1 (Fermi)", g["x_chopper1"],
-                    fermi_straight_window(f1, g["fermi_channel"], g["fermi_length"]))
-    c4 = DiskChopper("chopper 4 (double disk)", g["x_chopper4"], f_res,
-                     g["chopper4_slot"][variant], g["chopper4_radius"], g["chopper4_guide"],
-                     counter_rotating=True)
+                    Trapezoid(g["fermi_scale"] * fw.a, g["fermi_scale"] * fw.b))
+    c4 = DiskChopper.from_slot_angle("chopper 4 (counter-rotating pair)", g["x_chopper4"],
+                                     f_res, g["chopper4_slot_deg"][variant],
+                                     g["chopper4_beam_radius"], g["chopper4_beam_width"],
+                                     counter_rotating=True)
     if moderator is None:
         lam, fw = CNCS_MODERATOR_FWHM
         moderator = GaussianPulse(lam, np.asarray(fw) * 1e-6)

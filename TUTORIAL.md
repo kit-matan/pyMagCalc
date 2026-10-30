@@ -1275,17 +1275,22 @@ res = spec.resolution(7.7)
 - **When everything is Gaussian it is the erf.** Then `fraction` is the same exact bin
   integral as `GaussianEnergyResolution`, with σ(E) in closed form.
 - **CNCS.** `cncs(variant, f_res, f1)` with `variant` 'High Flux', 'Intermediate' or
-  'High Resolution' (the double-disk slot; `DoubleDiskMode` 1 and 3 in the run logs
-  are High Flux and Intermediate). The geometry is PyChop's CNCS model, and chopper 1
-  is a straight-slit Fermi chopper. The moderator is a Gaussian of PyChop's measured
-  FWHM(λ) unless you pass `moderator=read_sns_source_table(path)`, an SNS/McStas
-  emission-time file, for the pulse shape itself. `geometry={...}` overrides any number.
+  'High Resolution' (`DoubleDiskMode` 1 and 3 in the run logs are High Flux and
+  Intermediate). Chopper 4 is a counter-rotating pair with 9, 4.4 and 2° slots, and
+  chopper 1 a straight-slit Fermi chopper. The moderator is a Gaussian of PyChop's
+  measured FWHM(λ) unless you pass `moderator=read_sns_source_table(path)`, an SNS/McStas
+  emission-time file. Pass the file when the line shape matters: it carries the pulse
+  tail, which shows on the energy-gain side of the elastic line. `geometry={...}`
+  overrides any number, e.g. calibrated `chopper4_slot_deg` or `fermi_scale`.
+- **Counter-rotating pairs** (`DiskChopper(..., counter_rotating=True)`) open where the
+  two slots overlap. That halves a single disk's burst only when the beam fills the
+  slot, so give the beam width at the chopper.
 - **It does not yet move Q.** This is the energy part only. The Q resolution and the
   Q–E correlation come next (`OPEN_WORK.md` item 8), so keep `q_smear` and `Crystal`
   mosaic for Q.
 - **Calibrate before trusting a width.** The incoherent elastic line of the sample or a
-  vanadium run checks the line shape at E = 0. For the wide CNCS slots this model and
-  PyChop disagree by design (`GAP_STATUS.md`).
+  vanadium run checks the line shape at E = 0. Fit it with the model's own CDF and no
+  free width; then, if needed, one effective opening per chopper (`GAP_STATUS.md`).
 
 How each piece is validated (Sunny, a closed-form chain, exact identities) is recorded in
 `GAP_STATUS.md`, "Neutron data and the forward model, phase 1" and "phase 2, the energy resolution".

@@ -1153,7 +1153,7 @@ transmitted beam and `T0EnergyMap` re-centres what is left.
 `GaussianEnergyResolution.fraction` is phase 1's `_bin_fraction(σ(ε))`, bit for bit, and
 an object with only `sigma(E)` still gets that path.
 
-**Oracles** (`tests/test_resolution.py` 24, `tests/test_forward_model.py` +2):
+**Oracles** (`tests/test_resolution.py` 28, `tests/test_forward_model.py` +2):
 - **Mantid PyChop, exact.** PyChop's moderator/first-chopper width, final-chopper
   width and detector term go through this code's propagation as Gaussians, and give
   PyChop's own CNCS vanadium FWHM, its sample term removed, to **2.6e-14 relative**:
@@ -1177,18 +1177,42 @@ an object with only `sigma(E)` still gets that path.
   - The Ikeda–Carpenter mean and variance match their closed forms.
 - **Mutation check.** Shifting β's L₁ by 1 m fails 9 of the 19 original tests.
 
-**CNCS.** `cncs(variant, f_res, f1)` uses PyChop's CNCS geometry, slot and guide widths,
-and measured pulse widths, with chopper 1 as a straight-slit Fermi chopper (SNS's CNCS
-McStas model).
-- **High Resolution.** The 9.86 mm slot against a 12 mm guide is nearly a triangle, and
-  the result is within 12% of PyChop for |E| ≤ E_i/2.
-- **Intermediate and High Flux** come out 10–20% and about 1.7× wider than PyChop. That
-  is a convention, not a defect: PyChop takes a trapezoidal opening as a Gaussian of
-  FWHM (slot + guide)/2 (61 mm for High Flux's 110 mm slot and 12 mm guide), where the
-  trapezoid's own FWHM is the full slot. The vanadium line decides it, not PyChop.
-- **Two numbers to confirm** with the CNCS team: the McStas model's beam at chopper 4
-  (about 21 mm) against PyChop's 12 mm guide width; and PyChop's Intermediate and High
-  Flux slot widths (32 and 110 mm), which do not equal its quoted 4.4° and 9° × R.
+**Counter-rotating pairs.** A pair is modelled as two slots moving in opposite directions
+across the beam (`CounterRotatingOpening`). The time density is the length of the
+y-interval inside both slots and the beam.
+- **Checks:** brute-force sampling of (y, t) to 5e-3 in variance and 3e-3 in the CDF.
+  A beam filling the slot gives a triangle of FWHM w/(2v), exactly half a single disk;
+  a narrow beam gives a box of w/v, with no gain.
+- **What it replaced:** the first version treated the pair as one slot at twice the
+  speed. That is right only for a full beam. On the CNCS High Flux elastic line it gave
+  a flat-topped profile 1.8× too wide. Corrected the same day, before any merge.
+
+**CNCS.** `cncs(variant, f_res, f1)` uses:
+- PyChop's distances, disk radius and measured pulse widths;
+- chopper 4 as a counter-rotating pair with slots of 9°, 4.4° and 2°. These are the
+  angles in PyChop's comments and the SNS McStas model. PyChop's own slot widths (110,
+  32, 9.86 mm) are effective inputs to its (slot + guide)/2 Gaussian, not slots;
+- the beam on chopper 4 at radius 0.25 m, 21 mm wide;
+- chopper 1 as a straight-slit Fermi chopper (McStas geometry).
+
+Results:
+- **Against PyChop:** within 13% (0.87–1.09) for every slot, Ei (3.3–25 meV) and
+  frequency pair at |E| ≤ E_i/2. The disagreement is in the two codes' physical inputs;
+  their propagation agrees to 3e-14, as above.
+- **Against data,** the incoherent elastic line of a 2025 CNCS single-crystal dataset
+  (Bragg regions excluded; fit amplitude, centre and a linear background, **no free
+  width**):
+  - with the McStas BL5 pulse shape, the model's FWHM is 0.340 meV against the measured
+    0.341 meV (Ei 12, Intermediate), and 0.275 against 0.254 (Ei 6.25, High Flux);
+  - it fits better than any Gaussian, the free-width one included. The measured line
+    has a long energy-gain tail (late-emitted neutrons that pass chopper 4 on time are
+    fast). Reproducing its height needs chopper 1 about 1.9× wider than the Fermi
+    geometry gives;
+  - with that and one effective slot angle per mode (3.7° and 8.5°), χ²/dof is 93 and
+    3.5 on very high statistics, against 2617 and 8.6 for a free Gaussian, over two
+    decades of the line.
+- **Two numbers to confirm** with the CNCS team: chopper 1's actual opening at 60 Hz,
+  and the beam width at chopper 4 (PyChop's 12 mm against the McStas guide's ~21 mm).
 
 **Not done yet.** Q resolution and the Q–E correlation; AMATERAS, whose chopper
 radius, the FDC#3 slit and beam widths are needed; calibration on vanadium and

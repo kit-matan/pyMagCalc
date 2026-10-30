@@ -82,15 +82,47 @@ def test_trapezoid_and_disk_opening():
     assert np.trapezoid(t * t * f, t) == pytest.approx(tz.var(), rel=1e-7)
     assert tz.pdf(0.0) == pytest.approx(1 / 30e-6)          # flat top at 1/a
     assert tz.pdf(15e-6) == pytest.approx(0.5 / 30e-6)      # mid-edge at half height
-    # a disk: slot 30 mm, beam 10 mm at 0.35 m, 300 Hz; a counter-rotating pair opens 2x faster
+    # a disk: slot 30 mm, beam 10 mm at 0.35 m, 300 Hz: Trapezoid(slot/v, beam/v)
     one = DiskChopper("c", 7.0, 300.0, 0.03, 0.35, 0.01)
-    pair = DiskChopper("c", 7.0, 300.0, 0.03, 0.35, 0.01, counter_rotating=True)
     vel = 2 * np.pi * 0.35 * 300
     assert one.window().a == pytest.approx(0.03 / vel)
     assert one.window().b == pytest.approx(0.01 / vel)
-    assert pair.window().var() == pytest.approx(one.window().var() / 4)
     by_angle = DiskChopper.from_slot_angle("c", 7.0, 300.0, np.degrees(0.03 / 0.35), 0.35, 0.01)
     assert by_angle.window().var() == pytest.approx(one.window().var(), rel=1e-12)
+
+
+def test_counter_rotating_pair_halves_the_burst_only_for_a_full_beam():
+    """A pair's slots overlap: with the beam filling the slot the opening is a triangle
+    of FWHM w/(2v) (half a single disk's), with a narrow beam a box of w/v (no gain)."""
+    v = 2 * np.pi * 0.25 * 300
+    w = 0.03
+    full = DiskChopper("p", 30.0, 300.0, w, 0.25, w, counter_rotating=True).window()
+    assert full.var() == pytest.approx((w / (2 * v)) ** 2 / 6, rel=1e-6)
+    assert full.pdf(0.0) == pytest.approx(2 * v / w, rel=1e-6)
+    narrow = DiskChopper("p", 30.0, 300.0, w, 0.25, 0.0, counter_rotating=True).window()
+    assert narrow.var() == pytest.approx((w / v) ** 2 / 12, rel=1e-12)
+    single = DiskChopper("s", 30.0, 300.0, w, 0.25, w).window()
+    assert full.var() == pytest.approx(single.var() / 4, rel=1e-6)
+
+
+@pytest.mark.parametrize("w1,w2,b", [(0.044, 0.044, 0.012), (0.022, 0.044, 0.021),
+                                     (0.010, 0.010, 0.025)])
+def test_counter_rotating_pair_against_sampled_geometry(w1, w2, b):
+    """Direct sampling of (y, t): a neutron passes if it is inside both moving slots."""
+    from magcalc.resolution import CounterRotatingOpening
+    v = 471.0
+    d = CounterRotatingOpening(w1, w2, b, v)
+    rng = np.random.default_rng(3)
+    n = 2_000_000
+    h = 1.1 * (w1 + w2) / (4 * v)
+    y, t = rng.uniform(-b / 2, b / 2, n), rng.uniform(-h, h, n)
+    tt = t[(np.abs(y - v * t) < w1 / 2) & (np.abs(y + v * t) < w2 / 2)]
+    assert tt.var() == pytest.approx(d.var(), rel=5e-3)
+    x = np.linspace(-h, h, 21)
+    ecdf = np.searchsorted(np.sort(tt), x) / len(tt)
+    cdf = np.array([np.trapezoid(d.pdf(np.linspace(-h, xx, 4001)), np.linspace(-h, xx, 4001))
+                    for xx in x])
+    assert np.max(np.abs(ecdf - cdf)) < 3e-3
 
 
 def test_tabulated_is_normalised():
@@ -235,8 +267,10 @@ def test_moderator_tail_against_direct_monte_carlo():
     rng = np.random.default_rng(7)
     n = 400_000
 
-    def draw(tz, size):
-        return rng.uniform(-tz.a / 2, tz.a / 2, size) + rng.uniform(-tz.b / 2, tz.b / 2, size)
+    def draw(dist, size):      # inverse CDF of the opening on a fine grid
+        t = np.linspace(*dist.support(), 200001)
+        c = np.cumsum(dist.pdf(t))
+        return np.interp(rng.uniform(0, c[-1], size), c, t)
     sp, sm = draw(P.window(), n), draw(M.window(), n)
     d = XM - XP
     tau, mu = (XM * sp - XP * sm) / d, (sm - sp) / d
@@ -341,29 +375,31 @@ def test_propagation_reproduces_pychop_from_its_own_time_widths():
     assert worst < 1e-9
 
 
-def test_cncs_high_resolution_is_close_to_pychop():
-    """The CNCS model's own geometry (trapezoid openings, a Fermi chopper 1, the measured
-    pulse widths), against PyChop where their conventions nearly coincide: the 9.86 mm
-    High Resolution slot against a 12 mm guide, so the opening is close to a triangle,
-    and |E| <= Ei/2. (For the wide slots PyChop's (slot + guide)/2 FWHM is narrower than
-    the trapezoid's own; the vanadium line decides that, not this test.)"""
+def test_cncs_is_close_to_pychop():
+    """The CNCS model's own geometry (the counter-rotating chopper 4 with its 9, 4.4 and 2
+    deg slots, a Fermi chopper 1, the measured pulse widths) against PyChop, whose slot
+    widths are effective inputs to its Gaussian formula rather than the slots: within 13 %
+    for every variant, Ei and frequency pair at chopper 1 = 60 Hz, |E| <= Ei/2."""
     ref = _pychop()
+    n = 0
     for c in ref["cases"]:
-        if c["variant"] != "High Resolution" or c["f1"] != 60.0:
+        if c["f1"] != 60.0:
             continue
-        r = cncs("High Resolution", c["f_res"], c["f1"]).resolution(c["ei"])
-        et = np.array(c["etrans"])
-        for e, w in zip(et, c["fwhm"]):
+        r = cncs(c["variant"], c["f_res"], c["f1"]).resolution(c["ei"])
+        for e, w in zip(c["etrans"], c["fwhm"]):
             if abs(e) <= 0.5 * c["ei"]:
-                assert r.fwhm(e) == pytest.approx(w, rel=0.12), (c["ei"], c["f_res"], e)
+                assert r.fwhm(e) == pytest.approx(w, rel=0.13), (c["variant"], c["ei"], e)
+                n += 1
+    assert n > 200
 
 
 def test_cncs_wiring():
     spec = cncs("Intermediate", 300.0, 60.0)
     c1, c4 = spec.choppers
     assert spec.l1 == pytest.approx(36.265) and spec.l2 == 3.5
-    v4 = 2 * 2 * np.pi * 0.2825 * 300.0
-    assert c4.window().a == pytest.approx(0.032 / v4) and c4.window().b == pytest.approx(0.012 / v4)
+    w4 = c4.window()
+    assert (w4.w1, w4.w2, w4.b) == pytest.approx((0.25 * np.radians(4.4),) * 2 + (0.021,))
+    assert w4.v == pytest.approx(2 * np.pi * 0.25 * 300.0)
     assert c1.window().a == pytest.approx(((0.05 - 31 * 0.00015) / 30) / (2 * np.pi * 60 * 0.017))
     pulse = spec.moderator_pulse(12.0)       # PyChop's measured FWHM at 2.611 A
     assert FWHM_PER_SIGMA * pulse.sigma == pytest.approx(
