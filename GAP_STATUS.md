@@ -1301,8 +1301,6 @@ project):
     value for that instrument's m = 3.5 guide at λ = 2.6 Å is σ = 9.2 mrad.
   - **Vertical:** one peak can't separate vertical divergence from out-of-plane mosaic;
     two peaks give 7.0 mrad and 0.34°.
-  - **The sample:** a second crystallite shows in one peak as a double-peaked energy
-    profile within a single run.
 
 **Not done yet.**
 - The real-data comparison.
