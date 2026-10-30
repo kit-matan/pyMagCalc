@@ -94,7 +94,9 @@ known; item 3 is done:
      elastic width matches measured data with no free width. Still to do, in order:
      - **Q resolution and the Q–E correlation: Level 1 is in** (`magcalc/qe_resolution.py`;
        GAP_STATUS "the Q-E resolution"). Still open here:
-       - calibrating divergence on Bragg widths and checking on real data;
+       - divergence: calibrated on CNCS per-run Bragg data (σ_h ≈ 9 mrad at Ei 12,
+         the guide-limited value). Still to do: a dispersive mode on real data, and
+         two-grain samples (two `Crystal`s with positions and rotations);
        - Level 2, which draws the geometry from its true distributions and projects the
          chopper times through the mode's group velocity;
      - AMATERAS, once its disk radius, FDC#3 slit and beam widths are confirmed;

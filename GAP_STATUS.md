@@ -1291,9 +1291,20 @@ project):
   steps show as one stripe per run (1° = 0.026 Å⁻¹ at |G| = 1.5 Å⁻¹). A rotation-scan
   histogram therefore can't measure a Bragg peak's rocking width or tilt; calibrating
   divergence and mosaic needs per-run (pixel, TOF) data.
+- **Per-run fit:** the raw events of 20 runs per peak around two Bragg peaks (|G| = 1.50
+  and 2.42 Å⁻¹) were fitted, Poisson, per (run, pixel, energy bin) with the Level 1
+  kernel at each run's angle. The time-of-flight part was fixed from the elastic-line
+  calibration; divergence and mosaic were free.
+  - **Rocking curves:** reproduced (the strongest runs to 2%).
+  - **Horizontal divergence:** σ = 8.8–9.05 mrad, from each peak alone and from both.
+    Removing divergence and mosaic multiplies the deviance by 3–5. The guide-limited
+    value for that instrument's m = 3.5 guide at λ = 2.6 Å is σ = 9.2 mrad.
+  - **Vertical:** one peak can't separate vertical divergence from out-of-plane mosaic;
+    two peaks give 7.0 mrad and 0.34°.
+  - **The sample:** a second crystallite shows in one peak as a double-peaked energy
+    profile within a single run.
 
 **Not done yet.**
-- Calibrating the divergence and mosaic on per-run Bragg data.
 - The real-data comparison.
 - The non-Gaussian chopper times' own Q correlation (Level 2, group-velocity
   projection).

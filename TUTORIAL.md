@@ -1330,8 +1330,10 @@ fm = ForwardModel(calc, data, qe, crystals=[Crystal(position=[0, 0, 0.006]), ...
 - **The depth** in `GeometrySpread` should be the energy resolution's `detector_depth`.
 - **Divergence is an instrument number to calibrate.** It dominates the Q width at a cold
   instrument; fix it from Bragg-peak widths at several |Q| (mosaic grows with |Q|,
-  divergence does not). Measure those widths on per-run data (pixel × time of flight)
-  or a finely stepped rocking scan, not on a rotation-scan histogram. A scan stepped by
+  divergence does not). A guide-limited beam gives about σ = m·θc(λ)/√3 with
+  θc = 1.73 mrad per Å per unit m (on CNCS at Ei 12 meV, Bragg peaks gave 8.8–9 mrad
+  against 9.2 from its m = 3.5 guide). Measure those widths on per-run data (pixel × time
+  of flight) or a finely stepped rocking scan, not on a rotation-scan histogram. A scan stepped by
   0.5–1° moves Q by |G|·Δψ between runs, often more than the peak is wide, so a fine
   histogram shows one stripe per run and a coarse one blurs them.
 - **A Bragg peak in an energy-integrated map is stretched along k_f** by the elastic
