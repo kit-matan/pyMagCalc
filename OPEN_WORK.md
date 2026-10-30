@@ -1,12 +1,12 @@
 # Open work — pick-up notes
 
-**Current status (2026-10-29): one item is open, item 6 below**, found while closing
-item 5 the same day. The Rust kernels plan is
+**Current status (2026-10-30): nothing is open.** Item 6, found while closing item 5,
+was fixed the next day. The Rust kernels plan is
 finished. K1–K5 and a sparse exact KPM guard are in rsMagCalc, and K6 (mixed-spin
 dipole S(Q,ω)) is in fMagCalc. Everything is merged to `master` and pushed (pyMagCalc
 `9b70cf5` before the last two items, fMagCalc `4a5ff4b`, rsMagCalc `1d2532d`, now
-public). Last full gate: **2527 passed, 2 skipped** (structural; 2026-10-29, see
-`GAP_STATUS.md`, "Energy audit on a non-quadratic classical energy"). K7, the dimer series' per-cluster perturbation
+public). Last full gate: **2535 passed, 2 skipped** (structural; 2026-10-30, see
+`GAP_STATUS.md`, "minimize_energy on a quartic mixed-spin energy"). K7, the dimer series' per-cluster perturbation
 theory, followed on 2026-10-29 from a profile of every shipped example under the
 compiled kernels (`GAP_STATUS.md`, "Rust kernels K7"). Four small follow-ups were
 known; item 3 is done:
@@ -46,28 +46,19 @@ known; item 3 is done:
    to a B₄⁰ spin's closed form (`GAP_STATUS.md`, "Energy audit on a non-quadratic
    classical energy").
 
-6. **OPEN: `minimize_energy` puts every site on the reference sphere when the energy
-   is not quadratic.** Found 2026-10-29 while closing item 5.
-   - **What happens.** For a `biquadratic` or rank ≥ 4 `stevens` model the quadratic
-     form is unavailable, so the multistart path builds its angle-based SymPy energy
-     (the `("sym", ...)` payload). Its spin vectors are `S_sym·(sin θ cos φ, ...)` with
-     `S_sym` bound to the REFERENCE spin, i.e. |m_i| = S_ref on every site. That is the
-     mixed-spin bug `_classical_spin_lengths` fixed for quadratic models on 2026-08-18,
-     still live on this path. Measured on a two-site (1, ½) Néel chain with J = 1 and
-     B = 0.05 on the intracell bond: the minimizer reports −1.95 meV; the true energy
-     of the state it returns, and the exact Néel value, is −0.9875 meV. Uniform-spin
-     models are unaffected. `anneal`/`steep` refuse these models outright.
-   - **Injection point.** `MagCalc._classical_energy_general` (item 5) already gives
-     E(m) and ∇E(m) on |m_i| = S_i. The multistart path could relax on it through
-     `_general_energy_np` / `_general_grad_np`; the catch is that its closures do not
-     pickle to the `n_workers > 1` pool, which the `("sym", ...)` payload gets around
-     by lambdifying inside each worker.
-   - **Oracle.** The (1, ½) chain's −0.9875 meV
-     (`tests/test_energy_audit_quartic.py::test_audit_moves_on_per_site_lengths` pins
-     the audit's side of it), and the mixed-spin trimer of
-     `tests/test_mixed_spin_classical.py` with a small biquadratic added.
-   - **Guarded meanwhile:** guard 2 moves on the true lengths, so a structure this path
-     gets wrong because of the lengths is refused downstream rather than passed.
+6. **`minimize_energy` put every site on the reference sphere when the energy was not
+   quadratic. DONE 2026-10-30.** Found while closing item 5. For a `biquadratic` or a
+   rank ≥ 4 `stevens` model the multistart search falls back to an angle-based SymPy
+   energy (the `("sym", ...)` payload), whose spin vectors were `S_sym·(sin θ cos φ, ...)`
+   with `S_sym` bound to the reference spin: |m_i| = S_ref on every site, the mixed-spin
+   bug `_classical_spin_lengths` had fixed for quadratic models on 2026-08-18. Each
+   vector now carries its own site's length, `S_vec[i]`, as the quadratic path does. A
+   (1, ½) Néel chain with B = 0.05 went from −1.95 meV to its exact −0.9875; with
+   B = 4 the canting went from cos α = −¼ to the exact −J/(B s_A s_B) = −½. Pinned in
+   `tests/test_minimize_quartic_mixed_spin.py` (5 of its 8 tests fail on the old
+   fallback; the other 3 are uniform-spin and path controls) and in `GAP_STATUS.md`,
+   "minimize_energy on a quartic mixed-spin energy". The `n_workers > 1` pool needed
+   nothing: the lengths are numbers inside the payload.
 
 Items 3 and 4 come from the 2026-10-27 assessment of what is still worth compiling.
 Its third candidate, the Ewald dipolar sum, is done (`GAP_STATUS.md`, "Ewald dipolar
@@ -220,11 +211,11 @@ flow — the alternative is a commit that changes several unrelated numbers at o
 cannot be reviewed. The next item here will almost certainly be found the same way, so
 add it rather than folding it into whatever you are doing.
 
-### Open
+### Closed 2026-10-30
 
 | # | Item | Status |
 |---|---|---|
-| 6 | `minimize_energy` uses one spin length for a non-quadratic mixed-spin energy (2026-10-29; pick-up notes at the top of this file) | **OPEN** |
+| 6 | `minimize_energy` uses one spin length for a non-quadratic mixed-spin energy (2026-10-29; pick-up notes at the top of this file) | **DONE** 2026-10-30 — per-site lengths in the SymPy fallback |
 
 ### Closed 2026-08-16
 

@@ -988,6 +988,41 @@ the rule-value parser fix a87c8a8 below, magpipe at 283f694), 2026-10-22, idle m
 ALPS ones. The merge is also what makes `sqrt(3)*D1x/3`, the allowed kagome DM, pass this check: before the
 parser fix it reached the check as an unbound `sqrt3` and was refused as a conflict.
 
+### minimize_energy on a quartic mixed-spin energy, 2026-10-30 — the SymPy fallback moves on the per-site lengths
+
+**What was wrong.** A `biquadratic` or a rank ≥ 4 `stevens` term has no quadratic form,
+so `minimize_energy`'s multistart builds the energy in the angles with SymPy (the
+`("sym", ...)` payload). Its spin vectors were `S_sym·(sin θ cos φ, sin θ sin φ, cos θ)`,
+and `S_sym` is bound to the reference spin (the first atom's `spin_S`). Every site moved
+on that one sphere, which is the bug `_classical_spin_lengths` fixed for the quadratic
+path on 2026-08-18. Uniform-spin models were unaffected. The energy audit (guard 2)
+already moved on the true lengths, so a structure this got wrong was refused downstream,
+not passed.
+
+**Fix.** Each vector carries its own site's length, `S_vec[i % nspins]`, as a number;
+`S_sym` still binds anything else in the expression, as on the quadratic path. Stevens
+terms needed nothing: their `rcs` factor already reads the per-site `spin_S`.
+
+**Oracles** (`tests/test_minimize_quartic_mixed_spin.py`, all fast; 5 of the 8 fail on
+the old fallback, the other 3 are the controls):
+
+* **A (1, ½) Néel chain**, J = 1 on both bonds, B = 0.05 on the intracell one. Per cell
+  E = 2J s_A s_B cos α + B (s_A s_B)² cos² α, minimal at α = 180°: −0.9875 meV. The old
+  fallback reported −1.95. Under both `classical_energy` builds, and through the
+  `n_workers = 2` pool.
+* **The same chain with B = 4 > J/(s_A s_B)**: the minimum is canted, cos α =
+  −J/(B s_A s_B) = −½, at E = −J²/B. The old fallback returned cos α = −¼, the uniform
+  answer, so this pins the directions, not only the energy. The uniform control (s_B = 1)
+  gives −¼ under both.
+* **The (1, 1, ½) trimer** of `tests/test_mixed_spin_classical.py` with B = 0.05 on its
+  three bonds, against E = Σ_⟨ij⟩ J m_i·m_j + B (m_i·m_j)² written out in the test and
+  minimised by scipy on the true spheres from 40 starts. The reported energy is also the
+  energy of the returned state, which is what the old fallback broke.
+
+**Gate** (2026-10-30, pyMagCalc `a7b935d` plus this change, fMagCalc `4a5ff4b`, rsMagCalc
+`9061710`, magpipe `e92b2c7`; `MAGCALC_NO_GUI=1 pytest -m "" -rs` from the workspace root):
+**2535 passed, 2 skipped, 0 failed, 16 min 19 s**, the previous 2527 plus these 8.
+
 ### Energy audit on a non-quadratic classical energy, 2026-10-29 — guard 2 no longer skips biquadratic and rank ≥ 4 Stevens models
 
 Guard 2 (`MagCalc.relax_from_current`) relaxed the supplied structure on the quadratic
@@ -1036,8 +1071,9 @@ runs the stable cone, which a skipped audit passes too):
   `classical_energy` builds, and the runner refuses it. The cone itself passes and runs.
 * **A (1, ½) Néel chain** with B = 0.05 on the intracell bond: per cell
   E = −2J s_A s_B + B(s_A s_B)² = −0.9875 meV exactly, so the audit moves on the per-site
-  lengths. The minimizer's own symbolic fallback scores the same state at −1.95, one
-  length for both sites: `OPEN_WORK.md` item 6, left open.
+  lengths. The minimizer's own symbolic fallback scored the same state at −1.95, one
+  length for both sites (`OPEN_WORK.md` item 6; fixed 2026-10-30, "minimize_energy on a
+  quartic mixed-spin energy" below).
 * ∇E against central differences of E; the runner's WARNING when the energy cannot be
   built.
 

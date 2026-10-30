@@ -264,10 +264,10 @@ raises on it; there, write a polynomial in S_i·S_j as `heisenberg` (n = 1) plus
 `biquadratic` (n = 2). `biquadratic` is the genuine operator in dipole mode and holds
 for non-collinear structures, pinned to Sunny's `:dipole_uncorrected` on the 120°
 triangular antiferromagnet. The energy-audit guard runs on these quartic models too
-(since 2026-10-29; it used to skip them without a word). A multistart minimization of
-one with MIXED spins is still wrong: it gives every site the reference length
-(`OPEN_WORK.md` item 6). Supply the structure, and the audit, which uses the true
-lengths, will check it.
+(since 2026-10-29; it used to skip them without a word), and the multistart
+minimization moves each site on its own spin length, so mixed spins are handled (since
+2026-10-30; before, every site got the reference length). `method: anneal` and `steep`
+still need a quadratic energy and refuse these models; use a gradient method.
 
 > **Anisotropy renormalization.** Dipole mode replaces an on-site operator by its
 > classical (s → ∞) polynomial, which overestimates a rank-k term at finite s.

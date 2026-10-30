@@ -3266,7 +3266,10 @@ class MagCalc:
         else:
             # Fallback: symbolic angle-based energy + gradient (lambdified per
             # worker with cse=True). Build trig spin vectors in the unit-cell
-            # angles, then differentiate.
+            # angles, then differentiate. Each vector has its own site's length
+            # S_vec[i], as on the quadratic path: S_sym would put every site on
+            # the reference sphere (a (1, 1/2) Neel chain with a biquadratic
+            # scored -1.95 instead of -0.9875).
             logger.info("Energy not quadratic; building symbolic angle-based energy/gradient...")
             theta_sym = sp.symbols(f"theta0:{nspins}", real=True)
             phi_sym = sp.symbols(f"phi0:{nspins}", real=True)
@@ -3274,10 +3277,11 @@ class MagCalc:
             for i_ouc in range(nspins_ouc):
                 th = theta_sym[i_ouc % nspins]
                 ph = phi_sym[i_ouc % nspins]
+                s_i = sp.Float(S_vec[i_ouc % nspins])
                 S_vectors_ouc.append(sp.Matrix([
-                    self.S_sym * sp.sin(th) * sp.cos(ph),
-                    self.S_sym * sp.sin(th) * sp.sin(ph),
-                    self.S_sym * sp.cos(th),
+                    s_i * sp.sin(th) * sp.cos(ph),
+                    s_i * sp.sin(th) * sp.sin(ph),
+                    s_i * sp.cos(th),
                 ]))
             opt_vars = []
             for i in range(nspins):

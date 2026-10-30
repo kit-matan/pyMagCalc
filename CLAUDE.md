@@ -307,8 +307,9 @@ interactions:
   # dropped part of it, with only a WARNING, on a bond with no bilinear term and on
   # a non-collinear intercell bond; now pinned to Sunny on the 120-degree triangle
   # (tests/test_biquadratic_noncollinear.py). Guard 2, the energy audit, runs on
-  # this quartic energy since 2026-10-29 (it used to be skipped without a word);
-  # a multistart minimization with MIXED spins is still wrong (OPEN_WORK.md item 6).
+  # this quartic energy since 2026-10-29 (it used to be skipped without a word),
+  # and the multistart minimization moves on per-site spin lengths since 2026-10-30
+  # (it gave every site the reference length). anneal/steep refuse quartic models.
   biquadratic:
   - {pair: [A, B], rij_offset: [0, 0, 0], value: -0.037}
 

@@ -7,7 +7,7 @@ context can make a correct first change. It is a map, not the whole territory: t
 authoritative details live in the files it points to (§12), and when they disagree, the
 code and the tests win.
 
-*Last reviewed: 2026-10-29, against pyMagCalc `58300fa` (the quartic energy audit, on top of the biquadratic and `pair_operator` fixes). This file is kept current with
+*Last reviewed: 2026-10-30, against pyMagCalc `a7b935d` plus the per-site spin lengths in `minimize_energy`'s quartic fallback. This file is kept current with
 every change that alters what it describes (§13).*
 
 ---
@@ -284,8 +284,8 @@ pytest -n0 ...               # serial; needed for -s or pdb
 - Both `pytest.ini` files run in parallel (`-n auto --dist worksteal`, pytest-xdist is a
   required dev dependency).
 - From the maintainer's workspace root, plain `pytest` also collects fMagCalc's,
-  rsMagCalc's and magpipe's tests. The last full gate there was **2527 passed, 2 skipped**
-  (2026-10-29). The two skips are structural: `seekpath` absent, ALPS present.
+  rsMagCalc's and magpipe's tests. The last full gate there was **2535 passed, 2 skipped**
+  (2026-10-30). The two skips are structural: `seekpath` absent, ALPS present.
 - **Tests never open a GUI window.** `tests/conftest.py` forces the Agg backend and sets
   `MAGCALC_NO_GUI=1`. A bare `magcalc run` outside pytest is not guarded; prefix it with
   `MAGCALC_NO_GUI=1`.
@@ -418,8 +418,10 @@ iOS app).
   stationary maximum unguarded. It now relaxes on the energy itself and its gradient,
   pinned to the 120° triangular AFM with a biquadratic and to a B₄⁰ spin's closed form
   (`GAP_STATUS.md`, "Energy audit on a non-quadratic classical energy").
-- **One item is open** in `OPEN_WORK.md`: on those same models `minimize_energy`'s
-  multistart gives every site the reference spin length, which is wrong for mixed spins.
+- **`minimize_energy` on quartic mixed-spin models** (2026-10-30). Its SymPy fallback gave
+  every site the reference spin length; it now uses each site's own, pinned to a (1, ½)
+  Néel chain's exact −0.9875 meV and its exact canting angle (`GAP_STATUS.md`,
+  "minimize_energy on a quartic mixed-spin energy"). Nothing is open in `OPEN_WORK.md`.
 - **Not supported:**
   - mixed spins in the classical dipole samplers: `thermal_mc` and
     `sampled_correlations` refuse them, while the SU(N) sampler accepts them;
