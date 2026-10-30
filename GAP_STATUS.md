@@ -1153,7 +1153,7 @@ transmitted beam and `T0EnergyMap` re-centres what is left.
 `GaussianEnergyResolution.fraction` is phase 1's `_bin_fraction(σ(ε))`, bit for bit, and
 an object with only `sigma(E)` still gets that path.
 
-**Oracles** (`tests/test_resolution.py` 28, `tests/test_resolution_raytrace.py` 6, `tests/test_forward_model.py` +2):
+**Oracles** (`tests/test_resolution.py` 31, `tests/test_resolution_raytrace.py` 6, `tests/test_forward_model.py` +2):
 - **Mantid PyChop, exact.** PyChop's moderator/first-chopper width, final-chopper
   width and detector term go through this code's propagation as Gaussians, and give
   PyChop's own CNCS vanadium FWHM, its sample term removed, to **2.6e-14 relative**:
@@ -1227,9 +1227,34 @@ Results:
 - **Two numbers to confirm** with the CNCS team: chopper 1's actual opening at 60 Hz,
   and the beam width at chopper 4 (PyChop's 12 mm against the McStas guide's ~21 mm).
 
-**Not done yet.** Q resolution and the Q–E correlation; AMATERAS, whose chopper
-radius, the FDC#3 slit and beam widths are needed; calibration on vanadium and
-incoherent elastic lines; Fermi-chopper instruments. See `OPEN_WORK.md` item 8.
+**AMATERAS** (`amateras(f2, slit2, f3, f1)`, 2026-10-30). The geometry is from Nirei et
+al., J. Neutron Res. (2024), DOI 10.3233/JNR-230013, and the instrument team:
+- **Choppers:** #1 at 7.1 m, #3 at 14.2 m (single disk), #2 at L1 − 1.581 m
+  (counter-rotating, 10 or 30 mm slit).
+- **Disks:** R = 300 mm at the beam, and the beam fills the 30 mm guide width.
+- **Disk thickness:** 4.0 mm. The paper doesn't print it; its w_eff/w = 0.634 (10 mm at
+  2.0 meV) implies it, and that value reproduces the paper's Δt_mps of 74 and 229 µs at
+  5.9 meV to 0.1 µs. `DiskChopper(thickness=)` gives the paper's effective slit,
+  w − 2πRf d/v_n.
+
+The coupled-moderator pulse is given at one energy only (124 µs at 5.9 meV), so the
+default is a Gaussian of FWHM ∝ λ through it, to be calibrated on an elastic line.
+
+**The paper's analytic calculation, checked:**
+- **Eqs. (1)–(3)** are the standard first-order formulas. Without a pulse-shaping chopper
+  this code's propagation equals Eq. (1) exactly (a test). The pair's window equals Eqs.
+  (2)–(3) (a test).
+- **Eqs. (4)–(5),** the pulse-shaped width, are a heuristic: a linear sum of widths, the
+  smaller of pulse and shaped width, and the shaped pulse treated as independent of the
+  monochromator. Propagated jointly, the same Gaussian inputs give elastic widths 3–12%
+  narrower with the 30 mm slit and up to 24% narrower with the 10 mm slit.
+- **Against the facility's measured elastic widths:** every model, the paper's included,
+  is 15–29% narrow, unshaped settings too. The paper attributes that for unshaped
+  settings to the non-Gaussian pulse. The real pulse shape is the open input.
+
+**Not done yet.** Q resolution and the Q–E correlation are now Level 1 (next section); the
+AMATERAS pulse calibration; calibration against vanadium and incoherent elastic lines on
+AMATERAS; Fermi-chopper instruments. See `OPEN_WORK.md` item 8.
 
 ### Neutron data, phase 2, the Q-E resolution (Level 1), 2026-10-30 — the tilted resolution volume through the sample quadrature
 

@@ -1283,6 +1283,12 @@ res = spec.resolution(7.7)
   emission-time file. Pass the file when the line shape matters: it carries the pulse
   tail, which shows on the energy-gain side of the elastic line. `geometry={...}`
   overrides any number, e.g. calibrated `chopper4_slot_deg` or `fermi_scale`.
+- **AMATERAS.** `amateras(f2=300, slit2=0.030, f3=300)` builds the monochromating pair #2 and
+  the pulse shaper (#1 if `f1` is given, else #3). It uses Nirei et al. (J. Neutron Res.
+  2024) and the instrument team's geometry, with 4 mm disks. The moderator pulse defaults
+  to a Gaussian through the one published width; calibrate it on your elastic line.
+  `DiskChopper(thickness=)` narrows a slot by the distance the disk moves while the
+  neutron crosses it.
 - **Counter-rotating pairs** (`DiskChopper(..., counter_rotating=True)`) open where the
   two slots overlap. That halves a single disk's burst only when the beam fills the
   slot, so give the beam width at the chopper.

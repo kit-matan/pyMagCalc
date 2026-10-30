@@ -25,10 +25,10 @@ from magcalc.neutron_data import NEUTRON_V_PER_SQRT_MEV as V
 import json
 import os
 
-from magcalc.resolution import (FWHM_PER_SIGMA, ChopperSpectrometer, DiskChopper, Gaussian,
-                                GaussianPulse, IkedaCarpenter, Tabulated, TimeWindow,
-                                Trapezoid, Uniform, cncs, fermi_straight_window,
-                                read_sns_source_table, wavelength)
+from magcalc.resolution import (AMATERAS_GEOMETRY, FWHM_PER_SIGMA, ChopperSpectrometer,
+                                DiskChopper, Gaussian, GaussianPulse, IkedaCarpenter, Tabulated,
+                                TimeWindow, Trapezoid, Uniform, amateras, cncs,
+                                fermi_straight_window, read_sns_source_table, wavelength)
 
 HERE = os.path.dirname(__file__)
 
@@ -443,3 +443,56 @@ def test_gaussian_pulse_and_fermi_window():
     assert FWHM_PER_SIGMA * g(81.8042 / 4.0).sigma == pytest.approx(20e-6)
     w = fermi_straight_window(60.0, 0.0015, 0.017)
     assert w.a == w.b == pytest.approx(0.0015 / (2 * np.pi * 60 * 0.017))
+
+
+# ------------------------------------------------------------------ AMATERAS (Nirei et al. 2024)
+def _w_eff(w, f, ei, d=0.0040, r=0.300):
+    return w - 2 * np.pi * r * f * d / (V * np.sqrt(ei))
+
+
+def test_disk_thickness_is_the_papers_effective_slit():
+    """Nirei et al., J. Neutron Res. (2024), Eqs. (2)-(3): a counter-rotating pair whose beam
+    fills the slot opens as a triangle of FWHM w_eff / (2 * 2 pi R f), with w_eff = w -
+    2 pi R f d / v_n. Its stated w_eff / w = 0.634 (10 mm slit, 2.0 meV, 300 Hz) gives
+    d = 4.0 mm; that d reproduces its pulse widths 74 us and 229 us at 5.9 meV (Eq. 4)."""
+    for slit, ei in ((0.030, 7.7), (0.010, 2.0), (0.010, 15.0)):
+        pair = DiskChopper("#2", 28.419, 300.0, slit, 0.300, 0.030, True, thickness=0.0040)
+        w = pair.window(ei)
+        tri = _w_eff(slit, 300.0, ei) / (2 * 2 * np.pi * 0.300 * 300.0)
+        assert w.var() == pytest.approx(tri ** 2 / 6, rel=1e-5)        # a triangle of FWHM tri
+    assert _w_eff(0.010, 300.0, 2.0) / 0.010 == pytest.approx(0.634, abs=5e-4)
+    dch = _w_eff(0.030, 300.0, 5.9) / (2 * 2 * np.pi * 0.3 * 300.0)
+    for lps, f, want in ((7.1, 300.0, 74e-6), (14.2, 150.0, 229e-6)):
+        dchps = _w_eff(0.030, f, 5.9) / (2 * np.pi * 0.3 * f)
+        assert dchps + lps / (30.0 - 1.581 - lps) * (dchps + dch) == pytest.approx(want, abs=1e-6)
+    with pytest.raises(ValueError):
+        DiskChopper("x", 10.0, 300.0, 0.03, 0.3, 0.03, thickness=0.004).window()
+
+
+def test_papers_equation_1_is_the_exact_propagation_without_a_pulse_shaper():
+    """Eq. (1) of Nirei et al. with only #2 and the moderator: the first-order elastic width
+    2 Ei sqrt[(dt_ch/t_ch (1 + L1/L2))^2 + (dt_m/t_ch (1 + L3/L2))^2 + (dL2/L2)^2] equals this
+    code's propagation of the same Gaussian widths exactly."""
+    L1_, L2_, L3_ = 30.0, 4.0, 1.581
+    for ei, dch, dtm, dl2 in ((7.7, 25e-6, 110e-6, 0.013), (3.1, 30e-6, 170e-6, 0.01)):
+        t_ch = (L1_ - L3_) / (V * np.sqrt(ei))
+        eq1 = 2 * ei * np.sqrt((dch / t_ch * (1 + L1_ / L2_)) ** 2
+                               + (dtm / t_ch * (1 + L3_ / L2_)) ** 2 + (dl2 / L2_) ** 2)
+        spec = ChopperSpectrometer("eq1", L1_, L2_, [
+            TimeWindow("#2", L1_ - L3_, Gaussian(dch / FWHM_PER_SIGMA))],
+            moderator=Gaussian(dtm / FWHM_PER_SIGMA),
+            extra_sigma=2 * ei * dl2 / L2_ / FWHM_PER_SIGMA)
+        assert FWHM_PER_SIGMA * float(spec.sigma(ei, 0.0)) == pytest.approx(eq1, rel=1e-6)
+
+
+def test_amateras_wiring():
+    spec = amateras(f2=300.0, slit2=0.030, f3=300.0)
+    names = [c.name for c in spec.choppers]
+    assert names == ["#3", "#2"] and spec.l1 == 30.0 and spec.l2 == 4.0
+    c3, c2 = spec.choppers
+    assert c2.distance == pytest.approx(30.0 - 1.581) and c2.counter_rotating
+    assert not c3.counter_rotating and c3.thickness == AMATERAS_GEOMETRY["thickness"]
+    assert FWHM_PER_SIGMA * spec.moderator_pulse(5.9).sigma == pytest.approx(124e-6)
+    assert [c.name for c in amateras(f1=300.0, f3=150.0).choppers] == ["#1", "#2"]
+    r = spec.resolution(7.734)
+    assert 0.1 < r.fwhm(0.0) < 0.3

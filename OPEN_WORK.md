@@ -99,7 +99,10 @@ known; item 3 is done:
          two-grain samples (two `Crystal`s with positions and rotations);
        - Level 2, which draws the geometry from its true distributions and projects the
          chopper times through the mode's group velocity;
-     - AMATERAS, once its disk radius, FDC#3 slit and beam widths are confirmed;
+     - AMATERAS: the geometry is in (`amateras(...)`, Nirei et al. 2024 plus the instrument
+       team). Its moderator pulse (one published width) is still to be calibrated on an
+       elastic line, and then the Q–E kernel on count cells (the runs' ψ are in the
+       export manifests);
      - calibration against vanadium and the incoherent elastic line;
      - Fermi-chopper instruments (HRC, 4SEASONS): a triangle opening and an
        Ikeda–Carpenter pulse, through the same interface.
