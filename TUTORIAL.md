@@ -1286,15 +1286,54 @@ res = spec.resolution(7.7)
 - **Counter-rotating pairs** (`DiskChopper(..., counter_rotating=True)`) open where the
   two slots overlap. That halves a single disk's burst only when the beam fills the
   slot, so give the beam width at the chopper.
-- **It does not yet move Q.** This is the energy part only. The Q resolution and the
-  Q–E correlation come next (`OPEN_WORK.md` item 8), so keep `q_smear` and `Crystal`
-  mosaic for Q.
+- **It does not move Q.** For the Q resolution and the Q–E correlation, wrap it in a
+  `QEResolution` (next section).
 - **Calibrate before trusting a width.** The incoherent elastic line of the sample or a
   vanadium run checks the line shape at E = 0. Fit it with the model's own CDF and no
   free width; then, if needed, one effective opening per chopper (`GAP_STATUS.md`).
 
+### Q resolution and the Q–E correlation
+
+```python
+from magcalc.qe_resolution import QEResolution, GeometrySpread, RunGoniometer, RotationScan
+
+energy = cncs("Intermediate", 300.0, 60.0).resolution(12.0)
+spread = GeometrySpread(divergence=(0.008, 0.010),      # sigma, rad (h, v)
+                        sample_size=(0.008, 0.005, 0.012),  # m, sample frame, uniform
+                        pixel_height=0.016, pixel_width=0.022, depth=0.025)
+# count cells: each sample's run fixes the rotation (psi in degrees per run)
+qe = QEResolution(energy, RunGoniometer(U, psi_by_run), spread)
+# or histograms that summed a rotation scan: the two psi that put Q on the detector
+qe = QEResolution(energy, RotationScan(U, [(-110, 50)], 12.0, accept=my_coverage),
+                  spread, energy_blocks=8)
+fm = ForwardModel(calc, data, qe, crystals=[Crystal(position=[0, 0, 0.006]), ...])
+```
+
+- **What it does.** The recorded event differs from the true one by (δQ, δE), a function
+  of one neutron's emission time and speed, its divergence, where it scatters in the
+  sample, and where it is detected in the pixel. That function is exact; its Jacobian
+  gives the 4-D covariance Σ. For each sample the model is evaluated at Q − δQ, with
+  δQ = chol(Σ_QQ) z. The recorded energy is shifted by b·δQ (b = Σ_QQ⁻¹Σ_QE), and the
+  energy resolution's own line shape is narrowed to the conditional width. The result
+  is exact for a Gaussian kernel. The chopper times tilt the kernel: on a dispersive
+  mode they can widen or narrow the line.
+- **`U`** maps the model's Cartesian Q to the lab at ψ = 0. The lab has x along the beam
+  and z vertical; the rotation axis is vertical.
+- **Count cells** need each sample's run (`BinnedData.sample_run`, filled by
+  `CellList.aggregate`) and the run's angle.
+- **MDNorm histograms** lost the pixel, so `RotationScan` puts each Q on both branches the
+  scan allows. `accept(n_f)` returns False for directions with no detector (masks,
+  magnet dead angles). `energy_blocks` shares one kernel per sample across that many
+  energy blocks.
+- **`Crystal.position`** (m, sample frame) moves one crystal off the rotation axis: its
+  lines shift in Q and E with ψ.
+- **The depth** in `GeometrySpread` should be the energy resolution's `detector_depth`.
+- **Divergence is an instrument number to calibrate.** It dominates the Q width at a cold
+  instrument; fix it from Bragg-peak widths at several |Q| (mosaic grows with |Q|,
+  divergence does not).
+
 How each piece is validated (Sunny, a closed-form chain, exact identities) is recorded in
-`GAP_STATUS.md`, "Neutron data and the forward model, phase 1" and "phase 2, the energy resolution".
+`GAP_STATUS.md`, "Neutron data and the forward model, phase 1" and "phase 2, the energy resolution" and "the Q-E resolution".
 
 ---
 

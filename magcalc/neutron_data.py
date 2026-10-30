@@ -191,14 +191,17 @@ class BinnedData:
     bin_cell_w (summing to 1); cell c owns samples cell_ptr[c]:cell_ptr[c+1] of
     `samples_hkl` (data-frame r.l.u.) with weights `sample_w` (summing to 1 per cell),
     and optional `smear_normals` (standard normal deviates per sample, for a Gaussian Q
-    smearing applied in the data frame by the forward model).
+    smearing applied in the data frame by the forward model) and `sample_run` (the run
+    each sample was measured in, for count cells: it fixes the goniometer angle and so
+    the pixel, which the Q-E resolution needs).
 
     The bin's model value is s_b = sum_c w_bc sum_s w_s f(Q_s, [e_lo, e_hi]).
     """
 
     def __init__(self, counts, exposure, e_lo, e_hi, *, samples_hkl, cell_ptr,
                  bin_ptr, bin_cells, bin_cell_w, sample_w=None, smear_normals=None,
-                 frame=None, coords=None, meta=None, raw=None, energy_map=None):
+                 frame=None, coords=None, meta=None, raw=None, energy_map=None,
+                 sample_run=None):
         self.counts = np.asarray(counts, float)
         self.exposure = np.asarray(exposure, float)
         self.e_lo = np.asarray(e_lo, float)
@@ -214,6 +217,9 @@ class BinnedData:
                          np.repeat(1.0 / np.diff(self.cell_ptr), np.diff(self.cell_ptr)))
         self.smear_normals = (None if smear_normals is None
                               else np.asarray(smear_normals, float).reshape(ns, 3))
+        self.sample_run = None if sample_run is None else np.asarray(sample_run, np.int64)
+        if self.sample_run is not None and len(self.sample_run) != ns:
+            raise ValueError("sample_run needs one entry per sample")
         self.frame = frame if frame is not None else QFrame.identity()
         self.coords = {k: np.asarray(v) for k, v in (coords or {}).items()}
         self.meta = dict(meta or {})
@@ -292,7 +298,8 @@ class BinnedData:
             smear_normals=None if self.smear_normals is None else self.smear_normals[spos],
             frame=self.frame, coords={k: v[keep] for k, v in self.coords.items()},
             meta=self.meta, raw={k: v[keep] for k, v in self.raw.items()},
-            energy_map=self.energy_map)
+            energy_map=self.energy_map,
+            sample_run=None if self.sample_run is None else self.sample_run[spos])
 
     def select_region(self, **ranges) -> "BinnedData":
         """Keep bins whose coords lie in every given closed range, e.g.
@@ -376,7 +383,8 @@ class BinnedData:
             cnt, Xg, g_lo, g_hi, samples_hkl=self.samples_hkl, cell_ptr=self.cell_ptr,
             bin_ptr=bin_ptr, bin_cells=c_of, bin_cell_w=wsum, sample_w=self.sample_w,
             smear_normals=self.smear_normals, frame=self.frame, coords=coords,
-            meta={**self.meta, "aggregated": True}, raw=raw, energy_map=self.energy_map)
+            meta={**self.meta, "aggregated": True}, raw=raw, energy_map=self.energy_map,
+            sample_run=self.sample_run)
 
     # ------------------------------------------------------------------ io
     def save(self, path):
@@ -392,6 +400,8 @@ class BinnedData:
                 "coords": sorted(self.coords), "raw": sorted(self.raw)})))
         if self.smear_normals is not None:
             arrays["smear_normals"] = self.smear_normals
+        if self.sample_run is not None:
+            arrays["sample_run"] = self.sample_run
         for k, v in self.coords.items():
             arrays[f"coord__{k}"] = v
         for k, v in self.raw.items():
@@ -411,6 +421,7 @@ class BinnedData:
                 samples_hkl=z["samples_hkl"], cell_ptr=z["cell_ptr"], bin_ptr=z["bin_ptr"],
                 bin_cells=z["bin_cells"], bin_cell_w=z["bin_cell_w"], sample_w=z["sample_w"],
                 smear_normals=z["smear_normals"] if "smear_normals" in z.files else None,
+                sample_run=z["sample_run"] if "sample_run" in z.files else None,
                 frame=QFrame.from_dict(head["frame"]),
                 coords={k: z[f"coord__{k}"] for k in head["coords"]},
                 raw={k: z[f"raw__{k}"] for k in head["raw"]},
@@ -663,6 +674,8 @@ class CellList:
         ends = np.searchsorted(b_sorted, bins, side="right")
         n = int(samples_per_bin)
         samples = np.empty((nb, n, 3))
+        sample_run = np.full((nb, n), -1, np.int64)
+        runs = self.run[sel] if self.run is not None else None
         offs = rng.random(nb)
         for j in range(nb):
             ids = cells_use[order[starts[j]:ends[j]]]
@@ -673,6 +686,8 @@ class CellList:
             pick = np.searchsorted(cum, (np.arange(n) + offs[j]) / n * cum[-1], side="right")
             pick = np.minimum(pick, len(ids) - 1)
             samples[j] = np.stack([H[ids[pick]], K[ids[pick]], L[ids[pick]]], 1)
+            if runs is not None:
+                sample_run[j] = runs[ids[pick]]
         ie_b = bins % nE
         qidx = bins // nE
         q_coord = {}
@@ -703,7 +718,8 @@ class CellList:
             counts[bins], expo[bins], e_lo, e_hi, samples_hkl=samples.reshape(-1, 3),
             cell_ptr=np.arange(nb + 1) * n, bin_ptr=np.arange(nb + 1),
             bin_cells=np.arange(nb), bin_cell_w=np.ones(nb), frame=self.frame,
-            coords=coords, meta=md, energy_map=em)
+            coords=coords, meta=md, energy_map=em,
+            sample_run=None if runs is None else sample_run.reshape(-1))
 
 
 def read_count_cells(paths: Iterable, *, frame=None, energy_map=None, windows=None,

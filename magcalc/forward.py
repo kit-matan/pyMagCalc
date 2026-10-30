@@ -84,12 +84,15 @@ class Crystal:
     """One crystal (or twin) of the sample: Q in the lab frame is evaluated on the
     model at R @ Q, with weight `weight` (weights are used as given). A mosaic spread
     rotates further about `mosaic_axis` (Cartesian) by angles ~ N(0, mosaic_sigma_deg),
-    integrated at `n_mosaic` Gauss-Hermite nodes."""
+    integrated at `n_mosaic` Gauss-Hermite nodes. `position` (m, sample frame) is the
+    crystal's offset from the rotation axis; only a Q-E resolution
+    (`qe_resolution.QEResolution`) uses it, to shift that crystal's kernel."""
     rotation: np.ndarray = field(default_factory=lambda: np.eye(3))
     weight: float = 1.0
     mosaic_sigma_deg: float = 0.0
     mosaic_axis: Optional[Sequence[float]] = None
     n_mosaic: int = 5
+    position: Optional[Sequence[float]] = None
 
     @classmethod
     def from_axis_angle(cls, axis, angle_deg, weight=1.0, mosaic_sigma_deg=0.0,
@@ -154,6 +157,9 @@ class ForwardModel:
 
     resolution: anything with fraction(lo, hi, centre) -- a GaussianEnergyResolution, or
         a `resolution.ChopperEnergyResolution` -- or, failing that, sigma(E) (Gaussian).
+        A `qe_resolution.QEResolution` (it has `prepare`) adds the Q resolution and the
+        Q-E correlation: each sample becomes virtual samples displaced by dQ, with the
+        recorded energy shifted and the residual width narrowed (see that module).
     crystals: list of Crystal (default: one, unrotated, weight 1).
     temperature: K for the Bose factor; default data.meta['temperature'], else T = 0.
     q_smear: Gaussian Q smearing sigma (3,) in DATA-frame r.l.u., applied through each
@@ -202,6 +208,31 @@ class ForwardModel:
         self._e_samp = samp
         self._e_w = np.repeat(cw, clen) * d.sample_w[samp]
         self._active = d.exposure > 0
+        self._kernels = None
+        if hasattr(resolution, "prepare"):
+            self._build_qe_kernels()
+
+    def _build_qe_kernels(self):
+        """One Q-E kernel per crystal (they differ only by the crystal's position), on the
+        entries of exposed bins; entries become (bin, virtual sample, weight)."""
+        if self.q_smear is not None:
+            import warnings
+            warnings.warn("q_smear with a Q-E resolution adds a Gaussian on top of the "
+                          "instrument's Q resolution", stacklevel=3)
+        act = self._active[self._e_bin]
+        eb, es, ew = self._e_bin[act], self._e_samp[act], self._e_w[act]
+        e_centre = 0.5 * (self.data.e_lo + self.data.e_hi) - self.energy_shift
+        kernels = []
+        for cr in self.crystals:
+            kernels.append(self.resolution.prepare(
+                self.data, self.b_matrix, e_centre, eb, es,
+                crystal_position=getattr(cr, "position", None)))
+        k0 = kernels[0]
+        cnt = np.diff(k0.entry_ptr)
+        self._kernels = kernels
+        self._qe_bin = np.repeat(eb, cnt)
+        self._qe_v = k0.entry_v
+        self._qe_w = np.repeat(ew, cnt) * k0.weight[k0.entry_v]
 
     # ------------------------------------------------------------------ cache
     def clear_cache(self):
@@ -219,21 +250,26 @@ class ForwardModel:
         return self.data.sample_cartesian(self.b_matrix, self.q_smear)
 
     def _spectra(self):
-        """[(weight, energies (Ns, M), intensities (Ns, M))] per crystal node."""
+        """[(weight, energies, intensities, crystal index)] per crystal node, at the
+        samples (or, with a Q-E resolution, at the virtual samples)."""
         import time
         q = self.sample_q()
         out = []
         t = time.perf_counter()
-        for cr in self.crystals:
+        npts = 0
+        for ic, cr in enumerate(self.crystals):
+            qc = q if self._kernels is None else (q[self._kernels[ic].sample]
+                                                  - self._kernels[ic].dq)
             for R, w in cr.nodes():
-                E, I = self.calc.sqw_batch(q @ R.T, apply_g=self.apply_g,
+                E, I = self.calc.sqw_batch(qc @ R.T, apply_g=self.apply_g,
                                            g_tensors=self.g_tensors)
                 if not np.all(np.isfinite(E)) or not np.all(np.isfinite(I)):
                     raise FloatingPointError("sqw_batch returned non-finite values at "
                                              "some samples")
-                out.append((w, E, I))
+                out.append((w, E, I, ic))
+                npts += len(qc)
         self.last_timing["sqw_seconds"] = time.perf_counter() - t
-        self.last_timing["sqw_points"] = len(q) * len(out)
+        self.last_timing["sqw_points"] = npts
         return out
 
     def _fraction_function(self):
@@ -267,21 +303,35 @@ class ForwardModel:
         sig = np.zeros(nb)
         spectra = self._spectra()
         t = time.perf_counter()
-        act = self._active[self._e_bin]
-        eb, es, ew = self._e_bin[act], self._e_samp[act], self._e_w[act]
-        fraction = self._fraction_function()
-        for w_node, E, I in spectra:
+        if self._kernels is None:
+            act = self._active[self._e_bin]
+            eb, es, ew = self._e_bin[act], self._e_samp[act], self._e_w[act]
+            fraction = self._fraction_function()
+        else:
+            eb, es, ew = self._qe_bin, self._qe_v, self._qe_w
+        for w_node, E, I, ic in spectra:
             stokes, gain = self._line_weights(E)
             amp = I * stokes
             if gain is not None:
                 amp_g = I * gain
+            if self._kernels is not None:
+                kern = self._kernels[ic]
+
+                def fraction(lo_, hi_, c_, s_=None):
+                    return self.resolution.fraction(lo_, hi_, c_, kern.shift[s_][:, None],
+                                                    kern.rho[s_][:, None])
             for c0 in range(0, len(eb), self.entry_chunk):
                 b = eb[c0:c0 + self.entry_chunk]
                 s = es[c0:c0 + self.entry_chunk]
                 l, h = lo[b][:, None], hi[b][:, None]
-                val = np.sum(amp[s] * fraction(l, h, E[s]), axis=1)
-                if gain is not None:
-                    val += np.sum(amp_g[s] * fraction(l, h, -E[s]), axis=1)
+                if self._kernels is None:
+                    val = np.sum(amp[s] * fraction(l, h, E[s]), axis=1)
+                    if gain is not None:
+                        val += np.sum(amp_g[s] * fraction(l, h, -E[s]), axis=1)
+                else:
+                    val = np.sum(amp[s] * fraction(l, h, E[s], s), axis=1)
+                    if gain is not None:
+                        val += np.sum(amp_g[s] * fraction(l, h, -E[s], s), axis=1)
                 sig += w_node * np.bincount(b, weights=ew[c0:c0 + self.entry_chunk] * val,
                                             minlength=nb)
         self.last_timing["bin_seconds"] = time.perf_counter() - t

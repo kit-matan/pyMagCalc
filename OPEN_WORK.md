@@ -92,13 +92,11 @@ known; item 3 is done:
      reproduces PyChop's propagation to 3e-14 and an independent ray-tracing Monte
      Carlo (`tests/raytrace_tof.py`) to 0.5% in the CDF. CNCS is built in, and its
      elastic width matches measured data with no free width. Still to do, in order:
-     - **Q resolution and the Q–E correlation**: divergence, sample size and position
-       (two crystals), pixel size, and the chopper times' shift of |k_i| and |k_f|.
-       These enter through the sample quadrature: a per-sample δQ plus a conditional
-       energy shift and width (exact for a Gaussian kernel). A second level draws the
-       geometry from its true distributions, with the chopper times projected through
-       the mode's group velocity. Count cells need the pixel (run ψ or detector ID);
-       MDNorm data need the two ψ branches;
+     - **Q resolution and the Q–E correlation: Level 1 is in** (`magcalc/qe_resolution.py`;
+       GAP_STATUS "the Q-E resolution"). Still open here:
+       - calibrating divergence on Bragg widths and checking on real data;
+       - Level 2, which draws the geometry from its true distributions and projects the
+         chopper times through the mode's group velocity;
      - AMATERAS, once its disk radius, FDC#3 slit and beam widths are confirmed;
      - calibration against vanadium and the incoherent elastic line;
      - Fermi-chopper instruments (HRC, 4SEASONS): a triangle opening and an

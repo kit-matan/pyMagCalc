@@ -1231,6 +1231,62 @@ Results:
 radius, the FDC#3 slit and beam widths are needed; calibration on vanadium and
 incoherent elastic lines; Fermi-chopper instruments. See `OPEN_WORK.md` item 8.
 
+### Neutron data, phase 2, the Q-E resolution (Level 1), 2026-10-30 — the tilted resolution volume through the sample quadrature
+
+`magcalc/qe_resolution.py` (Python API).
+- **`kinematics(u, ...)`** is exact. From one neutron's primary deviations (emission
+  time, inverse speed, horizontal and vertical divergence, scattering point, and
+  detection point along, across and in the depth of the pixel), it builds the true
+  event and reduces it with the nominal Ei, time at the sample, sample centre and pixel
+  centre. It returns (δQ_lab, δE).
+- **The covariance:** its Jacobian, by central differences, times the primary covariance
+  gives Σ (4×4). The time block is `ChopperEnergyResolution.cov`; the geometry is uniform
+  widths, and the sample box turns with ψ.
+- **In `ForwardModel`:** a resolution with `prepare` turns each (sample, energy block,
+  rotation branch) into a virtual sample at Q − δQ, with δQ = chol(Σ_QQ) z and one
+  scrambled-Sobol normal per data sample. The recorded energy is shifted by b·δQ, and
+  Level 0's line shape is narrowed to the conditional width. That is exact for a
+  Gaussian kernel, and keeps the instrument's line shape otherwise.
+- **Geometry providers:**
+  - `RunGoniometer`: count cells, each sample's run angle; `BinnedData.sample_run` is
+    new, filled by `CellList.aggregate` and carried through select, aggregate and
+    save/load;
+  - `RotationScan`: MDNorm, the two ψ that put Q on the detector, within the scanned
+    ranges and an `accept(n_f)` coverage mask.
+- **`Crystal.position`** shifts a crystal's kernel.
+
+**Oracles** (`tests/test_qe_resolution.py` 10, `tests/test_neutron_data.py` +1):
+- **Independent ray trace** (`raytrace_tof.trace_qe`): a disk and a counter-rotating
+  pair, an Ikeda–Carpenter pulse, uniform divergence, sample box and pixel volume, exact
+  geometry and reduction; 200,000 neutrons at 2θ = 60°. Every element of the 4×4
+  covariance agrees to 3e-3 of √(Σ_ii Σ_jj), the 0.89 correlation of δQ_x with δE
+  included.
+- **First derivatives in closed form.** Divergence gives δQ = −k_i per rad. An
+  across-pixel offset gives +(k_f/L₂) ŵ per metre. Neither moves E. A sample offset
+  along the beam moves E by (2E_f v_f/L₂)(u₀ − n_x/v_f). The energy row equals the
+  Level 0 coefficients α, β.
+- **Linear dispersion, exact.** For ε = e₀ + v·Q (three directions) with a Gaussian
+  kernel, `ForwardModel` gives each bin as the erf with s² = Σ_EE − 2v·Σ_QE + vᵀΣ_QQv, to
+  4e-3 of peak with 4096 normals. Ignoring the tilt misses by more than 3%.
+- **Flat dispersion:** Level 1 equals Level 0, to the Sobol error.
+- **Crystal offset:** the closed-form first-order shift, to 1.0012–1.0024 (second order
+  at 5 mm), mirrored by −x.
+- **Rotation-scan branches:** |k_i − R(ψ)UQ| = k_f to 1e-10.
+- **A bug the oracle caught:** normals first indexed by virtual sample put a stride of
+  n_bins through the Sobol sequence, so each bin's samples shared nearly one normal.
+  The linear-dispersion test failed by orders of magnitude, and normals are now indexed
+  per data sample.
+
+**Cost:** preparing 0.8 M virtual samples (50,000 samples × 8 energy blocks × branches)
+and their 5 M entries takes 7 s, once per model setup.
+
+**Not done yet.**
+- Calibrating the divergence (Bragg widths).
+- The real-data comparison.
+- The non-Gaussian chopper times' own Q correlation (Level 2, group-velocity
+  projection).
+- AMATERAS geometry.
+
 ### calculate_sqw on Colpa's method, 2026-10-30 — every cross-section and single-k, 69–100× the per-q pool
 
 **What changed.** The dipole engine's `calculate_sqw` used a per-q process pool

@@ -249,3 +249,22 @@ def test_count_cell_read_window(tmp_path):
     cl = read_count_cells(_cell_files(tmp_path), windows={"E": (0.99, 1.01)})
     assert len(cl) == 3
     assert cl.meta["read_totals"]["cells"] == 5     # totals are of every file
+
+
+def test_count_cell_samples_carry_their_run(tmp_path):
+    """Each drawn sample keeps the run of the cell it came from (the Q-E resolution
+    needs it: the run fixes the rotation and so the pixel), through select and
+    save/load."""
+    paths = []
+    for run, k0 in ((7, 0.1), (9, 0.3)):
+        p = tmp_path / f"r{run}.npz"
+        write_cells(p, run, [0.0, 0.0], [k0, k0 + 0.01], [0.0, 0.0], [1.0, 1.0], [3, 4],
+                    [1.0, 2.0])
+        paths.append(p)
+    d = read_count_cells(paths).aggregate({"K": [0.0, 0.2, 0.4]}, samples_per_bin=6)
+    k = d.samples_hkl[:, 1]
+    assert np.all(d.sample_run[k < 0.2] == 7) and np.all(d.sample_run[k >= 0.2] == 9)
+    sub = d.select([1])
+    assert np.all(sub.sample_run == 9)
+    d.save(tmp_path / "d.npz")
+    assert np.array_equal(BinnedData.load(tmp_path / "d.npz").sample_run, d.sample_run)
