@@ -1310,6 +1310,13 @@ project):
   projection).
 - AMATERAS geometry.
 
+**Gate for phase 2's energy and Q-E resolution** (2026-10-30, pyMagCalc `5e5aeaf`,
+fMagCalc `4a5ff4b`, rsMagCalc `9061710`, magpipe `e92b2c7`; `MAGCALC_NO_GUI=1 pytest -m "" -rs`
+from the workspace root): **2700 passed, 2 skipped, 2 xfailed, 0 failed, 13 min 37 s**. That is
+the previous 2653 plus these 47: `test_resolution.py` 28, `test_resolution_raytrace.py` 6,
+`test_qe_resolution.py` 10, `test_forward_model.py` +2, `test_neutron_data.py` +1. The two
+skips are the structural `seekpath` and ALPS ones; the xfails are OPEN_WORK item 9's strict pins.
+
 ### calculate_sqw on Colpa's method, 2026-10-30 — every cross-section and single-k, 69–100× the per-q pool
 
 **What changed.** The dipole engine's `calculate_sqw` used a per-q process pool
