@@ -1088,6 +1088,134 @@ Writes `energy_cut_data.npz` (grid, panels, labels) and a panel figure
 
 ---
 
+## 4f2. Predicting the Counts in Your Data's Own Bins (Python API)
+
+Everything in §4f broadens a spectrum onto a plotting grid. To compare a model with
+reduced inelastic data you need something else: the **expected count in every bin of
+the data**, with the bin's own Q volume, its own energy edges and its own exposure.
+Three pieces do that. They are a Python API only; there is no config block yet.
+
+| Piece | Module | What it is |
+|---|---|---|
+| `MagCalc.sqw_batch` | `core.py`, `numerical.py` | one-magnon energies and intensities at many q at once (Colpa's method, batched) |
+| `BinnedData` and its readers | `magcalc/neutron_data.py` | the data: counts, exposure, true energy edges and the Q quadrature of each bin |
+| `ForwardModel` | `magcalc/forward.py` | μ per bin: the model integrated over each bin, times its exposure |
+
+**The model per bin.** For bin b with exposure X_b and energy edges [E_lo, E_hi]:
+
+```
+mu_b = X_b * sum_crystals w_c * <  sum_modes I_m(R_c Q) n_B(eps_m) [Phi((E_hi - eps_m)/sigma(eps_m)) - Phi((E_lo - eps_m)/sigma(eps_m))]  >_Q in bin
+```
+
+The energy integral over the bin is exact (an erf difference), with the resolution width
+taken at the **mode** energy. The Q average uses the bin's own quadrature points,
+weighted by exposure. n_B is the Bose factor at the data's temperature; at T > 0 the
+energy-gain line at −ε is included too. Nothing is fitted here: no amplitude and no
+background (those come with the fitting layer).
+
+### Batched S(Q,ω)
+
+```python
+E, I = calc.sqw_batch(q_cart)                  # (Nq, N) each, energies ascending
+E, I = calc.sqw_batch(q_cart, apply_g=True)    # scatter from the moment g.S
+```
+
+- **Same quantity as `calculate_sqw`.** Per-site form factors, √(S_i/2) per site, per
+  chemical cell, `perp` or `trace`. It is equal to `calculate_sqw`'s per-q path to 1e-9,
+  and to Sunny directly.
+- **Speed.** About 27,000 q/s on a 16-site cell (8 threads), against a few hundred q/s
+  for the per-q process pool. No `if __name__ == "__main__"` guard is needed, since it
+  uses threads, not processes.
+- **Gapless points.** Where H₂(q) is not safely positive definite (a Goldstone mode, a
+  Bragg point of a gapless model), that q falls back to the per-q path automatically.
+- **`apply_g`.** Default `False`, the bare spin, which is what every other pyMagCalc
+  S(Q,ω) means (Sunny `apply_g=false`). `True` weights each site by its configured
+  `atoms_uc[i].g`, evaluated at the current parameter values, or by `g_tensors=`
+  (N, 3, 3). That is Sunny's `ssf_perp(apply_g=true)`, 4× the bare value at g = 2.
+- **Not supported:** single-k (rotating-frame) structures and other cross-sections. Use
+  `calculate_sqw` for those.
+
+### The dataset
+
+```python
+from magcalc.neutron_data import read_mdnorm_npz, read_count_cells, QFrame, T0EnergyMap
+
+# Mantid MDNorm 4-D histogram (H, K, L, E): <zone>_data, _err2, _norm, _dims
+frame = QFrame.from_peaks([[3.97, 0.03, 0], [0.05, 2.01, 0]],   # observed
+                          [[4, 0, 0], [0, 2, 0]])                  # true
+t0 = T0EnergyMap.from_elastic_offset(ei=12.0, e_elastic=0.03)       # L2 = 3.5 m
+d = read_mdnorm_npz("export_4d.npz", "400", frame=frame, energy_map=t0,
+                    samples_per_cell=32, meta={"temperature": 1.8, "ei": 12.0})
+d = d.select_region(h=(3.85, 4.15), k=(-0.5, 0.5), L=(-0.1, 0.1))
+d = d.aggregate(d.coords["iK"] * 1000 + d.coords["iE"])   # sum H and L per K column
+
+# Per-run detector/energy cells: K, L, H, E, counts, exposure, dE, run
+cells = read_count_cells(sorted(glob.glob("production/run_*.npz")),
+                         windows={"H": (-0.15, 0.15), "L": (-0.1, 0.1)})
+a = cells.aggregate({"K": np.linspace(1, 3, 81)}, samples_per_bin=32, seed=0)
+
+d.save("zone400.npz"); d = BinnedData.load("zone400.npz")     # versioned native format
+```
+
+- **Weighted data become counts.** MDNorm data are weighted events. With the
+  per-energy event weight w(E) = median(err²/data), the effective counts are
+  n = data/w and the exposure is X = norm/w. You can pass `weight=` (a number, or an
+  array per energy from a higher-statistics run) instead; `meta['weight_source']`
+  records which was used.
+- **Q quadrature, histograms.** For a histogram, each (H, K, L) cell gets scrambled
+  Sobol points uniform in the cell, shared by all its energy bins (Q does not move
+  with E there). It also gets standard-normal deviates for an optional Q smearing.
+- **Q quadrature, cell lists.** For a cell list, each analysis bin draws its points
+  from its member cells' own (H, K, L) in proportion to their exposure. This is
+  systematic sampling of the exposure CDF, so it is exact in expectation, and all the
+  exposure in one cell puts every point there.
+- **`aggregate` keeps the exact exposure.** It merges bins with the same energy edges
+  using exposure-weighted mixture weights, per bin and per energy, never an
+  energy-averaged coverage.
+- **`QFrame` maps data r.l.u. to model r.l.u.** It covers a nominal or slightly wrong
+  UB (`from_peaks`, `from_2d`, or any 3×3). Cartesian Q is the map followed by the
+  model's B matrix.
+- **`T0EnergyMap` corrects the emission time of a direct-geometry reduction.** With
+  E_true = Ei − (L2/((t − δ)V))², it is applied to the bin **edges**.
+
+### The forward model
+
+```python
+from magcalc.forward import ForwardModel, GaussianEnergyResolution, Crystal, poisson_deviance
+
+res = GaussianEnergyResolution(fwhm0=0.10, poly=(1, -1.04, 0.38), variable="E/Ei",
+                               ei=5.0, extra_sigma=0.05)         # FWHM0 (1 - 1.04x + 0.38x^2)
+crystals = [Crystal.from_axis_angle([1, 0, 0], -1.5, weight=0.3, mosaic_sigma_deg=0.6),
+            Crystal.from_axis_angle([1, 0, 0], +1.5, weight=0.7, mosaic_sigma_deg=0.6)]
+fm = ForwardModel(calc, a, res, crystals=crystals, temperature=4.0)
+mu = fm.expected()                       # (n_bins,) expected counts
+s = fm.signal_per_exposure()             # mu / X, in the data's intensity units
+D = poisson_deviance(a.counts, mu)
+```
+
+- **`GaussianEnergyResolution`.** `poly` is in **ascending** powers. Use
+  `variable="E/Ei"` for a law in E/Ei, or `"E"` for a polynomial in meV (e.g. one
+  fitted to an instrument's resolution chart). `extra_sigma` adds in quadrature.
+- **`Crystal`.** A crystal (or twin) evaluates the model at R·Q. It can carry a
+  Gaussian mosaic spread, integrated at Gauss–Hermite nodes. `crystals_from_domains(spec)`
+  converts a `calculation.domains` spec, whose rotations act on the crystal and
+  therefore enter as Rᵀ.
+- **`q_smear=(σ_H, σ_K, σ_L)`.** A Gaussian smearing in data-frame r.l.u., for example
+  from the measured Bragg widths.
+- **`expected(params)` changes parameters but not the ground state.** It replaces the
+  Hamiltonian parameters on the **current** magnetic structure and does not
+  re-minimize. Use it only for changes that keep the ground state, or rebuild the model
+  through `magcalc run` / the minimizer first.
+
+The same caution as §7 of the guide applies: a hand-built `MagCalc` skips the
+runner's ground-state guards. Build the model through a run, or check
+`calc.relax_from_current()`, before trusting a μ map.
+
+How each piece is validated (Sunny, a closed-form chain, exact identities) is recorded in
+`GAP_STATUS.md`, "Neutron data and the forward model, phase 1".
+
+---
+
 ## 4g. SU(N) mode and entangled units (dimers / trimers)
 
 Dipole LSWT expands each spin as a single Holstein–Primakoff boson about a

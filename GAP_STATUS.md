@@ -988,6 +988,146 @@ the rule-value parser fix a87c8a8 below, magpipe at 283f694), 2026-10-22, idle m
 ALPS ones. The merge is also what makes `sqrt(3)*D1x/3`, the allowed kagome DM, pass this check: before the
 parser fix it reached the check as an unbound `sqrt3` and was refused as a conflict.
 
+### Neutron data and the forward model, phase 1, 2026-10-30 — μ per data bin, on a batched Colpa S(Q,ω)
+
+**What it is.** Phase 1 of making MagCalc the tool for reduced inelastic data. Three
+analyses (α-Cu₂V₂O₇, Cs₂Cu₃SnF₁₂, Rb₂Cu₃SnF₁₂) had each rebuilt, outside pyMagCalc, the
+path from reduced data to a predicted count:
+- frames and the t0 energy correction;
+- bin integration and the Q quadrature;
+- form factor, g, Bose factor and twins;
+- a fast batched S(Q,ω).
+
+Almost every defect their correction logs recorded sat in that layer:
+- unconverged Monte Carlo;
+- energy-averaged coverage used in place of the per-bin value;
+- the resolution width taken at the observed energy rather than the mode energy;
+- a frame term dropped.
+
+It now lives here, as a Python API (no config block yet, so the GUI emitters are
+untouched):
+- **`MagCalc.sqw_batch(q, apply_g=False)`** (`core.py`, `numerical.colpa_batch` /
+  `sqw_batch_from_h`). Colpa's method on stacks of 256 q (one Cholesky of H₂ = g·H, one
+  Hermitian `eigh` of K g K†, T = K⁻¹U E^½), threaded, with H(q) from `_build_h_stack`
+  (Ewald included). It applies per-site form factors and √(S_i/2), per chemical cell,
+  `perp` or `trace`, and optionally the per-site g tensor. Where the Cholesky fails, or
+  the lowest energy is below 1e-6 of max|H₂| (a numerically singular H₂ at an exact
+  Goldstone point passes the Cholesky with rounding-sized pivots, giving ω ~ 3e-8 and an
+  intensity of 7e7), that q goes to the per-q `KKdMatrix` path.
+- **`magcalc/neutron_data.py`.** `BinnedData` holds counts, exposure, the true energy
+  edges, coordinates, and a two-level quadrature table: bin → Q cells (exposure weights)
+  → sample points. Alongside it:
+  - `QFrame` (data r.l.u. → model r.l.u., 3×3) and `T0EnergyMap` (applied to bin edges);
+  - `read_mdnorm_npz` (MDNorm 4-D: weighted data → n = D/w(E), X = norm/w(E), with
+    w(E) = median(err²/D) per energy);
+  - `read_count_cells` + `CellList.aggregate` (exposure-CDF systematic draws per
+    analysis bin);
+  - `BinnedData.aggregate` (exposure-weighted merging, exact);
+  - versioned `save` / `load`.
+- **`magcalc/forward.py`.** `ForwardModel` gives μ_b = X_b · Σ_c w_c ⟨Σ_m I_m(R_c Q)
+  [(n+1) ΔΦ(ε_m) + n ΔΦ(−ε_m)]⟩, with:
+  - the energy integral exact over the bin, with σ at the **mode** energy;
+  - `GaussianEnergyResolution` (FWHM₀·poly(E/Ei) or poly(E), plus an extra width in
+    quadrature);
+  - `Crystal` (rotation acting on Q, weight, Gauss–Hermite mosaic);
+  - deterministic Q smearing;
+  - `poisson_deviance`.
+
+**Repo oracles** (`tests/test_sqw_batch.py` 17, `tests/test_neutron_data.py` 17,
+`tests/test_forward_model.py` 15; one slow):
+- **The per-q path.** `sqw_batch` equals the per-q worker to 1e-9 in energies and in
+  degenerate-group totals on the Néel chain, the (½, 2) ferrimagnet, a magnetic
+  supercell and the shipped 16-site α-Cu₂V₂O₇ model in its annealed ground state (slow).
+  This needs `KKdMatrix`'s zeroing of K elements below 1e-6 switched off. With it on,
+  the shipped per-q path is itself ~1e-6 off on 16 sites (1.7073801560 against the
+  exact 1.7073812084, which Colpa gives to 10 digits): `OPEN_WORK.md` item 7. The
+  shipped `calculate_sqw` is checked to 1e-5.
+- **Sunny, directly.** `data_afm_chain_sunny.json` (degenerate-pair totals, 1e-6). The
+  FM chain's ω and (S/2)(1 + q̂_z²) to 1e-10/1e-9, and the ferrimagnet's closed-form
+  branches.
+- **Goldstone points.** The Néel chain's q = 0 and both doubled-cell zone centres, and
+  the FM chain's q = 0, take the fallback and get the per-q answer (0, not 7e7).
+- **`apply_g=True` against a new Sunny reference**
+  (`tests/g_tensor_sqw_sunny_reference.jl` → `data_g_tensor_sqw_sunny.json`,
+  `ssf_perp(apply_g=true, formfactors)`). The model is a (½, 1) ferrimagnetic chain with
+  moments along a generic axis, a different **non-symmetric, off-diagonal** g on each
+  site, and Cu²⁺/Ni²⁺ form factors. It agrees to 1e-6. Swapping g for gᵀ changes the
+  answer by > 1%, so the pin sees transposition. No g configured gives exactly 4× the
+  bare value, and a parameter-valued g follows `hamiltonian_params`. The per-q fallback
+  applies g identically.
+- **Exact identities of the bin integral:**
+  - Σ_E μ_b/X_b over bins spanning every mode equals ⟨Σ_m I_m⟩ to 1e-12 (T = 0);
+  - a mode on a bin edge splits in half, to 1e-14;
+  - a mode stays in its bin as σ → 0 (and at σ = 0 exactly);
+  - a far bin sees the tail of σ(ε_mode), not σ(E_bin).
+- **Closed form: a ferromagnetic S = 1 chain in 2 T.** ω = 2μ_B B + 2|J|S(1 − cos 2πh),
+  at T = 12 K with the energy-gain line, over 3 Q boxes × 16 energy bins. The bin means
+  come from SciPy `quad` × `dblquad` over the box with the erf difference. The Sobol
+  estimate's max error relative to peak is 1.1e-3, 5.4e-4, 2.9e-6 and 7.8e-7 at 16, 64,
+  256 and 1024 samples per cell.
+- **Crystals.** Two crystals with weights (1 − f, f) give the weighted sum.
+  `Crystal(R)` equals a data frame with to_model = B⁻ᵀ R Bᵀ (two code paths, 1e-12).
+  `crystals_from_domains(spec)` equals `calculate_sqw(domains=spec)` mode by mode.
+  Gauss–Hermite mosaic (9 nodes) equals a 281-point Gaussian average over the angle to
+  1e-6.
+- **Data handling.** Q smearing equals shifted samples. Aggregated μ equals the sum of
+  member μ (1e-12). With all exposure in one cell, μ is that cell's value. The draws
+  are reproducible.
+- **Readers and maps.** Totals and weighted → counts. Zero-norm bins are dropped, and
+  data without normalization raises. Samples lie in their cells. The save/load round
+  trip is exact, and a future format version raises. `QFrame.from_peaks` reproduces the
+  2×2 construction from two Bragg peaks. The t0 map is the flight-time identity,
+  inverts to 1e-12, and maps the elastic offset to 0.
+
+**On real data** (α-Cu₂V₂O₇, CNCS 2025 and AMATERAS 2021; unpublished, so the data and
+the validation script stay in that project):
+- **Readers reproduce the export totals.** CNCS 14 T, 800 zone: data 604,980.59, err²
+  662,302.62, norm 8.81052e7. AMATERAS zero field, Ei = 4.681: 280 runs, 28,912,260
+  cells and 1,754,491 counts. Every run's cells, counts and SHA-256 match the
+  reduction's manifest; 3 runs are empty. Reading took 3 s.
+- **Frame map.** On the 0 T Bragg map the two-peak frame map puts 800 at
+  (8.0000, −0.0000) and 020 at (0.0006, 1.9998). The peaks were measured by a 2-D
+  Gaussian fit at (7.9476, 0.0420) and (0.0735, 2.0124) in the data frame, which
+  reproduces the analysis's own calibration.
+- **t0 correction.** The incoherent elastic line (Bragg regions excluded, both zones)
+  is at +0.022 ± 0.004 meV as measured (the analysis's value is +0.025) and at
+  −0.003 ± 0.004 meV after the t0 map.
+- **μ per bin against the analysis's own engines, on one candidate model, ground state
+  minimized on both sides.**
+  - **CNCS 14 T, 800 zone, 5808 (K, E) bins.**
+    - Ground states agree to 1e-10 in energy and 1e-5 in spin.
+    - With the same samples and bins through their engine (one parameter patched into
+      its basis) and their stratified numba binning, μ agrees to 1.4e-5 of peak
+      (rms 1.7e-6), and the totals to 7e-9.
+    - With each side's own quadrature (theirs: exposure-stratified nested Sobol, 256
+      points per bin; mine: 128 per cell, two seeds), the rms difference is 1.1% of
+      peak, against an expected 1.2% from their noise. The per-bin z over signal bins
+      has rms 0.99 and mean −0.04, and the totals agree to 9e-4. It is within Monte
+      Carlo error.
+  - **AMATERAS zero field, Ei = 4.681, 10,977 (K, E) bins, same samples.**
+    - Their Colpa kernel equals `sqw_batch` to 3e-14 in energy and 4e-15 in intensity.
+    - Their engine interpolates a table of the four brightest modes, and on the
+      model compared here its own guard refuses that (2.2% of the intensity lost). With
+      their kernel extended to all 16 modes, the rms difference is 0.84% of peak on the
+      medium table, 0.35% on the fine table and 0.10% on one twice as fine, with totals
+      at 1.006, 1.0027 and 1.0007. That is their interpolation, converging.
+    - Their unmodified 4-mode kernel on the model it was built for agrees to
+      0.53% rms on the fine table.
+- **Timing per evaluation.**
+  - CNCS: 3.5 s (16,896 samples).
+  - AMATERAS: 160 s, because 2 crystals × 5 mosaic nodes × 351k samples is 3.5 M exact
+    S(Q,ω) evaluations. Their table engine takes a 56 s build plus 2.6 s of binning. A
+    table or node-sharing option belongs with the fitting layer.
+
+`sqw_batch` itself: 16,384 q on the 16-site α-Cu₂V₂O₇ cell in 0.58–0.62 s (26,600–28,400
+q/s, 8 threads), against 327 q/s for `calculate_sqw`'s per-q process pool on the same
+machine and model (4,000 q in 12.2 s): 87×.
+
+**Gate** (2026-10-30, pyMagCalc `8fe6101` plus this change, fMagCalc `4a5ff4b`, rsMagCalc
+`9061710`, magpipe `e92b2c7`; `MAGCALC_NO_GUI=1 pytest -m "" -rs` from the workspace root,
+idle machine): **2584 passed, 2 skipped, 0 failed, 15 min 01 s**, the previous 2535 plus
+these 49. The two skips are the structural `seekpath` and ALPS ones.
+
 ### minimize_energy on a quartic mixed-spin energy, 2026-10-30 — the SymPy fallback moves on the per-site lengths
 
 **What was wrong.** A `biquadratic` or a rank ≥ 4 `stevens` term has no quadratic form,

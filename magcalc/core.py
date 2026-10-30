@@ -54,7 +54,10 @@ from .numerical import (
     ENERGY_IMAG_PART_THRESHOLD,
     fibonacci_sphere_points,
     thermal_bose_prefactor,
+    form_factor_matrix,
+    sqw_batch_from_h,
 )
+from .linalg import _spin_prefactor_vector
 from .linalg import rotation_matrix
 # --- End Modularized Imports ---
 
@@ -2488,6 +2491,144 @@ class MagCalc:
             result.intensities = result.intensities * thermal_bose_prefactor(
                 result.energies, temperature)
         return result
+
+    def _numeric_g_tensors(self) -> Optional[npt.NDArray[np.float64]]:
+        """Per-site lab-frame g tensors (N, 3, 3) at the CURRENT parameter values,
+        or None when no atom declares a `g` (then every site has the electron g = 2).
+
+        `hamiltonian_params` holds one entry per `parameter_order` name (a vector
+        parameter is one list entry), which is what `_resolve_g_tensors` needs; a
+        flattened vector is mapped back by the configured lengths.
+        """
+        resolver = getattr(self.sm, "_resolve_g_tensors", None)
+        if resolver is None:
+            return None
+        cfg = getattr(self.sm, "config", {}) or {}
+        order = cfg.get("parameter_order") or [
+            k for k in (cfg.get("parameters") or {}) if k != "S"]
+        params = list(self.hamiltonian_params)
+        conf = cfg.get("parameters") or {}
+        pmap = {}
+        if len(params) == len(order):
+            pmap = dict(zip(order, params))
+        else:
+            k = 0
+            for name in order:
+                width = len(conf[name]) if isinstance(conf.get(name), (list, tuple)) else 1
+                chunk = params[k:k + width]
+                pmap[name] = chunk if width > 1 else chunk[0]
+                k += width
+            if k != len(params):
+                raise ValueError(
+                    f"cannot map {len(params)} Hamiltonian parameters onto "
+                    f"parameter_order {order}; pass g_tensors= explicitly.")
+        g = resolver(pmap)
+        if g is None:
+            return None
+        return np.array([np.array(sp.Matrix(gi).evalf(), dtype=float) for gi in g])
+
+    def sqw_batch(
+        self,
+        q_cart: npt.NDArray[np.float64],
+        apply_g: bool = False,
+        g_tensors: Optional[npt.NDArray[np.float64]] = None,
+        cross_section: str = "perp",
+        chunk: int = 256,
+        return_ok: bool = False,
+        n_threads: Optional[int] = None,
+    ):
+        """Batched one-magnon S(Q,w) at Cartesian q (1/A), by Colpa's method.
+
+        The same quantity as `calculate_sqw(q, cross_section=...)` for a dipole
+        model -- per-site form factors and sqrt(S_i/2), per chemical cell -- but
+        diagonalized a stack of `chunk` q at a time in-process instead of one q
+        per pool task. H(q) comes from `_build_h_stack` (Ewald included). Where
+        H2(q) is not positive definite (Goldstone modes, Bragg points of a gapless
+        model) that q falls back to the per-q KKdMatrix path.
+
+        apply_g: weight each site's amplitude by its g tensor (the configured
+        `atoms_uc[i].g`, or `g_tensors` (N, 3, 3) if given), i.e. scatter from the
+        moment g.S instead of S. This is Sunny's `ssf_perp(apply_g=true)`; it is 4x
+        the default at g = 2. Default False = Sunny's `apply_g=false`, the meaning
+        every other pyMagCalc S(Q,w) has.
+
+        Only 'perp' and 'trace' are supported, and not single-k (rotating-frame)
+        structures: use `calculate_sqw` for those. No temperature or domains here;
+        the forward model (`magcalc.forward`) layers them on.
+
+        Chunks run on `n_threads` threads (default min(8, cores)); LAPACK releases
+        the GIL, so this needs no process pool and no __main__ guard.
+
+        Returns (energies, intensities), each (Nq, N) with energies ascending, plus
+        a bool mask of the points that took the Colpa path when return_ok=True.
+        """
+        if cross_section not in ("perp", "trace"):
+            raise ValueError(
+                f"sqw_batch supports cross_section 'perp' or 'trace', not "
+                f"{cross_section!r}; use calculate_sqw for the others.")
+        if self.k_cart is not None and self.k_case in (2, 3):
+            raise NotImplementedError(
+                "sqw_batch does not handle single-k (rotating-frame) structures; "
+                "use calculate_sqw(satellites=True).")
+        if self.HMat_sym is None or self.Ud_numeric is None:
+            raise RuntimeError("Symbolic matrices not initialized.")
+        q_cart = np.atleast_2d(np.asarray(q_cart, dtype=float))
+        n = int(self.nspins)
+        S = float(self.spin_magnitude)
+        try:
+            mags = [float(m) for m in self.sm.spin_magnitudes()]
+        except Exception:
+            mags = []
+        pref = _spin_prefactor_vector(S, n, mags if len(mags) == n else None)[::3]
+        ions = None
+        if hasattr(self.sm, "ion_list"):
+            ions = self.sm.ion_list() or None
+        g = None
+        if apply_g:
+            g = (np.asarray(g_tensors, float) if g_tensors is not None
+                 else self._numeric_g_tensors())
+            if g is None:
+                g = np.tile(2.0 * np.eye(3), (n, 1, 1))
+            if g.shape != (n, 3, 3):
+                raise ValueError(f"g_tensors must have shape ({n}, 3, 3), got {g.shape}")
+        elif g_tensors is not None:
+            raise ValueError("g_tensors given with apply_g=False")
+        Ud = np.asarray(self.Ud_numeric, dtype=np.complex128)
+        nq = len(q_cart)
+        E = np.empty((nq, n))
+        I = np.empty((nq, n))
+        ok = np.ones(nq, dtype=bool)
+        chunk = max(int(chunk), 1)
+        if n_threads is None:
+            n_threads = min(8, os.cpu_count() or 1)
+
+        def _chunk(start, hp):
+            qs = q_cart[start:start + len(hp)]
+            ff = form_factor_matrix(ions, qs) if ions else None
+            e, i, k = sqw_batch_from_h(
+                hp, qs, Ud, pref, form_factors=ff, g_tensors=g,
+                cross_section=cross_section,
+                h_minus_func=lambda idx: self._build_h_stack(qs[idx], S, negate=True),
+                spin_magnitude=S)
+            E[start:start + len(qs)] = e
+            I[start:start + len(qs)] = i
+            ok[start:start + len(qs)] = k
+
+        # H(q) is built for a large block in one vectorized call (its cost is the
+        # lambdified expression, held by the GIL); the Cholesky/eigh/solve per chunk
+        # run in LAPACK, which releases it, so the chunks go to a thread pool.
+        block = chunk * max(4 * int(n_threads), 1)
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=max(int(n_threads), 1)) as pool:
+            for b0 in range(0, nq, block):
+                hp = self._build_h_stack(q_cart[b0:b0 + block], S)
+                futs = [pool.submit(_chunk, b0 + c0, hp[c0:c0 + chunk])
+                        for c0 in range(0, len(hp), chunk)]
+                for f in futs:
+                    f.result()
+        if self.supercell_ncells > 1:
+            I = I / self.supercell_ncells
+        return (E, I, ok) if return_ok else (E, I)
 
     def _calculate_sqw_single_domain(
         self,

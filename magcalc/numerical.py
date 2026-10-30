@@ -475,6 +475,171 @@ def powder_average_from_sqw(calculator, q_magnitudes, num_samples: int = 50,
     return SqwResult(q_vectors=q_out, energies=np.array(E), intensities=np.array(I))
 
 
+# --- Batched Colpa S(Q,w) (MagCalc.sqw_batch) ---
+#
+# The per-q pool above (process_calc_Sqw -> KKdMatrix) diagonalizes the
+# non-Hermitian g.H2 with `eig` at +q AND at -q, then matches the two bases. For a
+# positive-definite H2 none of that is needed: Colpa's method gets the Bogoliubov
+# transform from one Cholesky and one Hermitian `eigh`, and both run on a whole
+# stack of q at once. The one-magnon amplitude of mode m along a is then
+#
+#     A_a(q, m) = sum_i f_i(|Q|) sqrt(S_i/2) [g_i . (U_d U_dd T(q))_i]_a,m
+#
+# and S^ab(q, m) = A_a A_b^*. Where H2 is not positive definite (a Goldstone
+# mode, a Bragg point of a gapless model) the Cholesky fails and that q goes back
+# to the per-q KKdMatrix path, so a gapless model loses nothing.
+
+COLPA_MIN_REL_ENERGY: float = 1e-6
+
+
+def _udd_map(nspins: int) -> npt.NDArray[np.complex128]:
+    """The (3N, 2N) local map from (a_i, a_i^dagger) to (S^x', S^y') per site, the
+    same matrix KKdMatrix builds (rows 3i+2, the local z, stay zero)."""
+    udd = np.zeros((3 * nspins, 2 * nspins), dtype=np.complex128)
+    idx = np.arange(nspins)
+    udd[3 * idx, idx] = 1.0
+    udd[3 * idx, idx + nspins] = 1.0
+    udd[3 * idx + 1, idx] = -1j
+    udd[3 * idx + 1, idx + nspins] = 1j
+    return udd
+
+
+def colpa_batch(h_stack: npt.NDArray[np.complex128], nspins: int):
+    """Colpa diagonalization of a stack of dynamical matrices H = g.H2.
+
+    Returns (energies (Nq, N) ascending, T (Nq, 2N, N) -- the columns of the
+    paraunitary transform that belong to the positive modes, normalized so that
+    T^dagger g T = I -- and ok (Nq,) bool). Rows where H2 is not positive definite
+    have ok = False and NaN energies; the caller takes them down the per-q path.
+    """
+    h_stack = np.asarray(h_stack, dtype=np.complex128)
+    nq = h_stack.shape[0]
+    n2 = 2 * nspins
+    metric = np.concatenate([np.ones(nspins), -np.ones(nspins)])
+    h2 = metric[None, :, None] * h_stack
+    h2 = 0.5 * (h2 + np.conj(np.swapaxes(h2, 1, 2)))
+    chol = np.empty_like(h2)
+    ok = np.ones(nq, dtype=bool)
+    try:
+        chol[:] = np.linalg.cholesky(h2)
+    except np.linalg.LinAlgError:
+        # Locate the failures one by one; the rest of the stack is still batched.
+        for k in range(nq):
+            try:
+                chol[k] = np.linalg.cholesky(h2[k])
+            except np.linalg.LinAlgError:
+                ok[k] = False
+                chol[k] = np.eye(n2)
+    # H2 = L L^dagger = K^dagger K with K = L^dagger; diagonalize K g K^dagger.
+    kmat = np.conj(np.swapaxes(chol, 1, 2))
+    w = kmat @ (metric[:, None] * chol)
+    w = 0.5 * (w + np.conj(np.swapaxes(w, 1, 2)))
+    lam, vec = np.linalg.eigh(w)
+    energies = lam[:, nspins:]                       # ascending, all > 0 where ok
+    # A numerically singular H2 (an exact Goldstone point) can still pass the
+    # Cholesky, with rounding-sized pivots and an energy ~ sqrt(eps)*|H|. Both this
+    # path and KKdMatrix lose accuracy as (omega/|H|)^-2 there, equally (measured on
+    # the Neel chain against 2JS|sin qa|: 5e-6 relative at omega/|H| = 3e-6), so
+    # below COLPA_MIN_REL_ENERGY the point goes to the per-q path, which gives an
+    # exactly-zero mode its conventional zero intensity.
+    scale = np.max(np.abs(h2), axis=(1, 2))
+    ok &= energies[:, 0] > COLPA_MIN_REL_ENERGY * scale
+    # T = K^{-1} U E^{1/2}, positive-mode columns only.
+    t = np.linalg.solve(kmat, vec[:, :, nspins:]) * np.sqrt(
+        np.clip(energies, 0.0, None))[:, None, :]
+    energies = np.where(ok[:, None], energies, np.nan)
+    return energies, t, ok
+
+
+def _perp_or_trace(amp, q_cart, cross_section):
+    """Contract amplitudes A (Nq, 3, M) to perp or trace, as contract_cross_section
+    does per q (perp falls back to the trace at |q| ~ 0)."""
+    tot = np.sum(np.abs(amp) ** 2, axis=1)
+    if cross_section == "trace":
+        return tot
+    qn = np.linalg.norm(q_cart, axis=1)
+    safe = np.where(qn ** 2 < Q_ZERO_THRESHOLD, 1.0, qn)
+    qhat = q_cart / safe[:, None]
+    par = np.abs(np.einsum("qa,qam->qm", qhat, amp)) ** 2
+    return np.where((qn ** 2 < Q_ZERO_THRESHOLD)[:, None], tot, tot - par)
+
+
+def form_factor_matrix(ion_list, q_cart) -> npt.NDArray[np.float64]:
+    """f_i(|Q|) for every q and site, (Nq, N), one vectorized call per distinct ion."""
+    q_cart = np.asarray(q_cart, dtype=float)
+    qm = np.linalg.norm(q_cart, axis=1)
+    n = len(ion_list)
+    ff = np.ones((len(qm), n))
+    for ion in set(i for i in ion_list if i):
+        cols = [k for k, i in enumerate(ion_list) if i == ion]
+        ff[:, cols] = np.asarray(get_form_factor(ion, qm), dtype=float)[:, None]
+    return ff
+
+
+def sqw_batch_from_h(
+    h_plus: npt.NDArray[np.complex128],
+    q_cart: npt.NDArray[np.float64],
+    Ud_numeric: npt.NDArray[np.complex128],
+    spin_prefactor: npt.NDArray[np.float64],
+    form_factors: Optional[npt.NDArray[np.float64]] = None,
+    g_tensors: Optional[npt.NDArray[np.float64]] = None,
+    cross_section: str = "perp",
+    h_minus_func=None,
+    spin_magnitude: float = 0.5,
+):
+    """S(Q,w) per mode for a stack of H(q) by Colpa's method (see colpa_batch).
+
+    spin_prefactor is the per-site sqrt(S_i/2) (N,), form_factors (Nq, N), and
+    g_tensors (N, 3, 3) in the lab frame or None (Sunny apply_g=false). Points where
+    the Cholesky fails are recomputed by KKdMatrix, which needs H(-q):
+    `h_minus_func(indices)` must return that stack. Returns (energies, intensities,
+    ok) with ok False where the per-q fallback ran.
+    """
+    q_cart = np.asarray(q_cart, dtype=float)
+    nq = len(q_cart)
+    n = len(spin_prefactor)
+    energies, t, ok = colpa_batch(h_plus, n)
+    b = np.asarray(Ud_numeric, dtype=np.complex128) @ _udd_map(n)      # (3N, 2N)
+    amp_site = (b @ t).reshape(nq, n, 3, n)                            # (q, i, a, m)
+    weight = np.asarray(spin_prefactor, float)[None, :]
+    if form_factors is not None:
+        weight = weight * np.asarray(form_factors, float)
+    amp_site = amp_site * weight[:, :, None, None]
+    if g_tensors is not None:
+        amp = np.einsum("iab,qibm->qam", np.asarray(g_tensors, float), amp_site)
+    else:
+        amp = amp_site.sum(axis=1)
+    intens = _perp_or_trace(amp, q_cart, cross_section)
+    bad = np.flatnonzero(~ok)
+    if len(bad):
+        if h_minus_func is None:
+            raise ValueError("H(q) is not positive definite at some q and no "
+                             "h_minus_func was given for the per-q fallback.")
+        h_minus = h_minus_func(bad)
+        spins = list(np.asarray(spin_prefactor, float) ** 2 * 2.0)
+        for k, iq in enumerate(bad):
+            K, Kd, ev = KKdMatrix(spin_magnitude, h_plus[iq], h_minus[k], Ud_numeric,
+                                  q_cart[iq], n, spin_magnitudes=spins)
+            if np.isnan(K).any() or np.isnan(Kd).any():
+                energies[iq] = np.nan
+                intens[iq] = np.nan
+                continue
+            f = (np.ones(n) if form_factors is None
+                 else np.asarray(form_factors[iq], float))
+            Km = K[:, :n].reshape(n, 3, n) * f[:, None, None]
+            Kdm = Kd[:, n:].reshape(n, 3, n) * f[:, None, None]
+            if g_tensors is not None:
+                Km = np.einsum("iab,ibm->iam", g_tensors, Km)
+                Kdm = np.einsum("iab,ibm->iam", g_tensors, Kdm)
+            corr = np.einsum("iam,jbm->abm", Km, Kdm)
+            val, _ = contract_cross_section(corr, q_cart[iq], cross_section)
+            val = np.real(val)
+            val[val < 0] = 0.0
+            energies[iq] = np.real(ev[:n])
+            intens[iq] = val
+    return energies, np.maximum(intens, 0.0), ok
+
+
 # --- Global variable for worker processes ---
 _worker_HMat_func = None
 

@@ -7,7 +7,7 @@ context can make a correct first change. It is a map, not the whole territory: t
 authoritative details live in the files it points to (§12), and when they disagree, the
 code and the tests win.
 
-*Last reviewed: 2026-10-30, against pyMagCalc `a7b935d` plus the per-site spin lengths in `minimize_energy`'s quartic fallback. This file is kept current with
+*Last reviewed: 2026-10-30, against pyMagCalc `8fe6101` plus phase 1 of the neutron-data layer (`sqw_batch`, `neutron_data.py`, `forward.py`). This file is kept current with
 every change that alters what it describes (§13).*
 
 ---
@@ -275,7 +275,7 @@ an exact identity, never by looking at a plot. So:
 ## 10. Tests
 
 ```bash
-pytest                       # fast suite: 1139 of 1348 tests; "-m 'not slow'" is the default
+pytest                       # fast suite: 1249 of 1521 tests; "-m 'not slow'" is the default
 pytest -m slow -k <name>     # one feature's deep validations
 pytest -m ""                 # everything: REQUIRED before merging to master
 pytest -n0 ...               # serial; needed for -s or pdb
@@ -284,7 +284,7 @@ pytest -n0 ...               # serial; needed for -s or pdb
 - Both `pytest.ini` files run in parallel (`-n auto --dist worksteal`, pytest-xdist is a
   required dev dependency).
 - From the maintainer's workspace root, plain `pytest` also collects fMagCalc's,
-  rsMagCalc's and magpipe's tests. The last full gate there was **2535 passed, 2 skipped**
+  rsMagCalc's and magpipe's tests. The last full gate there was **2584 passed, 2 skipped**
   (2026-10-30). The two skips are structural: `seekpath` absent, ALPS present.
 - **Tests never open a GUI window.** `tests/conftest.py` forces the Agg backend and sets
   `MAGCALC_NO_GUI=1`. A bare `magcalc run` outside pytest is not guarded; prefix it with
@@ -308,7 +308,7 @@ pytest -n0 ...               # serial; needed for -s or pdb
 | `config_builder.py`, `generic_model.py` | symmetry expansion of atoms and bonds; `GenericSpinModel`; magnetic structures and supercells |
 | `cif_utils.py`, `cell_utils.py`, `mcif.py` | CIF reading; primitive/standard cells and BZ paths; magnetic CIF import and export |
 | `symbolic.py` | SymPy Holstein–Primakoff Hamiltonian and its Fourier transform |
-| `core.py` | `MagCalc`: lambdified H(q), dispersion, S(Q,ω), powder, minimization, the fMagCalc hand-off, `DispersionEvaluator` |
+| `core.py` | `MagCalc`: lambdified H(q), dispersion, S(Q,ω), powder, minimization, the fMagCalc hand-off, `DispersionEvaluator`, `sqw_batch` (batched Colpa S(Q,ω), optional per-site g) |
 | `linalg.py`, `numerical.py` | Bogoliubov (`KKdMatrix`), per-q workers, cross-section contraction, domains, powder sampling |
 | `runner.py` | the task pipeline and the ground-state guards |
 | `sun/lswt.py`, `sun/operators.py`, `sun/adapter.py` | SU(N) LSWT (`SUNModel`), local operator algebra, runner adapter |
@@ -317,12 +317,14 @@ pytest -n0 ...               # serial; needed for -s or pdb
 | `scga.py`, `thermal_mc.py`, `classical_dynamics.py`, `annealing.py`, `spiral_opt.py`, `corrections.py` | the beyond-LSWT methods (§5) |
 | `stevens.py`, `ewald.py`, `form_factors.py`, `constants.py` | Stevens operators, Ewald dipolar sums, magnetic form factors, the one definition of each physical constant |
 | `diffraction.py`, `binning.py` | elastic magnetic intensities; histogram binning and NeXus input |
+| `neutron_data.py` | reduced INS data on its own bins: `BinnedData` (counts, exposure, true energy edges, the bin → Q cell → sample quadrature), `QFrame`, `T0EnergyMap`, the MDNorm and count-cell readers, a versioned native `.npz` |
+| `forward.py` | `ForwardModel`: the expected count μ per data bin (exact erf energy integral with the width at the mode energy, crystals with mosaic, Q smearing, Bose factor); `poisson_deviance` |
 | `fitting.py` | lmfit wrapper for dispersion, S(Q,ω) and powder data |
 | `plotting.py` | figures; `show_plot_if_possible` honours `MAGCALC_NO_GUI` |
 | `kernels.py` | selection of the Rust kernels: `resolve`, `rust_for`, `fell_back`, `make_rng` |
 | `provenance.py`, `_shadow_guard*.py` | `magcalc where` and the startup guard against a second importable copy |
 
-Other directories: `tests/` (91 test files), `examples/` (`materials/`, `entangled/`,
+Other directories: `tests/` (104 test files), `examples/` (`materials/`, `entangled/`,
 `spinw_tutorials/` with 30 SpinW ports, `sunny_tutorials/` with all 9 Sunny tutorials,
 `fitting/`), `gui/` (FastAPI and React Studio), `native/MagCalcStudio/` (SwiftUI macOS and
 iOS app).
@@ -370,7 +372,18 @@ iOS app).
 
 ---
 
-## 14. Where things stand (2026-10-29)
+## 14. Where things stand (2026-10-30)
+
+- **Phase 1 of the neutron-data layer** (2026-10-30). `MagCalc.sqw_batch` computes the
+  one-magnon S(Q,ω) by Colpa's method on stacks of q, about 27,000 q/s on a 16-site
+  cell. It equals the per-q path to 1e-9 and Sunny directly, and applies per-site g
+  tensors on request (Sunny `apply_g=true`, pinned on an off-diagonal, non-symmetric g).
+  `magcalc/neutron_data.py` reads Mantid MDNorm 4-D exports and per-run count cells into
+  one `BinnedData`, with frame and t0 energy maps and an exact exposure-weighted Q
+  quadrature. `magcalc/forward.py` predicts μ in every bin. A ferromagnetic chain's
+  closed form, integrated by SciPy quadrature, is reached to 8e-7. It is a Python API
+  only: there is no config block yet, and no fitting
+  (`GAP_STATUS.md`, "Neutron data and the forward model, phase 1").
 
 - **Every planned Rust kernel is in** (K1–K5, plus a sparse exact KPM guard). The sixth,
   mixed-spin dipole S(Q,ω), went into fMagCalc instead of Rust, because fMagCalc already
