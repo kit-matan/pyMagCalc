@@ -1280,8 +1280,20 @@ incoherent elastic lines; Fermi-chopper instruments. See `OPEN_WORK.md` item 8.
 **Cost:** preparing 0.8 M virtual samples (50,000 samples × 8 energy blocks × branches)
 and their 5 M entries takes 7 s, once per model setup.
 
+**On real data** (a 2025 CNCS dataset; unpublished, so the data and the scripts stay in that
+project):
+- **Geometry:** the export's UB, under Mantid's conventions, puts 020 on the elastic
+  condition 0.7° from the logged angle (the UB's known in-plane offset).
+- **Elongation:** the Bragg peaks' stretch along k_f in the energy-integrated map is
+  predicted with no free parameter: 0.025 against 0.024 Å⁻¹, and 0.023 against
+  0.026 Å⁻¹.
+- **What can't be measured on that data:** at 0.005 r.l.u. the rotation scan's 0.5–1°
+  steps show as one stripe per run (1° = 0.026 Å⁻¹ at |G| = 1.5 Å⁻¹). A rotation-scan
+  histogram therefore can't measure a Bragg peak's rocking width or tilt; calibrating
+  divergence and mosaic needs per-run (pixel, TOF) data.
+
 **Not done yet.**
-- Calibrating the divergence (Bragg widths).
+- Calibrating the divergence and mosaic on per-run Bragg data.
 - The real-data comparison.
 - The non-Gaussian chopper times' own Q correlation (Level 2, group-velocity
   projection).

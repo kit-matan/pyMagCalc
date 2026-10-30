@@ -1330,7 +1330,13 @@ fm = ForwardModel(calc, data, qe, crystals=[Crystal(position=[0, 0, 0.006]), ...
 - **The depth** in `GeometrySpread` should be the energy resolution's `detector_depth`.
 - **Divergence is an instrument number to calibrate.** It dominates the Q width at a cold
   instrument; fix it from Bragg-peak widths at several |Q| (mosaic grows with |Q|,
-  divergence does not).
+  divergence does not). Measure those widths on per-run data (pixel × time of flight)
+  or a finely stepped rocking scan, not on a rotation-scan histogram. A scan stepped by
+  0.5–1° moves Q by |G|·Δψ between runs, often more than the peak is wide, so a fine
+  histogram shows one stripe per run and a coarse one blurs them.
+- **A Bragg peak in an energy-integrated map is stretched along k_f** by the elastic
+  line's width (k σ_E/2E). That stretch is resolution, not a Q width; a Gaussian fitted
+  along H and K mixes it into both.
 
 How each piece is validated (Sunny, a closed-form chain, exact identities) is recorded in
 `GAP_STATUS.md`, "Neutron data and the forward model, phase 1" and "phase 2, the energy resolution" and "the Q-E resolution".
