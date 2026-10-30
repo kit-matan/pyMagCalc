@@ -7,7 +7,7 @@ context can make a correct first change. It is a map, not the whole territory: t
 authoritative details live in the files it points to (§12), and when they disagree, the
 code and the tests win.
 
-*Last reviewed: 2026-10-30, against pyMagCalc `8fe6101` plus phase 1 of the neutron-data layer (`sqw_batch`, `neutron_data.py`, `forward.py`). This file is kept current with
+*Last reviewed: 2026-10-30, against pyMagCalc `449ed61` plus `calculate_sqw` on Colpa's method (`sqw_amplitudes`, `contract_cross_section_batch`, `calculation.sqw_method`). This file is kept current with
 every change that alters what it describes (§13).*
 
 ---
@@ -84,7 +84,7 @@ GenericSpinModel           generic_model.py + config_builder.py
    ▼
 symbolic.py                SymPy Holstein–Primakoff Hamiltonian, Fourier transform → H(q)
    ▼
-MagCalc (core.py)          lambdify H(q); per-q Bogoliubov work (linalg.py, numerical.py)
+MagCalc (core.py)          lambdify H(q); batched Colpa Bogoliubov work (numerical.py)
    │                       — or hand the hot loop to fMagCalc (backend: fortran)
    ▼
 runner.py                  the declarative task pipeline:
@@ -308,8 +308,8 @@ pytest -n0 ...               # serial; needed for -s or pdb
 | `config_builder.py`, `generic_model.py` | symmetry expansion of atoms and bonds; `GenericSpinModel`; magnetic structures and supercells |
 | `cif_utils.py`, `cell_utils.py`, `mcif.py` | CIF reading; primitive/standard cells and BZ paths; magnetic CIF import and export |
 | `symbolic.py` | SymPy Holstein–Primakoff Hamiltonian and its Fourier transform |
-| `core.py` | `MagCalc`: lambdified H(q), dispersion, S(Q,ω), powder, minimization, the fMagCalc hand-off, `DispersionEvaluator`, `sqw_batch` (batched Colpa S(Q,ω), optional per-site g) |
-| `linalg.py`, `numerical.py` | Bogoliubov (`KKdMatrix`), per-q workers, cross-section contraction, domains, powder sampling |
+| `core.py` | `MagCalc`: lambdified H(q), dispersion, S(Q,ω) (`calculate_sqw` → `sqw_amplitudes`, batched Colpa; the per-q pool behind `sqw_method: perq`), `sqw_batch`, powder, minimization, the fMagCalc hand-off, `DispersionEvaluator` |
+| `linalg.py`, `numerical.py` | Colpa (`colpa_batch`, `SqwAmplitudes`), the per-q Bogoliubov fallback (`KKdMatrix`) and workers, `contract_cross_section_batch` (every cross-section), domains, powder sampling |
 | `runner.py` | the task pipeline and the ground-state guards |
 | `sun/lswt.py`, `sun/operators.py`, `sun/adapter.py` | SU(N) LSWT (`SUNModel`), local operator algebra, runner adapter |
 | `sun/entangled.py`, `sun/dimer_series.py` | entangled units; linked-cluster dimer series with Dlog-Padé |
@@ -373,6 +373,18 @@ iOS app).
 ---
 
 ## 14. Where things stand (2026-10-30)
+
+- **`calculate_sqw` runs on Colpa's method** (2026-10-30). The per-q process pool used
+  `eig` at ±q with basis matching. The default is now batched Cholesky plus `eigh`,
+  in-process, about 70–100× faster on 16 sites. Every cross-section and the three
+  single-k channels are supported, through one vectorized contraction. Non-positive-
+  definite q (Goldstone points, unstable q) still take KKdMatrix. The pool stays for one
+  release as `calculation: {sqw_method: perq}`. It is pinned by every existing Sunny
+  S(Q,ω) test and by an exact single-k = supercell identity for every cross-section.
+  Colpa is also 4–5× faster end to end than fMagCalc's S(Q,ω), whose retirement is
+  recommended (`GAP_STATUS.md`, "calculate_sqw on Colpa's method"). Two older defects
+  turned up: the k_case 2 polarized clamp (OPEN_WORK item 9), and a test whose "T = 0 fit
+  is biased 17 %" claim was rounding noise.
 
 - **Phase 1 of the neutron-data layer** (2026-10-30). `MagCalc.sqw_batch` computes the
   one-magnon S(Q,ω) by Colpa's method on stacks of q, about 27,000 q/s on a 16-site

@@ -376,29 +376,40 @@ def _ferri(J, temperature):
 
 
 @pytest.mark.slow
-def test_ignoring_temperature_biases_an_intensity_fit():
-    """Fitting intensities at T=0 when the data were measured warm biases the exchange.
-    Synthetic data at 40 K from J = 1.30; profile out a scale nuisance (what a real
-    fit's `scale` parameter does) and scan J. Ignoring T recovers ~1.07 (a 17% error);
-    modelling T recovers 1.30 exactly."""
+def test_temperature_is_what_makes_intensities_carry_J():
+    """Fitting warm intensities with a T = 0 model does not BIAS the exchange: it
+    leaves it undetermined. With one exchange constant H(q) = J x (a J-free matrix),
+    so the Bogoliubov amplitudes, and every T = 0 intensity, are exactly independent
+    of J. Only the Bose factor, through omega/kT, makes the intensities depend on J.
+
+    This test used to assert that a T = 0 fit to 40 K data "recovers ~1.07 (a 17%
+    error)". Its chi^2 was flat in J to 1e-12, and the argmin was set by the per-q
+    path's 1e-6 cut on K/Kd elements. Colpa's method has no such cut (2026-10-30), so
+    the argmin moved to 1.30 and the claim was exposed as rounding noise."""
     J_true, T = 1.30, 40.0
     data = _ferri(J_true, T)
+    grid = np.linspace(1.1, 1.5, 9)
+    cold = [_ferri(J, None) for J in grid]
+    warm = [_ferri(J, T) for J in grid]
 
-    def best_J(model_T):
-        # Coarse grid on purpose: the bias is ~0.2 meV, an order of magnitude bigger
-        # than the spacing, so a fine scan only burns time.
-        best, chi_best = None, np.inf
-        for J in np.linspace(1.1, 1.5, 9):
-            I = _ferri(J, model_T)
-            den = float(np.sum(I * I))
-            scale = float(np.sum(I * data)) / den if den > 0 else 0.0
-            chi = float(np.sum((scale * I - data) ** 2))
-            if chi < chi_best:
-                chi_best, best = chi, J
-        return best
+    # The identity: T = 0 intensities do not depend on J at all.
+    for I in cold[1:]:
+        assert I == pytest.approx(cold[0], rel=1e-12, abs=1e-15)
 
-    assert abs(best_J(T) - J_true) < 1e-9            # models T: exact
-    assert abs(best_J(None) - J_true) > 0.1          # ignores T: biased
+    def chi2(I):
+        scale = float(np.sum(I * data)) / float(np.sum(I * I))   # profiled scale
+        return float(np.sum((scale * I - data) ** 2))
+
+    chi_cold = np.array([chi2(I) for I in cold])
+    chi_warm = np.array([chi2(I) for I in warm])
+    # T = 0: flat, so no J is preferred, and the misfit is large (the branch ratio is
+    # wrong by a factor a free scale cannot absorb).
+    assert np.ptp(chi_cold) < 1e-9 * chi_cold.min()
+    assert chi_cold.min() > 0.01 * float(np.sum(data ** 2))
+    # Modelling T: a unique minimum at J_true, exact, with real curvature around it.
+    assert grid[np.argmin(chi_warm)] == pytest.approx(J_true, abs=1e-12)
+    assert chi_warm.min() < 1e-20
+    assert chi_warm[0] > 1e-3 and chi_warm[-1] > 1e-3
 
 
 def test_fitproblem_forward_model_uses_the_measurement_options():

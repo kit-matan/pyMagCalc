@@ -3,7 +3,9 @@
 `sqw_batch` diagonalizes a stack of H(q) by Colpa's method (one Cholesky and one
 Hermitian `eigh` per q, batched) instead of the per-q pool's `eig` at +q and -q plus
 basis matching (`process_calc_Sqw` -> `KKdMatrix`). It is the engine under the
-forward model (`magcalc.forward`), so it must be the SAME quantity:
+forward model (`magcalc.forward`) and, since 2026-10-30, under `calculate_sqw` itself
+(every cross-section and single-k: `test_sqw_colpa_routing.py`), so it must be the
+SAME quantity as the per-q path:
 
 - energies and per-mode intensities equal to `calculate_sqw` to 1e-9 (inside an
   exactly degenerate group only the group total is an observable, so totals);
@@ -90,14 +92,22 @@ def _assert_same_spectrum(E, I, Er, Ir, rtol):
 
 
 def _assert_equal_to_per_q(calc, q, rtol=1e-9, exact=True):
-    """sqw_batch against the per-q worker (exact) to rtol, and against the shipped
-    calculate_sqw (thresholds on, process pool) to 1e-5."""
+    """sqw_batch against the per-q worker (exact) to rtol, against calculate_sqw's
+    per-q process pool (`sqw_method: perq`, thresholds on) to 1e-5, and equal to
+    calculate_sqw's default, which is this path."""
     E, I, ok = calc.sqw_batch(q, return_ok=True)
     Er, Ir = _per_q(calc, q, exact)
     _assert_same_spectrum(E, I, Er, Ir, rtol)
-    ref = calc.calculate_sqw(list(q))
+    calc.sqw_method = "perq"
+    try:
+        ref = calc.calculate_sqw(list(q))
+    finally:
+        calc.sqw_method = None
     _assert_same_spectrum(E, I, np.real(np.asarray(ref.energies)),
                           np.real(np.asarray(ref.intensities)), max(rtol, 1e-5))
+    default = calc.calculate_sqw(list(q))
+    assert np.array_equal(default.energies, E, equal_nan=True)
+    assert np.array_equal(default.intensities, I, equal_nan=True)
     return ok
 
 
@@ -301,7 +311,7 @@ def test_parameter_dependent_g_follows_update_hamiltonian_params():
 def test_unsupported_requests_raise():
     calc = _fm_chain()
     with pytest.raises(ValueError):
-        calc.sqw_batch(np.ones((2, 3)), cross_section="xx")
+        calc.sqw_batch(np.ones((2, 3)), cross_section="qq")
     with pytest.raises(ValueError):
         calc.sqw_batch(np.ones((2, 3)), g_tensors=np.eye(3)[None])
 

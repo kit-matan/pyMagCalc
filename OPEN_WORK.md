@@ -1,13 +1,16 @@
 # Open work — pick-up notes
 
-**Current status (2026-10-30): items 7 and 8 are open**, both left by phase 1 of the
-neutron-data layer (`GAP_STATUS.md`, "Neutron data and the forward model, phase 1").
+**Current status (2026-10-30): items 8 and 9 are open.** Item 8 was left by phase 1
+of the neutron-data layer (`GAP_STATUS.md`, "Neutron data and the forward model,
+phase 1"). Item 9 was found while closing item 7, which routed `calculate_sqw`
+through Colpa's method the same day (`GAP_STATUS.md`, "calculate_sqw on Colpa's
+method").
 Item 6, found while closing item 5, was fixed the next day. The Rust kernels plan is
 finished. K1–K5 and a sparse exact KPM guard are in rsMagCalc, and K6 (mixed-spin
 dipole S(Q,ω)) is in fMagCalc. Everything is merged to `master` and pushed (pyMagCalc
 `9b70cf5` before the last two items, fMagCalc `4a5ff4b`, rsMagCalc `1d2532d`, now
-public). Last full gate: **2584 passed, 2 skipped** (structural; 2026-10-30, see
-`GAP_STATUS.md`, "Neutron data and the forward model, phase 1"). K7, the dimer series' per-cluster perturbation
+public). Last full gate: **2653 passed, 2 skipped, 2 xfailed** (structural skips, item 9's
+strict xfails; 2026-10-30, see `GAP_STATUS.md`, "calculate_sqw on Colpa's method"). K7, the dimer series' per-cluster perturbation
 theory, followed on 2026-10-29 from a profile of every shipped example under the
 compiled kernels (`GAP_STATUS.md`, "Rust kernels K7"). Four small follow-ups were
 known; item 3 is done:
@@ -61,30 +64,22 @@ known; item 3 is done:
    "minimize_energy on a quartic mixed-spin energy". The `n_workers > 1` pool needed
    nothing: the lengths are numbers inside the payload.
 
-7. **Route `calculate_sqw` through Colpa's method.** Found by phase 1. `MagCalc.sqw_batch`
-   gets the same S(Q,ω) as the per-q pool (`process_calc_Sqw` → `KKdMatrix`) from one
-   Cholesky and one `eigh` per q, batched and threaded. On a 16-site cell it runs at
-   about 27,000 q/s and needs no −q matching and no Gram–Schmidt. The per-q path also
-   zeroes K/Kd elements below `ZERO_MATRIX_ELEMENT_THRESHOLD = 1e-6`. On the 16-site
-   aCVO model that is a ~1e-6 relative intensity error (1.7073801560 against the exact
-   1.7073812084); Colpa matches the exact result to 10 digits. What is left:
-   - **Cross-sections.** Have `sqw_batch` return the amplitude tensor, so that every
-     cross-section works (polarized, chiral, Blume–Maleev, components). Today it
-     covers only `perp` and `trace`.
-   - **Routing.** Send commensurate `calculate_sqw` through it, keeping the per-q path
-     as an option for one release.
-   - **Single-k.** Do the same for the three channels of a single-k structure
-     (`process_calc_Sqw_single_k`).
-   - **fMagCalc.** Decide what happens to its S(Q,ω) path.
-
-   Keep these unchanged:
-   - **Gapless points.** The per-q fallback stays wherever H₂ is not safely positive
-     definite (ω_min < 1e-6 ‖H₂‖), as `sqw_batch` already does.
-   - **The imaginary-mode guard** stays on `eig`.
-   - **`on_imaginary: warn` runs.** A run about an unstable state cannot use Colpa.
-
-   Oracles: every existing Sunny and closed-form S(Q,ω) pin, comparing degenerate
-   groups as totals. Injection point: `MagCalc._calculate_sqw_single_domain` (`core.py`).
+7. **Route `calculate_sqw` through Colpa's method. DONE 2026-10-30.** `calculate_sqw`
+   now runs on `MagCalc.sqw_amplitudes` by default, with every cross-section and the
+   three channels of a single-k structure. `MagCalc.sqw_amplitudes` gives the
+   one-magnon amplitudes, S^ab = left_a right_b^*, and
+   `numerical.contract_cross_section_batch` is now the one implementation of every
+   cross-section (`contract_cross_section` is one q of it). The per-q pool stays
+   selectable for one release as `calculation: {sqw_method: perq}`. Points where H₂ is
+   not safely positive definite still take KKdMatrix: Goldstone points, and every
+   unstable q of an `on_imaginary: warn` run. The imaginary-mode guard is unchanged.
+   Oracles: every existing Sunny and closed-form S(Q,ω) pin, now on this path, plus an
+   exact identity, single-k = the explicit magnetic supercell for every cross-section at
+   k_case 3 and 2 (`GAP_STATUS.md`, "calculate_sqw on Colpa's method"). fMagCalc is
+   unchanged. The recommendation for its S(Q,ω) path is in that section. Item 9 was
+   found here.
+   **Next release:** delete `sqw_method: perq`, `process_calc_Sqw` and
+   `process_calc_Sqw_single_k`. `KKdMatrix` stays as the fallback.
 
 8. **Neutron-data phases 2–4.** Phase 1 (a dataset object and a forward model, Python
    API only) is done. Next:
@@ -99,6 +94,25 @@ known; item 3 is done:
 
    The forward model's oracles (Sunny, the closed-form chain, exact identities) carry
    over unchanged.
+
+9. **k_case 2 single-k with a polarization axis off q: the per-mode clamp changes the
+   group total.** Found while closing item 7, and older than it: the per-q pool does
+   the same. For a single-k structure with 2k a reciprocal-lattice vector (`k_case`
+   2), the q−k and q+k channel tensors are (I − nnᵀ) S′ R₁, which is not Hermitian. One
+   channel mode of a degenerate group can then carry a negative `sf+` or `sf-` when
+   the polarization axis has a component off q. The mode is clipped to zero before the
+   group is summed. On the S = 1 Néel chain written as k = ½, with P = (0.3, −0.5,
+   0.81), one q gets 0.273 for the group where the explicit 2-site supercell gives
+   0.257 (+6 %). Unclamped, the two agree to 1e-15.
+   - **Not affected:** `perp`, `trace`, the components, `chiral`, the P ∥ q `sf±`
+     strings, `nsf`, Blume–Maleev, and k_case 3. All of these pass the supercell
+     identity to 1e-9.
+   - **Pinned:** `tests/test_sqw_colpa_routing.py` has the two cases as strict xfails,
+     and the unclamped identity as a passing test.
+   - **Candidate fix:** for k_case 2, clamp the sum over the three channels of a
+     degenerate group, not each channel mode. Alternatively, fold q±k into one channel,
+     since they are the same momentum.
+   - **Oracle:** the supercell identity, which is exact.
 
 Items 3 and 4 come from the 2026-10-27 assessment of what is still worth compiling.
 Its third candidate, the Ewald dipolar sum, is done (`GAP_STATUS.md`, "Ewald dipolar
@@ -256,6 +270,7 @@ add it rather than folding it into whatever you are doing.
 | # | Item | Status |
 |---|---|---|
 | 6 | `minimize_energy` uses one spin length for a non-quadratic mixed-spin energy (2026-10-29; pick-up notes at the top of this file) | **DONE** 2026-10-30 — per-site lengths in the SymPy fallback |
+| 7 | `calculate_sqw` on the per-q pool, not Colpa (phase 1, 2026-10-30) | **DONE** 2026-10-30 — Colpa by default, every cross-section and single-k; `sqw_method: perq` kept one release |
 
 ### Closed 2026-08-16
 

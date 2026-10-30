@@ -55,7 +55,10 @@ from .numerical import (
     fibonacci_sphere_points,
     thermal_bose_prefactor,
     form_factor_matrix,
-    sqw_batch_from_h,
+    colpa_amplitudes_from_h,
+    contract_cross_section_batch,
+    spiral_channel_tensors,
+    SqwAmplitudes,
 )
 from .linalg import _spin_prefactor_vector
 from .linalg import rotation_matrix
@@ -370,6 +373,10 @@ class MagCalc:
         calculate_sqw(q_list, omega_grids, ...): Computes S(Q,w) with convolution.
         minimize_energy(x0, ...): Numerically finds the classical magnetic ground state.
     """
+
+    # calculate_sqw's engine: None reads `calculation.sqw_method` ('colpa' default,
+    # 'perq' for the per-q pool); see _sqw_method.
+    sqw_method: Optional[str] = None
 
     def __init__(
         self,
@@ -1350,8 +1357,10 @@ class MagCalc:
                 Each vector should be a 1D array/list of 3 numbers.
             processes (Optional[int]): Number of worker processes (default: cpu_count).
             serial (bool): If True, run in the main process without multiprocessing (avoid spawn/fork overhead).
-            backend (str): "numpy" (default) uses the in-process multiprocessing
-                path. "fortran" uses the external fMagCalc backend if available,
+            backend (str): "numpy" (default) runs in-process: batched Colpa
+                (`sqw_amplitudes`), or the per-q process pool when
+                `calculation.sqw_method` is 'perq'. "fortran" uses the external
+                fMagCalc backend for the perp cross-section if available,
                 transparently falling back to NumPy otherwise.
             satellites (Optional[bool]): For a single-k structure, also compute
                 the satellite branches omega(q -/+ k) by evaluating the same
@@ -2415,9 +2424,10 @@ class MagCalc:
                 n_domains * n_modes columns. Not supported together with a
                 lab-frame component cross_section.
             cross_section (str): 'perp' (default, unpolarized (delta_ab -
-                q^_a q^_b) contraction), 'trace', or a lab-frame tensor
-                component like 'xx', 'zz', 'xy' (real part; off-diagonal
-                components are signed).
+                q^_a q^_b) contraction), 'trace', 'chiral', 'sf+'/'sf-', a
+                lab-frame tensor component like 'xx', 'zz', 'xy' (real part;
+                off-diagonal components are signed), or a polarization /
+                Blume-Maleev dict (`numerical.normalize_cross_section`).
 
         Returns:
             Optional[SqwResult]: Object containing q_vectors, energies, and intensities.
@@ -2527,54 +2537,67 @@ class MagCalc:
             return None
         return np.array([np.array(sp.Matrix(gi).evalf(), dtype=float) for gi in g])
 
-    def sqw_batch(
+    def _sqw_method(self) -> str:
+        """`calculation.sqw_method`: 'colpa' (default) or 'perq'.
+
+        `self.sqw_method`, when set, overrides the config. 'perq' is the per-q process
+        pool (`process_calc_Sqw` -> `KKdMatrix`) that was the only engine before
+        2026-10-30; it is kept for one release so that a result can be checked
+        against it, and then goes."""
+        method = self.sqw_method
+        if method is None:
+            cfg = getattr(self.sm, "config", None) or {}
+            method = (cfg.get("calculation") or {}).get("sqw_method", "colpa")
+        method = str(method).strip().lower()
+        if method not in ("colpa", "perq"):
+            raise ValueError(
+                f"calculation.sqw_method must be 'colpa' or 'perq', not {method!r}.")
+        return method
+
+    def sqw_amplitudes(
         self,
         q_cart: npt.NDArray[np.float64],
         apply_g: bool = False,
         g_tensors: Optional[npt.NDArray[np.float64]] = None,
-        cross_section: str = "perp",
+        satellites: Optional[bool] = None,
         chunk: int = 256,
-        return_ok: bool = False,
         n_threads: Optional[int] = None,
-    ):
-        """Batched one-magnon S(Q,w) at Cartesian q (1/A), by Colpa's method.
+    ) -> SqwAmplitudes:
+        """One-magnon amplitudes at Cartesian q (1/A), by Colpa's method:
+        S^ab(q, m) = left_a(q, m) right_b(q, m)^* (see `numerical.SqwAmplitudes`).
 
-        The same quantity as `calculate_sqw(q, cross_section=...)` for a dipole
-        model -- per-site form factors and sqrt(S_i/2), per chemical cell -- but
-        diagonalized a stack of `chunk` q at a time in-process instead of one q
-        per pool task. H(q) comes from `_build_h_stack` (Ewald included). Where
-        H2(q) is not positive definite (Goldstone modes, Bragg points of a gapless
-        model) that q falls back to the per-q KKdMatrix path.
+        Normalized per CHEMICAL cell (each amplitude carries 1/sqrt(n_cells)), with
+        the per-site form factors and sqrt(S_i/2), so `.contract(q, cross_section)`
+        is `calculate_sqw`'s single-domain intensity for any cross-section. H(q)
+        comes from `_build_h_stack` (Ewald included) a stack of `chunk` q at a time,
+        on `n_threads` threads (default min(8, cores)); LAPACK releases the GIL, so
+        this needs no process pool and no __main__ guard. Where H2(q) is not
+        positive definite (Goldstone modes, Bragg points of a gapless model, the
+        unstable q of an `on_imaginary: warn` run) that q falls back to the per-q
+        KKdMatrix path.
+
+        A single-k structure (`satellites`, default True when one is active) gives
+        3N modes per q, channel-major [q-k | q | q+k]: H at q + shift, the form
+        factor at the physical |q|, and each channel's Toth-Lake projectors applied,
+        left by L and right by R^dagger (`spiral_channel_tensors`). `satellites=False`
+        returns the q channel alone, without projectors, as the per-q path does.
 
         apply_g: weight each site's amplitude by its g tensor (the configured
         `atoms_uc[i].g`, or `g_tensors` (N, 3, 3) if given), i.e. scatter from the
         moment g.S instead of S. This is Sunny's `ssf_perp(apply_g=true)`; it is 4x
         the default at g = 2. Default False = Sunny's `apply_g=false`, the meaning
-        every other pyMagCalc S(Q,w) has.
-
-        Only 'perp' and 'trace' are supported, and not single-k (rotating-frame)
-        structures: use `calculate_sqw` for those. No temperature or domains here;
-        the forward model (`magcalc.forward`) layers them on.
-
-        Chunks run on `n_threads` threads (default min(8, cores)); LAPACK releases
-        the GIL, so this needs no process pool and no __main__ guard.
-
-        Returns (energies, intensities), each (Nq, N) with energies ascending, plus
-        a bool mask of the points that took the Colpa path when return_ok=True.
+        every other pyMagCalc S(Q,w) has. Not with a single-k structure, whose
+        amplitudes are in the rotating frame.
         """
-        if cross_section not in ("perp", "trace"):
-            raise ValueError(
-                f"sqw_batch supports cross_section 'perp' or 'trace', not "
-                f"{cross_section!r}; use calculate_sqw for the others.")
-        if self.k_cart is not None and self.k_case in (2, 3):
-            raise NotImplementedError(
-                "sqw_batch does not handle single-k (rotating-frame) structures; "
-                "use calculate_sqw(satellites=True).")
         if self.HMat_sym is None or self.Ud_numeric is None:
             raise RuntimeError("Symbolic matrices not initialized.")
         q_cart = np.atleast_2d(np.asarray(q_cart, dtype=float))
         n = int(self.nspins)
         S = float(self.spin_magnitude)
+        single_k_active = self.k_cart is not None and self.k_case in (2, 3)
+        if satellites is None:
+            satellites = single_k_active
+        use_single_k = bool(satellites) and single_k_active
         try:
             mags = [float(m) for m in self.sm.spin_magnitudes()]
         except Exception:
@@ -2585,6 +2608,10 @@ class MagCalc:
             ions = self.sm.ion_list() or None
         g = None
         if apply_g:
+            if single_k_active:
+                raise NotImplementedError(
+                    "apply_g is not available for a single-k (rotating-frame) "
+                    "structure; use crystal_structure.magnetic_supercell.")
             g = (np.asarray(g_tensors, float) if g_tensors is not None
                  else self._numeric_g_tensors())
             if g is None:
@@ -2593,42 +2620,108 @@ class MagCalc:
                 raise ValueError(f"g_tensors must have shape ({n}, 3, 3), got {g.shape}")
         elif g_tensors is not None:
             raise ValueError("g_tensors given with apply_g=False")
-        Ud = np.asarray(self.Ud_numeric, dtype=np.complex128)
-        nq = len(q_cart)
-        E = np.empty((nq, n))
-        I = np.empty((nq, n))
-        ok = np.ones(nq, dtype=bool)
-        chunk = max(int(chunk), 1)
         if n_threads is None:
             n_threads = min(8, os.cpu_count() or 1)
 
+        def channel(shift):
+            return self._colpa_amplitudes(q_cart + shift, q_cart, pref, ions, g, S,
+                                          max(int(chunk), 1), max(int(n_threads), 1))
+
+        if not use_single_k:
+            amps = channel(np.zeros(3))
+        else:
+            kc = np.asarray(self.k_cart, dtype=float)
+            tensors = spiral_channel_tensors(self.spiral_axis, self.k_case)
+            parts = []
+            for shift, (t_left, t_right) in zip((-kc, np.zeros(3), kc), tensors):
+                a = channel(shift)
+                # L S' R = (L A)(R^dagger B)^dagger for S' = A B^dagger.
+                parts.append(SqwAmplitudes(
+                    a.energies,
+                    np.einsum("ax,qxm->qam", t_left, a.left),
+                    np.einsum("xa,qxm->qam", np.conj(t_right), a.right),
+                    a.ok))
+            amps = SqwAmplitudes(
+                np.concatenate([p.energies for p in parts], axis=1),
+                np.concatenate([p.left for p in parts], axis=2),
+                np.concatenate([p.right for p in parts], axis=2),
+                np.logical_and.reduce([p.ok for p in parts]))
+        if self.supercell_ncells > 1:
+            # Per-chemical-cell normalization (Sunny/SpinW convention).
+            norm = 1.0 / np.sqrt(self.supercell_ncells)
+            same = amps.right is amps.left
+            amps.left = amps.left * norm
+            amps.right = amps.left if same else amps.right * norm
+        return amps
+
+    def _colpa_amplitudes(self, q_eval, q_phys, pref, ions, g, S, chunk, n_threads):
+        """`colpa_amplitudes_from_h` over a q list: H at q_eval, form factors at
+        |q_phys|, `chunk` q per task on a thread pool."""
+        n = int(self.nspins)
+        nq = len(q_eval)
+        Ud = np.asarray(self.Ud_numeric, dtype=np.complex128)
+        E = np.empty((nq, n))
+        L = np.empty((nq, 3, n), dtype=np.complex128)
+        R = np.empty((nq, 3, n), dtype=np.complex128)
+        ok = np.ones(nq, dtype=bool)
+        same = [True]
+
         def _chunk(start, hp):
-            qs = q_cart[start:start + len(hp)]
-            ff = form_factor_matrix(ions, qs) if ions else None
-            e, i, k = sqw_batch_from_h(
-                hp, qs, Ud, pref, form_factors=ff, g_tensors=g,
-                cross_section=cross_section,
-                h_minus_func=lambda idx: self._build_h_stack(qs[idx], S, negate=True),
+            sl = slice(start, start + len(hp))
+            qe = q_eval[sl]
+            ff = form_factor_matrix(ions, q_phys[sl]) if ions else None
+            a = colpa_amplitudes_from_h(
+                hp, qe, Ud, pref, form_factors=ff, g_tensors=g,
+                h_minus_func=lambda idx: self._build_h_stack(qe[idx], S, negate=True),
                 spin_magnitude=S)
-            E[start:start + len(qs)] = e
-            I[start:start + len(qs)] = i
-            ok[start:start + len(qs)] = k
+            E[sl], L[sl], R[sl], ok[sl] = a.energies, a.left, a.right, a.ok
 
         # H(q) is built for a large block in one vectorized call (its cost is the
         # lambdified expression, held by the GIL); the Cholesky/eigh/solve per chunk
         # run in LAPACK, which releases it, so the chunks go to a thread pool.
-        block = chunk * max(4 * int(n_threads), 1)
+        block = chunk * 4 * n_threads
         from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=max(int(n_threads), 1)) as pool:
+        with ThreadPoolExecutor(max_workers=n_threads) as pool:
             for b0 in range(0, nq, block):
-                hp = self._build_h_stack(q_cart[b0:b0 + block], S)
+                hp = self._build_h_stack(q_eval[b0:b0 + block], S)
                 futs = [pool.submit(_chunk, b0 + c0, hp[c0:c0 + chunk])
                         for c0 in range(0, len(hp), chunk)]
                 for f in futs:
                     f.result()
-        if self.supercell_ncells > 1:
-            I = I / self.supercell_ncells
-        return (E, I, ok) if return_ok else (E, I)
+        return SqwAmplitudes(E, L, R if not ok.all() else L, ok)
+
+    def sqw_batch(
+        self,
+        q_cart: npt.NDArray[np.float64],
+        apply_g: bool = False,
+        g_tensors: Optional[npt.NDArray[np.float64]] = None,
+        cross_section="perp",
+        chunk: int = 256,
+        return_ok: bool = False,
+        n_threads: Optional[int] = None,
+        satellites: Optional[bool] = None,
+    ):
+        """Batched one-magnon S(Q,w) at Cartesian q (1/A), by Colpa's method.
+
+        `sqw_amplitudes` contracted to `cross_section` -- any of `calculate_sqw`'s:
+        perp, trace, components, chiral, sf+/sf-, a polarization dict or a
+        Blume-Maleev frame. This is `calculate_sqw`'s single-domain engine; no
+        temperature or domains here (`calculate_sqw` and the forward model,
+        `magcalc.forward`, layer them on).
+
+        Returns (energies, intensities), each (Nq, M) (M = N, or 3N for a single-k
+        structure with satellites), plus a bool mask of the points that took the
+        Colpa path when return_ok=True.
+        """
+        q_cart = np.atleast_2d(np.asarray(q_cart, dtype=float))
+        # Refuse a bad spec (or a q outside a Blume-Maleev plane) before any work.
+        contract_cross_section_batch(np.zeros((len(q_cart), 3, 3, 1)), q_cart,
+                                     cross_section)
+        amps = self.sqw_amplitudes(q_cart, apply_g=apply_g, g_tensors=g_tensors,
+                                   satellites=satellites, chunk=chunk,
+                                   n_threads=n_threads)
+        intens = amps.contract(q_cart, cross_section)
+        return (amps.energies, intens, amps.ok) if return_ok else (amps.energies, intens)
 
     def _calculate_sqw_single_domain(
         self,
@@ -2687,8 +2780,33 @@ class MagCalc:
                             fortran_result.intensities / self.supercell_ncells)
                     return fortran_result
 
+        q_arr = np.array(q_vectors_list, dtype=float).reshape(-1, 3)
+        if self._sqw_method() == "colpa":
+            # Colpa's method on stacks of q, in-process (`sqw_amplitudes`); the
+            # points where H2 is not positive definite take the per-q KKdMatrix
+            # path inside it, so this is the pool's answer without the pool.
+            if use_single_k:
+                logger.info(
+                    "Computing incommensurate S(q,w): three channels q-k, q, q+k "
+                    f"(k={self.k_rlu.tolist()} RLU, k_case={self.k_case}).")
+            energies, intensities, ok = self.sqw_batch(
+                q_arr, cross_section=cross_section, satellites=use_single_k,
+                return_ok=True)
+            n_fail = int(np.isnan(energies).any(axis=1).sum())
+            if n_fail:
+                logger.warning(
+                    f"S(q,w) calculation failed for {n_fail} out of {len(q_arr)} "
+                    "q-points. Check logs for details.")
+            logger.info(
+                f"S(q,w) by Colpa's method: {int(ok.sum())} of {len(q_arr)} q-points; "
+                f"{int((~ok).sum())} not positive definite took the per-q path. "
+                f"Run-time {np.round((timeit.default_timer() - start_t) / 60, 2)} min.")
+            return SqwResult(q_vectors=q_arr, energies=energies, intensities=intensities)
+
+        logger.warning(
+            "calculation.sqw_method: perq -- the per-q process pool, kept for one "
+            "release beside the default Colpa path.")
         # Dipolar (Ewald) contribution at +q and -q, precomputed here (see dispersion).
-        q_arr = np.array(q_vectors_list, dtype=float)
         dip_p = self._ewald_h_stack(q_arr)
         dip_m = self._ewald_h_stack(-q_arr)
         dip_pairs = None if dip_p is None else [

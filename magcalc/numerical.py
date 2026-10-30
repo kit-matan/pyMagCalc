@@ -160,35 +160,51 @@ def normalize_cross_section(cross_section):
         f"`polarization`/`channel` dict, or a `bm` dict.")
 
 
-def contract_cross_section(
-    spin_corr: npt.NDArray[np.complex128],
-    q_vector: npt.NDArray[np.float64],
+def _blume_maleev_frames(q_cart, normal):
+    """`blume_maleev_axes` for a stack of q: (Nq, 3, 3), the axes as COLUMNS.
+
+    The first q that is ~0 or out of the scattering plane is handed to
+    `blume_maleev_axes`, so the error is the same one, naming that q."""
+    q = np.asarray(q_cart, dtype=float).reshape(-1, 3)
+    e3 = _unit(normal, "the scattering-plane normal")
+    qn = np.linalg.norm(q, axis=1)
+    e1 = q / np.where(qn < 1e-12, 1.0, qn)[:, None]
+    bad = np.flatnonzero((qn < 1e-12) | (np.abs(e1 @ e3) > 1e-8))
+    if len(bad):
+        blume_maleev_axes(q[bad[0]], normal)        # raises
+    e2 = np.cross(e3[None, :], e1)
+    e2 /= np.linalg.norm(e2, axis=1)[:, None]
+    return np.stack([e1, e2, np.broadcast_to(e3, e1.shape)], axis=2)
+
+
+def contract_cross_section_batch(
+    corr: npt.NDArray[np.complex128],
+    q_cart: npt.NDArray[np.float64],
     cross_section="perp",
 ) -> Tuple[npt.NDArray[np.complex128], bool]:
-    """Contract the 3x3 spin-correlation tensor to a per-mode cross-section.
+    """`contract_cross_section` for a stack of q: corr is S^{ab}(q, mode) with shape
+    (Nq, 3, 3, n_modes), q_cart (Nq, 3) Cartesian. Returns (values (Nq, n_modes),
+    clamp).
 
-    spin_corr is S^{ab}(q, mode) with shape (3, 3, n_modes). Supported
-    cross_section values:
-      - "perp"  (default): unpolarized neutron factor sum_ab (d_ab - q^_a q^_b)
-        S^{ab}; falls back to the trace at |q| ~ 0 where q^ is undefined.
-      - "trace": sum_a S^{aa} (Sunny ssf_trace).
-      - a two-letter component like "xx", "zz", "xy": the single lab-frame
-        tensor component S^{ab} (Sunny ssf_custom analogue). Off-diagonal
-        components are generally complex; the caller reports the real part
-        and must not clamp it (it is legitimately signed).
-
-    Returns (per_mode_values, clamp) where clamp says whether negatives are
-    numerical noise that should be clipped to zero (true for perp/trace and
-    diagonal components).
+    This is the one implementation; `contract_cross_section` (one q) calls it. At
+    |q| ~ 0, where q^ is undefined, the projector is the identity, which is exactly
+    the per-q rules: perp and sf+/sf- fall back to the trace and chiral is zero.
     """
+    corr = np.asarray(corr)
+    q = np.asarray(q_cart, dtype=float).reshape(-1, 3)
     cs, prm = normalize_cross_section(cross_section)
 
     if cs == "bm":
         # Rotate the tensor into the Blume-Maleev frame and take one component.
-        R = blume_maleev_axes(q_vector, prm["normal"])
-        rotated = np.einsum("ca,cdm,db->abm", R, spin_corr, R)
+        R = _blume_maleev_frames(q, prm["normal"])
         a, b = prm["ab"]
-        return rotated[a, b, :], a == b
+        return np.einsum("qc,qcdm,qd->qm", R[:, :, a], corr, R[:, :, b]), a == b
+
+    qn2 = np.einsum("qa,qa->q", q, q)
+    small = qn2 < Q_ZERO_THRESHOLD
+    q_hat = q / np.sqrt(np.where(small, 1.0, qn2))[:, None]
+    q_hat[small] = 0.0
+    proj = np.eye(3)[None] - q_hat[:, :, None] * q_hat[:, None, :]
 
     if cs == "polarized":
         # Longitudinal polarization analysis about an arbitrary axis P:
@@ -212,33 +228,23 @@ def contract_cross_section(
         # not see it: on the proper SCREW that generated it the chiral vector is
         # already parallel to q, where the two expressions agree exactly.
         P = prm["P"]
-        q_norm_sq = float(np.dot(q_vector, q_vector))
-        if q_norm_sq < Q_ZERO_THRESHOLD:
-            proj = np.eye(3)
-        else:
-            q_hat = np.asarray(q_vector, dtype=float) / np.sqrt(q_norm_sq)
-            proj = np.eye(3) - np.outer(q_hat, q_hat)
-        m_perp = np.einsum("ac,cdm,db->abm", proj, spin_corr, proj)
-        total = np.einsum("aam->m", m_perp)
-        nsf = np.einsum("a,abm,b->m", P, m_perp, P)
+        m_perp = np.einsum("qac,qcdm,qdb->qabm", proj, corr, proj)
+        total = np.einsum("qaam->qm", m_perp)
+        nsf = np.einsum("a,qabm,b->qm", P, m_perp, P)
         if prm["channel"] == "nsf":
             return nsf, True
         sf = total - nsf
         if prm["channel"] == "sf":
             return sf, True
-        chiral = 1j * np.einsum("abc,c,abm->m", _EPS_TENSOR, P, m_perp)
+        chiral = 1j * np.einsum("abc,c,qabm->qm", _EPS_TENSOR, P, m_perp)
         sign = -1.0 if prm["channel"] in ("sf+", "sfplus") else +1.0
         return sf + sign * chiral, True
 
     if cs == "perp":
-        q_norm_sq = float(np.dot(q_vector, q_vector))
-        if q_norm_sq < Q_ZERO_THRESHOLD:
-            return np.einsum("aam->m", spin_corr), True
-        q_hat = np.asarray(q_vector, dtype=float) / np.sqrt(q_norm_sq)
-        polarization = np.eye(3) - np.outer(q_hat, q_hat)
-        return np.einsum("ab,abm->m", polarization, spin_corr), True
+        # Unpolarized: sum_ab (d_ab - q^_a q^_b) S^ab; the trace at |q| ~ 0.
+        return np.einsum("qab,qabm->qm", proj, corr), True
     if cs == "trace":
-        return np.einsum("aam->m", spin_corr), True
+        return np.einsum("qaam->qm", corr), True
     if cs in ("chiral", "sf+", "sf-", "sf_plus", "sf_minus"):
         # Chiral (polarization-dependent) term. With the neutron polarization along
         # q (the usual longitudinal SF/NSF setup) ALL magnetic scattering is
@@ -250,29 +256,52 @@ def contract_cross_section(
         # M_ch is the antisymmetric (imaginary) part of the correlation tensor, so
         # it is nonzero only for a chiral structure (a spiral): it vanishes
         # identically for any collinear or coplanar-with-a-mirror state. The SIGN
-        # convention here is pinned to Sunny (tests/test_polarized.py).
-        q_norm_sq = float(np.dot(q_vector, q_vector))
-        if q_norm_sq < Q_ZERO_THRESHOLD:
-            n_modes = spin_corr.shape[2]
-            zero = np.zeros(n_modes, dtype=np.complex128)
-            if cs == "chiral":
-                return zero, False
-            return np.einsum("aam->m", spin_corr), True
-        q_hat = np.asarray(q_vector, dtype=float) / np.sqrt(q_norm_sq)
-        chiral = 1j * np.einsum("abc,c,abm->m", _EPS_TENSOR, q_hat, spin_corr)
+        # convention here is pinned to Sunny (tests/test_polarized.py). At q ~ 0
+        # q^ = 0, so chiral is zero and sf+/sf- are the trace.
+        chiral = 1j * np.einsum("abc,qc,qabm->qm", _EPS_TENSOR, q_hat, corr)
         if cs == "chiral":
             return chiral, False          # signed: do NOT clamp negatives
-        polarization = np.eye(3) - np.outer(q_hat, q_hat)
-        perp = np.einsum("ab,abm->m", polarization, spin_corr)
+        perp = np.einsum("qab,qabm->qm", proj, corr)
         sign = -1.0 if cs in ("sf+", "sf_plus") else +1.0
         return perp + sign * chiral, True
     if len(cs) == 2 and cs[0] in _XYZ_INDEX and cs[1] in _XYZ_INDEX:
         a, b = _XYZ_INDEX[cs[0]], _XYZ_INDEX[cs[1]]
-        return spin_corr[a, b, :], a == b
+        return corr[:, a, b, :], a == b
     raise ValueError(
         f"Unknown cross_section '{cross_section}'. Use 'perp', 'trace', or a "
         f"component like 'xx', 'yy', 'zz', 'xy'."
     )
+
+
+def contract_cross_section(
+    spin_corr: npt.NDArray[np.complex128],
+    q_vector: npt.NDArray[np.float64],
+    cross_section="perp",
+) -> Tuple[npt.NDArray[np.complex128], bool]:
+    """Contract the 3x3 spin-correlation tensor to a per-mode cross-section.
+
+    spin_corr is S^{ab}(q, mode) with shape (3, 3, n_modes). Supported
+    cross_section values:
+      - "perp"  (default): unpolarized neutron factor sum_ab (d_ab - q^_a q^_b)
+        S^{ab}; falls back to the trace at |q| ~ 0 where q^ is undefined.
+      - "trace": sum_a S^{aa} (Sunny ssf_trace).
+      - "chiral", "sf+", "sf-": the chiral term and the two spin-flip channels with
+        the polarization along q.
+      - a two-letter component like "xx", "zz", "xy": the single lab-frame
+        tensor component S^{ab} (Sunny ssf_custom analogue). Off-diagonal
+        components are generally complex; the caller reports the real part
+        and must not clamp it (it is legitimately signed).
+      - the dict forms of `normalize_cross_section`: an arbitrary polarization
+        axis, or a Blume-Maleev frame component.
+
+    Returns (per_mode_values, clamp) where clamp says whether negatives are
+    numerical noise that should be clipped to zero (true for perp/trace and
+    diagonal components). One q of `contract_cross_section_batch`.
+    """
+    vals, clamp = contract_cross_section_batch(
+        np.asarray(spin_corr)[None], np.asarray(q_vector, dtype=float).reshape(1, 3),
+        cross_section)
+    return vals[0], clamp
 
 @dataclass
 class DispersionResult:
@@ -475,9 +504,9 @@ def powder_average_from_sqw(calculator, q_magnitudes, num_samples: int = 50,
     return SqwResult(q_vectors=q_out, energies=np.array(E), intensities=np.array(I))
 
 
-# --- Batched Colpa S(Q,w) (MagCalc.sqw_batch) ---
+# --- Batched Colpa S(Q,w): calculate_sqw's engine (MagCalc.sqw_amplitudes) ---
 #
-# The per-q pool above (process_calc_Sqw -> KKdMatrix) diagonalizes the
+# The per-q pool below (process_calc_Sqw -> KKdMatrix, `sqw_method: perq`) diagonalizes the
 # non-Hermitian g.H2 with `eig` at +q AND at -q, then matches the two bases. For a
 # positive-definite H2 none of that is needed: Colpa's method gets the Bogoliubov
 # transform from one Cholesky and one Hermitian `eigh`, and both run on a whole
@@ -485,9 +514,10 @@ def powder_average_from_sqw(calculator, q_magnitudes, num_samples: int = 50,
 #
 #     A_a(q, m) = sum_i f_i(|Q|) sqrt(S_i/2) [g_i . (U_d U_dd T(q))_i]_a,m
 #
-# and S^ab(q, m) = A_a A_b^*. Where H2 is not positive definite (a Goldstone
-# mode, a Bragg point of a gapless model) the Cholesky fails and that q goes back
-# to the per-q KKdMatrix path, so a gapless model loses nothing.
+# and S^ab(q, m) = A_a A_b^*, which `contract_cross_section_batch` turns into any
+# cross-section. Where H2 is not positive definite (a Goldstone mode, a Bragg point
+# of a gapless model, every unstable q of an `on_imaginary: warn` run) the Cholesky
+# fails and that q goes back to the per-q KKdMatrix path, so nothing is lost.
 
 COLPA_MIN_REL_ENERGY: float = 1e-6
 
@@ -551,19 +581,6 @@ def colpa_batch(h_stack: npt.NDArray[np.complex128], nspins: int):
     return energies, t, ok
 
 
-def _perp_or_trace(amp, q_cart, cross_section):
-    """Contract amplitudes A (Nq, 3, M) to perp or trace, as contract_cross_section
-    does per q (perp falls back to the trace at |q| ~ 0)."""
-    tot = np.sum(np.abs(amp) ** 2, axis=1)
-    if cross_section == "trace":
-        return tot
-    qn = np.linalg.norm(q_cart, axis=1)
-    safe = np.where(qn ** 2 < Q_ZERO_THRESHOLD, 1.0, qn)
-    qhat = q_cart / safe[:, None]
-    par = np.abs(np.einsum("qa,qam->qm", qhat, amp)) ** 2
-    return np.where((qn ** 2 < Q_ZERO_THRESHOLD)[:, None], tot, tot - par)
-
-
 def form_factor_matrix(ion_list, q_cart) -> npt.NDArray[np.float64]:
     """f_i(|Q|) for every q and site, (Nq, N), one vectorized call per distinct ion."""
     q_cart = np.asarray(q_cart, dtype=float)
@@ -576,24 +593,67 @@ def form_factor_matrix(ion_list, q_cart) -> npt.NDArray[np.float64]:
     return ff
 
 
-def sqw_batch_from_h(
+@dataclass
+class SqwAmplitudes:
+    """One-magnon amplitudes of a stack of q: S^ab(q, m) = left_a(q, m) right_b(q, m)^*.
+
+    energies (Nq, M), left and right (Nq, 3, M), ok (Nq,) True where every channel of
+    that q took the Colpa path. On a Colpa point of a commensurate structure the two
+    are the same array, A_a A_b^*. They differ where the per-q KKdMatrix fallback ran
+    (left from K at +q, right from Kd at -q) and in the k_case 2 single-k channels,
+    whose left and right projectors are not each other's adjoint.
+    """
+    energies: npt.NDArray[np.float64]
+    left: npt.NDArray[np.complex128]
+    right: npt.NDArray[np.complex128]
+    ok: npt.NDArray[np.bool_]
+
+    def correlation(self, sl=slice(None)) -> npt.NDArray[np.complex128]:
+        """S^ab(q, m), (Nq, 3, 3, M), for the q in `sl`."""
+        return np.einsum("qam,qbm->qabm", self.left[sl], np.conj(self.right[sl]))
+
+    def contract(self, q_cart, cross_section="perp", block: int = 4096):
+        """Real per-mode intensities (Nq, M) for any cross-section, contracted at the
+        PHYSICAL q_cart with `contract_cross_section_batch` (in blocks of q, so the
+        3x3 tensor of a long q list is never held at once). Negatives are clipped
+        where the contraction is a cross-section, kept where it is signed."""
+        q_cart = np.asarray(q_cart, dtype=float).reshape(-1, 3)
+        out = np.empty(self.energies.shape)
+        worst = 0.0
+        for b0 in range(0, len(q_cart), block):
+            sl = slice(b0, b0 + block)
+            vals, clamp = contract_cross_section_batch(
+                self.correlation(sl), q_cart[sl], cross_section)
+            if clamp and vals.size:
+                worst = max(worst, float(np.nanmax(np.abs(np.imag(vals)), initial=0.0)))
+            vals = np.real(vals)
+            if clamp:
+                vals = np.where(vals < 0, 0.0, vals)        # keeps NaN
+            out[sl] = vals
+        if worst > SQW_IMAG_PART_THRESHOLD:
+            # Imaginary parts are numerical noise for perp/trace/diagonal
+            # contractions; off-diagonal components are legitimately complex.
+            logger.warning(f"Significant imaginary part in Sqw: max {worst:.3g}.")
+        return out
+
+
+def colpa_amplitudes_from_h(
     h_plus: npt.NDArray[np.complex128],
     q_cart: npt.NDArray[np.float64],
     Ud_numeric: npt.NDArray[np.complex128],
     spin_prefactor: npt.NDArray[np.float64],
     form_factors: Optional[npt.NDArray[np.float64]] = None,
     g_tensors: Optional[npt.NDArray[np.float64]] = None,
-    cross_section: str = "perp",
     h_minus_func=None,
     spin_magnitude: float = 0.5,
-):
-    """S(Q,w) per mode for a stack of H(q) by Colpa's method (see colpa_batch).
+) -> SqwAmplitudes:
+    """One-magnon amplitudes for a stack of H(q) by Colpa's method (see colpa_batch).
 
     spin_prefactor is the per-site sqrt(S_i/2) (N,), form_factors (Nq, N), and
-    g_tensors (N, 3, 3) in the lab frame or None (Sunny apply_g=false). Points where
-    the Cholesky fails are recomputed by KKdMatrix, which needs H(-q):
-    `h_minus_func(indices)` must return that stack. Returns (energies, intensities,
-    ok) with ok False where the per-q fallback ran.
+    g_tensors (N, 3, 3) in the lab frame or None (Sunny apply_g=false). q_cart is
+    the momentum H was evaluated at (it only labels the fallback's log lines). Points
+    where the Cholesky fails are recomputed by KKdMatrix, which needs H(-q):
+    `h_minus_func(indices)` must return that stack.
     """
     q_cart = np.asarray(q_cart, dtype=float)
     nq = len(q_cart)
@@ -606,24 +666,30 @@ def sqw_batch_from_h(
         weight = weight * np.asarray(form_factors, float)
     amp_site = amp_site * weight[:, :, None, None]
     if g_tensors is not None:
-        amp = np.einsum("iab,qibm->qam", np.asarray(g_tensors, float), amp_site)
+        left = np.einsum("iab,qibm->qam", np.asarray(g_tensors, float), amp_site)
     else:
-        amp = amp_site.sum(axis=1)
-    intens = _perp_or_trace(amp, q_cart, cross_section)
+        left = amp_site.sum(axis=1)
+    right = left
     bad = np.flatnonzero(~ok)
     if len(bad):
         if h_minus_func is None:
             raise ValueError("H(q) is not positive definite at some q and no "
                              "h_minus_func was given for the per-q fallback.")
+        right = left.copy()
         h_minus = h_minus_func(bad)
         spins = list(np.asarray(spin_prefactor, float) ** 2 * 2.0)
         for k, iq in enumerate(bad):
             K, Kd, ev = KKdMatrix(spin_magnitude, h_plus[iq], h_minus[k], Ud_numeric,
                                   q_cart[iq], n, spin_magnitudes=spins)
-            if np.isnan(K).any() or np.isnan(Kd).any():
-                energies[iq] = np.nan
-                intens[iq] = np.nan
+            if np.isnan(K).any() or np.isnan(Kd).any() or np.isnan(ev).any():
+                logger.error(f"NaN encountered in KKdMatrix result for q={q_cart[iq]}.")
+                energies[iq] = left[iq] = right[iq] = np.nan
                 continue
+            imag = np.abs(np.imag(ev[:n]))
+            if np.any(imag > ENERGY_IMAG_PART_THRESHOLD):
+                logger.warning(
+                    f"Significant imaginary part in energy eigenvalues for "
+                    f"q={q_cart[iq]}. Max imag: {np.max(imag)}")
             f = (np.ones(n) if form_factors is None
                  else np.asarray(form_factors[iq], float))
             Km = K[:, :n].reshape(n, 3, n) * f[:, None, None]
@@ -631,13 +697,31 @@ def sqw_batch_from_h(
             if g_tensors is not None:
                 Km = np.einsum("iab,ibm->iam", g_tensors, Km)
                 Kdm = np.einsum("iab,ibm->iam", g_tensors, Kdm)
-            corr = np.einsum("iam,jbm->abm", Km, Kdm)
-            val, _ = contract_cross_section(corr, q_cart[iq], cross_section)
-            val = np.real(val)
-            val[val < 0] = 0.0
+            # S^ab = (sum_i K_ia)(sum_j Kd_jb), the per-q worker's einsum.
             energies[iq] = np.real(ev[:n])
-            intens[iq] = val
-    return energies, np.maximum(intens, 0.0), ok
+            left[iq] = Km.sum(axis=0)
+            right[iq] = np.conj(Kdm.sum(axis=0))
+    return SqwAmplitudes(energies, left, right, ok)
+
+
+def sqw_batch_from_h(
+    h_plus: npt.NDArray[np.complex128],
+    q_cart: npt.NDArray[np.float64],
+    Ud_numeric: npt.NDArray[np.complex128],
+    spin_prefactor: npt.NDArray[np.float64],
+    form_factors: Optional[npt.NDArray[np.float64]] = None,
+    g_tensors: Optional[npt.NDArray[np.float64]] = None,
+    cross_section="perp",
+    h_minus_func=None,
+    spin_magnitude: float = 0.5,
+):
+    """S(Q,w) per mode for a stack of H(q) by Colpa's method: the amplitudes of
+    `colpa_amplitudes_from_h` contracted to `cross_section` at q_cart. Returns
+    (energies, intensities, ok) with ok False where the per-q fallback ran."""
+    amps = colpa_amplitudes_from_h(
+        h_plus, q_cart, Ud_numeric, spin_prefactor, form_factors=form_factors,
+        g_tensors=g_tensors, h_minus_func=h_minus_func, spin_magnitude=spin_magnitude)
+    return amps.energies, amps.contract(q_cart, cross_section), amps.ok
 
 
 # --- Global variable for worker processes ---

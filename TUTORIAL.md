@@ -500,11 +500,13 @@ the **Run & Analyze** tab.
 package that runs pyMagCalc's numerical hot path — the per-q diagonalization
 of the Bogoliubov Hamiltonian, the S(Q,ω) intensity contraction, and powder
 averaging — in an OpenMP-parallel Fortran core backed by LAPACK. The physics
-and results are identical to the NumPy path (parity to ~1e-13); the win is
-speed: the compute kernel is 18–100× faster than the multiprocessing NumPy
-path, and on the KFe3J example with 8000 q-points the end-to-end S(Q,ω) run is
-roughly an order of magnitude faster. It shines on dense q-grids and powder
-averages; for a handful of q-points the default NumPy path is fine. Mixed-spin
+and results are identical to the NumPy path (parity to ~1e-13 in energy). Its
+compute kernel was 18–100× faster than the multiprocessing NumPy pool that S(Q,ω)
+used until 2026-10-30. **That is no longer the comparison:** the default S(Q,ω)
+path is now batched Colpa (§4f, `sqw_method`). On a 16-site cell it runs at
+26,000–28,000 q/s, against 5,900 q/s for `backend: fortran` end to end, and
+fMagCalc computes `perp` only. For S(Q,ω) and powder, leave `backend` at `numpy`
+(`GAP_STATUS.md`, "calculate_sqw on Colpa's method"). Mixed-spin
 models run through it too since 2026-10-27, with each site's own √(S_i/2)
 prefactor (see §4e).
 
@@ -1042,6 +1044,26 @@ A clean constant factor is a bug until proven otherwise.) The one real differenc
 is not an overall factor: Sunny's `ssf_perp` applies the g-tensor by default, so
 it is 4× ours at g = 2 — compare against `ssf_perp(sys; apply_g=false)`.
 
+**How S(Q,ω) is computed** (`calculation.sqw_method`, dipole mode). Since 2026-10-30
+the default, `colpa`, diagonalizes a stack of q at a time by Colpa's method: one
+Cholesky and one Hermitian eigensolve per q, on threads, in-process. It gives the
+one-magnon amplitudes A_a(q, m), S^ab = A_a A_b^*, which every cross-section above
+contracts. Single-k structures use it too, for all three channels. Where H₂(q) is not
+safely positive definite, that q is computed by the older per-q method (`eig` at +q
+and −q with basis matching). That covers a Goldstone mode, a Bragg point of a gapless
+model, and every unstable q of an `on_imaginary: warn` run, so nothing is lost there.
+
+```yaml
+calculation:
+  sqw_method: colpa     # colpa (default) | perq -- the per-q process pool, kept for
+                        # one release so a result can be checked against it
+```
+
+The two agree to about 1e-6 of the intensity. The per-q method zeroes Bogoliubov
+matrix elements below 1e-6, and Colpa's method does not, so Colpa is the more exact of
+the two. On 16 sites Colpa is about 100× faster. `backend: fortran` is unchanged and
+computes `perp` only.
+
 Domain averaging samples the unrotated model at `R^T q` per domain — exact for
 `perp`/`trace` (the polarization projector transforms covariantly) and
 rejected for tensor components. Modes are concatenated domain-major, so a
@@ -1120,9 +1142,15 @@ E, I = calc.sqw_batch(q_cart)                  # (Nq, N) each, energies ascendin
 E, I = calc.sqw_batch(q_cart, apply_g=True)    # scatter from the moment g.S
 ```
 
-- **Same quantity as `calculate_sqw`.** Per-site form factors, √(S_i/2) per site, per
-  chemical cell, `perp` or `trace`. It is equal to `calculate_sqw`'s per-q path to 1e-9,
-  and to Sunny directly.
+- **Same quantity as `calculate_sqw`.** It is `calculate_sqw`'s engine since
+  2026-10-30 (`sqw_method: colpa`): per-site form factors, √(S_i/2) per site, per
+  chemical cell, and any cross-section (`cross_section=`, as in §4f). It equals the old
+  per-q path to 1e-9 and Sunny directly. A single-k structure gives 3N modes per q,
+  channel-major [q−k | q | q+k], as `calculate_sqw` does.
+- **Amplitudes.** `calc.sqw_amplitudes(q_cart)` returns the energies and the
+  amplitudes themselves, with S^ab(q, m) = left_a right_b^*. The two arrays are the
+  same where Colpa ran on a commensurate structure. `.contract(q_cart, cross_section)`
+  gives any cross-section without diagonalizing again.
 - **Speed.** About 27,000 q/s on a 16-site cell (8 threads), against a few hundred q/s
   for the per-q process pool. No `if __name__ == "__main__"` guard is needed, since it
   uses threads, not processes.
@@ -1132,8 +1160,8 @@ E, I = calc.sqw_batch(q_cart, apply_g=True)    # scatter from the moment g.S
   S(Q,ω) means (Sunny `apply_g=false`). `True` weights each site by its configured
   `atoms_uc[i].g`, evaluated at the current parameter values, or by `g_tensors=`
   (N, 3, 3). That is Sunny's `ssf_perp(apply_g=true)`, 4× the bare value at g = 2.
-- **Not supported:** single-k (rotating-frame) structures and other cross-sections. Use
-  `calculate_sqw` for those.
+- **Not supported:** `apply_g` on a single-k structure, whose amplitudes are in the
+  rotating frame. Use a `magnetic_supercell` for that.
 
 ### The dataset
 

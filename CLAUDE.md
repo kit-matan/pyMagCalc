@@ -1009,11 +1009,24 @@ The one real difference, which is *not* an overall factor: Sunny's `ssf_perp` ap
 the g-tensor by DEFAULT, i.e. it measures moments (g·S) and is 4× ours at g = 2.
 Compare against `ssf_perp(sys; apply_g=false)`.
 
-**Ignoring temperature biases fits.** Not a rounding effect: on a ferrimagnet, fitting
-40 K data with a T=0 model returns J = 1.07 instead of 1.30 (a 17% error), because the
-Bose factor reweights the acoustic and optic branches *relative to each other* and a free
-`scale` cannot absorb that. (On a simple AFM chain no bias is even possible: I ~ 1/(J f(q)),
-so J only rescales the intensity and it carries no information about J at all.)
+**Model the temperature in an intensity fit.** With one exchange constant H(q) =
+J × (a J-free matrix), so every T = 0 intensity is exactly independent of J. Only the
+Bose factor, through ω/kT, makes intensities depend on J. A T = 0 model fitted to warm
+intensities therefore cannot determine J at all: its χ² is flat. On the ferrimagnetic
+chain at 40 K it also misfits badly, because the Bose factor reweights the acoustic and
+optic branches *relative to each other* and a free `scale` cannot absorb that. Modelling
+T recovers J exactly (`test_temperature_is_what_makes_intensities_carry_J`). This entry
+used to say a T = 0 fit "returns J = 1.07 instead of 1.30 (a 17% error)". That was
+rounding noise: the per-q path's 1e-6 cut on K/Kd decided the argmin of a χ² flat to
+1e-12. Colpa's method has no such cut, which exposed it (2026-10-30).
+
+**How S(Q,ω) is computed** (dipole mode, 2026-10-30). `calculate_sqw` uses batched Colpa
+(`MagCalc.sqw_amplitudes`, contracted by `numerical.contract_cross_section_batch`) for
+every cross-section and for single-k. A q where H₂ is not safely positive definite (a
+Goldstone point, an unstable q under `on_imaginary: warn`) falls back to the per-q
+KKdMatrix. `calculation: {sqw_method: perq}` selects the old per-q process pool for one
+release. Colpa has no 1e-6 element cut, so results move by ~1e-6 relative. A test that
+needs tighter agreement with an old per-q number needs that context.
 
 **Mixed spin.** The S(Q,ω) prefactor is √(S_i/2) **per site**. It used to be a single
 global √(S/2), making every site whose S differed from the reference wrong by √(S_i/S_ref)

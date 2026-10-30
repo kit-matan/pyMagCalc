@@ -81,7 +81,7 @@ Tests: `tests/test_hamiltonian_terms.py`.
 | # | Item | Status | Key | Validated against |
 |---|---|---|---|---|
 | 1 | **SU(N) mode** | ✅ | `calculation.mode: SUN` | Sunny `:SUN` — FeI₂ energy, all 8 bands, AND intensities to 4e-7 |
-| 2 | Fitting sees temperature/domains/cross_section | ✅ | (auto from `calculation:`) | ignoring T biased J by 17% |
+| 2 | Fitting sees temperature/domains/cross_section | ✅ | (auto from `calculation:`) | ferrimagnetic chain at 40 K: modelling T recovers J exactly, and T = 0 intensities are exactly J-independent (the old "17% bias" was rounding noise, corrected 2026-10-30) |
 | 3 | Mixed-spin intensity prefactor | ✅ | (per-site √(S_i/2)) | decoupled-sublattice identity (was 60% error); the alternating-spin chain's closed form, energies AND per-band intensities to 1e-10, under `backend: numpy` and `fortran` (K6, 2026-10-27: fMagCalc carries the per-site factor, no NumPy fallback) |
 | 3b | Mixed-spin **classical ground state** | ✅ | (per-site \|m_i\| = S_i) | closed-triangle law of cosines: AFM trimer S = (1,1,½) minimises at 151.0°/104.5°, E = −1.125 J, not the 120°/−1.5 J a uniform-length search returns |
 | 4 | Polarized / chiral cross-sections | ✅ | `cross_section` | Sunny (also listed under Gap 1) |
@@ -1127,6 +1127,111 @@ machine and model (4,000 q in 12.2 s): 87×.
 `9061710`, magpipe `e92b2c7`; `MAGCALC_NO_GUI=1 pytest -m "" -rs` from the workspace root,
 idle machine): **2584 passed, 2 skipped, 0 failed, 15 min 01 s**, the previous 2535 plus
 these 49. The two skips are the structural `seekpath` and ALPS ones.
+
+### calculate_sqw on Colpa's method, 2026-10-30 — every cross-section and single-k, 69–100× the per-q pool
+
+**What changed.** The dipole engine's `calculate_sqw` used a per-q process pool
+(`process_calc_Sqw` → `KKdMatrix`). At every q it ran `eig` on the non-Hermitian g·H₂
+at +q and at −q, Gram–Schmidt inside degenerate blocks, and −q → +q basis matching. It
+now runs on `MagCalc.sqw_amplitudes` by default. That is phase 1's batched Colpa
+diagonalization: one Cholesky of H₂ and one Hermitian `eigh` per q, a stack of q at a
+time, on threads, in-process. The pool stays selectable for one release as
+`calculation: {sqw_method: perq}` (or `MagCalc.sqw_method = "perq"`).
+
+- **Amplitudes, then any cross-section.** `sqw_amplitudes` returns the energies and two
+  amplitude tensors, with S^ab(q, m) = left_a right_b^*.
+  - Where Colpa ran on a commensurate structure the two are one array, A_a A_b^*.
+  - At a fallback point they come from K (+q) and Kd (−q).
+  - In a single-k channel they are L·A and R^†·A, with L and R the Toth–Lake
+    projectors. At k_case 2 the left and right projectors are not adjoints.
+- **One implementation of every cross-section.** `numerical.contract_cross_section_batch`
+  is the vectorized implementation: perp, trace, components, chiral, sf±, an arbitrary
+  polarization axis and Blume–Maleev. `contract_cross_section` is one q of it, and the
+  SU(N) and KPM engines call it unchanged. Against the previous per-q implementation it
+  agrees to 1e-13 on every cross-section, including the |q| ≈ 0 fallbacks. A
+  Blume–Maleev q outside the plane is refused before any diagonalization.
+- **Single-k.** The three channels are three Colpa stacks at q − k, q and q + k. Each
+  carries the form factor at the physical |q| and its own Ewald block. The result is the
+  pool's 3N columns, channel-major. `apply_g` refuses a single-k structure, whose
+  amplitudes are in the rotating frame.
+- **What did not move:**
+  - **Gapless and unstable q.** Where H₂ is not safely positive definite (ω_min < 1e-6
+    ‖H₂‖) that q still takes KKdMatrix: Goldstone points, Bragg points of a gapless
+    model, and every unstable q of an `on_imaginary: warn` run. A supplied ferromagnet of
+    a J₁–J₂ chain past its Lifshitz point falls back exactly where the closed form
+    ω(q) < 0, and equals the pool everywhere.
+  - **The imaginary-mode guard** (`stability_report`, on `eig`).
+  - **`backend: fortran`** and the SU(N) and entangled engines.
+
+**Oracles.**
+- **Existing pins.** Every Sunny and closed-form S(Q,ω) pin now runs on this path and
+  passes unchanged:
+  - `test_polarized.py`: chiral and perp absolute, band by band;
+  - `test_polarization_frames.py`: Blume–Maleev and general P against Sunny;
+  - `test_single_k.py`: three channels against `SpinWaveTheorySpiral` at k_case 3 and 2;
+  - `test_absolute_normalization.py`, `test_mixed_spin_sqw.py`;
+  - `test_ewald_spiral.py`: the supercell identity and Sunny;
+  - `test_gapless_backends.py`, `test_sqw_batch.py`.
+- **A new exact identity** (`tests/test_sqw_colpa_routing.py`). A commensurate screw in
+  the rotating frame is compared with the same structure as an explicit
+  `magnetic_supercell` (plain LSWT, Sunny-pinned in `test_polarized.py`), per chemical
+  cell. It holds for 16 cross-sections at k_case 3 (k = ⅓) and k_case 2 (k = ½), to 1e-9
+  of the trace band sum. The screw's chiral term is over half its perp, so the identity
+  is not vacuous.
+- **Equality with the pool.** Colpa equals the pool for every cross-section on the
+  commensurate screw, and for perp, chiral, xy and a general P on both single-k chains,
+  to 1e-5 (the pool zeroes K/Kd elements below 1e-6). Every channel forced down the
+  fallback reproduces the Colpa amplitudes' cross-section.
+
+**Found while doing it, both older than Colpa:**
+- **OPEN_WORK item 9.** At k_case 2, with a polarization axis off q, one channel mode
+  of a degenerate group can carry a negative sf±. The per-mode clamp zeroes it before
+  the group is summed: +6 % on one group total on the Néel chain. Unclamped, the
+  supercell identity holds to 1e-15. The pool does the same. It is pinned as two strict
+  xfails, not fixed here.
+- **A false claim about temperature in fits.**
+  `test_ignoring_temperature_biases_an_intensity_fit` asserted that a T = 0 model fitted
+  to 40 K intensities of a ferrimagnetic chain "recovers ~1.07 (a 17% error)", and
+  CLAUDE.md §6 repeated it. With one exchange constant, H = J × (a J-free matrix), so
+  T = 0 intensities are exactly J-independent. The χ² was flat to 1e-12, and the pool's
+  1e-6 cut picked the argmin (1.15 on the old path). Colpa has no cut, so the argmin moved
+  to 1.30. The test now pins the true statement: T = 0 intensities do not depend on J,
+  the χ² is flat and misfits badly, and modelling T recovers J exactly
+  (`test_temperature_is_what_makes_intensities_carry_J`).
+
+**Speed** (16-site α-Cu₂V₂O₇, zero field, annealed ground state; `calculate_sqw`, perp,
+warm; machine at load 12–27):
+
+| path | 4,000 q | 16,384 q |
+|---|---|---|
+| Colpa (default) | 0.19 s, 21,500 q/s | 0.58–0.63 s, 26,000–28,000 q/s |
+| per-q pool (`sqw_method: perq`) | 12.8 s, 312 q/s | — |
+| fMagCalc (`backend: fortran`) | 0.60 s, 6,700 q/s | 2.76–2.79 s, 5,900 q/s |
+
+The three agree to 8e-14 meV in energy and 5e-7 of the band sum in intensity: the pool
+and fMagCalc share the 1e-6 element cut, and Colpa does not.
+
+**fMagCalc's S(Q,ω) path: the recommendation.** Its 2.8 s splits into three parts: the
+Python H(+q) and H(−q) build (0.93 s), a per-q Python loop over form factors (0.92 s)
+and the kernel itself (1.45 s). The kernel is the same `eig` ±q algorithm in Fortran,
+and it alone takes 2.5× the whole Colpa path. Colpa's own time is 35–60 % the H(q)
+build, and the rest is already LAPACK, batched and threaded. A Fortran Colpa kernel
+could therefore recover only part of about 0.3 s per 16k q. Recommendation, not acted
+on here:
+1. Have `backend: fortran` S(Q,ω) and powder use the Colpa path, keeping `run_sqw` only
+   as a parity oracle.
+2. Retire fMagCalc's S(Q,ω) kernel with the per-q pool in the next release. It computes
+   perp only and keeps the 1e-6 element cut.
+3. The next real speedup is the H(q) build: a numeric builder from the bond arrays in
+   place of the lambdified SymPy matrix, not a compiled diagonalizer.
+
+fMagCalc's dispersion path is not affected by any of this.
+
+**Gate** (2026-10-30, pyMagCalc `4ec9424`, fMagCalc `4a5ff4b`, rsMagCalc `9061710`, magpipe
+`e92b2c7`; `MAGCALC_NO_GUI=1 pytest -m "" -rs` from the workspace root, load 7–15):
+**2653 passed, 2 skipped, 2 xfailed, 0 failed, 12 min 14 s**. That is the previous 2584
+plus 69. The skips are the structural `seekpath` and ALPS ones, and the xfails are item
+9's two strict pins.
 
 ### minimize_energy on a quartic mixed-spin energy, 2026-10-30 — the SymPy fallback moves on the per-site lengths
 
