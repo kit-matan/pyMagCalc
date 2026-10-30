@@ -1287,7 +1287,7 @@ AMATERAS; Fermi-chopper instruments. See `OPEN_WORK.md` item 8.
     ranges and an `accept(n_f)` coverage mask.
 - **`Crystal.position`** shifts a crystal's kernel.
 
-**Oracles** (`tests/test_qe_resolution.py` 10, `tests/test_neutron_data.py` +1):
+**Oracles** (`tests/test_qe_resolution.py` 11, `tests/test_neutron_data.py` +1):
 - **Independent ray trace** (`raytrace_tof.trace_qe`): a disk and a counter-rotating
   pair, an Ikeda–Carpenter pulse, uniform divergence, sample box and pixel volume, exact
   geometry and reduction; 200,000 neutrons at 2θ = 60°. Every element of the 4×4
@@ -1303,6 +1303,8 @@ AMATERAS; Fermi-chopper instruments. See `OPEN_WORK.md` item 8.
 - **Flat dispersion:** Level 1 equals Level 0, to the Sobol error.
 - **Crystal offset:** the closed-form first-order shift, to 1.0012–1.0024 (second order
   at 5 mm), mirrored by −x.
+- **Intrinsic width** (`intrinsic_sigma`): for a Gaussian residual, the bin fraction is
+  the erf with √((ρσ₀)² + σᵢ²), to 2e-4 of peak.
 - **Rotation-scan branches:** |k_i − R(ψ)UQ| = k_f to 1e-10.
 - **A bug the oracle caught:** normals first indexed by virtual sample put a stride of
   n_bins through the Sobol sequence, so each bin's samples shared nearly one normal.

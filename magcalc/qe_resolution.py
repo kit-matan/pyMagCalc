@@ -289,7 +289,9 @@ class QEResolution:
     """
 
     def __init__(self, energy, geometry, spread: GeometrySpread, *, ei=None, l1=None,
-                 l2=None, time_cov=None, energy_blocks=None, seed=0):
+                 l2=None, time_cov=None, energy_blocks=None, seed=0, intrinsic_sigma=0.0):
+        """intrinsic_sigma: a Gaussian width (meV) of the modes themselves (a lifetime or
+        an unresolved splitting), added after the Q-E conditioning; 0 for sharp modes."""
         self.energy = energy
         self.geometry = geometry
         self.spread = spread
@@ -300,11 +302,20 @@ class QEResolution:
         self.time_cov = np.asarray(time_cov if time_cov is not None else energy.cov, float)
         self.energy_blocks = energy_blocks
         self.seed = int(seed)
+        self.intrinsic_sigma = float(intrinsic_sigma)
 
     def fraction(self, lo, hi, centre, shift=0.0, rho=1.0):
         """Probability that a mode at `centre` is recorded in [lo, hi] when the recorded
         energy is shifted by `shift` and the residual narrowed to `rho` of the energy
-        resolution's width."""
+        resolution's width. With `intrinsic_sigma` (meV) the mode itself has a Gaussian
+        width, added in quadrature to the residual's: exact for a Gaussian residual, and
+        for any other the residual's own shape, widened."""
+        if self.intrinsic_sigma > 0:
+            s0 = np.asarray(self.energy.sigma(np.asarray(centre, float)), float)
+            rho = np.sqrt(np.asarray(rho, float) ** 2 + (self.intrinsic_sigma / s0) ** 2)
+        return self._fraction(lo, hi, centre, shift, rho)
+
+    def _fraction(self, lo, hi, centre, shift=0.0, rho=1.0):
         centre = np.asarray(centre, float)
         lo = np.asarray(lo) - shift
         hi = np.asarray(hi) - shift

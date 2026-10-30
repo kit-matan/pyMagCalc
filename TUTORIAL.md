@@ -1333,6 +1333,10 @@ fm = ForwardModel(calc, data, qe, crystals=[Crystal(position=[0, 0, 0.006]), ...
   energy blocks.
 - **`Crystal.position`** (m, sample frame) moves one crystal off the rotation axis: its
   lines shift in Q and E with ψ.
+- **`QEResolution(intrinsic_sigma=...)`** gives the modes a Gaussian width of their own
+  (a lifetime, or an unresolved splitting), added in quadrature after the Q–E
+  conditioning. Fit it as a nuisance only once the instrument and the sample's grains are
+  modelled; otherwise it absorbs them.
 - **The depth** in `GeometrySpread` should be the energy resolution's `detector_depth`.
 - **Divergence is an instrument number to calibrate.** It dominates the Q width at a cold
   instrument; fix it from Bragg-peak widths at several |Q| (mosaic grows with |Q|,

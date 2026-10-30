@@ -224,3 +224,19 @@ def test_run_goniometer_needs_every_run():
     with pytest.raises(ValueError):
         RunGoniometer(np.eye(3), {1: 0.0}).rotations(data, np.zeros((4, 3)), np.arange(4),
                                                      np.zeros(4))
+
+
+def test_intrinsic_width_adds_in_quadrature_to_the_residual():
+    """A Gaussian intrinsic width s_i, convolved after the conditioning: for a Gaussian
+    residual of width rho sigma0 the bin fraction is the erf with sqrt((rho sigma0)^2 + s_i^2)."""
+    energy = _gaussian_spec().resolution(EI)
+    qe = QEResolution(energy, RunGoniometer(np.eye(3), {0: 0.0}), GeometrySpread(),
+                      intrinsic_sigma=0.05)
+    lo = np.linspace(2.0, 4.0, 41)[:-1]
+    hi = lo + 0.05
+    s0 = float(energy.sigma(3.0))
+    for rho in (1.0, 0.5):
+        s = np.hypot(rho * s0, 0.05)
+        want = ndtr((hi - 3.0 - 0.02) / s) - ndtr((lo - 3.0 - 0.02) / s)
+        got = qe.fraction(lo, hi, np.full_like(lo, 3.0), 0.02, rho)
+        assert np.max(np.abs(got - want)) < 2e-4 * want.max()
