@@ -1153,7 +1153,7 @@ transmitted beam and `T0EnergyMap` re-centres what is left.
 `GaussianEnergyResolution.fraction` is phase 1's `_bin_fraction(σ(ε))`, bit for bit, and
 an object with only `sigma(E)` still gets that path.
 
-**Oracles** (`tests/test_resolution.py` 28, `tests/test_forward_model.py` +2):
+**Oracles** (`tests/test_resolution.py` 28, `tests/test_resolution_raytrace.py` 6, `tests/test_forward_model.py` +2):
 - **Mantid PyChop, exact.** PyChop's moderator/first-chopper width, final-chopper
   width and detector term go through this code's propagation as Gaussians, and give
   PyChop's own CNCS vanadium FWHM, its sample term removed, to **2.6e-14 relative**:
@@ -1175,6 +1175,19 @@ an object with only `sigma(E)` still gets that path.
   - Fractions over covering bins sum to 1 (1e-12); `ForwardModel`'s energy sum rule
     holds under the full line shape (1e-12).
   - The Ikeda–Carpenter mean and variance match their closed forms.
+- **Independent ray-tracing Monte Carlo** (`tests/raytrace_tof.py`,
+  `tests/test_resolution_raytrace.py`; 400,000 transmitted neutrons a case).
+  - **How it works:** neutrons get emission times from the pulse and speeds from a flat
+    band. They pass each chopper by its own geometry (a moving slot, two counter-rotating
+    slots, or a straight Fermi channel at its rotor angle), and are reduced by exact time
+    of flight with the nominal Ei and time at the sample. It never calls the model.
+  - **CNCS-like instrument** (Fermi chopper 1, counter-rotating chopper 4,
+    Ikeda–Carpenter pulse, 25 mm depth), Ei 3.3–12 meV, E from −E_i/2 to E_i/2: the
+    profile matches to ≤ 1.5e-3 in the CDF and 0.998–1.001 in the width.
+  - **The first-order mapping:** off by 0.4–0.9% here, and by 4.5% for a pair alone
+    passing a long unshaped tail. So the table now maps every quadrature point through
+    the exact time of flight (`kinematics='exact'`, the default). σ(E) and the
+    PyChop-exact propagation stay first order.
 - **Mutation check.** Shifting β's L₁ by 1 m fails 9 of the 19 original tests.
 
 **Counter-rotating pairs.** A pair is modelled as two slots moving in opposite directions
@@ -1202,14 +1215,14 @@ Results:
 - **Against data,** the incoherent elastic line of a 2025 CNCS single-crystal dataset
   (Bragg regions excluded; fit amplitude, centre and a linear background, **no free
   width**):
-  - with the McStas BL5 pulse shape, the model's FWHM is 0.340 meV against the measured
-    0.341 meV (Ei 12, Intermediate), and 0.275 against 0.254 (Ei 6.25, High Flux);
+  - with the McStas BL5 pulse shape, the model's FWHM is 0.342 meV against the measured
+    0.341 meV (Ei 12, Intermediate), and 0.277 against 0.254 (Ei 6.25, High Flux);
   - it fits better than any Gaussian, the free-width one included. The measured line
     has a long energy-gain tail (late-emitted neutrons that pass chopper 4 on time are
-    fast). Reproducing its height needs chopper 1 about 1.9× wider than the Fermi
+    fast). Reproducing its height needs chopper 1 about 1.8× wider than the Fermi
     geometry gives;
-  - with that and one effective slot angle per mode (3.7° and 8.5°), χ²/dof is 93 and
-    3.5 on very high statistics, against 2617 and 8.6 for a free Gaussian, over two
+  - with that and one effective slot angle per mode (3.7° and 8.5°), χ²/dof is 86 and
+    2.8 on very high statistics, against 2617 and 8.6 for a free Gaussian, over two
     decades of the line.
 - **Two numbers to confirm** with the CNCS team: chopper 1's actual opening at 60 Hz,
   and the beam width at chopper 4 (PyChop's 12 mm against the McStas guide's ~21 mm).

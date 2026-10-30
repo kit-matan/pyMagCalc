@@ -88,10 +88,10 @@ known; item 3 is done:
      elastic widths, in place of the Gaussian width law. **The energy part is in**
      (2026-10-30, `magcalc/resolution.py`; GAP_STATUS "phase 2, the energy
      resolution"). It gives an exact line shape from the pulse, choppers and flight
-     paths, integrated over each bin through `fraction(lo, hi, centre)`, and
-     reproduces PyChop's propagation to 3e-14. CNCS is built in. Still to do, in order:
-     - an independent ray-tracing Monte Carlo of the spectrometer, to check the
-       linearisation itself;
+     paths, integrated over each bin through `fraction(lo, hi, centre)`. It
+     reproduces PyChop's propagation to 3e-14 and an independent ray-tracing Monte
+     Carlo (`tests/raytrace_tof.py`) to 0.5% in the CDF. CNCS is built in, and its
+     elastic width matches measured data with no free width. Still to do, in order:
      - **Q resolution and the Q–E correlation**: divergence, sample size and position
        (two crystals), pixel size, and the chopper times' shift of |k_i| and |k_f|.
        These enter through the sample quadrature: a per-sample δQ plus a conditional

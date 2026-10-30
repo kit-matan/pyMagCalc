@@ -23,6 +23,11 @@ distribution of alpha tau + beta mu, plus independent extra terms (detector dept
 Gaussian width). Its mean is removed: the reduction's Ei and time zero are calibrated
 on the transmitted beam (`neutron_data.T0EnergyMap` re-centres what is left).
 
+The first-order relation sets sigma(E) and the scale of the table. The table itself maps
+every quadrature point through the exact time of flight the reduction uses (`kinematics=
+'exact'`, the default), which matters once an unshaped pulse tail spreads the incident
+speed by a few % (tests/test_resolution_raytrace.py: about 4 % in width otherwise).
+
 `ChopperEnergyResolution.fraction(lo, hi, centre)` is the probability that a mode at
 `centre` is recorded in [lo, hi]: the protocol `forward.ForwardModel` uses, shared with
 `forward.GaussianEnergyResolution`. When every part is Gaussian it is that same erf
@@ -371,9 +376,11 @@ class ChopperSpectrometer:
             lam[0, 0] += 1.0 / m.var()
         return np.linalg.inv(lam)
 
-    def time_points(self, ei, n=400):
+    def time_points(self, ei, n=400, centre=True):
         """Midpoint quadrature of the transmitted (tau, mu) density: points (N, 2) and
-        weights summing to 1, mean removed."""
+        weights summing to 1, mean removed unless `centre` is False (then tau is the
+        emission time about the phasing time and mu the inverse speed about the
+        phased one)."""
         m = self.moderator_pulse(ei)
         n = int(n)
         if len(self.choppers) == 2:
@@ -405,7 +412,8 @@ class ChopperSpectrometer:
         pts = np.column_stack([tau.ravel(), mu.ravel()])
         keep = w > 0
         pts, w = pts[keep], w[keep]
-        pts = pts - w @ pts
+        if centre:
+            pts = pts - w @ pts
         return pts, w
 
     def time_covariance(self, ei, n=400):
@@ -447,10 +455,19 @@ class ChopperEnergyResolution:
     the two nearest nodes. A mode outside `e_range` takes the nearest node's profile
     (its weight in bins below Ei is a tail). `n_time` is the quadrature per time axis,
     `n_x` the bins across each node's profile.
+
+    kinematics: 'exact' (default) maps each quadrature point (tau, mu) to its recorded
+    energy with the time-of-flight relation the reduction uses, E_rec = Ei - (m/2)(L2 /
+    (t_D - t_S0))^2, so a long pulse tail (a few % of the flight time) keeps its true
+    shape; 'linear' uses dE = alpha tau + beta mu. sigma(E) is always the linear
+    covariance's, the scale the table is stored in.
     """
 
     def __init__(self, spec: ChopperSpectrometer, ei: float, *, e_range=None,
-                 n_nodes=64, n_time=400, n_x=2000, force_table=False):
+                 n_nodes=64, n_time=400, n_x=2000, force_table=False, kinematics="exact"):
+        if kinematics not in ("exact", "linear"):
+            raise ValueError("kinematics must be 'exact' or 'linear'")
+        self.kinematics = kinematics
         self.spec = spec
         self.ei = float(ei)
         lo, hi = e_range if e_range is not None else (-2.0 * ei, 0.95 * ei)
@@ -462,7 +479,9 @@ class ChopperEnergyResolution:
             self.cov = spec.time_covariance_gaussian(ei)
         else:
             # any shape (force_table: a Gaussian one too, to test the table itself)
-            self._pts, self._w = spec.time_points(ei, n_time)
+            # uncentred: the exact mapping needs the speeds the choppers are phased to
+            self._raw, self._w = spec.time_points(ei, n_time, centre=False)
+            self._pts = self._raw - self._w @ self._raw
             self.cov = (self._pts * self._w[:, None]).T @ self._pts
             self._build_table(int(n_x))
 
@@ -481,8 +500,11 @@ class ChopperEnergyResolution:
     def _profile_at(self, e, n_x):
         """(x bin edges' upper ends, CDF) of the recorded-minus-mode energy at e, meV."""
         sp = self.spec
-        al, be = sp.coefficients(self.ei, e)
-        s = self._pts @ np.array([al, be])
+        if self.kinematics == "exact":
+            s, w = self._exact_shift(e)
+        else:
+            al, be = sp.coefficients(self.ei, e)
+            s, w = self._pts @ np.array([al, be]), self._w
         sig = float(sp._sigma_from_cov(self.cov, self.ei, e))
         dep = abs(float(sp.depth_coefficient(self.ei, e))) * sp.detector_depth
         ext = sp.extra_sigma
@@ -490,7 +512,7 @@ class ChopperEnergyResolution:
         dx = 2 * half / n_x
         nh = int(np.ceil(half / dx)) + 2
         x = dx * np.arange(-nh, nh + 1)
-        mass = _deposit(s, self._w, dx, nh)
+        mass = _deposit(s, w, dx, nh)
         for width, kind in ((dep, "box"), (ext, "gauss")):
             if width > 0:
                 mass = np.convolve(mass, _kernel(width, kind, dx), mode="same")
@@ -498,6 +520,25 @@ class ChopperEnergyResolution:
         cdf = np.cumsum(mass)
         cdf /= cdf[-1]
         return x + dx / 2, cdf, sig
+
+    def _exact_shift(self, e):
+        """Recorded-minus-mode energy of every quadrature point by exact time of flight
+        (nominal Ei and time at the sample, as reduced), mean removed; weights (points
+        whose final energy would be <= 0 are dropped)."""
+        sp = self.spec
+        V = NEUTRON_V_PER_SQRT_MEV
+        u0 = 1.0 / (V * np.sqrt(self.ei))
+        tau, mu = self._raw[:, 0], self._raw[:, 1]
+        u = u0 + mu
+        ef = (1.0 / (u * V)) ** 2 - e
+        ok = (ef > 0) & (u > 0)
+        w = np.where(ok, self._w, 0.0)
+        vf = V * np.sqrt(np.where(ok, ef, 1.0))
+        t_det = tau + sp.l1 * u + sp.l2 / vf
+        ef_rec = (sp.l2 / (t_det - sp.l1 * u0) / V) ** 2
+        s = np.where(ok, self.ei - ef_rec - e, 0.0)
+        w = w / w.sum()
+        return s - w @ s, w
 
     def _build_table(self, n_x):
         profs = [self._profile_at(e, n_x) for e in self.e_nodes]

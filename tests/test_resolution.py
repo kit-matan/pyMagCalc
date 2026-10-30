@@ -1,7 +1,10 @@
 """magcalc.resolution: a chopper spectrometer's energy resolution, against closed forms,
 exact limits and direct Monte Carlo of the transmitted neutrons.
 
-Oracles (none of them the code's own tabulation):
+Oracles (none of them the code's own tabulation). Those built on the first-order relation
+dE = alpha tau + beta mu test the tabulation with kinematics="linear"; the default exact
+time-of-flight mapping is checked against the ray-tracing Monte Carlo in
+test_resolution_raytrace.py.
 - the two-chopper Gaussian width in closed form (Windsor's propagation, written out
   below independently of the precision-matrix route the code takes);
 - the exact CDFs of Gaussian (x) box and Gaussian (x) trapezoid (iterated integrals of
@@ -177,8 +180,8 @@ def test_table_reproduces_the_erf_when_forced():
     spec = ChopperSpectrometer("g", L1, L2, [TimeWindow("P", XP, Gaussian(9e-6)),
                                              TimeWindow("M", XM, Gaussian(6e-6))],
                                moderator=Gaussian(40e-6))
-    exact = spec.resolution(EI)
-    table = spec.resolution(EI, force_table=True)
+    exact = spec.resolution(EI, kinematics="linear")
+    table = spec.resolution(EI, force_table=True, kinematics="linear")
     assert not table.gaussian
     assert table.cov == pytest.approx(exact.cov, rel=1e-6)
     x = np.linspace(-0.4, 0.4, 33)
@@ -212,7 +215,7 @@ def test_gaussian_and_box_choppers_give_the_closed_form_profile(e):
     sp, wm = 6e-6, 30e-6
     spec = ChopperSpectrometer("gb", L1, L2, [TimeWindow("P", XP, Gaussian(sp)),
                                               TimeWindow("M", XM, Uniform(wm))])
-    r = spec.resolution(EI)
+    r = spec.resolution(EI, kinematics="linear")
     assert not r.gaussian
     cp, cm = _chopper_coefficients(EI, e)
     s, w = abs(cp) * sp, abs(cm) * wm
@@ -229,7 +232,7 @@ def test_trapezoid_with_extra_gaussian_gives_the_closed_form_profile(e):
     spec = ChopperSpectrometer("gt", L1, L2, [TimeWindow("P", XP, Gaussian(sp)),
                                               TimeWindow("M", XM, Trapezoid(ta, tb))],
                                extra_sigma=ext)
-    r = spec.resolution(EI)
+    r = spec.resolution(EI, kinematics="linear")
     cp, cm = _chopper_coefficients(EI, e)
     s = np.hypot(abs(cp) * sp, ext)
     a, b = abs(cm) * ta, abs(cm) * tb
@@ -244,7 +247,7 @@ def test_detector_depth_is_a_box_in_energy():
     spec = ChopperSpectrometer("gd", L1, L2, [TimeWindow("P", XP, Gaussian(sp)),
                                               TimeWindow("M", XM, Gaussian(sm))],
                                detector_depth=d)
-    r = spec.resolution(EI)
+    r = spec.resolution(EI, kinematics="linear")
     assert not r.gaussian
     for e in (0.0, 3.4):
         cp, cm = _chopper_coefficients(EI, e)
@@ -263,7 +266,7 @@ def test_moderator_tail_against_direct_monte_carlo():
     P = DiskChopper("P", XP, 150.0, 0.03, 0.35, 0.03, counter_rotating=True)
     M = DiskChopper("M", XM, 300.0, 0.02, 0.35, 0.01, counter_rotating=True)
     spec = ChopperSpectrometer("mc", L1, L2, [P, M], moderator=pulse)
-    r = spec.resolution(EI)
+    r = spec.resolution(EI, kinematics="linear")
     rng = np.random.default_rng(7)
     n = 400_000
 
@@ -297,9 +300,9 @@ def test_elastic_width_scales_as_ei_to_three_halves():
     M = DiskChopper("M", XM, 300.0, 0.03, 0.35, 0.01, counter_rotating=True)
     spec = ChopperSpectrometer("multi", L1, L2, [P, M])
     eis = np.array([15.143, 7.734, 4.682, 3.135])
-    s = np.array([float(spec.resolution(ei).sigma(0.0)) for ei in eis])
+    s = np.array([float(spec.resolution(ei, kinematics="linear").sigma(0.0)) for ei in eis])
     assert s / eis ** 1.5 == pytest.approx(np.full(4, s[0] / eis[0] ** 1.5), rel=1e-12)
-    f = np.array([spec.resolution(ei).fwhm(0.0) for ei in eis])
+    f = np.array([spec.resolution(ei, kinematics="linear").fwhm(0.0) for ei in eis])
     assert f / eis ** 1.5 == pytest.approx(np.full(4, f[0] / eis[0] ** 1.5), rel=2e-3)
 
 

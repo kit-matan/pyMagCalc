@@ -1270,8 +1270,9 @@ res = spec.resolution(7.7)
   two choppers that set the resolution (a disk's trapezoid, a Fermi chopper's
   triangle, or any density), the moderator pulse about the time the choppers are phased
   to, the detector depth, and an optional extra Gaussian width. The recorded-minus-mode
-  energy is linear in those, with coefficients at the mode energy. Its distribution is
-  computed exactly, not assumed Gaussian, and tabulated once per Ei (about 0.1 s).
+  energy is mapped through the exact time of flight the reduction uses (or, with
+  `kinematics="linear"`, the first-order relation that also sets σ(E)). Its distribution
+  is computed exactly, not assumed Gaussian, and tabulated once per Ei (about 0.1 s).
 - **When everything is Gaussian it is the erf.** Then `fraction` is the same exact bin
   integral as `GaussianEnergyResolution`, with σ(E) in closed form.
 - **CNCS.** `cncs(variant, f_res, f1)` with `variant` 'High Flux', 'Intermediate' or
