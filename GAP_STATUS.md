@@ -1150,8 +1150,13 @@ the signal on to Python (TUTORIAL §4g has the script).
 `pytest -m slow -k dimer_series`, 6 passed; the fast suite, 1354 passed, 18 skipped, 2 xfailed. Three tests did
 not pass, and none is from this change. The two shadow-guard tests cannot pass while a second checkout is
 importable, as it is from a worktree. One xdist worker crashed in `test_intensity_layer.py` with the machine at
-load ~180, and that file passes on a rerun. The full gate (`pytest -m ""` from the workspace root) is owed before
-merging.
+load ~180, and that file passes on a rerun.
+
+**Gate after the merge** (onto K8, merge `8ca6723`; 2026-10-31 20:04–20:24, workspace root, `MAGCALC_NO_GUI=1 python
+-m pytest -m "" -rs`, idle machine; rsMagCalc `3f16142`, fMagCalc `192e7f8`, magpipe `e92b2c7`): **3206 passed, 2
+skipped, 4 xfailed, 0 failed, 20 min 07 s**. The 15 added to K8's 3191 are this file's. The skips are the structural
+`seekpath` and ALPS pair, the xfails item 9's two pins under both H(q) builders. The shadow-guard tests pass here: the
+worktree that made them fail is not importable from the workspace root.
 
 **Why order 9's L = 9 chunks run at about half the node** (LANTA job 6492718; looked at the same day; nothing changed by it).
 - **Not the order of the topologies.** `hopping_series` hands them to the kernel in the iteration order of the
