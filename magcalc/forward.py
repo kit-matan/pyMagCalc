@@ -250,13 +250,13 @@ class ForwardModel:
         return self.data.sample_cartesian(self.b_matrix, self.q_smear)
 
     def _spectra(self):
-        """[(weight, energies, intensities, crystal index)] per crystal node, at the
-        samples (or, with a Q-E resolution, at the virtual samples)."""
+        """Yields (weight, energies, intensities, crystal index) per crystal node, at the
+        samples (or, with a Q-E resolution, at the virtual samples): one node at a time,
+        so only one node's spectra are held in memory."""
         import time
         q = self.sample_q()
-        out = []
-        t = time.perf_counter()
-        npts = 0
+        self.last_timing["sqw_seconds"] = 0.0
+        self.last_timing["sqw_points"] = 0
         for ic, cr in enumerate(self.crystals):
             if self._kernels is None:
                 qc = q
@@ -264,16 +264,15 @@ class ForwardModel:
                 kern = self._kernels[ic]
                 qc = q[np.repeat(kern.sample, kern.points)] - kern.dq
             for R, w in cr.nodes():
+                t = time.perf_counter()
                 E, I = self.calc.sqw_batch(qc @ R.T, apply_g=self.apply_g,
                                            g_tensors=self.g_tensors)
+                self.last_timing["sqw_seconds"] += time.perf_counter() - t
+                self.last_timing["sqw_points"] += len(qc)
                 if not np.all(np.isfinite(E)) or not np.all(np.isfinite(I)):
                     raise FloatingPointError("sqw_batch returned non-finite values at "
                                              "some samples")
-                out.append((w, E, I, ic))
-                npts += len(qc)
-        self.last_timing["sqw_seconds"] = time.perf_counter() - t
-        self.last_timing["sqw_points"] = npts
-        return out
+                yield w, E, I, ic
 
     def _fraction_function(self):
         """fraction(lo, hi, centre) of the resolution: its own method (the protocol), or,
@@ -391,7 +390,9 @@ class ForwardModel:
                     f = fraction(l, h, s, True)
                     val += np.sum((amp_g[s] * f).reshape(len(s), -1), axis=1)
                 sig += w_node * np.bincount(b, weights=ew[c0:c0 + step] * val, minlength=nb)
-        self.last_timing["bin_seconds"] = time.perf_counter() - t
+        # the spectra are computed inside the loop now: the binning time is the rest
+        self.last_timing["bin_seconds"] = (time.perf_counter() - t
+                                           - self.last_timing["sqw_seconds"])
         self._cache = {key: sig}
         return sig
 
