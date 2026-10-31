@@ -1381,7 +1381,12 @@ fm = ForwardModel(calc, data, qe, crystals=[Crystal(position=[0, 0, 0.006]), ...
 - **The average over δQ** is deterministic by default (`method="quadrature"`): a 3×3×3
   Gauss–Hermite grid carries 1 − `smoothing` of the Q covariance and catches curvature;
   the rest is integrated analytically at each node from a quadratic fitted through them.
-  It costs 27 model evaluations per sample and adds no noise to a fit. `method="sample"`
+  It costs 27 model evaluations per sample and adds no noise to a fit. `nodes="s14"` uses
+  a 14-point rule exact to fifth order instead, at about half the cost: the same moments
+  on a linear or quadratic dispersion, but 3.5× the grid's error at a minimum's vertex.
+  It pays where the time saved buys more samples per bin, usually the larger error: on a
+  synthetic AMATERAS cut, 64 samples per bin with `"s14"` had about half the error of 32
+  with the grid, at the same cost. `method="sample"`
   draws one δQ per sample instead: exact on average, but on a steep dispersion it needs
   thousands of samples per bin, and a fit rewards a free width for smoothing its noise.
   Near the vertex of a minimum whose curvature across the Q resolution exceeds the gap

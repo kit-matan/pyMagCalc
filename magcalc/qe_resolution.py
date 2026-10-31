@@ -25,8 +25,10 @@ exact for a Gaussian kernel, and keeps the instrument's line shape otherwise.
 The average over dQ is done one of two ways (`QEResolution(method=...)`):
 - 'quadrature' (default), deterministic. Write dQ = L z (L L^T = Sigma_QQ, z standard
   normal) and split z = sqrt(1 - a) u + sqrt(a) w, a = `smoothing`. u runs over a
-  Gauss-Hermite product grid (`nodes` per axis), where the model is evaluated; it
-  carries the dispersion's curvature, a minimum's one-sided tail and a crossing's kink.
+  Gauss-Hermite product grid (`nodes` per axis), or over the 14-point degree-5 rule
+  (`nodes="s14"`, about half the model evaluations of the 3^3 grid), where the model is
+  evaluated; it carries the dispersion's curvature, a minimum's one-sided tail and a
+  crossing's kink.
   w is integrated analytically at each node: a quadratic fitted through all the nodes'
   f = eps(Q - dQ) + b . dQ, f ~ c + g.z + z^T H z / 2, gives the node's mean
   f + a tr(H) / 2 and variance a |g + H z|^2 + a^2 |H|_F^2 / 2, which widen the
@@ -280,6 +282,33 @@ def _gauss_hermite_grid(m):
     return g, wg
 
 
+def _degree5_rule_14():
+    """A 14-point rule for a standard normal in 3-D, exact for every polynomial of degree
+    <= 5: the 6 points +-r e_i (weight w1) and the 8 points (+-s, +-s, +-s) (weight w2).
+    Odd moments vanish by symmetry; the even ones up to degree 4 ask
+        6 w1 + 8 w2 = 1,  2 w1 r^2 + 8 w2 s^2 = 1,  2 w1 r^4 + 8 w2 s^4 = 3,  8 w2 s^4 = 1,
+    solved by r^2 = 5/2, s^2 = 5, w1 = 4/25, w2 = 1/200 (all weights positive). Its 14
+    points determine the 10 coefficients of the quadratic fit."""
+    r, s = np.sqrt(2.5), np.sqrt(5.0)
+    axis = np.concatenate([np.eye(3), -np.eye(3)]) * r
+    corners = np.array([[a, b, c] for a in (1, -1) for b in (1, -1) for c in (1, -1)],
+                       float) * s
+    z = np.concatenate([axis, corners])
+    w = np.concatenate([np.full(6, 4.0 / 25.0), np.full(8, 1.0 / 200.0)])
+    return z, w
+
+
+RULES = {"s14": _degree5_rule_14}
+
+
+def _quadrature_rule(nodes):
+    """The quadrature's (nodes (P, 3), weights (P,)): the nodes^3 Gauss-Hermite grid for an
+    int, else the named rule of RULES."""
+    if isinstance(nodes, str):
+        return RULES[nodes]()
+    return _gauss_hermite_grid(nodes)
+
+
 def _rotations(n, seed):
     """n fixed random rotations of 3-space (QR of Gaussian matrices, sign-fixed)."""
     a = np.random.default_rng(seed).standard_normal((n, 3, 3))
@@ -335,8 +364,9 @@ class QEResolution:
     energy_blocks: None evaluates the kernel at each entry's own bin energy (count cells:
     one bin per sample); an int groups bins into that many energy blocks per sample
     (MDNorm, where a cell's samples serve every energy bin). method: 'quadrature'
-    (default, deterministic; `nodes` per axis, analytic share `smoothing`) or 'sample'
-    (Monte Carlo); see the module docstring. seed: the normals of 'sample', one
+    (default, deterministic; `nodes` per axis of a Gauss-Hermite grid, or "s14" for the
+    14-point degree-5 rule; analytic share `smoothing`) or 'sample' (Monte Carlo); see
+    the module docstring. seed: the normals of 'sample', one
     scrambled-Sobol point per data sample.
     """
 
@@ -347,12 +377,16 @@ class QEResolution:
         an unresolved splitting), added after the Q-E conditioning; 0 for sharp modes."""
         if method not in ("quadrature", "sample"):
             raise ValueError(f"method must be 'quadrature' or 'sample', not {method!r}")
-        if int(nodes) < 3:
+        if isinstance(nodes, str):
+            if nodes not in RULES:
+                raise ValueError(f"nodes must be an int >= 3 or one of {sorted(RULES)}, "
+                                 f"not {nodes!r}")
+        elif int(nodes) < 3:
             raise ValueError("nodes must be >= 3 per axis (the quadratic fit needs them)")
         if not 0.0 <= float(smoothing) < 1.0:
             raise ValueError("smoothing must lie in [0, 1)")
         self.method = method
-        self.nodes = int(nodes)
+        self.nodes = nodes if isinstance(nodes, str) else int(nodes)
         self.smoothing = float(smoothing)
         self.energy = energy
         self.geometry = geometry
@@ -428,7 +462,7 @@ class QEResolution:
         ev = np.clip(ev, 0.0, None)
         extra = {}
         if self.method == "quadrature":
-            u, wq = _gauss_hermite_grid(self.nodes)
+            u, wq = _quadrature_rule(self.nodes)
             zn = np.sqrt(1.0 - self.smoothing) * u
             # each DATA sample turns the grid by its own fixed random rotation, so the
             # nodes' comb falls differently for a bin's samples and averages out; the

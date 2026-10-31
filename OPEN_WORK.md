@@ -111,6 +111,10 @@ known; item 3 is done:
          a minimum with c σ_Q ≳ Δ, which `nodes` only buys down at n³ cost. The next step
          there is to treat the most curved direction exactly: a·w + κw²/2 has a
          closed-form CDF, which keeps the onset at the gap;
+       - samples per bin, not nodes, are usually the larger error (2026-10-31, GAP_STATUS
+         "The 14-point rule"). `nodes="s14"` halves the cost per sample so that the saving
+         can buy samples. A better sampling of each bin's cells, stratified in the
+         integrated directions, is the next lever;
      - AMATERAS: the geometry is in (`amateras(...)`, Nirei et al. 2024 plus the instrument
        team). Its moderator pulse (one published width) is still to be calibrated on an
        elastic line, and then the Q–E kernel on count cells (the runs' ψ are in the

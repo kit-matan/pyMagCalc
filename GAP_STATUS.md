@@ -1765,6 +1765,55 @@ energy resolution (c σ_Q > Δ at a vertex) 3 nodes are not enough: 7 nodes with
 bring a c σ_Q = 1.4 Δ vertex to 10%, at 343 evaluations per virtual sample. Check such a
 case against `method="sample"` with many draws on a few bins.
 
+**The 14-point rule (`nodes="s14"`, 2026-10-31).** u runs over 14 points instead of 27: the
+6 points ±r eᵢ and the 8 cube corners (±s, ±s, ±s), r² = 5/2, s² = 5, weights 4/25 and
+1/200, the solution of the moment equations up to degree 4 (odd moments vanish by
+symmetry). It is exact for every Gaussian moment of degree ≤ 5, as the 3×3×3 grid is, and
+its points determine the quadratic fit. Pinned in `tests/test_qe_resolution.py`:
+- **Exact identities.** Every monomial of degree ≤ 5 to 1e-13 (and degree 6 visibly not:
+  10 for E z₁⁶ = 15). On a QUADRATIC dispersion ε = e₀ + v·δ + δᵀAδ/2, for every rule
+  (3³, 4³, 14), the binned profile's total is 1 to 2e-9 and its mean is
+  e₀ + tr(AΣ_QQ)/2 to 4e-8 σ, and its variance is s²_lin + tr(AΣ_QQAΣ_QQ)/2. The variance
+  is 3e-4 to 6e-4 from the closed form for every rule, because the residual's width is
+  taken at each node's energy, and 1e-9 to 7e-7 from the 4³ grid's. The curvature carries
+  20% and 96% of the variance.
+- **The linear tests** at s14's own tolerances: the tilted erf to 5.3% at one Q point
+  (3.6% for 3³) and its moments as before. The total falls 2.2e-4 short on the steepest
+  line, because the corners at |u| = √(15(1 − a)) = 3.2 run past the ±1.2 meV window.
+- **Against the 4³ grid at a minimum's vertex,** 3.5% of the peak. Against 2¹⁵ draws
+  there, s14 is off by 19.7% of the peak (4.5% rms, the total to 0.3%), against 5.6% for
+  3³ and 16.6% for 4³. The corners sit where the fitted quadratic is furthest from the
+  vertex's cone, so s14 is not for that case.
+
+**Why it exists: samples per bin are usually the larger error.** On synthetic AMATERAS-like
+count cells (600 bins of a K cut, 0.01 r.l.u. × 0.05 meV, H and L integrated over ±0.1
+r.l.u.; the 16-site α-Cu₂V₂O₇ model; counts drawn from the reference, at most 200 per
+bin), against 4³ nodes with 64 samples per bin, the expected deviance penalty of the model
+error was:
+
+| rule | samples per bin | evaluations per bin | s per evaluation | χ² penalty |
+|---|---|---|---|---|
+| 4³ (reference) | 64 | 4096 | 74.9 | 0 |
+| 3³ | 64 | 1728 | 30.4 | 22 |
+| 14 | 64 | 896 | 15.3 | 28 |
+| 3³ | 32 | 864 | 13.5 | 173 |
+| 14 | 32 | 448 | 7.8 | 199 |
+| 3³ | 16 | 432 | 6.6 | 370 |
+
+Two draws of 64 samples differ by 93, so each is about 45 from the exact answer. The node
+rules cost little on the same samples: the 27-point grid adds 22 against the reference
+and the 14-point rule 28. Halving the samples adds about 150. At equal cost
+(about 880 evaluations per bin), 64 samples with s14 carry about half the error of 32 with
+3³. The synthetic windows integrate a steep dispersion over ±0.1 r.l.u. in H and L, likely
+harsher than a real cut, so read the sampling numbers as an upper estimate. Time scales
+with evaluations per bin.
+
+**Gate** (2026-10-31 23:59 to 2026-11-01 00:18, pyMagCalc `55d66c4` plus this change,
+workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`, load about 10; rsMagCalc
+`3f16142`, fMagCalc `192e7f8`, magpipe `e92b2c7`): **3216 passed, 2 skipped, 4 xfailed,
+0 failed, 19 min 11 s**. The 10 added tests are the rule's (the s14 parametrizations of the
+linear tests, the moments, the quadratic identity, and the 4³ pin).
+
 **Cost:** preparing 0.8 M virtual samples (50,000 samples × 8 energy blocks × branches)
 and their 5 M entries takes 7 s, once per model setup. Each evaluation then builds the
 per-node mixture by batched matmul over (sample, mode) rather than four-index `einsum`, and
