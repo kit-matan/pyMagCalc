@@ -1318,11 +1318,19 @@ fm = ForwardModel(calc, data, qe, crystals=[Crystal(position=[0, 0, 0.006]), ...
 - **What it does.** The recorded event differs from the true one by (δQ, δE), a function
   of one neutron's emission time and speed, its divergence, where it scatters in the
   sample, and where it is detected in the pixel. That function is exact; its Jacobian
-  gives the 4-D covariance Σ. For each sample the model is evaluated at Q − δQ, with
-  δQ = chol(Σ_QQ) z. The recorded energy is shifted by b·δQ (b = Σ_QQ⁻¹Σ_QE), and the
-  energy resolution's own line shape is narrowed to the conditional width. The result
-  is exact for a Gaussian kernel. The chopper times tilt the kernel: on a dispersive
-  mode they can widen or narrow the line.
+  gives the 4-D covariance Σ. The model is evaluated at Q − δQ, and the recorded energy
+  is shifted by b·δQ (b = Σ_QQ⁻¹Σ_QE); the energy resolution's own line shape is
+  narrowed to the conditional width. The result is exact for a Gaussian kernel. The
+  chopper times tilt the kernel: on a dispersive mode they can widen or narrow the line.
+- **The average over δQ** is deterministic by default (`method="quadrature"`): a 3×3×3
+  Gauss–Hermite grid carries 1 − `smoothing` of the Q covariance and catches curvature;
+  the rest is integrated analytically at each node from a quadratic fitted through them.
+  It costs 27 model evaluations per sample and adds no noise to a fit. `method="sample"`
+  draws one δQ per sample instead: exact on average, but on a steep dispersion it needs
+  thousands of samples per bin, and a fit rewards a free width for smoothing its noise.
+  Near the vertex of a minimum whose curvature across the Q resolution exceeds the gap
+  (c σ_Q > Δ), raise `nodes` (5 or 7, with `smoothing=0.1`) and check a few bins against
+  `method="sample"` with many draws.
 - **`U`** maps the model's Cartesian Q to the lab at ψ = 0. The lab has x along the beam
   and z vertical; the rotation axis is vertical.
 - **Count cells** need each sample's run (`BinnedData.sample_run`, filled by

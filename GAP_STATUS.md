@@ -1275,10 +1275,12 @@ AMATERAS; Fermi-chopper instruments. See `OPEN_WORK.md` item 8.
   gives Σ (4×4). The time block is `ChopperEnergyResolution.cov`; the geometry is uniform
   widths, and the sample box turns with ψ.
 - **In `ForwardModel`:** a resolution with `prepare` turns each (sample, energy block,
-  rotation branch) into a virtual sample at Q − δQ, with δQ = chol(Σ_QQ) z and one
-  scrambled-Sobol normal per data sample. The recorded energy is shifted by b·δQ, and
-  Level 0's line shape is narrowed to the conditional width. That is exact for a
-  Gaussian kernel, and keeps the instrument's line shape otherwise.
+  rotation branch) into a virtual sample. The recorded energy of a mode is
+  ε(Q − δQ) + b·δQ plus a residual carrying Level 0's line shape, narrowed to the
+  conditional width. That is exact for a Gaussian kernel, and keeps the instrument's
+  line shape otherwise. The average over δQ is a deterministic quadrature by default
+  (next section); `method="sample"` keeps the original one scrambled-Sobol draw
+  δQ = chol(Σ_QQ) z per data sample.
 - **Geometry providers:**
   - `RunGoniometer`: count cells, each sample's run angle; `BinnedData.sample_run` is
     new, filled by `CellList.aggregate` and carried through select, aggregate and
@@ -1310,6 +1312,50 @@ AMATERAS; Fermi-chopper instruments. See `OPEN_WORK.md` item 8.
   n_bins through the Sobol sequence, so each bin's samples shared nearly one normal.
   The linear-dispersion test failed by orders of magnitude, and normals are now indexed
   per data sample.
+
+### Level 1's average over δQ: a deterministic quadrature, 2026-10-31
+
+**Why.** One random δQ per virtual sample is exact on average, but each draw carries only
+the narrow conditional residual. On a steep dispersion almost all of the line's width
+comes from δQ, so a bin's prediction counts how many of its draws land in it: a
+histogram, noisy until the draws per bin number in the thousands. In a Poisson fit that
+noise is not harmless. A free intrinsic width is rewarded for smoothing it, and a
+splitting parameter moves with the random seed, so the noise reads as physics.
+
+**What (`QEResolution(method="quadrature", nodes=3, smoothing=0.3)`, the default).** With
+δQ = L z (L Lᵀ = Σ_QQ), split z = √(1 − a) u + √a w:
+- u runs over a 3×3×3 Gauss–Hermite product grid, turned by a fixed random rotation per
+  data sample so that the grid's comb falls differently for a bin's samples. The model
+  is evaluated at the 27 nodes; they carry the dispersion's curvature, a minimum's
+  one-sided tail and a crossing's kink.
+- w is integrated analytically at each node. A quadratic fitted through the nodes'
+  f = ε(Q − δQ) + b·δQ gives the node's mean f + a tr(H)/2 and variance
+  a|g + Hz|² + a²‖H‖²_F/2, added in quadrature to the residual. The intensity gets the
+  same a tr(H_I)/2 correction.
+
+It is deterministic, so a fit sees a smooth function of its parameters, and it costs 27
+model evaluations per virtual sample.
+
+**Oracles** (`tests/test_qe_resolution.py`):
+- **Linear dispersion, moments exact.** The binned profile's total, mean and variance
+  equal the tilted erf's (variance to 1e-5; 1e-3 where the line is 6× wider than the
+  energy resolution). At a single Q point the shape is within 3–7% of the erf. The turned
+  grids average to near-uniform projections, not a Gaussian; bins holding many Q points
+  smooth this further.
+- **A gapped minimum with the sample on its vertex,** c σ_Q = 0.5 Δ. Against 2¹⁵ Sobol
+  draws (the sampling method, converged), the quadrature is within 5.6% of the peak
+  (1.7% rms, the total to 0.07%). The same number of draws as data samples (32) is off
+  by 22%.
+- **Flat dispersion:** Level 0 to 0.8% of the peak; the linear tests run for both
+  methods.
+
+**Limits, measured.** `smoothing` trades two errors. A small a leaves the 27-node comb
+visible on a steep line at one Q point (11% at a = 0.25); a large a treats a strongly
+curved remainder as Gaussian, which puts intensity below a gap (24% at the vertex above
+with a = 0.5). Where the curvature across the Q resolution is several times the
+energy resolution (c σ_Q > Δ at a vertex) 3 nodes are not enough: 7 nodes with a = 0.1
+bring a c σ_Q = 1.4 Δ vertex to 10%, at 343 evaluations per virtual sample. Check such a
+case against `method="sample"` with many draws on a few bins.
 
 **Cost:** preparing 0.8 M virtual samples (50,000 samples × 8 energy blocks × branches)
 and their 5 M entries takes 7 s, once per model setup.

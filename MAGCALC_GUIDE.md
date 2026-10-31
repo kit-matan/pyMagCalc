@@ -7,7 +7,7 @@ context can make a correct first change. It is a map, not the whole territory: t
 authoritative details live in the files it points to (§12), and when they disagree, the
 code and the tests win.
 
-*Last reviewed: 2026-10-30, against pyMagCalc `d8bd01a` plus neutron-data phase 2's energy and Q–E resolution (`magcalc/resolution.py`, `magcalc/qe_resolution.py`, the `fraction` and `prepare` hooks in `ForwardModel`). This file is kept current with
+*Last reviewed: 2026-10-31, against pyMagCalc `d8bd01a` plus neutron-data phase 2's energy and Q–E resolution (`magcalc/resolution.py`, `magcalc/qe_resolution.py` with its deterministic δQ quadrature, the `fraction` and `prepare` hooks in `ForwardModel`). This file is kept current with
 every change that alters what it describes (§13).*
 
 ---
@@ -320,7 +320,7 @@ pytest -n0 ...               # serial; needed for -s or pdb
 | `neutron_data.py` | reduced INS data on its own bins: `BinnedData` (counts, exposure, true energy edges, the bin → Q cell → sample quadrature), `QFrame`, `T0EnergyMap`, the MDNorm and count-cell readers, a versioned native `.npz` |
 | `forward.py` | `ForwardModel`: the expected count μ per data bin (exact energy integral over each bin through the resolution's `fraction(lo, hi, centre)`, crystals with mosaic, Q smearing, Bose factor); `GaussianEnergyResolution`; `poisson_deviance` |
 | `resolution.py` | an instrument's energy resolution from its moderator pulse, choppers and flight paths: `ChopperSpectrometer`, `DiskChopper`, pulse shapes (`IkedaCarpenter`, `read_sns_source_table`), `cncs(...)`; `ChopperEnergyResolution.fraction` for `ForwardModel` |
-| `qe_resolution.py` | the Q resolution and Q–E correlation (Level 1): exact `kinematics`, its 4-D covariance, geometry providers (`RunGoniometer`, `RotationScan`), `QEResolution`, whose kernel enters `ForwardModel`'s sample quadrature |
+| `qe_resolution.py` | the Q resolution and Q–E correlation (Level 1): exact `kinematics`, its 4-D covariance, geometry providers (`RunGoniometer`, `RotationScan`), `QEResolution`, whose kernel enters `ForwardModel`'s sample quadrature (δQ averaged by a deterministic Gauss–Hermite grid plus an analytic remainder, or by sampling) |
 | `fitting.py` | lmfit wrapper for dispersion, S(Q,ω) and powder data |
 | `plotting.py` | figures; `show_plot_if_possible` honours `MAGCALC_NO_GUI` |
 | `kernels.py` | selection of the Rust kernels: `resolve`, `rust_for`, `fell_back`, `make_rng` |
@@ -407,8 +407,10 @@ iOS app).
   widths, the propagation reproduces PyChop's CNCS widths to 3e-14. CNCS is built in;
   AMATERAS waits for its chopper geometry. `magcalc/qe_resolution.py` adds the Q
   resolution and the Q–E correlation through the sample quadrature; its covariance
-  matches an independent ray trace to 0.3% (`GAP_STATUS.md`, "phase 2, the energy
-  resolution" and "the Q-E resolution"; `OPEN_WORK.md` item 8).
+  matches an independent ray trace to 0.3%. Its average over δQ is deterministic (a
+  Gauss–Hermite grid plus an analytic remainder), because one random draw per sample
+  was too noisy for a Poisson fit (`GAP_STATUS.md`, "phase 2, the energy resolution",
+  "the Q-E resolution" and "Level 1's average over δQ"; `OPEN_WORK.md` item 8).
 
 - **Every planned Rust kernel is in** (K1–K5, plus a sparse exact KPM guard). The sixth,
   mixed-spin dipole S(Q,ω), went into fMagCalc instead of Rust, because fMagCalc already

@@ -99,6 +99,12 @@ known; item 3 is done:
          two-grain samples (two `Crystal`s with positions and rotations);
        - Level 2, which draws the geometry from its true distributions and projects the
          chopper times through the mode's group velocity;
+       - the average over δQ is a deterministic quadrature since 2026-10-31 (GAP_STATUS
+         "Level 1's average over δQ"); one draw per sample was too noisy to fit with.
+         Its weak point is a strongly curved remainder, such as a sample on the vertex of
+         a minimum with c σ_Q ≳ Δ, which `nodes` only buys down at n³ cost. The next step
+         there is to treat the most curved direction exactly: a·w + κw²/2 has a
+         closed-form CDF, which keeps the onset at the gap;
      - AMATERAS: the geometry is in (`amateras(...)`, Nirei et al. 2024 plus the instrument
        team). Its moderator pulse (one published width) is still to be calibrated on an
        elastic line, and then the Q–E kernel on count cells (the runs' ψ are in the

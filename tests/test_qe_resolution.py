@@ -12,7 +12,11 @@ Oracles:
   bin is the erf with s^2 = (-v, 1)^T Sigma (-v, 1), exactly (the conditional
   decomposition and every frame and sign in the plumbing);
 - a flat dispersion: Level 1 reduces to Level 0;
-- the rotation-scan branches satisfy |k_i - R(psi) U Q| = k_f.
+- the rotation-scan branches satisfy |k_i - R(psi) U Q| = k_f;
+- the 'quadrature' average over dQ: on a linear dispersion its binned profile has the
+  tilted erf's mean and variance exactly; on a curved one (a hyperbolic minimum with a
+  sample on its vertex) it is pinned to brute-force sampling at 2^15 draws, and it is
+  deterministic.
 """
 import os
 import sys
@@ -139,12 +143,14 @@ def _setup(v, spread, e_mode=3.0, n=4096):
     return calc, data, energy, qe, q0, n_f, edges
 
 
+@pytest.mark.parametrize("method", ["sample", "quadrature"])
 @pytest.mark.parametrize("v", [[2.0, -1.0, 0.5], [0.0, 3.0, 0.0], [-4.0, 0.0, 1.0]])
-def test_linear_dispersion_gives_the_tilted_erf(v):
+def test_linear_dispersion_gives_the_tilted_erf(v, method):
     """eps = e0 + v.Q, Gaussian kernel: mu_b = Phi((hi - eps0)/s) - Phi((lo - eps0)/s),
     s^2 = Sigma_EE - 2 v.Sigma_QE + v^T Sigma_QQ v at each bin's energy."""
     spread = GeometrySpread((0.012, 0.02), (0.0, 0.0, 0.0), 0.02, 0.02, 0.0)
     calc, data, energy, qe, q0, n_f, edges = _setup(v, spread)
+    qe.method = method
     mu = ForwardModel(calc, data, qe, b_matrix=np.eye(3), temperature=0).expected()
     v = np.asarray(v, float)
     want = []
@@ -154,11 +160,107 @@ def test_linear_dispersion_gives_the_tilted_erf(v):
         s = np.sqrt(S[3, 3] - 2 * v @ S[:3, 3] + v @ S[:3, :3] @ v)
         want.append(ndtr((hi - 3.0) / s) - ndtr((lo - 3.0) / s))
     want = np.array(want)
-    assert np.max(np.abs(mu - want)) < 4e-3 * want.max()
+    # sampling: the Sobol error of 4096 normals; quadrature: the grid's shape error at one
+    # Q point (measured 0.3-3.6%; the moments are exact, see the next test)
+    assert np.max(np.abs(mu - want)) < {"sample": 4e-3, "quadrature": 5e-2}[method] * want.max()
     # and the tilt matters: without it the widths differ by more than the tolerance
     s0 = float(energy.sigma(3.0))
     plain = ndtr((edges[1:] - 3.0) / s0) - ndtr((edges[:-1] - 3.0) / s0)
     assert np.max(np.abs(mu - plain)) > 3e-2 * want.max()
+
+
+@pytest.mark.parametrize("v", [[2.0, -1.0, 0.5], [0.0, 3.0, 0.0], [0.0, 13.0, 0.0]])
+def test_quadrature_has_the_tilted_erf_moments_on_a_linear_dispersion(v):
+    """One kernel per sample (energy_blocks=1) and fine bins: the binned profile's total,
+    mean and variance equal the tilted erf's -- the grid carries (1 - a) of the Q
+    variance, the analytic share a, and a linear f is fitted exactly. The steepest case
+    spreads the line 6x wider than the energy resolution."""
+    spread = GeometrySpread((0.012, 0.02), (0.0, 0.0, 0.0), 0.02, 0.02, 0.0)
+    energy = _gaussian_spec().resolution(EI)
+    n_f = _n_f(55.0)
+    q0 = K * np.sqrt(EI) * np.array([1.0, 0, 0]) - K * np.sqrt(EI - 3.0) * n_f
+    v = np.asarray(v, float)
+    calc = LinearMode(3.0 - v @ q0, v)
+    edges = 3.0 + np.linspace(-1.2, 1.2, 481)
+    qe = QEResolution(energy, RunGoniometer(np.eye(3), {0: 0.0}), spread, energy_blocks=1)
+    mu = ForwardModel(calc, _point(q0, edges, 32), qe, b_matrix=np.eye(3),
+                      temperature=0).expected()
+    S = covariance(ei=EI, omega=3.0, n_f=n_f, l1=L1, l2=L2, time_cov=energy.cov,
+                   spread=spread)
+    s = np.sqrt(S[3, 3] - 2 * v @ S[:3, 3] + v @ S[:3, :3] @ v)
+    want = ndtr((edges[1:] - 3.0) / s) - ndtr((edges[:-1] - 3.0) / s)
+    e = 0.5 * (edges[1:] + edges[:-1])
+
+    def moments(m):
+        tot = m.sum()
+        mean = (m * e).sum() / tot
+        return tot, mean, (m * (e - mean) ** 2).sum() / tot
+    (t1, m1, v1), (t2, m2, v2) = moments(mu), moments(want)
+    assert t1 == pytest.approx(t2, rel=1e-4)
+    assert abs(m1 - m2) < 1e-5 * s
+    # measured 1e-5; 1e-3 at the steepest, where the residual follows the nodes' energies
+    assert v1 == pytest.approx(v2, rel=2e-3)
+    # the shape at ONE Q point: the turned grids average to near-uniform projections, not
+    # a Gaussian (measured 3-7%); real bins, many Q points each, smooth it further
+    assert np.max(np.abs(mu - want)) < 0.09 * want.max()
+
+
+class Hyperbolic:
+    """A gapped minimum at q0: eps = sqrt(D^2 + (c u.dQ)^2 + (4 dQ_x)^2), I = 1 / eps."""
+
+    def __init__(self, D, c, u, q0):
+        self.D, self.c, self.u, self.q0 = D, c, np.asarray(u, float), q0
+        self.hamiltonian_params = [0.0]
+
+    def update_hamiltonian_params(self, p):
+        pass
+
+    def sqw_batch(self, q, apply_g=False, g_tensors=None):
+        d = np.asarray(q, float) - self.q0
+        e = np.sqrt(self.D ** 2 + (self.c * (d @ self.u)) ** 2 + (4.0 * d[:, 0]) ** 2)
+        return e[:, None], (1.0 / e)[:, None]
+
+
+@pytest.mark.slow
+def test_quadrature_against_brute_force_sampling_on_a_minimum():
+    """A sample sitting on the vertex of a gapped minimum, the worst case for a quadratic
+    remainder: the Q resolution spreads the mode by c sigma_Q = 0.5 D. Against 2^15 Sobol
+    draws (the 'sample' method converged), the default grid is within 6% of the peak
+    (1.7% rms, the total to 0.1%); 32 draws are off by about 20%."""
+    spread = GeometrySpread((0.012, 0.02), (0.0, 0.0, 0.0), 0.02, 0.02, 0.0)
+    energy = _gaussian_spec().resolution(EI)
+    n_f = _n_f(55.0)
+    q0 = K * np.sqrt(EI) * np.array([1.0, 0, 0]) - K * np.sqrt(EI - 3.0) * n_f
+    calc = Hyperbolic(0.65, 10.0, [0.0, 0.6, 0.8], q0)
+    edges = np.linspace(0.25, 1.85, 65)
+
+    def run(n, **kw):
+        qe = QEResolution(energy, RunGoniometer(np.eye(3), {0: 0.0}), spread, **kw)
+        return ForwardModel(calc, _point(q0, edges, n), qe, b_matrix=np.eye(3),
+                            temperature=0).expected()
+    ref = run(1 << 15, method="sample")
+    quad = run(32)
+    few = run(32, method="sample")
+    m = ref.max()
+    assert np.max(np.abs(quad - ref)) < 0.08 * m                  # measured 0.056
+    assert np.sqrt(np.mean((quad - ref) ** 2)) < 0.025 * m        # measured 0.0165
+    assert np.max(np.abs(few - ref)) > 2 * np.max(np.abs(quad - ref))
+    assert quad.sum() == pytest.approx(ref.sum(), rel=5e-3)
+
+
+def test_quadrature_is_deterministic_and_validates_its_settings():
+    spread = GeometrySpread((0.012, 0.02), (0.0, 0.0, 0.0), 0.02, 0.02, 0.0)
+    calc, data, energy, qe, q0, n_f, edges = _setup([0.0, 3.0, 0.0], spread, n=16)
+    a = ForwardModel(calc, data, qe, b_matrix=np.eye(3), temperature=0).expected()
+    b = ForwardModel(calc, data, qe, b_matrix=np.eye(3), temperature=0).expected()
+    assert np.array_equal(a, b)
+    k = ForwardModel(calc, data, qe, b_matrix=np.eye(3), temperature=0)._kernels[0]
+    assert k.points == 27 and k.node_weight.sum() == pytest.approx(1.0)
+    geo = RunGoniometer(np.eye(3), {0: 0.0})
+    for bad in (dict(method="cubature"), dict(nodes=2), dict(smoothing=1.0),
+                dict(smoothing=-0.1)):
+        with pytest.raises(ValueError):
+            QEResolution(energy, geo, spread, **bad)
 
 
 def test_flat_dispersion_reduces_to_the_energy_resolution():
@@ -166,7 +268,7 @@ def test_flat_dispersion_reduces_to_the_energy_resolution():
     calc, data, energy, qe, q0, n_f, edges = _setup([0.0, 0.0, 0.0], spread)
     mu = ForwardModel(calc, data, qe, b_matrix=np.eye(3), temperature=0).expected()
     plain = ForwardModel(calc, data, energy, b_matrix=np.eye(3), temperature=0).expected()
-    assert np.max(np.abs(mu - plain)) < 6e-3 * plain.max()     # Sobol error, 4096 normals
+    assert np.max(np.abs(mu - plain)) < 1.2e-2 * plain.max()   # the grid's ripple: 0.9%
     assert mu.sum() == pytest.approx(plain.sum(), rel=1e-3)
 
 
@@ -187,8 +289,8 @@ def test_crystal_position_shifts_the_line_by_the_closed_form():
     want = 2 * (EI - e) * vf / L2 * (x * u0 - x * n_f[0] / vf)
     s0 = fm_0._kernels[0].shift          # the same normals: the difference is the offset
     sp, sm = fm_p._kernels[0].shift - s0, fm_m._kernels[0].shift - s0
-    blk = fm_p._kernels[0].block
-    assert sp == pytest.approx(want[blk], rel=3e-3)     # 1.0012-1.0024: second order in x
+    k = fm_p._kernels[0]
+    assert sp == pytest.approx(np.repeat(want[k.block], k.points), rel=3e-3)   # second order in x
     assert sm == pytest.approx(-sp, rel=6e-3)
 
 
