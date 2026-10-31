@@ -7,7 +7,7 @@ context can make a correct first change. It is a map, not the whole territory: t
 authoritative details live in the files it points to (§12), and when they disagree, the
 code and the tests win.
 
-*Last reviewed: 2026-10-31, against pyMagCalc `d8bd01a` plus neutron-data phase 2's energy and Q–E resolution (`magcalc/resolution.py`, `magcalc/qe_resolution.py` with its deterministic δQ quadrature, the `fraction` and `prepare` hooks in `ForwardModel`). This file is kept current with
+*Last reviewed: 2026-10-31, against pyMagCalc `bfae055` plus neutron-data phase 2's AMATERAS model and deterministic δQ quadrature (`magcalc/resolution.py`, `magcalc/qe_resolution.py`, the `fraction` and `prepare` hooks in `ForwardModel`), merged the same day after the dimer series' projective cluster-additive one-particle block (`_pca_one_particle`, OPEN_WORK item 11). This file is kept current with
 every change that alters what it describes (§13).*
 
 ---
@@ -284,8 +284,9 @@ pytest -n0 ...               # serial; needed for -s or pdb
 - Both `pytest.ini` files run in parallel (`-n auto --dist worksteal`, pytest-xdist is a
   required dev dependency).
 - From the maintainer's workspace root, plain `pytest` also collects fMagCalc's,
-  rsMagCalc's and magpipe's tests. The last full gate there was **2584 passed, 2 skipped**
-  (2026-10-30). The two skips are structural: `seekpath` absent, ALPS present.
+  rsMagCalc's and magpipe's tests. The last full gate there was **2749 passed, 2 skipped,
+  2 xfailed** (2026-10-31). The two skips are structural: `seekpath` absent, ALPS
+  present. The two xfails are strict pins of OPEN_WORK item 9.
 - **Tests never open a GUI window.** `tests/conftest.py` forces the Agg backend and sets
   `MAGCALC_NO_GUI=1`. A bare `magcalc run` outside pytest is not guarded; prefix it with
   `MAGCALC_NO_GUI=1`.
@@ -446,6 +447,18 @@ iOS app).
   with the NumPy process pool, and order 7 6.4 min instead of 32 min
   (`GAP_STATUS.md`, "Rust kernels K7"). An earlier plan had excluded it as
   "symbolic"; it is numerical throughout.
+  How many clusters run at once is set by memory, not by `n_workers` alone. Each
+  cluster is charged its own scratch against `$RSMAGCALC_SCRATCH_GB`, or else half the
+  available memory, cgroup limits included. Until 2026-10-31 a fixed 3 GB was divided
+  by a level's largest cluster, which left order 8 on 2 threads of a 128-core node
+  (`GAP_STATUS.md`, "Dimer series under `kernels: rust`: memory admits each cluster").
+  The subtraction after each kernel call runs in forked processes on Linux
+  (`DimerSeriesModel.subtract_workers`, default `n_workers`). The additivity check is
+  logged once per cluster size; it used to be one line per cluster, 82 342 lines at
+  order 8. Those lines were not noise. With DM, the T0 (Sz = 0) band's des Cloizeaux
+  effective Hamiltonian is not cluster additive, because the T0 states share their
+  sector with the vacuum. That block now goes through Hörmann and Schmidt's projective
+  cluster-additive transformation (OPEN_WORK item 11, done the same day).
 - **Biquadratic exchange is right off the collinear axis** (2026-10-29). The
   symbolic build had dropped, with only a WARNING, a biquadratic's cross-site terms on
   a bond with no bilinear coupling, and on a non-collinear intercell bond the part that

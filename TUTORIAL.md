@@ -758,6 +758,24 @@ and the SU(N)/entangled LSWT, KPM and dimer-series kernels read it from the
 calculation: {mode: SUN, kernels: rust, n_workers: 4}
 ```
 
+`n_workers` sets the number of threads, and **memory sets how many run at once**.
+SU(N) LSWT, KPM, SCGA and the dimer series each have a per-item scratch estimate,
+and they run only as many items together as fit a scratch budget. The budget is
+`$RSMAGCALC_SCRATCH_GB` (in GB), or else half the memory still available. That means
+`/proc/meminfo` and the cgroup limits, so a Slurm job's own memory limit counts. On
+macOS, which has neither, the budget is 3 GB. `python -c "import rsmagcalc;
+print(rsmagcalc.scratch_budget())"` prints the budget and where it came from. The
+dimer series charges each cluster its own scratch, largest first, and logs the
+threads, the peak number running at once and the budget for every call. In a
+script, `DimerSeriesModel.scratch_budget_gb` sets the budget and `kernel_stats` keeps
+those numbers (`GAP_STATUS.md`, "Dimer series under `kernels: rust`: memory admits
+each cluster"). The linked-cluster subtraction that follows each call runs in forked
+processes on Linux, `n_workers` of them, with the serial result bit for bit;
+`DimerSeriesModel.subtract_workers` overrides the count, and 1 keeps it serial. macOS
+stays serial, because fork is not safe with its system libraries. The check that every
+subtracted weight vanishes below its cluster's size is logged once per cluster size, as
+a count and the worst residual, and is kept in `DimerSeriesModel.additivity`.
+
 Under `kernels: numpy` these keys are ignored (the NumPy loops are serial), except
 by the dimer series, whose NumPy path sizes its process pool with
 `calculation.n_workers` (default: one fewer than the cores). If a
@@ -1415,6 +1433,16 @@ all inter-dimer couplings, resummed per band with Dlog-Padé (the method of Mata
 order; add `kernels: rust` (§4c2) to run each cluster's perturbation theory in
 rsMagCalc — on the six-dimer Rb₂Cu₃SnF₁₂ cell, order 6 takes 21 s instead of 115 s
 and order 7 6.4 min instead of 32 min.
+
+With a DM interaction that breaks spin-rotation symmetry, the T0 (S<sup>z</sup> = 0)
+one-triplon band shares its symmetry sector with the vacuum. That band goes through the
+projective cluster-additive transformation of Hörmann and Schmidt (SciPost Phys. 15, 097
+(2023)) instead of the des Cloizeaux effective Hamiltonian. Until 2026-10-31 it used the
+des Cloizeaux one, which is not cluster additive there. The S<sup>z</sup> = 0 band's
+coefficients from order 6 on were then wrong; on Rb₂Cu₃SnF₁₂ the Δ₂ band's order-6
+coefficient moved from −1.125 to −1.091. The S<sup>z</sup> = ±1 bands were never
+affected. The run log warns, once per cluster size, if the additivity check fails
+(`GAP_STATUS.md`, "The dimer series' T0 sector made cluster additive").
 
 ## 4h. Beyond LSWT: diffuse, thermal, and dynamical methods
 

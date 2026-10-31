@@ -771,13 +771,24 @@ calculation: {mode: entangled, series_order: 5, series_resum: dlog_pade}  # | pa
   (`magcalc/sun/dimer_series.py`): a linked-cluster expansion of the one-triplon
   effective Hamiltonian to order N in ALL interdimer couplings (Heisenberg + DM),
   resummed per band with Dlog-Pade (the papers' method; the spread across approximants
-  is the uncertainty). Validated against exact diagonalization of the alternating
+  is the uncertainty). The one-particle block that shares the vacuum's Sz sector (the
+  T0 states under DM) goes through the projective cluster-additive transformation
+  (Hoermann & Schmidt, SciPost Phys. 15, 097 (2023)) -- the des Cloizeaux H_eff there is
+  NOT cluster additive, and before 2026-10-31 it made the Sz = 0 band wrong from order 6
+  on (OPEN_WORK item 11, DONE). Results from before that date for the Sz = 0 band at
+  order >= 6 with DM must be recomputed; the Sz = +-1 bands were never affected. Validated against exact diagonalization of the alternating
   chain -- 5e-4 J at J'/J = 0.4, better than 8 percent at the STRONG coupling
   J'/J = 0.8 -- and against the exact first-order dimer expansion of PRR 8, 013247
   (Eq. A11). Cost grows 10-20x per order (cluster count x Hilbert 4^(N+1)). Under
   `calculation: {kernels: rust}` each cluster's PT runs in rsMagCalc (K7), threaded:
   on Rb2Cu3SnF12 order 6 is 21 s (NumPy process pool 115 s, serial 566 s) and order 7
-  6.4 min (pool 32 min); without rsMagCalc the NumPy pool runs. The hoppings agree to
+  6.4 min (pool 32 min); without rsMagCalc the NumPy pool runs. Memory, not
+  `n_workers`, decides how many clusters run at once: `$RSMAGCALC_SCRATCH_GB`, else
+  half the available memory (cgroup limits included), else 3 GB; until 2026-10-31 a
+  fixed 3 GB held order 8 to 2 threads on a 128-core node. The subtraction after each
+  call runs in forked processes on Linux (`DimerSeriesModel.subtract_workers`, default
+  `n_workers`; serial on macOS), bit for bit the serial result, and the additivity
+  check is one log line per cluster size (`DimerSeriesModel.additivity`). The hoppings agree to
   ~1e-12 (2e-11 at order 6: the subtraction amplifies rounding, in both). S(Q,w) and the ground-state guards stay on the
   harmonic model. Reference: `examples/entangled/Rb2Cu3SnF12/series_dispersion.py`
   (the full pinwheel at J2 = 0.95 J1, gaps vs the measured 2.35 / 7.3 meV).

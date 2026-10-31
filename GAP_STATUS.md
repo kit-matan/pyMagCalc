@@ -988,6 +988,218 @@ the rule-value parser fix a87c8a8 below, magpipe at 283f694), 2026-10-22, idle m
 ALPS ones. The merge is also what makes `sqrt(3)*D1x/3`, the allowed kagome DM, pass this check: before the
 parser fix it reached the check as an unbound `sqrt3` and was refused as a conflict.
 
+### The dimer series' T0 sector made cluster additive, 2026-10-31 — OPEN_WORK item 11
+
+**The defect** (found in the section below). The one-particle effective Hamiltonian was the des Cloizeaux
+H_eff = S^(−1/2) Ω†HΩ S^(−1/2) of each one-particle sector. That is cluster additive only when the vacuum lies in
+another symmetry sector. With out-of-plane DM only total Sz is conserved, so the T0 states share the Sz = 0 sector
+with the vacuum, and the two mix.
+- **What goes wrong:** the dressed vacuum acquires one-particle components. On two disconnected clusters the des
+  Cloizeaux H_eff then hops a particle from one to the other.
+- **On Rb₂Cu₃SnF₁₂:** 9 088 of the 35 566 seven-link topologies at order 7 kept an order-6 weight of up to
+  4.2e-3. Hörmann and Schmidt (SciPost Phys. 15, 097 (2023), Sec. 2.4) describe the same failure for a transverse
+  Ising chain with a parity-breaking term.
+
+**The fix.** It is their projective cluster-additive transformation for one-particle states (Sec. 3.1, Eq. 56).
+Before the symmetric orthonormalization, each exact one-particle state loses its vacuum component:
+|Ψ₁⟩ − ⟨0|Ψ₁⟩ |ψ₀⟩, with ψ₀ the dressed vacuum in intermediate normalization. In the engine's Bloch terms this is a
+closed form:
+- **Overlap correction:** A = 1 − c b†, where c = Pψ₀ holds the vacuum's one-particle components and b† = ⟨0|Ω
+  holds the vacuum components of the one-particle Bloch columns.
+- **Effective Hamiltonian:** H_eff = (A S⁻¹ A†)^(−1/2) A S⁻¹ M S⁻¹ A† (A S⁻¹ A†)^(−1/2).
+- It equals the des Cloizeaux H_eff when A = 1, and is a unitary rotation of it otherwise, so the eigenvalues are
+  the same.
+- Only the one-particle block in the vacuum's own sector takes it: the T0 sector with Sz sectors, or every
+  one-particle state without them. Every other sector keeps the des Cloizeaux path, bit for bit.
+
+The code:
+- pyMagCalc `_pca_one_particle`, with `block_effective_series` split into `_bloch_parts`, `_inv_sqrt_series`
+  and `_sandwich`; the numbers are unchanged.
+- rsMagCalc `pca_one_particle`, with the same split. The two agree to 1e-12 in rsMagCalc's parity tests, whose
+  random clusters mix the vacuum with every one-particle state.
+
+**Pinned** (`tests/test_dimer_series_additivity.py`, 9, under both kernel sets where both apply).
+- **The cluster check:** one seven-link, six-node Rb₂Cu₃SnF₁₂ cluster at order 6 is additive with the DM off and
+  with it on (residual 4e-14, was 3.506e-3). With the des Cloizeaux H_eff put back, the old 3.506e-3 returns,
+  confined to the T0 block, so the pin is known to bite.
+- **Same physics:** on that cluster at order 7 the new and old T0 blocks have the same eigenvalue series (to 1e-10),
+  and the Sz = ±1 blocks are identical.
+- **Independent oracle:** momentum-resolved ED of Hörmann and Schmidt's toy model, a 10-spin transverse Ising ring
+  with a parity-breaking σᶻσˣ term, run through the engine with single-spin units. Halving the couplings
+  (g = 0.04 → 0.02) cuts the order-6 series' error as follows:
+
+  | H_eff | Error ratio | Scaling |
+  |---|---|---|
+  | PCAT | 116× | g⁷, as a correct order-6 series must (2⁷ = 128) |
+  | des Cloizeaux | 15.5× | g⁴: a non-linked error at order 4 never cancels |
+
+**Measured on Rb₂Cu₃SnF₁₂, order 7, `kernels: rust`.**
+- **Additivity:** every topology now passes; 9 088 failed before.
+- **Γ, Sz = ±1 doublets:** unchanged to 1e-12. This includes the Δ₁ band, whose plain sum is 2.8005 meV.
+- **Γ, Sz = 0 bands:** they differ from order 6 on. The lowest T0 band, Δ₂, changes as follows:
+
+  | Quantity | Before | After |
+  |---|---|---|
+  | Order-6 coefficient | −1.125 | −1.091 |
+  | Order-7 coefficient | 0.118 | 0.063 |
+  | Plain sum | 7.555 meV | 7.534 meV |
+
+  The highest T0 band moves by up to 1.3 in its order-7 coefficient.
+- **Cost:** the added work is p × p series algebra in one sector per cluster. The order-7 run took 475 s at load
+  60–170, against 600 s for this morning's run before the fix at a different load.
+
+**Gate** (2026-10-31 12:45–13:01, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`; pyMagCalc
+`d557a7c` plus this change, rsMagCalc `c641b23` built and installed with an 8-aligned stroff, fMagCalc `4a5ff4b`,
+magpipe `e92b2c7`): **2737 passed, 2 skipped, 2 xfailed, 0 failed, 15 min 35 s**.
+- **The count:** 2732 before, minus the 4 passing tests of the old additivity file, plus the 9 of the new.
+- **The xfails:** item 11's two strict xfails are gone; item 9's two remain.
+
+Merging neutron-data phase 2's last five commits on top (AMATERAS, the deterministic δQ quadrature, spectra per
+crystal node; merge `1220ad9`) and gating again gives **2749 passed, 2 skipped, 2 xfailed, 0 failed, 26 min 26 s**
+(13:08–13:35, at load up to 125 from another session's fits). The 12 added tests are phase 2's.
+
+### The dimer series' subtraction in processes, and the T0 sector under DM, 2026-10-31
+
+**What changed.** Two follow-ups from the LANTA validation below:
+- **The subtraction in processes.** At order 8 on Rb₂Cu₃SnF₁₂ the serial linked-cluster subtraction took 6 min of
+  58, 11 % of the wall, after the PT had gone parallel. `_subtracted` now computes one topology's subtracted weight
+  and writes nothing, and `_store` memoizes it. A level's new topologies read only the memo of smaller sizes, so
+  they are independent of one another. `_subtract_level` runs them in forked processes
+  (`concurrent.futures.ProcessPoolExecutor`). The children inherit the memo and the raw PT. Only the subtracted
+  weights come back, at most 1/(L+1) of each raw array.
+  - **When:** on Linux by default, `n_workers` processes with at least 500 topologies each. Serial below that and
+    on macOS, where fork is unsafe with the system libraries. `DimerSeriesModel.subtract_workers` sets the count,
+    and 1 is serial.
+  - **Memory:** `gc.freeze()` before the fork keeps the children's first collection from copying the parent's heap.
+  - **Failure:** a child that dies, for example under the OOM killer, raises `BrokenProcessPool`, where
+    `multiprocessing.Pool` would hang. The level is then subtracted serially.
+  - **Records:** `subtract_stats` keeps one dict per forked level, and the log names the process count.
+  - The two defensive copies of the raw PT are gone. `_subtracted` consumes its raw in place, and the copies were
+    24 s of the 110 s serial subtraction at order 7.
+- **The additivity check, once per level.** It was one WARNING per failing topology: 82 342 lines and a 22 MB log
+  at order 8. It is now one WARNING per cluster size, with the count, the worst residual and the worst cluster.
+  The per-topology line is at DEBUG, and `DimerSeriesModel.additivity` keeps the counts.
+
+**The warnings were not noise.** The check is the linked-cluster theorem: an L-link cluster's subtracted weight
+vanishes below order L. It is an exact identity, so a failure is a defect. On Rb₂Cu₃SnF₁₂:
+- **Order 6:** every size is additive to 1e-13.
+- **Order 7:** 9 088 of the 35 566 seven-link topologies keep an order-6 weight of up to 4.2e-3 of their scale.
+  The genuine order-6 weights of six-link trees are up to 2.8e-3. The failures include trees, and clusters with
+  one or two loops.
+- **Where the residual sits:**
+  - only in the block of the T0 (Sz = 0) one-triplon states; the Sz = ±1 blocks cancel to 1e-14;
+  - with the DM switched off it cancels everywhere;
+  - the dimer chain is additive to 1e-15 through order 8, with uniform DM, with staggered DM, and with two kinds of
+    dimer;
+  - the NumPy and Rust PT agree on it.
+- **Cause:** in the Sz = 0 sector the one-triplon block was transformed against a complement that holds the
+  vacuum. Without DM, total S keeps the two apart at every order; with DM they mix. This was OPEN_WORK item 11. It
+  was fixed the same day, in the section above.
+
+**Pinned.**
+- `tests/test_kernels_dimer_series.py` (+4):
+  - the forked subtraction is the serial one bit for bit: hoppings, ground-state energy and memo keys, with every
+    level of more than one topology forked; it also equals NumPy's series to 1e-12;
+  - a killed child falls back to serial with the serial result;
+  - clusters corrupted on purpose below their size are counted exactly, in one WARNING, serially and forked.
+- `tests/test_dimer_series_additivity.py` (6, under both kernel sets), on one seven-link, six-node Rb₂Cu₃SnF₁₂
+  cluster at order 6, 0.2–0.7 s each:
+  - additive with the DM off;
+  - with the DM on, the residual is confined to the T0 block, at 3.506e-3;
+  - additivity with the DM on was a strict xfail. The fix in the section above flipped it, and the file was
+    rewritten there.
+
+**Measured.** Rb₂Cu₃SnF₁₂, `kernels: rust`, on the 10-core Mac under other sessions' load. The results are bit
+for bit the same as the serial run, and so are the additivity counts (9 088 at order 7, worst 4.19e-3).
+
+| Order | Serial subtraction | Forked subtraction |
+|---|---|---|
+| 6 | 10.3 s | 2.9 s, 8 processes |
+| 7 | 46.1 s | 14.8 s, 8 processes |
+
+**Gate** (2026-10-31 11:32–11:50, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`; pyMagCalc
+`3c0b5b0` plus this change, rsMagCalc `8552281`, fMagCalc `4a5ff4b`, magpipe `e92b2c7`): **2732 passed, 2 skipped,
+4 xfailed, 0 failed, 17 min 39 s**. That is the 2724 of the previous gate plus the 8 passing tests added here. The
+skips are the structural pair, and the xfails are the strict pins of items 9 and 11, two each.
+
+### Dimer series under `kernels: rust`: memory admits each cluster, 2026-10-31 — order 8 was on 2 threads of 128
+
+Reported from a LANTA run (128 cores, 243 GB, `n_workers=120`, Rb₂Cu₃SnF₁₂ path A at f = 0): order 7 matched
+NumPy (dlog difference 2e-11) in 357 s, but order 8 sat on **2 threads for 25+ min**, and order 9 would have run on
+1. Every memory-bound rsMagCalc kernel capped its pool at a hard-coded 3 GB divided by the LARGEST item's scratch
+estimate, and K7 applied that to a whole cluster size at once. The largest order-8 cluster is a tree of 9 dimers
+(1.08 GB by the old estimate), so 3 GB allowed 2 of them, and every other cluster of the level waited behind the
+same cap, though most have loops and need far less.
+
+**Three changes, none of which changes a number.**
+- **The budget** (rsMagCalc `src/budget.rs`; `rsmagcalc.scratch_budget()` reports it). First match wins: the call's
+  `scratch_budget_gb`, then `$RSMAGCALC_SCRATCH_GB`, then half the memory still available — the smaller of
+  `/proc/meminfo` MemAvailable and the headroom (limit − usage) of every memory-limited cgroup above the process
+  (v2 `memory.max`, v1 `memory.limit_in_bytes`, which is where a Slurm job's limit lives), then 3 GB where neither
+  exists (macOS). SU(N) LSWT, KPM and SCGA use the same budget in their existing cap.
+- **Admission per cluster** (`src/dimer_series.rs`, `Gate`). `n_workers` threads, or one per core, take the clusters
+  largest first. Each cluster is charged its own scratch and starts only when it fits beside those running. One
+  larger than the whole budget runs alone. The admission is strictly in order, so the small clusters behind a large
+  one cannot starve it.
+- **A tighter estimate.** A sectored cluster was charged dims/2 + 1 rows. It is now charged its largest total-Sz
+  sector, counted by convolving the nodes' level Sz, which is C(2m, m) for m dimers: 2.7× smaller at m = 9.
+
+Measured against peak RSS (one cluster on one thread, chains of 7–9 dimers at order m − 1), the measured peak is
+0.92–1.07 of the old estimate without sectors, and 0.24–0.29 with them. Against the new one it is 0.83–0.97 without
+sectors and 0.55–0.80 with them, so the estimate is never below the measured peak. Running ten m = 8 clusters on ten
+threads, peak RSS was 1.18× the admitted bytes at a 1 GB budget. The half in the default leaves room for that
+overshoot, for the caller's arrays and for the results.
+
+The results are a second memory problem, separate from the scratch. `hopping_series` sent a whole cluster size to
+the kernel at once, so every topology's raw (order+1, p, p) delta and its inputs were alive together. At order 8
+on Rb₂Cu₃SnF₁₂ that is up to 16 GB of deltas (157 159 new topologies, at most 9 × 27² complex each), and more at
+order 9. A level now goes in chunks of at most
+`DimerSeriesModel.chunk_bytes` (4 GB) of results, and each chunk is subtracted and memoized as it returns, which
+keeps only its trimmed rows.
+
+**Recorded.** `cluster_pt_batch(..., return_stats=True)` returns `threads`, `peak_concurrent`, `budget_bytes`,
+`budget_source`, `peak_bytes`, `max_scratch_bytes` and `n_clusters`. `DimerSeriesModel.kernel_stats` keeps one such
+dict per call, with `order` and `size`, and the log names the pool per chunk. `DimerSeriesModel.scratch_budget_gb`
+sets the budget for one model. An rsmagcalc built before this is still called the old way.
+
+**Pinned.** rsMagCalc `tests/test_scratch_budget.py` (22):
+- the precedence, on fake /proc and /sys trees. These cover a Slurm-shaped v2 tree whose limit sits on the job
+  cgroup above a `max` task cgroup, a v1 tree under the near-2⁶³ "unlimited" root, a limit looser than
+  MemAvailable, usage above the limit, and bad values raising;
+- the sector count against C(2m, m) and the unsectored 4^m;
+- results bit-identical at budgets of 1e-9 GB and 100 GB, and on 1, 4 and 32 threads;
+- a budget below one cluster giving `peak_concurrent == 1`, and admitted bytes never above the budget.
+
+pyMagCalc `tests/test_kernels_dimer_series.py` (+2):
+- a level in one-topology chunks bit-identical to one call, and equal to NumPy's series to 1e-12, with the
+  stats recorded per call;
+- an rsmagcalc without `scratch_budget` still used.
+
+Rb₂Cu₃SnF₁₂ order 6 under `rust` logs its six levels with 10 threads; the largest cluster is 0.02 GB.
+
+**Gate** (2026-10-31 08:41–08:55, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`; pyMagCalc
+`a511aa8` plus this change, rsMagCalc `8552281` built and installed with an 8-aligned stroff, fMagCalc `4a5ff4b`,
+magpipe `e92b2c7`): **2724 passed, 2 skipped, 2 xfailed, 0 failed, 14 min 19 s**. That is the 2700 of the phase 2
+gate plus the 24 added here. The skips are the structural pair and the xfails are item 9's strict pins.
+
+**Validated on the node that reported it** (LANTA, 128 cores, 243 GB, `n_workers=120`, the same model and path;
+rsMagCalc `8552281`, pyMagCalc code-identical to `7e6cd94`; the 23 dimer-series tests and the 22 budget tests pass
+there). The default budget came out as 126 GB from "0.5 x MemAvailable".
+- **Order 7:** 150 s, down from 357 s; peak RSS 9.3 GB; dlog equal to the Mac reference to 2.1e-11, its 8
+  coefficients to 5.1e-11.
+- **Order 8:** 58 min; peak RSS 36.8 GB; dlog 1.8618137855 against NumPy's 1.8618137849 (6.6e-10), its 9
+  coefficients to 6.7e-10.
+- **The pool:** levels 5–8 ran 120 clusters at once on 120 threads. Level 8 went in four chunks of about 42 000
+  topologies, largest cluster 0.42 GB.
+- **Where order 8's hour goes:** levels up to 7 take 3 min, and level 8's topology classification 42 s. The kernel
+  chunks take 48 min, about 2.2 core-seconds per cluster. The serial subtraction after each chunk takes 6 min,
+  11 % of the wall.
+
+**Not done here:**
+- The series has no checkpoint (OPEN_WORK item 10).
+- The serial subtraction and the per-topology additivity warnings were the next change. That change found that the
+  warnings were real (the next section above).
+
 ### Neutron data and the forward model, phase 1, 2026-10-30 — μ per data bin, on a batched Colpa S(Q,ω)
 
 **What it is.** Phase 1 of making MagCalc the tool for reduced inelastic data. Three

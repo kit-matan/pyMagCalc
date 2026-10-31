@@ -29,17 +29,24 @@ Structure (all validated against independent oracles -- see tests/test_dimer_ser
     cluster size's new topologies. Everything else (enumeration, isomorphism keys,
     the subtraction, resummation) stays here, and the NumPy PT is the fallback and the
     parity reference (tests/test_dimer_series.py runs its oracles under both).
+    The subtraction of a level's new topologies runs in forked processes on Linux
+    (`subtract_workers`, default `n_workers`), bit for bit the serial result.
   * `pade` / `dlog_pade_estimates` / `resummed` -- Pade and Dlog-Pade resummation;
     Dlog-Pade returns the family of near-diagonal approximants (defective ones with a
     real pole in (0, lambda] are discarded) and the spread is the uncertainty, as in
     the papers.
 
 Cluster additivity note: the one-particle effective Hamiltonian minus the ground-state
-energy, both from the canonical (des Cloizeaux) transformation, is cluster additive
-(Gelfand, Solid State Comm. 98, 11 (1996)): on a disconnected cluster the wave operator
-factorizes, so cross-cluster hopping vanishes and the subtraction scheme is exact. The
-engine ASSERTS this numerically -- after subtraction, every weight must vanish below
-order L(cluster).
+energy is cluster additive (Gelfand, Solid State Comm. 98, 11 (1996)) when the
+one-particle states and the vacuum lie in different symmetry sectors: on a
+disconnected cluster the wave operator factorizes, so cross-cluster hopping vanishes
+and the subtraction scheme is exact. When they share a sector -- out-of-plane DM
+conserves only Sz, so the T0 states mix with the vacuum -- the des Cloizeaux H_eff is
+NOT additive (Hoermann and Schmidt, SciPost Phys. 15, 097 (2023), Sec. 2.4; on
+Rb2Cu3SnF12 from order 6 until 2026-10-31), and that block goes through their
+projective cluster-additive transformation instead (`_pca_one_particle`). The engine
+checks additivity numerically -- after subtraction, every weight must vanish below
+order L(cluster) -- and reports each cluster size where it fails.
 """
 import itertools
 import logging
@@ -56,19 +63,16 @@ logger = logging.getLogger(__name__)
 # numpy 2 renamed trapz -> trapezoid; keep compat with older numpy
 _trapezoid = getattr(np, "trapezoid", None) or np.trapz
 
+# the additivity check: after the subtraction, a cluster's weight below order
+# L(cluster), over the largest entry of its weight (or 1)
+ADDITIVITY_TOL = 1e-7
+
 
 # --------------------------------------------------------------------- PT engine
-def block_effective_series(E0, V_list, P_idx, order):
-    """Effective-Hamiltonian series for a (quasi-degenerate) model space.
-
-    H(lambda) = diag(E0) + sum_{j>=1} V_list[j-1] lambda^j.  Returns
-    [H_eff_0, ..., H_eff_order] (each p x p, Hermitian) such that the eigenvalues of
-    sum_k H_eff_k lambda^k reproduce the exact eigenvalues connected to the model
-    space to O(lambda^{order+1}).
-
-    Bloch recursion with column-dependent resolvents (quasi-degenerate model space),
-    then the des Cloizeaux Hermitization H_eff = S^{-1/2} (Omega^+ H Omega) S^{-1/2}.
-    """
+def _bloch_parts(E0, V_list, P_idx, order):
+    """The Bloch wave operator and the overlap and Hamiltonian series of a
+    (quasi-degenerate) model space: (Om, S, M), Om[k] (N, p) with Om[0] = P
+    (intermediate normalization), S_k = (Om^+ Om)_k, M_k = (Om^+ H Om)_k."""
     E0 = np.asarray(E0, dtype=float)
     N = len(E0)
     P_idx = np.asarray(P_idx, dtype=int)
@@ -120,8 +124,12 @@ def block_effective_series(E0, V_list, P_idx, order):
                 Mk += Om[i].conj().T @ (V_list[l - 1] @ Om[k - l - i])
         S.append(Sk)
         M.append(Mk)
+    return Om, S, M
 
-    # G = S^{1/2}, T = S^{-1/2} as series (all Hermitian)
+
+def _inv_sqrt_series(S, order):
+    """T = S^{-1/2} as a series, for S_0 = 1 (all Hermitian): G = S^{1/2} first."""
+    p = S[0].shape[0]
     G = [np.eye(p, dtype=complex)]
     for k in range(1, order + 1):
         acc = S[k].copy()
@@ -134,8 +142,13 @@ def block_effective_series(E0, V_list, P_idx, order):
         for j in range(1, k + 1):
             acc -= G[j] @ T[k - j]
         T.append(acc)
+    return T
 
+
+def _sandwich(T, M, order):
+    """sum_{a+b+c=k} T_a M_b T_c, Hermitized, per order k."""
     Heff = []
+    p = M[0].shape[0]
     for k in range(order + 1):
         Hk = np.zeros((p, p), dtype=complex)
         for a in range(k + 1):
@@ -143,6 +156,76 @@ def block_effective_series(E0, V_list, P_idx, order):
                 Hk += T[a] @ M[b] @ T[k - a - b]
         Heff.append(0.5 * (Hk + Hk.conj().T))
     return Heff
+
+
+def _series_mul(X, Y, order):
+    return [sum((X[i] @ Y[k - i] for i in range(k + 1)),
+                np.zeros((X[0].shape[0], Y[0].shape[1]), dtype=complex))
+            for k in range(order + 1)]
+
+
+def block_effective_series(E0, V_list, P_idx, order):
+    """Effective-Hamiltonian series for a (quasi-degenerate) model space.
+
+    H(lambda) = diag(E0) + sum_{j>=1} V_list[j-1] lambda^j.  Returns
+    [H_eff_0, ..., H_eff_order] (each p x p, Hermitian) such that the eigenvalues of
+    sum_k H_eff_k lambda^k reproduce the exact eigenvalues connected to the model
+    space to O(lambda^{order+1}).
+
+    Bloch recursion with column-dependent resolvents (quasi-degenerate model space),
+    then the des Cloizeaux Hermitization H_eff = S^{-1/2} (Omega^+ H Omega) S^{-1/2}.
+    """
+    _Om, S, M = _bloch_parts(E0, V_list, P_idx, order)
+    return _sandwich(_inv_sqrt_series(S, order), M, order)
+
+
+def _pca_one_particle(Om1, S, M, Om0, vac, order):
+    """The one-particle effective Hamiltonian of the projective cluster-additive
+    transformation (Hoermann and Schmidt, SciPost Phys. 15, 097 (2023), Sec. 3.1),
+    for a model space that shares its symmetry sector with the vacuum.
+
+    The des Cloizeaux H_eff = S^{-1/2} M S^{-1/2} orthonormalizes the projections of
+    the exact one-particle states on the model space. When the dressed vacuum has
+    one-particle components (here: out-of-plane DM, which conserves only Sz, mixes
+    the vacuum with the T0 states), that H_eff is NOT cluster additive: on two
+    disconnected clusters it hops a particle from one to the other (OPEN_WORK item
+    11; on Rb2Cu3SnF12 from order 6). The cure is to remove from each exact
+    one-particle state its vacuum component, |Psi_1> - <0|Psi_1> |psi_0>, with psi_0
+    the dressed vacuum in intermediate normalization, before orthonormalizing. With
+    Omega the one-particle Bloch operator (P Omega = 1) that gives
+
+        A = 1 - c b^+,   c = P psi_0,   b^+ = <0| Omega,
+        H_eff = (A S^-1 A^+)^{-1/2} A S^-1 M S^-1 A^+ (A S^-1 A^+)^{-1/2},
+
+    which is the des Cloizeaux H_eff when A = 1, and a unitary rotation of it
+    otherwise (same eigenvalues).
+
+    Om1: the one-particle Bloch columns per order, (N, p); Om0: the vacuum's, (N, 1);
+    vac: the vacuum's row in both; the model rows of Om0 are read where Om1[0] is 1.
+    """
+    p = S[0].shape[0]
+    model_rows = np.argmax(np.abs(Om1[0]), axis=0)
+    c = [Om0[k][model_rows, 0] for k in range(order + 1)]
+    b = [Om1[k][vac, :] for k in range(order + 1)]
+    A = [np.eye(p, dtype=complex)]
+    for k in range(1, order + 1):
+        Ak = np.zeros((p, p), dtype=complex)
+        for i in range(k + 1):
+            Ak -= np.outer(c[i], b[k - i])
+        A.append(Ak)
+    Ah = [a.conj().T for a in A]
+    Sinv = [np.eye(p, dtype=complex)]
+    for k in range(1, order + 1):
+        acc = np.zeros((p, p), dtype=complex)
+        for j in range(1, k + 1):
+            acc -= S[j] @ Sinv[k - j]
+        Sinv.append(acc)
+    ASinv = _series_mul(A, Sinv, order)
+    Y = _series_mul(ASinv, Ah, order)                       # A S^-1 A^+ = K K^+
+    Z = _series_mul(_series_mul(ASinv, M, order),
+                    _series_mul(Sinv, Ah, order), order)    # A S^-1 M S^-1 A^+
+    Y = [0.5 * (y + y.conj().T) for y in Y]
+    return _sandwich(_inv_sqrt_series(Y, order), Z, order)
 
 
 def eigenvalue_series(H_list, order, tol=1e-9):
@@ -349,35 +432,46 @@ def _cluster_pt(levels_list, links_local, order, sz_list=None):
     onep = [alpha * nloc ** d for d in range(m) for alpha in range(1, nloc)]
     p = len(onep)
 
+    # the one-particle block of the vacuum's own sector goes through the projective
+    # cluster-additive transformation (`_pca_one_particle`); any other sector cannot
+    # mix with the vacuum and keeps the des Cloizeaux H_eff, bit for bit
     if sz_list is None:
-        Heff_g = block_effective_series(E0, [V], [0], order)
+        Om0, S0, M0 = _bloch_parts(E0, [V], [0], order)
+        Heff_g = _sandwich(_inv_sqrt_series(S0, order), M0, order)
         gs = np.array([float(Heff_g[k][0, 0].real) for k in range(order + 1)])
-        Heff_1 = block_effective_series(E0, [V], onep, order)
+        Om1, S1, M1 = _bloch_parts(E0, [V], onep, order)
+        Heff_1 = _pca_one_particle(Om1, S1, M1, Om0, 0, order)
         delta = np.array([Heff_1[k] - gs[k] * np.eye(p) for k in range(order + 1)])
     else:
         Sz = np.zeros(dims)
         for d in range(m):
             Sz += np.asarray(sz_list[d])[digits[d]]
         Sz = np.round(Sz * 2).astype(int)          # half-integer-safe integer key
+        q_vac = Sz[0]
 
-        def sector_pt(model_global):
+        def sector_parts(model_global):
             q = Sz[model_global[0]]
             sel = np.flatnonzero(Sz == q)
             pos = {g: i for i, g in enumerate(sel)}
             Vs = V[sel][:, sel]
             P_loc = [pos[g] for g in model_global]
-            return block_effective_series(E0[sel], [Vs], P_loc, order)
+            return _bloch_parts(E0[sel], [Vs], P_loc, order), pos
 
-        Heff_g = sector_pt([0])
+        (Om0, S0, M0), pos0 = sector_parts([0])
+        Heff_g = _sandwich(_inv_sqrt_series(S0, order), M0, order)
         gs = np.array([float(Heff_g[k][0, 0].real) for k in range(order + 1)])
 
         delta = np.zeros((order + 1, p, p), dtype=complex)
         groups = defaultdict(list)                 # sector Sz -> [(pos_in_onep, state)]
         for ii, g in enumerate(onep):
             groups[Sz[g]].append((ii, g))
-        for _q, members in groups.items():
+        for q, members in groups.items():
             cols = [ii for ii, _g in members]
-            Heff_s = sector_pt([g for _ii, g in members])
+            (Om1, S1, M1), _pos = sector_parts([g for _ii, g in members])
+            if q == q_vac:
+                Heff_s = _pca_one_particle(Om1, S1, M1, Om0, pos0[0], order)
+            else:
+                Heff_s = _sandwich(_inv_sqrt_series(S1, order), M1, order)
             for k in range(order + 1):
                 blk = Heff_s[k] - gs[k] * np.eye(len(cols))
                 delta[k][np.ix_(cols, cols)] = blk
@@ -389,6 +483,21 @@ def _cluster_pt(levels_list, links_local, order, sz_list=None):
                      for d in range(m) for alpha in range(1, nloc)])
     delta[0] -= np.diag(loc0)
     return gs_int, delta
+
+
+# fewest topologies per process worth forking for
+SUBTRACT_MIN_PER_PROC = 500
+
+# (model, items, order) of the subtraction in flight, for its forked children
+_FORKED = None
+
+
+def _subtract_worker(i):
+    """Forked worker: the subtracted weight of item i, from the parent's memo."""
+    m, items, order = _FORKED
+    form, raw = items[i]
+    _skey, node_order = m._struct(form)
+    return (i,) + m._subtracted(form, node_order, order, raw)
 
 
 def _pt_worker(args):
@@ -416,6 +525,17 @@ class DimerSeriesModel:
         self.n_workers = n_workers        # None = auto (cpu_count) for big orders
         self.kernels = str(kernels)       # "rust": the cluster PT runs in rsMagCalc
         self._rust_failed = False         # a kernel error -> NumPy for the rest
+        # rsMagCalc's scratch budget for the cluster PT, in GB; None = its own
+        # default ($RSMAGCALC_SCRATCH_GB, else half the available memory)
+        self.scratch_budget_gb = None
+        self.chunk_bytes = 4 << 30        # PT results per rsMagCalc call
+        self.kernel_stats = []            # one dict per rsMagCalc call
+        # processes for the subtraction of a level's new topologies; None = auto
+        # (n_workers, on Linux only: it forks), 1 = serial
+        self.subtract_workers = None
+        self.additivity = []              # one dict per level with a failed check
+        self.subtract_stats = []          # one dict per forked subtraction
+        self._violations = {}             # (order, size) -> [count, worst, form]
         self._touch = defaultdict(list)   # d -> [(t, shift)]: node (d,c) in inst (t, c-shift)
         for t, (u, v, off, _V) in enumerate(self.link_types):
             self._touch[u].append((t, (0, 0, 0)))
@@ -675,8 +795,14 @@ class DimerSeriesModel:
         if rs is None or self._rust_failed:
             return None
         try:
-            return [(np.asarray(g), np.asarray(d))
-                    for g, d in rs.cluster_pt_batch(clusters, order, self.n_workers)]
+            if not hasattr(rs, "scratch_budget"):      # a build before 2026-10-31
+                out = rs.cluster_pt_batch(clusters, order, self.n_workers)
+            else:
+                out, st = rs.cluster_pt_batch(
+                    clusters, order, self.n_workers,
+                    scratch_budget_gb=self.scratch_budget_gb, return_stats=True)
+                self.kernel_stats.append(dict(st, order=order))
+            return [(np.asarray(g), np.asarray(d)) for g, d in out]
         except Exception:
             _kernels.fell_back("dimer-series cluster PT")
             self._rust_failed = True
@@ -779,7 +905,17 @@ class DimerSeriesModel:
         if memo_key in self._w_memo:
             gs_w, Lc0, delta_trim = self._w_memo[memo_key]
             return node_order, gs_w, Lc0, delta_trim
+        gs_w, Lc0, delta_trim, ratio = self._subtracted(form, node_order, order, raw)
+        self._store(memo_key, form, gs_w, Lc0, delta_trim, ratio)
+        return node_order, gs_w, Lc0, delta_trim
 
+    def _subtracted(self, form, node_order, order, raw=None):
+        """One topology's raw PT minus every proper connected subcluster's weight:
+        (gs_w, Lc0, delta_trim, ratio), ratio = the largest weight left below order
+        L(cluster) over the cluster's scale (the additivity check). Reads the memo of
+        the smaller sizes and writes nothing, so a level's topologies are
+        independent of one another (`_subtract_level` runs them in processes).
+        A given `raw` is consumed: it is subtracted in place."""
         lv, sz = self._node_levels(node_order)
         if raw is None:
             links = self._local_links(form, node_order)
@@ -787,8 +923,6 @@ class DimerSeriesModel:
             gs_raw, delta_raw = out[0] if out else _cluster_pt(lv, links, order, sz)
         else:
             gs_raw, delta_raw = raw
-        gs_raw = gs_raw.copy()
-        delta_raw = delta_raw.copy()
 
         nexc = self.nexc
         node_pos = {n: i for i, n in enumerate(node_order)}
@@ -809,13 +943,148 @@ class DimerSeriesModel:
         low = max((np.abs(delta_raw[k]).max() for k in range(min(Lc, order + 1))),
                   default=0.0)
         scale = max(np.abs(delta_raw).max(), 1.0)
-        if low > 1e-7 * scale:
-            logger.warning("cluster additivity violated for %s (below-order weight "
-                           "%.2e vs scale %.2e)", form, low, scale)
-        delta_trim = delta_raw[min(Lc, order + 1):].copy() \
+        Lc0 = min(Lc, order + 1)
+        delta_trim = delta_raw[Lc0:].copy() \
             if Lc <= order else np.zeros((0,) + delta_raw.shape[1:], complex)
-        self._w_memo[memo_key] = (gs_raw, min(Lc, order + 1), delta_trim)
-        return node_order, gs_raw, min(Lc, order + 1), delta_trim
+        return gs_raw, Lc0, delta_trim, low / scale
+
+    def _store(self, memo_key, form, gs_w, Lc0, delta_trim, ratio):
+        """Memoize one topology's weight and tally its additivity check. A cluster
+        over the tolerance is logged at DEBUG only: `hopping_series` reports each
+        level's tally in one line (at order 8 on Rb2Cu3SnF12 one line per cluster
+        was 82 342 lines)."""
+        self._w_memo[memo_key] = (gs_w, Lc0, delta_trim)
+        if ratio > ADDITIVITY_TOL:
+            logger.debug("cluster additivity violated for %s (below-order weight "
+                         "%.2e of the cluster's scale)", form, ratio)
+            acc = self._violations.setdefault((memo_key[1], len(form)), [0, 0.0, None])
+            acc[0] += 1
+            if ratio > acc[1]:
+                acc[1], acc[2] = ratio, form
+
+    def _report_additivity(self, order, size, n_new):
+        """One record (and, if any cluster failed, one WARNING) per level: the
+        level's new topologies and any smaller one first computed while
+        subtracting them."""
+        for key in sorted(k for k in self._violations if k[0] == order):
+            count, worst, form = self._violations.pop(key)
+            here = key[1] == size
+            self.additivity.append(dict(order=order, size=key[1], violated=count,
+                                        topologies=n_new if here else None,
+                                        worst=worst, worst_cluster=form))
+            logger.warning(
+                "  L=%d: cluster additivity violated in %d %s at order %d: "
+                "below-order weight up to %.2e of the cluster's scale (tolerance "
+                "%.0e), worst %s", key[1], count,
+                f"of {n_new} new topologies" if here
+                else f"topologies first met subtracting L={size}",
+                order, worst, ADDITIVITY_TOL, form)
+
+    def _rust_level(self, reps, order, size):
+        """The raw PT of one level's new topologies in rsMagCalc, subtracted and
+        memoized chunk by chunk; returns the topologies left to the NumPy path
+        (all of them if the kernel is absent or fails).
+
+        A chunk holds at most `chunk_bytes` of results: the whole level at once
+        would hold every topology's raw (order+1, p, p) delta, and its inputs, at
+        the same time -- up to 16 GB of results alone at order 8 on Rb2Cu3SnF12
+        (157 159 new topologies), and more at order 9. Each chunk's weights are
+        memoized as it returns, keeping only their trimmed rows, so the level's
+        peak is one chunk.
+        """
+        keys = list(reps)
+        i = 0
+        while i < len(keys):
+            chunk, nbytes = [], 0
+            while i < len(keys) and (not chunk or nbytes < self.chunk_bytes):
+                form, node_order = reps[keys[i]]
+                p = len(node_order) * self.nexc
+                nbytes += (order + 1) * p * p * 16
+                chunk.append(keys[i])
+                i += 1
+            tasks = []
+            for skey in chunk:
+                form, node_order = reps[skey]
+                lv, sz = self._node_levels(node_order)
+                tasks.append((lv, self._local_links(form, node_order), sz))
+            n_stats = len(self.kernel_stats)
+            out = self._rust_pt(tasks, order)
+            if out is None:
+                return {k: reps[k] for k in keys[i - len(chunk):]}
+            if len(self.kernel_stats) > n_stats:
+                st = self.kernel_stats[-1]
+                st.update(size=size)
+                logger.info(
+                    "  L=%d: rsMagCalc PT on %d clusters, %d threads (%d at once at "
+                    "peak), scratch budget %.1f GB (%s), largest cluster %.2f GB",
+                    size, st["n_clusters"], st["threads"], st["peak_concurrent"],
+                    st["budget_bytes"] / 2**30, st["budget_source"],
+                    st["max_scratch_bytes"] / 2**30)
+            self._subtract_level([(reps[skey][0], raw)
+                                  for skey, raw in zip(chunk, out)], order)
+            del out
+        return {}
+
+    def _subtract_procs(self, items):
+        """How many processes `_subtract_level` forks for these (form, raw) items:
+        1 (serial) unless every raw PT is in hand and the batch is worth a pool."""
+        import os
+        import sys
+        n = self.subtract_workers
+        if n is None:
+            if not sys.platform.startswith("linux"):
+                return 1             # fork is not safe on macOS's system libraries
+            n = self.n_workers or os.cpu_count() or 1
+        if any(raw is None for _f, raw in items):
+            return 1
+        return max(1, min(int(n), len(items) // SUBTRACT_MIN_PER_PROC))
+
+    def _subtract_level(self, items, order):
+        """Subtract and memoize a level's new topologies, given their raw PT as
+        [(form, (gs_raw, delta_raw))]. Each topology reads only the smaller sizes'
+        memo, so they are independent; with `_subtract_procs` > 1 they run in
+        forked processes that inherit the memo and the raws, and only the
+        subtracted weights come back. The result is the serial one bit for bit.
+
+        At order 8 on Rb2Cu3SnF12 the serial subtraction took 6 min of 58 on a
+        128-core node, after the PT had gone parallel.
+        """
+        nproc = self._subtract_procs(items)
+        if nproc > 1:
+            import gc
+            import multiprocessing as mp
+            from concurrent.futures import ProcessPoolExecutor
+            global _FORKED
+            _FORKED = (self, items, order)
+            # the children would otherwise write every object's GC header on their
+            # first collection, copying the whole parent heap page by page
+            gc.freeze()
+            try:
+                # an executor, not mp.Pool: a child killed (say, out of memory)
+                # raises BrokenProcessPool here, where a Pool would wait forever
+                with ProcessPoolExecutor(nproc, mp_context=mp.get_context("fork")) as ex:
+                    done = list(ex.map(_subtract_worker, range(len(items)),
+                                       chunksize=max(1, len(items) // (16 * nproc))))
+            except Exception:
+                logger.warning("dimer series: the forked subtraction failed; "
+                               "subtracting serially", exc_info=True)
+                done = None
+            finally:
+                _FORKED = None
+                gc.unfreeze()
+            if done is not None:
+                self.subtract_stats.append(dict(order=order, size=len(items[0][0]),
+                                                topologies=len(items), procs=nproc))
+                logger.info("  L=%d: subtracted %d topologies in %d processes",
+                            len(items[0][0]), len(items), nproc)
+                for i, gs_w, Lc0, delta_trim, ratio in done:
+                    form = items[i][0]
+                    skey, _no = self._struct(form)
+                    if (skey, order) not in self._w_memo:
+                        self._store((skey, order), form, gs_w, Lc0, delta_trim, ratio)
+                return
+        for form, raw in items:
+            self._weight_by_struct(form, order, raw=raw)
 
     # ----------------------------------------------------------------- assembly
     def hopping_series(self, order):
@@ -847,20 +1116,15 @@ class DimerSeriesModel:
                 form_struct[form] = (skey, node_order)
                 if (skey, order) not in self._w_memo and skey not in reps:
                     reps[skey] = (form, node_order)
+            n_new = len(reps)
             logger.info("  L=%d: %d embeddings -> %d new topologies", size,
-                        len(forms), len(reps))
+                        len(forms), n_new)
 
             # parallel raw PT for the new topologies (worth it for big clusters)
-            raws = {}
             if reps and self.kernels == "rust":
-                tasks = []
-                for (form, node_order) in reps.values():
-                    lv, sz = self._node_levels(node_order)
-                    tasks.append((lv, self._local_links(form, node_order), sz))
-                out = self._rust_pt(tasks, order)
-                if out is not None:
-                    raws = dict(zip(reps, out))
-            if reps and not raws and size >= 4 and n_workers > 1 \
+                reps = self._rust_level(reps, order, size)
+            raws = {}
+            if reps and size >= 4 and n_workers > 1 \
                     and len(reps) > 2 * n_workers:
                 import multiprocessing as mp
                 tasks = []
@@ -874,9 +1138,11 @@ class DimerSeriesModel:
                             _pt_worker, tasks, chunksize=4):
                         raws[skey] = (gs_raw, delta_raw)
 
-            # subtraction (serial: cheap) + memoization, reps first
-            for skey, (form, _no) in reps.items():
-                self._weight_by_struct(form, order, raw=raws.get(skey))
+            # subtraction + memoization, reps first
+            self._subtract_level([(form, raws.get(skey))
+                                  for skey, (form, _no) in reps.items()], order)
+            del raws
+            self._report_additivity(order, size, n_new)
 
             # assembly over ALL embeddings
             for form in forms:

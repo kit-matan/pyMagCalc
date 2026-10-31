@@ -1,6 +1,7 @@
 # Open work — pick-up notes
 
-**Current status (2026-10-30): items 8 and 9 are open.** Item 8 was left by phase 1
+**Current status (2026-10-31): items 8, 9 and 10 are open.** Item 11, a correctness
+defect in the dimer series under DM, was found and fixed the same day. Item 8 was left by phase 1
 of the neutron-data layer (`GAP_STATUS.md`, "Neutron data and the forward model,
 phase 1"). Item 9 was found while closing item 7, which routed `calculate_sqw`
 through Colpa's method the same day (`GAP_STATUS.md`, "calculate_sqw on Colpa's
@@ -9,8 +10,9 @@ Item 6, found while closing item 5, was fixed the next day. The Rust kernels pla
 finished. K1–K5 and a sparse exact KPM guard are in rsMagCalc, and K6 (mixed-spin
 dipole S(Q,ω)) is in fMagCalc. Everything is merged to `master` and pushed (pyMagCalc
 `9b70cf5` before the last two items, fMagCalc `4a5ff4b`, rsMagCalc `1d2532d`, now
-public). Last full gate: **2653 passed, 2 skipped, 2 xfailed** (structural skips, item 9's
-strict xfails; 2026-10-30, see `GAP_STATUS.md`, "calculate_sqw on Colpa's method"). K7, the dimer series' per-cluster perturbation
+public). Last full gate: see `GAP_STATUS.md`, "The dimer series' subtraction in
+processes, and the T0 sector under DM" and "The dimer series' T0 sector made cluster
+additive" (the structural skips, and item 9's strict xfails). K7, the dimer series' per-cluster perturbation
 theory, followed on 2026-10-29 from a profile of every shipped example under the
 compiled kernels (`GAP_STATUS.md`, "Rust kernels K7"). Four small follow-ups were
 known; item 3 is done:
@@ -139,6 +141,30 @@ known; item 3 is done:
      degenerate group, not each channel mode. Alternatively, fold q±k into one channel,
      since they are the same momentum.
    - **Oracle:** the supercell identity, which is exact.
+10. **The dimer series has no checkpoint.** Found on 2026-10-31 by a LANTA run of
+    Rb₂Cu₃SnF₁₂ at order 8, which was also the run that showed the K7 pool on 2
+    threads (`GAP_STATUS.md`, "Dimer series under `kernels: rust`: memory admits each
+    cluster"). `hopping_series(order)` holds everything in memory until it returns.
+    A job killed at the 24 h wall therefore loses the whole order, and order 9 is
+    likely to need more than one allocation.
+    - **Injection point:** `DimerSeriesModel._w_memo`, keyed by (structural key,
+      order). After each chunk of `_rust_level` (and each level of the NumPy path),
+      the new entries could be appended to a file. A restart would then load them and
+      skip their topologies.
+    - **Oracle:** a restarted run must give hoppings bit-identical to an
+      uninterrupted one. The memo is exact, so this is an identity.
+    - **Watch:** the key is a blake2b digest of rounded levels and pair operators, so
+      the file must record the model it belongs to and refuse any other.
+
+11. **With DM, the dimer series' T0 band was not cluster additive. DONE 2026-10-31,** the
+    day it was found. The linked-cluster theorem failed in the Sz = 0 sector: on
+    Rb₂Cu₃SnF₁₂ at order 7, 9 088 seven-link topologies kept an order-6 weight of up to
+    4.2e-3. The cause was the des Cloizeaux one-particle H_eff in the sector the vacuum
+    shares with the T0 states. That block now goes through Hörmann and Schmidt's
+    projective cluster-additive transformation, in pyMagCalc and in rsMagCalc. It is
+    pinned by `tests/test_dimer_series_additivity.py`, including momentum-resolved ED of
+    their toy model, whose error now scales as g⁷ at order 6. See `GAP_STATUS.md`, "The
+    dimer series' T0 sector made cluster additive".
 
 Items 3 and 4 come from the 2026-10-27 assessment of what is still worth compiling.
 Its third candidate, the Ewald dipolar sum, is done (`GAP_STATUS.md`, "Ewald dipolar
