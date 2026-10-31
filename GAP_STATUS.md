@@ -1766,7 +1766,11 @@ bring a c σ_Q = 1.4 Δ vertex to 10%, at 343 evaluations per virtual sample. Ch
 case against `method="sample"` with many draws on a few bins.
 
 **Cost:** preparing 0.8 M virtual samples (50,000 samples × 8 energy blocks × branches)
-and their 5 M entries takes 7 s, once per model setup.
+and their 5 M entries takes 7 s, once per model setup. Each evaluation then builds the
+per-node mixture by batched matmul over (sample, mode) rather than four-index `einsum`, and
+`_bin_mixture` evaluates a mode's components only where the mode carries intensity and its
+mixture reaches the bin within `PRUNE_WIDTHS` (12) widths: on a 1,439-bin AMATERAS subset,
+25 s → 9 s per evaluation (2.8×), equal to 3e-16 (`e2ae02b`).
 
 **On real data** (a 2025 CNCS dataset; unpublished, so the data and the scripts stay in that
 project):
