@@ -37,11 +37,16 @@ Structure (all validated against independent oracles -- see tests/test_dimer_ser
     the papers.
 
 Cluster additivity note: the one-particle effective Hamiltonian minus the ground-state
-energy, both from the canonical (des Cloizeaux) transformation, is cluster additive
-(Gelfand, Solid State Comm. 98, 11 (1996)): on a disconnected cluster the wave operator
-factorizes, so cross-cluster hopping vanishes and the subtraction scheme is exact. The
-engine ASSERTS this numerically -- after subtraction, every weight must vanish below
-order L(cluster).
+energy is cluster additive (Gelfand, Solid State Comm. 98, 11 (1996)) when the
+one-particle states and the vacuum lie in different symmetry sectors: on a
+disconnected cluster the wave operator factorizes, so cross-cluster hopping vanishes
+and the subtraction scheme is exact. When they share a sector -- out-of-plane DM
+conserves only Sz, so the T0 states mix with the vacuum -- the des Cloizeaux H_eff is
+NOT additive (Hoermann and Schmidt, SciPost Phys. 15, 097 (2023), Sec. 2.4; on
+Rb2Cu3SnF12 from order 6 until 2026-10-31), and that block goes through their
+projective cluster-additive transformation instead (`_pca_one_particle`). The engine
+checks additivity numerically -- after subtraction, every weight must vanish below
+order L(cluster) -- and reports each cluster size where it fails.
 """
 import itertools
 import logging
@@ -64,17 +69,10 @@ ADDITIVITY_TOL = 1e-7
 
 
 # --------------------------------------------------------------------- PT engine
-def block_effective_series(E0, V_list, P_idx, order):
-    """Effective-Hamiltonian series for a (quasi-degenerate) model space.
-
-    H(lambda) = diag(E0) + sum_{j>=1} V_list[j-1] lambda^j.  Returns
-    [H_eff_0, ..., H_eff_order] (each p x p, Hermitian) such that the eigenvalues of
-    sum_k H_eff_k lambda^k reproduce the exact eigenvalues connected to the model
-    space to O(lambda^{order+1}).
-
-    Bloch recursion with column-dependent resolvents (quasi-degenerate model space),
-    then the des Cloizeaux Hermitization H_eff = S^{-1/2} (Omega^+ H Omega) S^{-1/2}.
-    """
+def _bloch_parts(E0, V_list, P_idx, order):
+    """The Bloch wave operator and the overlap and Hamiltonian series of a
+    (quasi-degenerate) model space: (Om, S, M), Om[k] (N, p) with Om[0] = P
+    (intermediate normalization), S_k = (Om^+ Om)_k, M_k = (Om^+ H Om)_k."""
     E0 = np.asarray(E0, dtype=float)
     N = len(E0)
     P_idx = np.asarray(P_idx, dtype=int)
@@ -126,8 +124,12 @@ def block_effective_series(E0, V_list, P_idx, order):
                 Mk += Om[i].conj().T @ (V_list[l - 1] @ Om[k - l - i])
         S.append(Sk)
         M.append(Mk)
+    return Om, S, M
 
-    # G = S^{1/2}, T = S^{-1/2} as series (all Hermitian)
+
+def _inv_sqrt_series(S, order):
+    """T = S^{-1/2} as a series, for S_0 = 1 (all Hermitian): G = S^{1/2} first."""
+    p = S[0].shape[0]
     G = [np.eye(p, dtype=complex)]
     for k in range(1, order + 1):
         acc = S[k].copy()
@@ -140,8 +142,13 @@ def block_effective_series(E0, V_list, P_idx, order):
         for j in range(1, k + 1):
             acc -= G[j] @ T[k - j]
         T.append(acc)
+    return T
 
+
+def _sandwich(T, M, order):
+    """sum_{a+b+c=k} T_a M_b T_c, Hermitized, per order k."""
     Heff = []
+    p = M[0].shape[0]
     for k in range(order + 1):
         Hk = np.zeros((p, p), dtype=complex)
         for a in range(k + 1):
@@ -149,6 +156,76 @@ def block_effective_series(E0, V_list, P_idx, order):
                 Hk += T[a] @ M[b] @ T[k - a - b]
         Heff.append(0.5 * (Hk + Hk.conj().T))
     return Heff
+
+
+def _series_mul(X, Y, order):
+    return [sum((X[i] @ Y[k - i] for i in range(k + 1)),
+                np.zeros((X[0].shape[0], Y[0].shape[1]), dtype=complex))
+            for k in range(order + 1)]
+
+
+def block_effective_series(E0, V_list, P_idx, order):
+    """Effective-Hamiltonian series for a (quasi-degenerate) model space.
+
+    H(lambda) = diag(E0) + sum_{j>=1} V_list[j-1] lambda^j.  Returns
+    [H_eff_0, ..., H_eff_order] (each p x p, Hermitian) such that the eigenvalues of
+    sum_k H_eff_k lambda^k reproduce the exact eigenvalues connected to the model
+    space to O(lambda^{order+1}).
+
+    Bloch recursion with column-dependent resolvents (quasi-degenerate model space),
+    then the des Cloizeaux Hermitization H_eff = S^{-1/2} (Omega^+ H Omega) S^{-1/2}.
+    """
+    _Om, S, M = _bloch_parts(E0, V_list, P_idx, order)
+    return _sandwich(_inv_sqrt_series(S, order), M, order)
+
+
+def _pca_one_particle(Om1, S, M, Om0, vac, order):
+    """The one-particle effective Hamiltonian of the projective cluster-additive
+    transformation (Hoermann and Schmidt, SciPost Phys. 15, 097 (2023), Sec. 3.1),
+    for a model space that shares its symmetry sector with the vacuum.
+
+    The des Cloizeaux H_eff = S^{-1/2} M S^{-1/2} orthonormalizes the projections of
+    the exact one-particle states on the model space. When the dressed vacuum has
+    one-particle components (here: out-of-plane DM, which conserves only Sz, mixes
+    the vacuum with the T0 states), that H_eff is NOT cluster additive: on two
+    disconnected clusters it hops a particle from one to the other (OPEN_WORK item
+    11; on Rb2Cu3SnF12 from order 6). The cure is to remove from each exact
+    one-particle state its vacuum component, |Psi_1> - <0|Psi_1> |psi_0>, with psi_0
+    the dressed vacuum in intermediate normalization, before orthonormalizing. With
+    Omega the one-particle Bloch operator (P Omega = 1) that gives
+
+        A = 1 - c b^+,   c = P psi_0,   b^+ = <0| Omega,
+        H_eff = (A S^-1 A^+)^{-1/2} A S^-1 M S^-1 A^+ (A S^-1 A^+)^{-1/2},
+
+    which is the des Cloizeaux H_eff when A = 1, and a unitary rotation of it
+    otherwise (same eigenvalues).
+
+    Om1: the one-particle Bloch columns per order, (N, p); Om0: the vacuum's, (N, 1);
+    vac: the vacuum's row in both; the model rows of Om0 are read where Om1[0] is 1.
+    """
+    p = S[0].shape[0]
+    model_rows = np.argmax(np.abs(Om1[0]), axis=0)
+    c = [Om0[k][model_rows, 0] for k in range(order + 1)]
+    b = [Om1[k][vac, :] for k in range(order + 1)]
+    A = [np.eye(p, dtype=complex)]
+    for k in range(1, order + 1):
+        Ak = np.zeros((p, p), dtype=complex)
+        for i in range(k + 1):
+            Ak -= np.outer(c[i], b[k - i])
+        A.append(Ak)
+    Ah = [a.conj().T for a in A]
+    Sinv = [np.eye(p, dtype=complex)]
+    for k in range(1, order + 1):
+        acc = np.zeros((p, p), dtype=complex)
+        for j in range(1, k + 1):
+            acc -= S[j] @ Sinv[k - j]
+        Sinv.append(acc)
+    ASinv = _series_mul(A, Sinv, order)
+    Y = _series_mul(ASinv, Ah, order)                       # A S^-1 A^+ = K K^+
+    Z = _series_mul(_series_mul(ASinv, M, order),
+                    _series_mul(Sinv, Ah, order), order)    # A S^-1 M S^-1 A^+
+    Y = [0.5 * (y + y.conj().T) for y in Y]
+    return _sandwich(_inv_sqrt_series(Y, order), Z, order)
 
 
 def eigenvalue_series(H_list, order, tol=1e-9):
@@ -355,35 +432,46 @@ def _cluster_pt(levels_list, links_local, order, sz_list=None):
     onep = [alpha * nloc ** d for d in range(m) for alpha in range(1, nloc)]
     p = len(onep)
 
+    # the one-particle block of the vacuum's own sector goes through the projective
+    # cluster-additive transformation (`_pca_one_particle`); any other sector cannot
+    # mix with the vacuum and keeps the des Cloizeaux H_eff, bit for bit
     if sz_list is None:
-        Heff_g = block_effective_series(E0, [V], [0], order)
+        Om0, S0, M0 = _bloch_parts(E0, [V], [0], order)
+        Heff_g = _sandwich(_inv_sqrt_series(S0, order), M0, order)
         gs = np.array([float(Heff_g[k][0, 0].real) for k in range(order + 1)])
-        Heff_1 = block_effective_series(E0, [V], onep, order)
+        Om1, S1, M1 = _bloch_parts(E0, [V], onep, order)
+        Heff_1 = _pca_one_particle(Om1, S1, M1, Om0, 0, order)
         delta = np.array([Heff_1[k] - gs[k] * np.eye(p) for k in range(order + 1)])
     else:
         Sz = np.zeros(dims)
         for d in range(m):
             Sz += np.asarray(sz_list[d])[digits[d]]
         Sz = np.round(Sz * 2).astype(int)          # half-integer-safe integer key
+        q_vac = Sz[0]
 
-        def sector_pt(model_global):
+        def sector_parts(model_global):
             q = Sz[model_global[0]]
             sel = np.flatnonzero(Sz == q)
             pos = {g: i for i, g in enumerate(sel)}
             Vs = V[sel][:, sel]
             P_loc = [pos[g] for g in model_global]
-            return block_effective_series(E0[sel], [Vs], P_loc, order)
+            return _bloch_parts(E0[sel], [Vs], P_loc, order), pos
 
-        Heff_g = sector_pt([0])
+        (Om0, S0, M0), pos0 = sector_parts([0])
+        Heff_g = _sandwich(_inv_sqrt_series(S0, order), M0, order)
         gs = np.array([float(Heff_g[k][0, 0].real) for k in range(order + 1)])
 
         delta = np.zeros((order + 1, p, p), dtype=complex)
         groups = defaultdict(list)                 # sector Sz -> [(pos_in_onep, state)]
         for ii, g in enumerate(onep):
             groups[Sz[g]].append((ii, g))
-        for _q, members in groups.items():
+        for q, members in groups.items():
             cols = [ii for ii, _g in members]
-            Heff_s = sector_pt([g for _ii, g in members])
+            (Om1, S1, M1), _pos = sector_parts([g for _ii, g in members])
+            if q == q_vac:
+                Heff_s = _pca_one_particle(Om1, S1, M1, Om0, pos0[0], order)
+            else:
+                Heff_s = _sandwich(_inv_sqrt_series(S1, order), M1, order)
             for k in range(order + 1):
                 blk = Heff_s[k] - gs[k] * np.eye(len(cols))
                 delta[k][np.ix_(cols, cols)] = blk

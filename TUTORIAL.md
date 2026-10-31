@@ -1416,15 +1416,15 @@ order; add `kernels: rust` (§4c2) to run each cluster's perturbation theory in
 rsMagCalc — on the six-dimer Rb₂Cu₃SnF₁₂ cell, order 6 takes 21 s instead of 115 s
 and order 7 6.4 min instead of 32 min.
 
-> **Known defect, open (2026-10-31).** With a DM interaction that breaks spin-rotation
-> symmetry, the T0 (S<sup>z</sup> = 0) one-triplon band is not cluster additive from
-> order 6 on. The linked-cluster theorem fails there: on Rb₂Cu₃SnF₁₂ a seven-link
-> cluster keeps an order-6 weight of up to 4×10⁻³ after the subtraction. The
-> S<sup>z</sup> = ±1 bands are additive, and so is everything without DM. Treat the
-> S<sup>z</sup> = 0 band's coefficients of order 6 and up as unreliable until it is
-> fixed. The run log warns once per cluster size where the check fails
-> (`GAP_STATUS.md`, "The dimer series' subtraction in processes, and the T0 sector
-> under DM").
+With a DM interaction that breaks spin-rotation symmetry, the T0 (S<sup>z</sup> = 0)
+one-triplon band shares its symmetry sector with the vacuum. That band goes through the
+projective cluster-additive transformation of Hörmann and Schmidt (SciPost Phys. 15, 097
+(2023)) instead of the des Cloizeaux effective Hamiltonian. Until 2026-10-31 it used the
+des Cloizeaux one, which is not cluster additive there. The S<sup>z</sup> = 0 band's
+coefficients from order 6 on were then wrong; on Rb₂Cu₃SnF₁₂ the Δ₂ band's order-6
+coefficient moved from −1.125 to −1.091. The S<sup>z</sup> = ±1 bands were never
+affected. The run log warns, once per cluster size, if the additivity check fails
+(`GAP_STATUS.md`, "The dimer series' T0 sector made cluster additive").
 
 ## 4h. Beyond LSWT: diffuse, thermal, and dynamical methods
 

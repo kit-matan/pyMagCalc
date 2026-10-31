@@ -1,7 +1,7 @@
 # Open work — pick-up notes
 
-**Current status (2026-10-31): items 8, 9, 10 and 11 are open.** Item 11, a correctness
-defect in the dimer series under DM, is the most urgent. Item 8 was left by phase 1
+**Current status (2026-10-31): items 8, 9 and 10 are open.** Item 11, a correctness
+defect in the dimer series under DM, was found and fixed the same day. Item 8 was left by phase 1
 of the neutron-data layer (`GAP_STATUS.md`, "Neutron data and the forward model,
 phase 1"). Item 9 was found while closing item 7, which routed `calculate_sqw`
 through Colpa's method the same day (`GAP_STATUS.md`, "calculate_sqw on Colpa's
@@ -11,8 +11,8 @@ finished. K1–K5 and a sparse exact KPM guard are in rsMagCalc, and K6 (mixed-s
 dipole S(Q,ω)) is in fMagCalc. Everything is merged to `master` and pushed (pyMagCalc
 `9b70cf5` before the last two items, fMagCalc `4a5ff4b`, rsMagCalc `1d2532d`, now
 public). Last full gate: see `GAP_STATUS.md`, "The dimer series' subtraction in
-processes, and the T0 sector under DM" (the structural skips, and the strict xfails of
-items 9 and 11). K7, the dimer series' per-cluster perturbation
+processes, and the T0 sector under DM" and "The dimer series' T0 sector made cluster
+additive" (the structural skips, and item 9's strict xfails). K7, the dimer series' per-cluster perturbation
 theory, followed on 2026-10-29 from a profile of every shipped example under the
 compiled kernels (`GAP_STATUS.md`, "Rust kernels K7"). Four small follow-ups were
 known; item 3 is done:
@@ -147,52 +147,15 @@ known; item 3 is done:
     - **Watch:** the key is a blake2b digest of rounded levels and pair operators, so
       the file must record the model it belongs to and refuse any other.
 
-11. **With DM, the dimer series' T0 band is not cluster additive from order 6 on.**
-    Found on 2026-10-31, while collapsing the series' additivity warnings into one line
-    per level (`GAP_STATUS.md`, "The dimer series' subtraction in processes, and the T0
-    sector under DM"). The linked-cluster theorem says an L-link cluster's subtracted
-    weight vanishes below order L, and the engine checks it for every topology. On
-    Rb₂Cu₃SnF₁₂ the check fails:
-
-    | Order | Clusters that fail | Residual left |
-    |---|---|---|
-    | 7 | 9 088 of the 35 566 seven-link topologies | order-6 weight up to 4.2e-3 of the cluster's scale |
-    | 8 | 82 342 eight-link topologies (LANTA) | not measured |
-
-    That residual is as large as the genuine order-6 weights of six-link trees, up to
-    2.8e-3. Everything below order 6 cancels to 1e-13.
-    - **What is known:**
-      - The residual is only in the block of the T0 (Sz = 0) one-triplon states. The
-        Sz = ±1 blocks cancel to 1e-14.
-      - With the DM switched off (d_z = 0) it cancels everywhere.
-      - The dimer chain is additive to 1e-15 through order 8 in every variant tried:
-        uniform DM, staggered DM, two kinds of dimer.
-      - The NumPy and Rust PT agree on the residual, so it is the method, not a kernel.
-    - **Most likely cause (not yet proved):** `_cluster_pt` block-diagonalizes the
-      one-triplon states against everything else, and in the Sz = 0 sector everything
-      else includes the vacuum. Without DM, total S keeps the vacuum (S = 0) and T0
-      (S = 1) apart at every order. With DM only Sz is conserved, so the dressed vacuum
-      and the T0 states mix, and a canonical transformation of the one-particle block
-      alone is not cluster additive. Gelfand's prescription (Solid State Comm. 98, 11
-      (1996)) block-diagonalizes the zero- and one-particle spaces together. It treats
-      vacuum ⊕ one-triplon as the model space, then orthogonalizes the one-particle
-      states against the dressed vacuum, in order of particle number.
-    - **Injection point:** `_cluster_pt`'s `sector_pt` for the sector that holds state
-      0, the vacuum. The Rust kernel's `sector_pt` mirrors it (rsMagCalc
-      `src/dimer_series.rs`), and the two must change together.
-    - **Oracle:** `tests/test_dimer_series_additivity.py`.
-      - `test_with_dm_the_cluster_is_additive` is a strict xfail on one seven-link,
-        six-node cluster at order 6, and must flip.
-      - Its two passing neighbours must stay: the DM-off control, and the residual
-        confined to T0.
-      - The Sz = ±1 hoppings must not move.
-      - The chain oracles in `tests/test_dimer_series.py` must still pass. An
-        independent check of the T0 band is momentum-resolved ED of a small periodic
-        cluster with staggered DM.
-    - **Until then:** the Sz = 0 band's coefficients of order 6 and up are unreliable
-      for any model with DM. On Rb₂Cu₃SnF₁₂ that is the Δ₂ ≈ 7.3 meV mode. The run log
-      warns once per cluster size where the check fails, and
-      `DimerSeriesModel.additivity` keeps the counts.
+11. **With DM, the dimer series' T0 band was not cluster additive. DONE 2026-10-31,** the
+    day it was found. The linked-cluster theorem failed in the Sz = 0 sector: on
+    Rb₂Cu₃SnF₁₂ at order 7, 9 088 seven-link topologies kept an order-6 weight of up to
+    4.2e-3. The cause was the des Cloizeaux one-particle H_eff in the sector the vacuum
+    shares with the T0 states. That block now goes through Hörmann and Schmidt's
+    projective cluster-additive transformation, in pyMagCalc and in rsMagCalc. It is
+    pinned by `tests/test_dimer_series_additivity.py`, including momentum-resolved ED of
+    their toy model, whose error now scales as g⁷ at order 6. See `GAP_STATUS.md`, "The
+    dimer series' T0 sector made cluster additive".
 
 Items 3 and 4 come from the 2026-10-27 assessment of what is still worth compiling.
 Its third candidate, the Ewald dipolar sum, is done (`GAP_STATUS.md`, "Ewald dipolar

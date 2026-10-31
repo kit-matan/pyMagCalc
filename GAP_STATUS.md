@@ -988,6 +988,72 @@ the rule-value parser fix a87c8a8 below, magpipe at 283f694), 2026-10-22, idle m
 ALPS ones. The merge is also what makes `sqrt(3)*D1x/3`, the allowed kagome DM, pass this check: before the
 parser fix it reached the check as an unbound `sqrt3` and was refused as a conflict.
 
+### The dimer series' T0 sector made cluster additive, 2026-10-31 — OPEN_WORK item 11
+
+**The defect** (found in the section below). The one-particle effective Hamiltonian was the des Cloizeaux
+H_eff = S^(−1/2) Ω†HΩ S^(−1/2) of each one-particle sector. That is cluster additive only when the vacuum lies in
+another symmetry sector. With out-of-plane DM only total Sz is conserved, so the T0 states share the Sz = 0 sector
+with the vacuum, and the two mix.
+- **What goes wrong:** the dressed vacuum acquires one-particle components. On two disconnected clusters the des
+  Cloizeaux H_eff then hops a particle from one to the other.
+- **On Rb₂Cu₃SnF₁₂:** 9 088 of the 35 566 seven-link topologies at order 7 kept an order-6 weight of up to
+  4.2e-3. Hörmann and Schmidt (SciPost Phys. 15, 097 (2023), Sec. 2.4) describe the same failure for a transverse
+  Ising chain with a parity-breaking term.
+
+**The fix.** It is their projective cluster-additive transformation for one-particle states (Sec. 3.1, Eq. 56).
+Before the symmetric orthonormalization, each exact one-particle state loses its vacuum component:
+|Ψ₁⟩ − ⟨0|Ψ₁⟩ |ψ₀⟩, with ψ₀ the dressed vacuum in intermediate normalization. In the engine's Bloch terms this is a
+closed form:
+- **Overlap correction:** A = 1 − c b†, where c = Pψ₀ holds the vacuum's one-particle components and b† = ⟨0|Ω
+  holds the vacuum components of the one-particle Bloch columns.
+- **Effective Hamiltonian:** H_eff = (A S⁻¹ A†)^(−1/2) A S⁻¹ M S⁻¹ A† (A S⁻¹ A†)^(−1/2).
+- It equals the des Cloizeaux H_eff when A = 1, and is a unitary rotation of it otherwise, so the eigenvalues are
+  the same.
+- Only the one-particle block in the vacuum's own sector takes it: the T0 sector with Sz sectors, or every
+  one-particle state without them. Every other sector keeps the des Cloizeaux path, bit for bit.
+
+The code:
+- pyMagCalc `_pca_one_particle`, with `block_effective_series` split into `_bloch_parts`, `_inv_sqrt_series`
+  and `_sandwich`; the numbers are unchanged.
+- rsMagCalc `pca_one_particle`, with the same split. The two agree to 1e-12 in rsMagCalc's parity tests, whose
+  random clusters mix the vacuum with every one-particle state.
+
+**Pinned** (`tests/test_dimer_series_additivity.py`, 9, under both kernel sets where both apply).
+- **The cluster check:** one seven-link, six-node Rb₂Cu₃SnF₁₂ cluster at order 6 is additive with the DM off and
+  with it on (residual 4e-14, was 3.506e-3). With the des Cloizeaux H_eff put back, the old 3.506e-3 returns,
+  confined to the T0 block, so the pin is known to bite.
+- **Same physics:** on that cluster at order 7 the new and old T0 blocks have the same eigenvalue series (to 1e-10),
+  and the Sz = ±1 blocks are identical.
+- **Independent oracle:** momentum-resolved ED of Hörmann and Schmidt's toy model, a 10-spin transverse Ising ring
+  with a parity-breaking σᶻσˣ term, run through the engine with single-spin units. Halving the couplings
+  (g = 0.04 → 0.02) cuts the order-6 series' error as follows:
+
+  | H_eff | Error ratio | Scaling |
+  |---|---|---|
+  | PCAT | 116× | g⁷, as a correct order-6 series must (2⁷ = 128) |
+  | des Cloizeaux | 15.5× | g⁴: a non-linked error at order 4 never cancels |
+
+**Measured on Rb₂Cu₃SnF₁₂, order 7, `kernels: rust`.**
+- **Additivity:** every topology now passes; 9 088 failed before.
+- **Γ, Sz = ±1 doublets:** unchanged to 1e-12. This includes the Δ₁ band, whose plain sum is 2.8005 meV.
+- **Γ, Sz = 0 bands:** they differ from order 6 on. The lowest T0 band, Δ₂, changes as follows:
+
+  | Quantity | Before | After |
+  |---|---|---|
+  | Order-6 coefficient | −1.125 | −1.091 |
+  | Order-7 coefficient | 0.118 | 0.063 |
+  | Plain sum | 7.555 meV | 7.534 meV |
+
+  The highest T0 band moves by up to 1.3 in its order-7 coefficient.
+- **Cost:** the added work is p × p series algebra in one sector per cluster. The order-7 run took 475 s at load
+  60–170, against 600 s for this morning's run before the fix at a different load.
+
+**Gate** (2026-10-31 12:45–13:01, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`; pyMagCalc
+`d557a7c` plus this change, rsMagCalc `c641b23` built and installed with an 8-aligned stroff, fMagCalc `4a5ff4b`,
+magpipe `e92b2c7`): **2737 passed, 2 skipped, 2 xfailed, 0 failed, 15 min 35 s**.
+- **The count:** 2732 before, minus the 4 passing tests of the old additivity file, plus the 9 of the new.
+- **The xfails:** item 11's two strict xfails are gone; item 9's two remain.
+
 ### The dimer series' subtraction in processes, and the T0 sector under DM, 2026-10-31
 
 **What changed.** Two follow-ups from the LANTA validation below:
@@ -1022,12 +1088,9 @@ vanishes below order L. It is an exact identity, so a failure is a defect. On Rb
   - the dimer chain is additive to 1e-15 through order 8, with uniform DM, with staggered DM, and with two kinds of
     dimer;
   - the NumPy and Rust PT agree on it.
-- **Most likely cause:** in the Sz = 0 sector the one-triplon block is transformed against a complement that
-  holds the vacuum. Without DM, total S keeps the two apart at every order; with DM they mix. This is OPEN_WORK
-  item 11, which holds the evidence, the likely fix (Gelfand's joint zero- and one-particle block
-  diagonalization), the injection point and the oracle.
-- **Consequence:** the Sz = 0 band's coefficients of order 6 and up are unreliable for any model with DM; on
-  Rb₂Cu₃SnF₁₂ that band is the Δ₂ mode. The Sz = ±1 bands are additive. TUTORIAL §4g carries the caveat.
+- **Cause:** in the Sz = 0 sector the one-triplon block was transformed against a complement that holds the
+  vacuum. Without DM, total S keeps the two apart at every order; with DM they mix. This was OPEN_WORK item 11. It
+  was fixed the same day, in the section above.
 
 **Pinned.**
 - `tests/test_kernels_dimer_series.py` (+4):
@@ -1039,7 +1102,8 @@ vanishes below order L. It is an exact identity, so a failure is a defect. On Rb
   cluster at order 6, 0.2–0.7 s each:
   - additive with the DM off;
   - with the DM on, the residual is confined to the T0 block, at 3.506e-3;
-  - additivity with the DM on is a strict xfail until item 11 is fixed.
+  - additivity with the DM on was a strict xfail. The fix in the section above flipped it, and the file was
+    rewritten there.
 
 **Measured.** Rb₂Cu₃SnF₁₂, `kernels: rust`, on the 10-core Mac under other sessions' load. The results are bit
 for bit the same as the serial run, and so are the additivity counts (9 088 at order 7, worst 4.19e-3).
