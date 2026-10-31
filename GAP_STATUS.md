@@ -988,6 +988,68 @@ the rule-value parser fix a87c8a8 below, magpipe at 283f694), 2026-10-22, idle m
 ALPS ones. The merge is also what makes `sqrt(3)*D1x/3`, the allowed kagome DM, pass this check: before the
 parser fix it reached the check as an unbound `sqrt3` and was refused as a conflict.
 
+### Dimer series under `kernels: rust`: memory admits each cluster, 2026-10-31 — order 8 was on 2 threads of 128
+
+Reported from a LANTA run (128 cores, 243 GB, `n_workers=120`, Rb₂Cu₃SnF₁₂ path A at f = 0): order 7 matched
+NumPy (dlog difference 2e-11) in 357 s, but order 8 sat on **2 threads for 25+ min**, and order 9 would have run on
+1. Every memory-bound rsMagCalc kernel capped its pool at a hard-coded 3 GB divided by the LARGEST item's scratch
+estimate, and K7 applied that to a whole cluster size at once. The largest order-8 cluster is a tree of 9 dimers
+(1.08 GB by the old estimate), so 3 GB allowed 2 of them, and every other cluster of the level waited behind the
+same cap, though most have loops and need far less.
+
+**Three changes, none of which changes a number.**
+- **The budget** (rsMagCalc `src/budget.rs`; `rsmagcalc.scratch_budget()` reports it). First match wins: the call's
+  `scratch_budget_gb`, then `$RSMAGCALC_SCRATCH_GB`, then half the memory still available — the smaller of
+  `/proc/meminfo` MemAvailable and the headroom (limit − usage) of every memory-limited cgroup above the process
+  (v2 `memory.max`, v1 `memory.limit_in_bytes`, which is where a Slurm job's limit lives), then 3 GB where neither
+  exists (macOS). SU(N) LSWT, KPM and SCGA use the same budget in their existing cap.
+- **Admission per cluster** (`src/dimer_series.rs`, `Gate`). `n_workers` threads, or one per core, take the clusters
+  largest first. Each cluster is charged its own scratch and starts only when it fits beside those running. One
+  larger than the whole budget runs alone. The admission is strictly in order, so the small clusters behind a large
+  one cannot starve it.
+- **A tighter estimate.** A sectored cluster was charged dims/2 + 1 rows. It is now charged its largest total-Sz
+  sector, counted by convolving the nodes' level Sz, which is C(2m, m) for m dimers: 2.7× smaller at m = 9.
+
+Measured against peak RSS (one cluster on one thread, chains of 7–9 dimers at order m − 1), the measured peak is
+0.92–1.07 of the old estimate without sectors, and 0.24–0.29 with them. Against the new one it is 0.83–0.97 without
+sectors and 0.55–0.80 with them, so the estimate is never below the measured peak. Running ten m = 8 clusters on ten
+threads, peak RSS was 1.18× the admitted bytes at a 1 GB budget. The half in the default leaves room for that
+overshoot, for the caller's arrays and for the results.
+
+The results are a second memory problem, separate from the scratch. `hopping_series` sent a whole cluster size to
+the kernel at once, so every topology's raw (order+1, p, p) delta and its inputs were alive together. At order 8
+on Rb₂Cu₃SnF₁₂ that is up to 16 GB of deltas (157 159 new topologies, at most 9 × 27² complex each), and more at
+order 9. A level now goes in chunks of at most
+`DimerSeriesModel.chunk_bytes` (4 GB) of results, and each chunk is subtracted and memoized as it returns, which
+keeps only its trimmed rows.
+
+**Recorded.** `cluster_pt_batch(..., return_stats=True)` returns `threads`, `peak_concurrent`, `budget_bytes`,
+`budget_source`, `peak_bytes`, `max_scratch_bytes` and `n_clusters`. `DimerSeriesModel.kernel_stats` keeps one such
+dict per call, with `order` and `size`, and the log names the pool per chunk. `DimerSeriesModel.scratch_budget_gb`
+sets the budget for one model. An rsmagcalc built before this is still called the old way.
+
+**Pinned.** rsMagCalc `tests/test_scratch_budget.py` (22):
+- the precedence, on fake /proc and /sys trees. These cover a Slurm-shaped v2 tree whose limit sits on the job
+  cgroup above a `max` task cgroup, a v1 tree under the near-2⁶³ "unlimited" root, a limit looser than
+  MemAvailable, usage above the limit, and bad values raising;
+- the sector count against C(2m, m) and the unsectored 4^m;
+- results bit-identical at budgets of 1e-9 GB and 100 GB, and on 1, 4 and 32 threads;
+- a budget below one cluster giving `peak_concurrent == 1`, and admitted bytes never above the budget.
+
+pyMagCalc `tests/test_kernels_dimer_series.py` (+2):
+- a level in one-topology chunks bit-identical to one call, and equal to NumPy's series to 1e-12, with the
+  stats recorded per call;
+- an rsmagcalc without `scratch_budget` still used.
+
+Rb₂Cu₃SnF₁₂ order 6 under `rust` logs its six levels with 10 threads; the largest cluster is 0.02 GB.
+
+**Gate** (2026-10-31 08:41–08:55, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`; pyMagCalc
+`a511aa8` plus this change, rsMagCalc `8552281` built and installed with an 8-aligned stroff, fMagCalc `4a5ff4b`,
+magpipe `e92b2c7`): **2724 passed, 2 skipped, 2 xfailed, 0 failed, 14 min 19 s**. That is the 2700 of the phase 2
+gate plus the 24 added here. The skips are the structural pair and the xfails are item 9's strict pins.
+
+**Not done here:** the series has no checkpoint (OPEN_WORK item 10).
+
 ### Neutron data and the forward model, phase 1, 2026-10-30 — μ per data bin, on a batched Colpa S(Q,ω)
 
 **What it is.** Phase 1 of making MagCalc the tool for reduced inelastic data. Three

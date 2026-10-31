@@ -7,7 +7,7 @@ context can make a correct first change. It is a map, not the whole territory: t
 authoritative details live in the files it points to (§12), and when they disagree, the
 code and the tests win.
 
-*Last reviewed: 2026-10-30, against pyMagCalc `d8bd01a` plus neutron-data phase 2's energy and Q–E resolution (`magcalc/resolution.py`, `magcalc/qe_resolution.py`, the `fraction` and `prepare` hooks in `ForwardModel`). This file is kept current with
+*Last reviewed: 2026-10-31, against pyMagCalc `a511aa8` plus the dimer series' memory-admitted pool (rsMagCalc `src/budget.rs`, `DimerSeriesModel.chunk_bytes` and `kernel_stats`). This file is kept current with
 every change that alters what it describes (§13).*
 
 ---
@@ -284,8 +284,9 @@ pytest -n0 ...               # serial; needed for -s or pdb
 - Both `pytest.ini` files run in parallel (`-n auto --dist worksteal`, pytest-xdist is a
   required dev dependency).
 - From the maintainer's workspace root, plain `pytest` also collects fMagCalc's,
-  rsMagCalc's and magpipe's tests. The last full gate there was **2584 passed, 2 skipped**
-  (2026-10-30). The two skips are structural: `seekpath` absent, ALPS present.
+  rsMagCalc's and magpipe's tests. The last full gate there was **2724 passed, 2 skipped,
+  2 xfailed** (2026-10-31). The two skips are structural: `seekpath` absent, ALPS
+  present. The two xfails are strict pins of OPEN_WORK item 9.
 - **Tests never open a GUI window.** `tests/conftest.py` forces the Agg backend and sets
   `MAGCALC_NO_GUI=1`. A bare `magcalc run` outside pytest is not guarded; prefix it with
   `MAGCALC_NO_GUI=1`.
@@ -444,6 +445,11 @@ iOS app).
   with the NumPy process pool, and order 7 6.4 min instead of 32 min
   (`GAP_STATUS.md`, "Rust kernels K7"). An earlier plan had excluded it as
   "symbolic"; it is numerical throughout.
+  How many clusters run at once is set by memory, not by `n_workers` alone. Each
+  cluster is charged its own scratch against `$RSMAGCALC_SCRATCH_GB`, or else half the
+  available memory, cgroup limits included. Until 2026-10-31 a fixed 3 GB was divided
+  by a level's largest cluster, which left order 8 on 2 threads of a 128-core node
+  (`GAP_STATUS.md`, "Dimer series under `kernels: rust`: memory admits each cluster").
 - **Biquadratic exchange is right off the collinear axis** (2026-10-29). The
   symbolic build had dropped, with only a WARNING, a biquadratic's cross-site terms on
   a bond with no bilinear coupling, and on a non-collinear intercell bond the part that

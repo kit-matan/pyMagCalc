@@ -758,6 +758,19 @@ and the SU(N)/entangled LSWT, KPM and dimer-series kernels read it from the
 calculation: {mode: SUN, kernels: rust, n_workers: 4}
 ```
 
+`n_workers` sets the number of threads, and **memory sets how many run at once**.
+SU(N) LSWT, KPM, SCGA and the dimer series each have a per-item scratch estimate,
+and they run only as many items together as fit a scratch budget. The budget is
+`$RSMAGCALC_SCRATCH_GB` (in GB), or else half the memory still available. That means
+`/proc/meminfo` and the cgroup limits, so a Slurm job's own memory limit counts. On
+macOS, which has neither, the budget is 3 GB. `python -c "import rsmagcalc;
+print(rsmagcalc.scratch_budget())"` prints the budget and where it came from. The
+dimer series charges each cluster its own scratch, largest first, and logs the
+threads, the peak number running at once and the budget for every call. In a
+script, `DimerSeriesModel.scratch_budget_gb` sets the budget and `kernel_stats` keeps
+those numbers (`GAP_STATUS.md`, "Dimer series under `kernels: rust`: memory admits
+each cluster").
+
 Under `kernels: numpy` these keys are ignored (the NumPy loops are serial), except
 by the dimer series, whose NumPy path sizes its process pool with
 `calculation.n_workers` (default: one fewer than the cores). If a

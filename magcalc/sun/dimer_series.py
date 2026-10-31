@@ -416,6 +416,11 @@ class DimerSeriesModel:
         self.n_workers = n_workers        # None = auto (cpu_count) for big orders
         self.kernels = str(kernels)       # "rust": the cluster PT runs in rsMagCalc
         self._rust_failed = False         # a kernel error -> NumPy for the rest
+        # rsMagCalc's scratch budget for the cluster PT, in GB; None = its own
+        # default ($RSMAGCALC_SCRATCH_GB, else half the available memory)
+        self.scratch_budget_gb = None
+        self.chunk_bytes = 4 << 30        # PT results per rsMagCalc call
+        self.kernel_stats = []            # one dict per rsMagCalc call
         self._touch = defaultdict(list)   # d -> [(t, shift)]: node (d,c) in inst (t, c-shift)
         for t, (u, v, off, _V) in enumerate(self.link_types):
             self._touch[u].append((t, (0, 0, 0)))
@@ -675,8 +680,14 @@ class DimerSeriesModel:
         if rs is None or self._rust_failed:
             return None
         try:
-            return [(np.asarray(g), np.asarray(d))
-                    for g, d in rs.cluster_pt_batch(clusters, order, self.n_workers)]
+            if not hasattr(rs, "scratch_budget"):      # a build before 2026-10-31
+                out = rs.cluster_pt_batch(clusters, order, self.n_workers)
+            else:
+                out, st = rs.cluster_pt_batch(
+                    clusters, order, self.n_workers,
+                    scratch_budget_gb=self.scratch_budget_gb, return_stats=True)
+                self.kernel_stats.append(dict(st, order=order))
+            return [(np.asarray(g), np.asarray(d)) for g, d in out]
         except Exception:
             _kernels.fell_back("dimer-series cluster PT")
             self._rust_failed = True
@@ -817,6 +828,50 @@ class DimerSeriesModel:
         self._w_memo[memo_key] = (gs_raw, min(Lc, order + 1), delta_trim)
         return node_order, gs_raw, min(Lc, order + 1), delta_trim
 
+    def _rust_level(self, reps, order, size):
+        """The raw PT of one level's new topologies in rsMagCalc, subtracted and
+        memoized chunk by chunk; returns the topologies left to the NumPy path
+        (all of them if the kernel is absent or fails).
+
+        A chunk holds at most `chunk_bytes` of results: the whole level at once
+        would hold every topology's raw (order+1, p, p) delta, and its inputs, at
+        the same time -- up to 16 GB of results alone at order 8 on Rb2Cu3SnF12
+        (157 159 new topologies), and more at order 9. Each chunk's weights are
+        memoized as it returns, keeping only their trimmed rows, so the level's
+        peak is one chunk.
+        """
+        keys = list(reps)
+        i = 0
+        while i < len(keys):
+            chunk, nbytes = [], 0
+            while i < len(keys) and (not chunk or nbytes < self.chunk_bytes):
+                form, node_order = reps[keys[i]]
+                p = len(node_order) * self.nexc
+                nbytes += (order + 1) * p * p * 16
+                chunk.append(keys[i])
+                i += 1
+            tasks = []
+            for skey in chunk:
+                form, node_order = reps[skey]
+                lv, sz = self._node_levels(node_order)
+                tasks.append((lv, self._local_links(form, node_order), sz))
+            n_stats = len(self.kernel_stats)
+            out = self._rust_pt(tasks, order)
+            if out is None:
+                return {k: reps[k] for k in keys[i - len(chunk):]}
+            if len(self.kernel_stats) > n_stats:
+                st = self.kernel_stats[-1]
+                st.update(size=size)
+                logger.info(
+                    "  L=%d: rsMagCalc PT on %d clusters, %d threads (%d at once at "
+                    "peak), scratch budget %.1f GB (%s), largest cluster %.2f GB",
+                    size, st["n_clusters"], st["threads"], st["peak_concurrent"],
+                    st["budget_bytes"] / 2**30, st["budget_source"],
+                    st["max_scratch_bytes"] / 2**30)
+            for skey, raw in zip(chunk, out):
+                self._weight_by_struct(reps[skey][0], order, raw=raw)
+        return {}
+
     # ----------------------------------------------------------------- assembly
     def hopping_series(self, order):
         """Bulk one-triplon hoppings: {(dA, dB, off3): (order+1, nexc, nexc) complex},
@@ -851,16 +906,10 @@ class DimerSeriesModel:
                         len(forms), len(reps))
 
             # parallel raw PT for the new topologies (worth it for big clusters)
-            raws = {}
             if reps and self.kernels == "rust":
-                tasks = []
-                for (form, node_order) in reps.values():
-                    lv, sz = self._node_levels(node_order)
-                    tasks.append((lv, self._local_links(form, node_order), sz))
-                out = self._rust_pt(tasks, order)
-                if out is not None:
-                    raws = dict(zip(reps, out))
-            if reps and not raws and size >= 4 and n_workers > 1 \
+                reps = self._rust_level(reps, order, size)
+            raws = {}
+            if reps and size >= 4 and n_workers > 1 \
                     and len(reps) > 2 * n_workers:
                 import multiprocessing as mp
                 tasks = []
