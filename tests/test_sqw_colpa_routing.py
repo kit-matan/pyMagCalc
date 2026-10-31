@@ -304,3 +304,9 @@ def test_bm_out_of_plane_raises_before_any_work():
     with pytest.raises(ValueError, match="scattering plane"):
         calc.sqw_batch(np.array([[0.3, 0.2, 0.5]]),
                        cross_section={"bm": {"normal": [0, 0, 1]}, "component": "11"})
+
+
+@pytest.fixture(autouse=True)
+def _under_both_builders(builder):
+    """Every test here runs under both H(q) builders (K8; tests/conftest.py)."""
+    return builder

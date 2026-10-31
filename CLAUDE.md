@@ -452,6 +452,8 @@ calculation:
   h2_rel_tolerance: 1.0e-6         # guard 3 (kpm_sqw): min eig H2 / ||H2||
   classical_energy: numeric        # numeric (default) | symbolic -- how the
                                    # minimizer's and guard 2's E(m) is built
+  hamiltonian_builder: auto        # auto (default) | numeric | symbolic -- how
+                                   # the LSWT H(q) is built (see section 6)
 ```
 
 1. **Imaginary-energy check** (`max_imaginary_energy`) -- a non-minimum with
@@ -789,7 +791,16 @@ calculation: {mode: entangled, series_order: 5, series_resum: dlog_pade}  # | pa
   call runs in forked processes on Linux (`DimerSeriesModel.subtract_workers`, default
   `n_workers`; serial on macOS), bit for bit the serial result, and the additivity
   check is one log line per cluster size (`DimerSeriesModel.additivity`). The hoppings agree to
-  ~1e-12 (2e-11 at order 6: the subtraction amplifies rounding, in both). S(Q,w) and the ground-state guards stay on the
+  ~1e-12 (2e-11 at order 6: the subtraction amplifies rounding, in both).
+  **An order longer than one job** (order 9 is about a day on 120 threads): set
+  `calculation.series_checkpoint: <dir>` (or `$MAGCALC_SERIES_CHECKPOINT`,
+  `DimerSeriesModel.checkpoint_dir`; off by default). Each chunk's subtracted weights are
+  written atomically to `<dir>/order-N/`, and a rerun with the same directory loads them
+  and continues, bit for bit the uninterrupted hoppings. It refuses a directory written
+  for another model, order, kernel set or algorithm version. SIGTERM or SIGUSR1 finishes
+  the chunk in flight, saves it and exits with status 75; the signal is seen only between
+  chunks (about an hour each at order 9), so ask Slurm for it earlier than that (TUTORIAL
+  §4g; `tests/test_dimer_series_checkpoint.py`). S(Q,w) and the ground-state guards stay on the
   harmonic model. Reference: `examples/entangled/Rb2Cu3SnF12/series_dispersion.py`
   (the full pinwheel at J2 = 0.95 J1, gaps vs the measured 2.35 / 7.3 meV).
 * Powder averaging: supported (same shared spherical average as SU(N)).
@@ -1038,6 +1049,24 @@ Goldstone point, an unstable q under `on_imaginary: warn`) falls back to the per
 KKdMatrix. `calculation: {sqw_method: perq}` selects the old per-q process pool for one
 release. Colpa has no 1e-6 element cut, so results move by ~1e-6 relative. A test that
 needs tighter agreement with an old per-q number needs that context.
+
+**How H(q) is built** (dipole mode, 2026-10-31). `calculation.hamiltonian_builder: auto`
+(the default) builds H(q) = 2gH₂ in rsMagCalc (K8, `DipoleHq`) from monomials the spin
+model's own term builders produce, in milliseconds per parameter set. `symbolic` is the
+SymPy `gen_HM`, 3–35 s per cold model (FeI₂ 35 s), kept as the fallback and the reference.
+The two agree entry by entry (`tests/test_numeric_hq.py`), and the dipole oracle modules
+run under both through the `builder` fixture. A new Hamiltonian term therefore goes into
+the model's builders (`_compute_*_terms`, `spin_interactions`) and reaches both builders
+at once; never teach one builder a term the other lacks. `MAGCALC_HAMILTONIAN_BUILDER`
+overrides the config.
+
+**Exact zero modes** (2026-10-31). At an antiferromagnet's Bragg point the Goldstone mode
+is a Jordan block, its true intensity diverges, and it is reported as zero. The per-q
+fallback (and fMagCalc) now call a mode an exact zero mode when ω ≤ 1e-5 × max|H_ij| and
+its pseudo-norm is < 1e-3. The old absolute |N_ii| < 1e-12 cut alone let rounding choose
+between 0 and a 1e6–1e9 spike (`tests/test_zero_mode_rule.py`). Two consequences for
+tests: compare a Goldstone mode's energy only as "both below the noise floor" (an
+O(ε) change in H moves it by O(√ε)), and never pin a per-band number inside it.
 
 **Mixed spin.** The S(Q,ω) prefactor is √(S_i/2) **per site**. It used to be a single
 global √(S/2), making every site whose S differed from the reference wrong by √(S_i/S_ref)

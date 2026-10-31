@@ -988,6 +988,202 @@ the rule-value parser fix a87c8a8 below, magpipe at 283f694), 2026-10-22, idle m
 ALPS ones. The merge is also what makes `sqrt(3)*D1x/3`, the allowed kagome DM, pass this check: before the
 parser fix it reached the check as an unbound `sqrt3` and was refused as a conflict.
 
+### Rust kernels K8, 2026-10-31 — the dipole H(q) built numerically, SymPy kept as fallback and reference
+
+**What changed.** `calculation.hamiltonian_builder` chooses how the dipole engine's LSWT matrix
+H(q) = 2 g H2(q) is built:
+- **`symbolic`:** `symbolic.gen_HM`, the SymPy Holstein–Primakoff expansion, Fourier transform and matrix
+  extraction, then a `lambdify`, in the parent and again in every pool worker. It stays as the fallback, the
+  parity reference, and the only route for a custom Python spin model.
+- **`numeric`:** `magcalc/numeric_hq.py` with rsMagCalc's `DipoleHq` (`src/dipole_hq.rs`).
+- **`auto`, the default:** numeric when rsMagCalc is installed and the model allows it, otherwise symbolic. The
+  reason for a fallback is logged at INFO, or at WARNING when `numeric` was asked for by name.
+  `MAGCALC_HAMILTONIAN_BUILDER` in the environment overrides the config.
+
+**How the numeric build works.** Term meaning stays in one place: `HamiltonianTerms` calls the spin model's own
+builders (`GenericSpinModel.classical_parts`, the calls `Hamiltonian` makes) once, with commutative symbols for
+the spin components and symbolic parameters, and applies the substitution `Hamiltonian` applies to its total
+(`_apply_substitution_and_filter`).
+- **The tables:** the result is a list of monomials, coefficient times a product of (site, component) factors.
+  Bilinear terms give two factors, the polynomial terms (biquadratic, `sia`, `sia_matrix`, Stevens) up to six,
+  and the Zeeman term one, which still carries −R[a][2] c†c. Unique coefficients are lambdified once in
+  (S, parameters), and so are the rotations when `transformations` makes them depend on a parameter.
+- **The algebra, in Rust:** for each (S, parameters), `DipoleHq` does what `gen_HM` does symbolically: the HP
+  expansion about each site's frame, truncated at boson degree 2 with no reordering, `gen_HM`'s Fourier
+  placement, and 2g. The result is a sparse bond sum H(q) = Σ_d M_d e^{iq·d}, evaluated over q in parallel.
+  The √(S/2) of two one-boson factors is applied once, as √(S_a S_b)/2; √(S/2)² is not S/2 in floating point,
+  and a collinear ferromagnet's H(0) would otherwise be 4e-16 instead of exactly 0.
+- **The wiring:** `MagCalc._build_h_stack` (every guard, Colpa, corrections, the Fortran stacks), the per-q
+  process pools (the bond model is pickled to the workers in place of a SymPy matrix to lambdify), the fit
+  evaluator (`compile_dispersion_evaluator`: same signature, the bond model rebuilt only when (S, p) change),
+  Ud, and the numerical-results cache key all take either builder. `HMat_sym` and `Ud_sym` are properties:
+  under the numeric builder they run `gen_HM` only if something asks for them.
+
+**Pinned** (`tests/test_numeric_hq.py`, 83 tests, 29 of them in the fast suite; rsMagCalc `tests/test_dipole_hq.py`, 11).
+- **Entry-wise parity with `HMat_sym`**, H(±q) and Ud, at ≤ 1e-12 relative (measured ≤ 5e-15):
+  - every buildable shipped dipole config (slow), and a fast subset with DM, a Kitaev matrix, a rotating-frame
+    spiral, a field, single-ion anisotropy and different ions;
+  - random rotations in place of the configured structure (parity is an identity at any rotation);
+  - a triclinic three-site model with spins 1, 5/2 and 1/2 carrying every term the examples do not: a biquadratic
+    on an intercell bond between differently rotated sites and on a bond with no bilinear term, `sia_matrix`,
+    Stevens (2,0), (2,2), (4,0), (4,3), (6,0), (6,6), with and without `rcs`, Kitaev, all three g-tensor forms in
+    a field, parameter expressions;
+  - after a parameter change, and with a rotation that depends on a parameter.
+- **The wiring:** dispersion, S(Q,ω) band sums and the fit evaluator at new parameters agree with the symbolic
+  builder's; the per-q pool runs on the shipped bond model; a bond model refuses other (S, p); `HMat_sym` on
+  demand equals the numeric H; the fallbacks (no rsMagCalc, a custom model, `pair_operator`).
+- **End to end:** the `builder` fixture (`tests/conftest.py`) runs 22 oracle modules under both builders:
+  Sunny's absolute normalization, polarization and Blume–Maleev frames, mixed spin, single-k, every Hamiltonian
+  term, RCS, Ewald (spiral too), the gapless backends, Kitaev, the biquadratic Sunny pin, Colpa S(Q,ω),
+  corrections, the guards and their tolerances, the Zeeman calibration, supercells, the intensity layer and
+  fitting.
+- **Closed forms, in rsMagCalc:** ferromagnetic and Néel chains, an easy-plane ferromagnet's gapless mode (the
+  anomalous placement), a Zeeman monomial, a collinear biquadratic as its bilinear equivalent 2BS², and the
+  anisotropy axis carried by the rotation.
+
+The sweep found one defect in the first draft, not in the reference: a one-factor monomial (Zeeman) was skipped,
+so the three field configs (aCVO at 20 T, SW20, SW29) disagreed by 3–86 %.
+
+**The Goldstone noise, and the zero-mode rule.** The two builders round differently, and at a Goldstone mode of a
+Jordan block an O(ε) change in H moves the eigenvalue by O(√ε) × the scale: 5e-16 against 1.1e-7 meV on SW09 at
+Γ. Both are noise, but KKdMatrix decided between zero intensity and a spike with an absolute cut on the
+pseudo-norm (|N_ii| < 1e-12), and N_ii ~ ω / scale follows the noise. The feasibility study saw SW28 at its
+antiferromagnetic Bragg points ±(1,1,1) give 0 on SymPy's H and 2.7e9 on the prototype's.
+- **The rule** (`linalg.ZERO_MODE_ENERGY_REL = 1e-5`, `ZERO_MODE_NORM = 1e-3`): a mode with ω ≤ 1e-5 × max|H_ij|
+  at that q and |N_ii| < 1e-3 is an exact zero mode, reported with zero intensity. The scale is H's largest
+  entry, not the largest eigenvalue, which is itself zero at a Néel chain's Bragg point. A ferromagnetic
+  Goldstone mode is not defective (N_ii = 1), so its finite intensity down to ω → 0 is kept.
+- **fMagCalc:** `calc_alpha` applies the same rule, line for line (fMagCalc `192e7f8`).
+- **Pinned** (`tests/test_zero_mode_rule.py`, 5, both backends): a Néel chain's Bragg points lifted by a noise
+  gap H2 → H2 + ε max|H| I, ε = 1e-14 to 1e-11 (ω up to 4.5e-6 of the scale), give zero intensity, and with the
+  rule off the 1e5–1e7 spike returns, so the pin bites; next to the peak (ω / scale = 1e-3) the intensity is
+  untouched and equals the chain's closed form 2S(1 − cos qd)/|sin qd| (8000 there). The existing FM closed
+  form down to 4e-11 meV (`test_gapless_backends.py`) is unchanged.
+- **What it costs:** a defective mode within 1e-5 of the band scale of an exact zero, i.e. a q within about that
+  relative distance of a Bragg point, now reads 0 instead of its (huge) value.
+- **On the shipped models:** with the Rust builder SW28 has no spike under either rule, so the rule changes no
+  shipped result there; the test above is what shows it is needed.
+
+**Measured** (MagCalc construction, `cache_mode: none`, 2026-10-31 at load 40–100 from other sessions; the
+symbolic time includes `gen_HM`, the numeric time the term resolution and one assembly; a 2005-q H(q) stack after
+warm-up):
+
+| Model | sites | numeric build | symbolic build | 2005-q stack, numeric / symbolic |
+|---|---|---|---|---|
+| KFe₃J | 9 | 0.17 s | 2.9 s | 2 / 9 ms |
+| α-Cu₂V₂O₇ at 20 T | 16 | 0.32 s | 2.9 s | 7 / 27 ms |
+| FeI₂ (1×4×4) | 16 | 0.66 s | 34.9 s | 7 / 119 ms |
+| SW20 in field | 16 | 0.50 s | 7.3 s | 13 / 17 ms |
+| SW21 YIG | 20 | 0.18 s | 6.2 s | 14 / 38 ms |
+| SW28 | 32 | 0.62 s | 25.6 s | 75 / 245 ms |
+
+Nearly all of the numeric build is the spin model's own term resolution in SymPy, which the classical energy
+also pays; the Rust assembly is milliseconds and is redone for each new parameter vector (fitting). The pool
+workers no longer `lambdify` either: FeI₂'s cost 3.7 s per worker.
+
+Also in this change: `GenericSpinModel._compute_rotated_interactions` skips (i, j) pairs with no coupling
+before building their rotation (J_eff = 0 · R = 0, bit-identical). It built a SymPy rotation for all 1200 OUC
+pairs of SW23, most of them uncoupled; the numeric build there went from 3.1 s to 0.6 s, and the symbolic build
+and the classical energy gain the same 2.5 s.
+
+**Not done:** fMagCalc's `run_sqw_model` still applies its 1e-3 meV energy cut, which was introduced for the
+bond-reconstructed H. It could be fed the numeric bond model exactly, with the cut at 0, but GAP_STATUS
+"calculate_sqw on Colpa's method" already recommends retiring fMagCalc's S(Q,ω), so this was left.
+
+**Gate** (2026-10-31 18:49–19:08, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`; pyMagCalc
+`feature/k8-numeric-hq`, rsMagCalc `3f16142` built and installed with an 8-aligned stroff, fMagCalc `192e7f8`
+installed, magpipe `e92b2c7`, at load 40–100 from other sessions): **3191 passed, 2 skipped, 4 xfailed, 0
+failed, 19 min 30 s**.
+- **The count:** 2749 before. The 442 added are the 88 tests of `test_numeric_hq.py` and `test_zero_mode_rule.py`,
+  rsMagCalc's 11, and the 22 oracle modules' second (`symbolic`) parametrization; under `auto` their existing
+  tests now run on the numeric builder.
+- **The skips** are the structural `seekpath` and ALPS pair. **The xfails** are OPEN_WORK item 9's two strict pins,
+  now under both builders.
+
+### The dimer series saves and resumes, 2026-10-31 — OPEN_WORK item 10
+
+**Why.** `DimerSeriesModel.hopping_series(order)` kept every subtracted cluster weight in memory until it returned.
+Rb₂Cu₃SnF₁₂ at order 9 has 910 371 clusters, 705 014 of them at L = 9, and on LANTA (120 threads) each ~30 000-topology
+chunk of L = 9 took 54–61 min, so the order needs about a day. A job killed at the 24 h wall lost all of it.
+
+**What is saved** (`magcalc/sun/series_checkpoint.py`). The memo itself: for each topology its structural key, one
+embedding, its subtracted weight (gs_w, Lc0, delta_trim) and its additivity ratio. These are exactly the numbers the
+assembly sums, so a resumed run's hoppings are the uninterrupted run's bit for bit.
+- **When:** after every chunk of `_rust_level`, after every chunk of the NumPy path (which now goes in the same
+  `chunk_bytes` chunks, through one process pool per level), after every level, and on the way out of an exception.
+  One file per chunk, `<dir>/order-N/w-NNNNNN.pkl`, append only.
+- **How:** written to a temporary name, fsynced, renamed, and the directory fsynced. A kill at any moment leaves the
+  previous state; a temporary file from a killed write is ignored and removed. A `flock` keeps a second process out
+  (Lustre mounted without flock only warns).
+- **The key:** the manifest and every chunk file carry a blake2b fingerprint of the local levels, their Sz labels
+  (whether the PT runs in sectors), every link's pair operator (DM included) and offset, the lattice and unit
+  positions, the order, the kernel set, the cluster enumeration (count and an order-independent digest per size),
+  the file format and an algorithm version (`ALGORITHM`, to bump whenever a weight changes). The memo's own key is a
+  digest of ROUNDED levels and operators, so it could not serve; the fingerprint uses the exact bytes. A mismatch
+  raises `CheckpointMismatch` naming what differs, before anything is loaded.
+- **Safe to load:** the files hold only tuples, bytes, ints, floats and strings (arrays as raw bytes), read by an
+  unpickler that refuses every global.
+
+**Stopping cleanly.** While a checkpointed run is in progress, SIGTERM and SIGUSR1 (`stop_signals`) set a flag. After
+the chunk in flight, the run saves it and raises `SeriesInterrupted`, a `SystemExit` with status 75 (EX_TEMPFAIL), so
+an unhandled one ends the process with that status and no `except Exception` swallows it. The NumPy pool's workers
+ignore SIGUSR1, so a signal sent to the whole job step does not kill them under the parent. The handlers are restored
+afterwards. The flag is read only between chunks, because the Rust kernel runs a whole chunk without returning to
+Python; at order 9 that is about an hour, so a Slurm job should ask for `--signal=B:USR1@4500` or earlier and pass
+the signal on to Python (TUTORIAL §4g has the script).
+
+**The switch,** off by default: `DimerSeriesModel.checkpoint_dir`, `$MAGCALC_SERIES_CHECKPOINT`, or
+`calculation.series_checkpoint` in a `mode: entangled` config with `series_order`.
+
+**Pinned** (`tests/test_dimer_series_checkpoint.py`, Rb₂Cu₃SnF₁₂ with its out-of-plane DM, both kernel sets):
+- order 4: a crash in the middle of a chunk of the last level, and a stop by a real SIGUSR1 (status 75, the chunk in
+  flight finished and no more, handlers restored), each resumed from a fresh model to the uninterrupted hoppings
+  and ground-state energy, bit for bit;
+- refusals: one link's DM sign flipped, another kernel set, the PT without Sz sectors, a chunk file of another
+  calculation, a pickle naming a global (`os.getcwd`, not called), a directory held by another process;
+- one directory holding orders 2 and 3; off by default (no files, no handlers touched); on by the environment
+  variable and by the config key;
+- slow, order 6: a separate process SIGKILLed a third of the way into L = 6, with nothing flushed on the way out,
+  resumed here to the uninterrupted hoppings bit for bit (315 s under `numpy` with 4 pool workers, 102 s under `rust`).
+
+**Tests run** (pyMagCalc `285a038` plus this change, on the Mac): the 15 tests of the new file (13 fast, 2 slow);
+`pytest -m slow -k dimer_series`, 6 passed; the fast suite, 1354 passed, 18 skipped, 2 xfailed. Three tests did
+not pass, and none is from this change. The two shadow-guard tests cannot pass while a second checkout is
+importable, as it is from a worktree. One xdist worker crashed in `test_intensity_layer.py` with the machine at
+load ~180, and that file passes on a rerun.
+
+**Gate after the merge** (onto K8, merge `8ca6723`; 2026-10-31 20:04–20:24, workspace root, `MAGCALC_NO_GUI=1 python
+-m pytest -m "" -rs`, idle machine; rsMagCalc `3f16142`, fMagCalc `192e7f8`, magpipe `e92b2c7`): **3206 passed, 2
+skipped, 4 xfailed, 0 failed, 20 min 07 s**. The 15 added to K8's 3191 are this file's. The skips are the structural
+`seekpath` and ALPS pair, the xfails item 9's two pins under both H(q) builders. The shadow-guard tests pass here: the
+worktree that made them fail is not importable from the workspace root.
+
+**Why order 9's L = 9 chunks run at about half the node** (LANTA job 6492718; looked at the same day; nothing changed by it).
+- **Not the order of the topologies.** `hopping_series` hands them to the kernel in the iteration order of the
+  level's set of forms, which is unrelated to cluster size. Enumerated here (705 014 embeddings → 702 820
+  topologies, 15 min on the Mac) and cut by the same 4 GB rule, the 23 full chunks each hold 30 439–30 515
+  topologies, 27 023–27 305 of them ten-dimer trees (m = 10), and their summed scratch, a proxy for the work,
+  agrees to ±0.4 %. Chunk 22 is no heavier than chunk 0.
+- **The admission gate.** The m = 10 trees are 89 % of each chunk and 97 % of its work, and each is charged
+  1.94 GB (C(20, 10) rows × 30 columns × 21 blocks). The gate admits them in budget/1.94 GB at a time: 60 at the
+  117 GB that 0.5 × MemAvailable gave, so half of the 120 threads wait through the heavy part of every chunk.
+  The budget is measured again at each call, and MemAvailable falls as the parent's memo and heap grow. The
+  order-9 log reads 115.0, 109.0, 100.2, 102.5, 100.7, 103.3 and 101.5 GB over L = 9's first seven chunks, which
+  admit 59, 56, then 51–53 m = 10 trees at once; the node's load average was 53. The chunks took 54.1, 55.9,
+  55.3, 57.9, 61.0, 56.5 and 57.4 min. So the budget settled near 100 GB by the third chunk, and the 61 min chunk
+  was partly noise, not a steady drift. Between chunks the processes held 35–41 GB, and inside a chunk the
+  scratch in use was about 0.57 of the admitted sum. Order 8 never met this: its largest cluster is 0.42 GB, so
+  120 fit in any of its budgets (115.2 → 111.5 → 107.2 → 107.2 GB).
+- **Why the statistics hide it.** `peak_concurrent` is the maximum over the call, and the small clusters at the
+  end of each chunk always fill all 120 threads, so it reads 120. The per-chunk log line's "scratch budget" is the
+  number that tracks the slowdown.
+- **What would help:** a fixed `RSMAGCALC_SCRATCH_GB` in the job. It stops the budget moving with MemAvailable
+  and admits budget/1.94 GB m = 10 trees at once: 77 at 150 GB, 87 at 170 GB. At the measured 0.57 that is
+  about 97 GB of real scratch at 170, beside the 35–41 GB the processes hold between chunks. A run at 170 GB
+  was queued the same day (job 6494816). In rsMagCalc, the sectored estimate
+  could be tightened toward the measured peak, and a time-weighted concurrency could be reported next to
+  `peak_concurrent`. Neither is done here.
+
 ### The dimer series' T0 sector made cluster additive, 2026-10-31 — OPEN_WORK item 11
 
 **The defect** (found in the section below). The one-particle effective Hamiltonian was the des Cloizeaux

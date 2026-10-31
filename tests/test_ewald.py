@@ -298,3 +298,9 @@ def test_fortran_backend_carries_the_ewald_term(atoms, fortran_backend):
     plain = _chain_along_x(atoms, False, tag + "_plain")
     d_plain = plain.calculate_dispersion(qs, backend=fortran_backend).energies
     assert np.max(np.abs(np.sort(np.real(d_f), 1) - np.sort(np.real(d_plain), 1))) > 1e-3
+
+
+@pytest.fixture(autouse=True)
+def _under_both_builders(builder):
+    """Every test here runs under both H(q) builders (K8; tests/conftest.py)."""
+    return builder

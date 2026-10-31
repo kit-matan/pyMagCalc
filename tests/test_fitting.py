@@ -304,3 +304,9 @@ def test_update_hamiltonian_params_flattens_vector(tmp_path):
     Ea = np.real(np.asarray(calc_a.calculate_dispersion(q, serial=True).energies))
     Eb = np.real(np.asarray(calc_b.calculate_dispersion(q, serial=True).energies))
     assert np.allclose(Ea, Eb, atol=1e-9)
+
+
+@pytest.fixture(autouse=True)
+def _under_both_builders(builder):
+    """Every test here runs under both H(q) builders (K8; tests/conftest.py)."""
+    return builder

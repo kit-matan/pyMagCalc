@@ -140,3 +140,9 @@ def test_gapless_powder_averages_agree_between_backends(fortran_backend):
         tn = np.real(pn.intensities).sum(axis=1)
         tf = np.real(pf.intensities).sum(axis=1)
         np.testing.assert_allclose(tf, tn, rtol=1e-8)
+
+
+@pytest.fixture(autouse=True)
+def _under_both_builders(builder):
+    """Every test here runs under both H(q) builders (K8; tests/conftest.py)."""
+    return builder

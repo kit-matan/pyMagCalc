@@ -173,7 +173,7 @@ def compute_corrections(
     """
     from .core import reciprocal_b_matrix
 
-    if calc.HMat_sym is None:
+    if not calc._has_hamiltonian():
         raise ValueError("MagCalc must be initialised (HMat_sym is None).")
 
     N = int(calc.nspins)

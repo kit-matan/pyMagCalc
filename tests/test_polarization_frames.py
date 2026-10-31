@@ -338,3 +338,9 @@ def test_domains_refuse_a_lab_anchored_polarization():
         calc.calculate_sqw(_q(HS), domains={"axis": [0, 0, 1], "n_fold": 3},
                            cross_section={"polarization": [0, 0, 1],
                                           "channel": "sf"})
+
+
+@pytest.fixture(autouse=True)
+def _under_both_builders(builder):
+    """Every test here runs under both H(q) builders (K8; tests/conftest.py)."""
+    return builder

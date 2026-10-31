@@ -109,6 +109,25 @@ def kernels(request):
     return request.param
 
 
+@pytest.fixture(params=["numeric", "symbolic"])
+def builder(request, monkeypatch):
+    """Run a test under both H(q) builders (`calculation.hamiltonian_builder`).
+
+    The numeric builder (K8: `magcalc/numeric_hq.py` on rsMagCalc's `DipoleHq`) is
+    pinned entry by entry to SymPy's gen_HM in tests/test_numeric_hq.py; this
+    re-validates it END TO END against every Sunny, SpinW and closed-form oracle in
+    the modules that use it (`_under_both_builders` there). The environment
+    variable reaches `magcalc run` children too. 'numeric' skips with a named
+    reason when rsMagCalc is not built.
+    """
+    from magcalc import numeric_hq
+
+    if request.param == "numeric" and numeric_hq.rust_dipole_hq() is None:
+        pytest.skip("rsmagcalc with K8 (DipoleHq) not installed (numeric H(q) builder)")
+    monkeypatch.setenv(numeric_hq.ENV, request.param)
+    return request.param
+
+
 def fortran_backend_status():
     """None when fMagCalc's compiled S(Q,w) path can serve a mixed-spin model,
     else the reason it cannot (the skip message)."""

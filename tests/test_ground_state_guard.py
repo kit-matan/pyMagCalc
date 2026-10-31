@@ -169,3 +169,9 @@ def test_multistart_reports_how_many_starts_hit_the_best_energy():
                                seed=0)
     assert hasattr(res, "hits") and hasattr(res, "num_starts")
     assert 1 <= res.hits <= res.num_starts
+
+
+@pytest.fixture(autouse=True)
+def _under_both_builders(builder):
+    """Every test here runs under both H(q) builders (K8; tests/conftest.py)."""
+    return builder

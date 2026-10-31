@@ -281,3 +281,9 @@ def test_multiatom_pattern_supercell():
     # every unfolded band appears among the folded ones
     for e in e1:
         assert np.min(np.abs(e2 - e)) < 1e-8
+
+
+@pytest.fixture(autouse=True)
+def _under_both_builders(builder):
+    """Every test here runs under both H(q) builders (K8; tests/conftest.py)."""
+    return builder

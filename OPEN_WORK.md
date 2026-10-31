@@ -1,6 +1,10 @@
 # Open work — pick-up notes
 
-**Current status (2026-10-31): items 8, 9 and 10 are open.** Item 11, a correctness
+**Current status (2026-10-31): items 8 and 9 are open.** Item 10, the dimer series'
+checkpoint, was done the day it was found. The numeric dipole H(q) builder (rsMagCalc K8,
+`calculation.hamiltonian_builder`, default `auto`) and the exact-zero-mode rule it needed
+were done the same day; nothing of it is open (`GAP_STATUS.md`, "Rust kernels K8", which
+also says why fMagCalc's `run_sqw_model` cut was left). Item 11, a correctness
 defect in the dimer series under DM, was found and fixed the same day. Item 8 was left by phase 1
 of the neutron-data layer (`GAP_STATUS.md`, "Neutron data and the forward model,
 phase 1"). Item 9 was found while closing item 7, which routed `calculate_sqw`
@@ -141,20 +145,27 @@ known; item 3 is done:
      degenerate group, not each channel mode. Alternatively, fold q±k into one channel,
      since they are the same momentum.
    - **Oracle:** the supercell identity, which is exact.
-10. **The dimer series has no checkpoint.** Found on 2026-10-31 by a LANTA run of
-    Rb₂Cu₃SnF₁₂ at order 8, which was also the run that showed the K7 pool on 2
-    threads (`GAP_STATUS.md`, "Dimer series under `kernels: rust`: memory admits each
-    cluster"). `hopping_series(order)` holds everything in memory until it returns.
-    A job killed at the 24 h wall therefore loses the whole order, and order 9 is
-    likely to need more than one allocation.
-    - **Injection point:** `DimerSeriesModel._w_memo`, keyed by (structural key,
-      order). After each chunk of `_rust_level` (and each level of the NumPy path),
-      the new entries could be appended to a file. A restart would then load them and
-      skip their topologies.
-    - **Oracle:** a restarted run must give hoppings bit-identical to an
-      uninterrupted one. The memo is exact, so this is an identity.
-    - **Watch:** the key is a blake2b digest of rounded levels and pair operators, so
-      the file must record the model it belongs to and refuse any other.
+10. **The dimer series has no checkpoint. DONE 2026-10-31,** the day it was found
+    (a LANTA run of Rb₂Cu₃SnF₁₂ at order 8, the run that showed the K7 pool on 2
+    threads). `hopping_series(order)` held everything in memory until it returned, so
+    a job killed at the 24 h wall lost the whole order, and order 9 needs about a day.
+    `DimerSeriesModel.checkpoint_dir` (`$MAGCALC_SERIES_CHECKPOINT`,
+    `calculation.series_checkpoint`; off by default) now writes the memo of
+    subtracted weights after every chunk of `_rust_level` and of the NumPy path, one
+    atomic file per chunk, keyed on the model, the order, the kernel set, the
+    enumeration and the algorithm version; a mismatch is refused. SIGTERM or SIGUSR1
+    finishes the chunk in flight, saves it and exits with status 75. Pinned by
+    `tests/test_dimer_series_checkpoint.py`: a run crashed, signalled or SIGKILLed in
+    the middle of the last level resumes to the uninterrupted hoppings bit for bit,
+    under both kernel sets (order 6 for the SIGKILL). See `GAP_STATUS.md`, "The dimer
+    series saves and resumes".
+    - **Left open:** the signal is seen only between chunks, because the Rust kernel
+      runs a whole chunk (about an hour at order 9 on 120 threads) without returning
+      to Python. Ask Slurm for the signal more than a chunk before the wall, or lower
+      `chunk_bytes`. rsMagCalc could poll `Python::check_signals` between clusters
+      and return early.
+    - **Also found:** at order 9 the admission gate, not the thread count, sets the
+      pace (`GAP_STATUS.md`, same section).
 
 11. **With DM, the dimer series' T0 band was not cluster additive. DONE 2026-10-31,** the
     day it was found. The linked-cluster theorem failed in the Sz = 0 sector: on

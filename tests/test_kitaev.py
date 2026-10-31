@@ -277,3 +277,9 @@ def test_symmetry_rule_kitaev_end_to_end_matches_matrix_rule():
     heis = _sc_bands({"type": "heisenberg", "distance": 4.0, "value": 0.0}, "sc_heis")
     assert kit == pytest.approx(mat, abs=1e-9)
     assert np.abs(kit - heis).max() > 0.1     # the term really is present
+
+
+@pytest.fixture(autouse=True)
+def _under_both_builders(builder):
+    """Every test here runs under both H(q) builders (K8; tests/conftest.py)."""
+    return builder

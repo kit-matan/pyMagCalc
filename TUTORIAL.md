@@ -613,11 +613,11 @@ powder = calc.calculate_powder_average(q_mags, num_samples=200, backend="fortran
 companion, for a different set of loops than fMagCalc: the ones that are
 Python-bound per site or per q in the classical and SU(N) **samplers**
 (`thermal_mc`, `sampled_correlations`, `sun_sampled_correlations`), SU(N) LSWT
-assembly, KPM, SCGA and the dimer series expansion. It is written in Rust and
-loaded through PyO3. It is **not** a port of pyMagCalc, and it does not touch the
-dipole LSWT path, which stays with fMagCalc. What each kernel covers, the oracle it
-is pinned to and its measured speed-up are recorded in `GAP_STATUS.md` under "Rust
-kernels K1" to "K5" and "K7".
+assembly, KPM, SCGA and the dimer series expansion, and it builds the dipole engine's
+LSWT matrix H(q) without SymPy (K8, §4e2, `hamiltonian_builder`). It is written in Rust
+and loaded through PyO3. It is **not** a port of pyMagCalc. What each kernel covers, the
+oracle it is pinned to and its measured speed-up are recorded in `GAP_STATUS.md` under
+"Rust kernels K1" to "K5", "K7" and "K8".
 
 The contract is fMagCalc's. pyMagCalc never *requires* it: a `kernels: rust`
 request with the package missing (or built without its compiled core) logs a
@@ -741,6 +741,13 @@ the linked-cluster subtraction amplifies rounding in both).
 On the Rb₂Cu₃SnF₁₂ pinwheel order 5 went from 11.0 s (NumPy, process pool; 30 s
 serial) to 1.6 s, order 6 from 115 s (566 s serial) to 21 s, and order 7 from
 32 min to 6.4 min (`GAP_STATUS.md`, "Rust kernels K7").
+
+The **dipole H(q) builder** (K8) is the one kernel that `kernels:` does not select:
+`calculation.hamiltonian_builder` does, and its default, `auto`, uses it whenever
+rsMagCalc is installed (§4e2, "How the LSWT matrix H(q) is built"). Python resolves the
+terms; the kernel does the Holstein–Primakoff algebra and the Fourier placement for each
+parameter set, and the result agrees with the SymPy build entry by entry
+(`GAP_STATUS.md`, "Rust kernels K8").
 
 Three blocks take an `n_workers` for the Rust thread pool (default: every core):
 
@@ -1001,6 +1008,32 @@ calculation:
   classical_energy: numeric    # numeric (default) | symbolic
 ```
 
+**How the LSWT matrix H(q) is built (`calculation.hamiltonian_builder`, dipole mode).**
+Until 2026-10-31 every run built H(q) = 2gH₂ by expanding the Hamiltonian in SymPy
+(Holstein–Primakoff, Fourier transform, matrix extraction), then compiled it with
+`lambdify`, once in the main process and again in every worker. That took 3–35 s
+for a cold model (FeI₂ 35 s, SW28 26 s, YIG 6 s). The `numeric` builder resolves the
+terms with the same model code but leaves the boson algebra to the Rust kernels
+(rsMagCalc): those models build in 0.2–0.7 s, nearly all of it the model's own term
+resolution, and each new parameter set reassembles in milliseconds. The two agree entry by entry to rounding, on every shipped example.
+
+```yaml
+calculation:
+  hamiltonian_builder: auto    # auto (default) | numeric | symbolic
+```
+
+- `auto` uses `numeric` when rsMagCalc is installed and the model allows it, and
+  `symbolic` otherwise; the run log says which and why.
+- `numeric` asks for it by name: if it is unavailable the run warns and uses `symbolic`.
+- `symbolic` is the SymPy build, kept as the reference. It is the only route for a
+  custom Python spin model (`spin_model_module`).
+
+Nothing else changes: results, guards, caches and fitting work the same way under
+either builder. Under `numeric` the symbolic cache files are not written (there is
+nothing worth caching), and `MagCalc.HMat_sym` still exists for scripts: asking for it
+runs the SymPy build then. `MAGCALC_HAMILTONIAN_BUILDER=symbolic` in the environment
+overrides the config, for a quick cross-check.
+
 ---
 
 ## 4f. Modeling the Measurement (temperature, twins, resolution, cuts)
@@ -1070,6 +1103,11 @@ contracts. Single-k structures use it too, for all three channels. Where H₂(q)
 safely positive definite, that q is computed by the older per-q method (`eig` at +q
 and −q with basis matching). That covers a Goldstone mode, a Bragg point of a gapless
 model, and every unstable q of an `on_imaginary: warn` run, so nothing is lost there.
+At an antiferromagnet's Bragg point the Goldstone mode's true intensity diverges, and
+it is reported as zero. Since 2026-10-31 a mode counts as that exact zero mode when
+its energy is below 1e-5 of the matrix scale at that q and it is defective (pseudo-norm
+below 1e-3). Before, an absolute cut decided it, and rounding could turn the same point
+into a spike of 1e6–1e9. A ferromagnet's Goldstone mode keeps its finite intensity.
 
 ```yaml
 calculation:
@@ -1443,6 +1481,46 @@ coefficients from order 6 on were then wrong; on Rb₂Cu₃SnF₁₂ the Δ₂ b
 coefficient moved from −1.125 to −1.091. The S<sup>z</sup> = ±1 bands were never
 affected. The run log warns, once per cluster size, if the additivity check fails
 (`GAP_STATUS.md`, "The dimer series' T0 sector made cluster additive").
+
+#### Save and resume: an order longer than one job
+
+A high order can outlast a batch job's wall time (Rb₂Cu₃SnF₁₂ at order 9 needs about a
+day on 120 threads). Give the series a checkpoint directory and it writes each chunk of
+finished cluster weights there as it goes; a second run with the same directory loads
+them and continues:
+
+```yaml
+calculation: {mode: entangled, series_order: 9, kernels: rust, series_checkpoint: ckpt_o9}
+```
+
+or `export MAGCALC_SERIES_CHECKPOINT=ckpt_o9` (for a script, e.g.
+`series_dispersion.py`), or `DimerSeriesModel.checkpoint_dir` in Python. It is off by
+default. Each order gets its own `order-N/` subdirectory, so a loop over orders can share
+one directory. The resumed hoppings are bit for bit those of an uninterrupted run.
+
+- Every file is written to a temporary name, fsynced and renamed, so a kill at any
+  moment leaves a usable checkpoint. A hard kill loses only the chunk in flight.
+- The checkpoint records the model (levels, Sz sectors, every pair operator with its
+  DM, the lattice), the order, the kernel set, the cluster enumeration and the
+  algorithm version. A run that differs in any of them refuses to resume and names
+  what differs. Use a new directory, or delete the old one to start over.
+- **SIGTERM or SIGUSR1 stops the run cleanly.** The chunk in flight finishes and is
+  saved, and the process exits with status **75**, so a job script can tell "resume
+  me" from a failure. A chunk is up to `chunk_bytes` (4 GB) of results, about an hour
+  at order 9 on 120 threads. Under Slurm, ask for the signal more than one chunk
+  before the wall and pass it to Python:
+
+```bash
+#SBATCH --signal=B:USR1@4500
+python -u run_series.py & PID=$!
+trap 'kill -USR1 $PID' USR1
+wait $PID; wait $PID; rc=$?
+[ $rc -eq 75 ] && sbatch "$0"     # not finished: queue the next job
+```
+
+  The first `wait` returns when the trap fires; the second collects the exit status.
+  If the signal comes too late, Slurm's SIGKILL ends the job and the next one repeats
+  only the unfinished chunk.
 
 ## 4h. Beyond LSWT: diffuse, thermal, and dynamical methods
 

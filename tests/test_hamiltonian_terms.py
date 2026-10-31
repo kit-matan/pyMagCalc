@@ -423,3 +423,9 @@ def test_multik_two_k_gives_noncollinear_unit_moments():
                      for t, p in zip(th, ph)])
     assert np.allclose(np.linalg.norm(dirs, axis=1), 1.0)      # normalize=True
     assert len({tuple(np.round(d, 6)) for d in dirs}) == 4     # non-collinear
+
+
+@pytest.fixture(autouse=True)
+def _under_both_builders(builder):
+    """Every test here runs under both H(q) builders (K8; tests/conftest.py)."""
+    return builder

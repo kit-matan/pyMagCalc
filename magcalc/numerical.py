@@ -2,6 +2,7 @@ import sys
 import logging
 import numpy as np
 import scipy.linalg as la
+import sympy as sp
 from sympy import lambdify
 from dataclasses import dataclass
 from typing import List, Tuple, Optional, Union
@@ -736,6 +737,11 @@ def _init_worker(HMat_sym, full_symbol_list):
 
     try:
         logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+        if not isinstance(HMat_sym, sp.MatrixBase) and callable(HMat_sym):
+            # The numeric builder's bond model (numeric_hq.BondHamiltonian): it
+            # already has the lambdified matrix's signature.
+            _worker_HMat_func = HMat_sym
+            return
         _worker_HMat_func = lambdify(full_symbol_list, HMat_sym, modules=["numpy"], cse=True)
     except Exception as e:
         sys.stderr.write(f"Error in worker initialization: {e}\n")

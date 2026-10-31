@@ -12,6 +12,20 @@ DEGENERACY_THRESHOLD: float = 1e-8
 ZERO_MATRIX_ELEMENT_THRESHOLD: float = 1e-6
 ALPHA_MATRIX_ZERO_NORM_WARNING_THRESHOLD: float = 1e-14
 EIGENVECTOR_MATCHING_THRESHOLD: float = 1e-4
+# An EXACT zero mode -- the Goldstone mode at an antiferromagnetic Bragg point,
+# where g H is a Jordan block and the true intensity diverges like 1/omega -- is
+# reported with zero intensity. Rounding of order eps in H moves such a mode to
+# omega ~ sqrt(eps) x the band scale (5e-9 to 1.2e-7 of it on SW28 and SW09), and
+# its pseudo-norm N_ii ~ omega / scale with it, so the absolute |N_ii| < 1e-12 cut
+# alone decided "zero" or "a 1e9 spike" by which side the noise fell (SW28 at
+# +-(1,1,1), GAP_STATUS "Numeric H(q)"). A mode is also an exact zero mode when
+# its energy is below ZERO_MODE_ENERGY_REL x the scale of H at that q -- its
+# largest entry, NOT its largest eigenvalue, which is itself zero at a Neel
+# chain's Bragg point -- AND |N_ii| < ZERO_MODE_NORM, i.e. it is defective. A
+# ferromagnetic Goldstone mode is not (N_ii = 1), so its finite intensity down to
+# omega -> 0 is kept.
+ZERO_MODE_ENERGY_REL: float = 1e-5
+ZERO_MODE_NORM: float = 1e-3
 
 def rotation_matrix(
     axis: npt.NDArray[np.float64], angle_deg: float
@@ -190,6 +204,8 @@ def _calculate_alpha_matrix(
     G_metric: npt.NDArray[np.float64],
     zero_threshold: float,
     q_vector_label: str,
+    eigenvalues: Optional[npt.NDArray[np.complex128]] = None,
+    energy_scale: Optional[float] = None,
 ) -> Optional[npt.NDArray[np.complex128]]:
     """
     Calculate the diagonal alpha matrix used in the transformation T.
@@ -209,12 +225,20 @@ def _calculate_alpha_matrix(
         zero_threshold (float): Threshold below which norms or alpha values are
                                 treated as zero.
         q_vector_label (str): A string label identifying the q-vector (for logging).
+        eigenvalues, energy_scale: the eigenvalues of the columns and the scale
+            of H (its largest |entry|), for the exact-zero-mode rule
+            (ZERO_MODE_ENERGY_REL, ZERO_MODE_NORM); without them only the
+            absolute pseudo-norm cut applies.
 
     Returns:
         Optional[npt.NDArray[np.complex128]]: The diagonal alpha matrix (2N x 2N).
                                            Returns None if calculation fails.
     """
     nspins2 = eigenvectors.shape[0]
+    zero_mode = np.zeros(nspins2, dtype=bool)
+    if eigenvalues is not None and energy_scale is not None:
+        ev = np.abs(np.real(np.asarray(eigenvalues)))
+        zero_mode = ev <= ZERO_MODE_ENERGY_REL * float(energy_scale)
     alpha_diag_sq: npt.NDArray[np.float64] = np.zeros(nspins2, dtype=float)
     zero_threshold_sq = zero_threshold**2  # Pre-calculate square
 
@@ -222,6 +246,11 @@ def _calculate_alpha_matrix(
         V_i = eigenvectors[:, i]
         norm_sq_N_ii = np.real(np.vdot(V_i, G_metric @ V_i))
         G_ii = G_metric[i, i]
+
+        # A defective mode at the noise floor: an exact zero mode.
+        if zero_mode[i] and abs(norm_sq_N_ii) < ZERO_MODE_NORM:
+            alpha_diag_sq[i] = 0.0
+            continue
 
         # Check if norm is below the main threshold for setting alpha to zero
         if abs(norm_sq_N_ii) < zero_threshold_sq:
@@ -502,7 +531,8 @@ def KKdMatrix(
     
     # --- 3. Alpha +q ---
     alpha_p = _calculate_alpha_matrix(
-        eigvecs_p_ortho, G_metric, ZERO_MATRIX_ELEMENT_THRESHOLD, f"+{q_label}"
+        eigvecs_p_ortho, G_metric, ZERO_MATRIX_ELEMENT_THRESHOLD, f"+{q_label}",
+        eigvals_p_sorted, float(np.max(np.abs(Hmat_plus_q))),
     )
     if alpha_p is None:
         return nan_matrix, nan_matrix, nan_eigs
@@ -532,7 +562,8 @@ def KKdMatrix(
 
     # --- 6. Alpha -q ---
     alpha_m_sorted = _calculate_alpha_matrix(
-        eigvecs_m_ortho, G_metric, ZERO_MATRIX_ELEMENT_THRESHOLD, f"-{q_label}"
+        eigvecs_m_ortho, G_metric, ZERO_MATRIX_ELEMENT_THRESHOLD, f"-{q_label}",
+        eigvals_m_sorted, float(np.max(np.abs(Hmat_minus_q))),
     )
     if alpha_m_sorted is None:
         return nan_matrix, nan_matrix, nan_eigs
