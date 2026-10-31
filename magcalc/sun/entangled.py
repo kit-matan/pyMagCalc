@@ -406,6 +406,8 @@ class EntangledCalculator:
         calc_cfg = (config.get("calculation") or {})
         self.series_order = int(calc_cfg.get("series_order", 0) or 0)
         self.series_resum = str(calc_cfg.get("series_resum", "dlog_pade"))
+        # save-and-resume directory for the series (default: $MAGCALC_SERIES_CHECKPOINT)
+        self.series_checkpoint = calc_cfg.get("series_checkpoint")
         self._series = None
         logger.info("Entangled units: %d unit(s), N=%d per unit (%d bosons), %d bond(s).",
                     self.model.L, self.model.Ns[0], self.model.Ms[0], len(self.model.bonds))
@@ -418,6 +420,8 @@ class EntangledCalculator:
             self._series = DimerSeriesModel.from_generic_model(
                 self.sm, self.hamiltonian_params, units=self._units,
                 kernels=self.kernels, n_workers=self.n_workers)
+            if self.series_checkpoint:
+                self._series.checkpoint_dir = str(self.series_checkpoint)
         return self._series
 
     def calculate_dispersion(self, q_vectors, backend="numpy", satellites=None, **_):

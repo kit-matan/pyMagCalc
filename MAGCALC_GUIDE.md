@@ -7,7 +7,7 @@ context can make a correct first change. It is a map, not the whole territory: t
 authoritative details live in the files it points to (§12), and when they disagree, the
 code and the tests win.
 
-*Last reviewed: 2026-10-31, against pyMagCalc `bfae055` plus neutron-data phase 2's AMATERAS model and deterministic δQ quadrature (`magcalc/resolution.py`, `magcalc/qe_resolution.py`, the `fraction` and `prepare` hooks in `ForwardModel`), merged the same day after the dimer series' projective cluster-additive one-particle block (`_pca_one_particle`, OPEN_WORK item 11). This file is kept current with
+*Last reviewed: 2026-10-31, against pyMagCalc `285a038` plus the dimer series' save and resume (`magcalc/sun/series_checkpoint.py`, `calculation.series_checkpoint`), and before that `bfae055` plus neutron-data phase 2's AMATERAS model and deterministic δQ quadrature (`magcalc/resolution.py`, `magcalc/qe_resolution.py`, the `fraction` and `prepare` hooks in `ForwardModel`), merged the same day after the dimer series' projective cluster-additive one-particle block (`_pca_one_particle`, OPEN_WORK item 11). This file is kept current with
 every change that alters what it describes (§13).*
 
 ---
@@ -146,7 +146,7 @@ separate model. Top-level blocks:
 | `magnetic_structure` | `pattern`, `single_k` (rotating-frame spiral), `multi_k`, `explicit`; or `from_mcif:` at top level |
 | `tasks` | which steps to run (§5) |
 | `q_path` | named points in **chemical** RLU plus `path` and `points_per_segment` |
-| `calculation` | `mode`, `backend`, `kernels`, `n_workers`, `temperature`, `domains`, `cross_section`, `cache_mode`, the guard tolerances, `anisotropy_renormalization`, `classical_energy`, `series_order` |
+| `calculation` | `mode`, `backend`, `kernels`, `n_workers`, `temperature`, `domains`, `cross_section`, `cache_mode`, the guard tolerances, `anisotropy_renormalization`, `classical_energy`, `series_order`, `series_checkpoint` |
 | per-task blocks | `minimization`, `scga`, `thermal_mc`, `sampled_correlations`, `kpm`, `corrections`, `powder_average`, `energy_cut`, `fitting`, … |
 | `output`, `plotting` | file names, `save_plot`, `show_plot`, resolution |
 
@@ -313,7 +313,7 @@ pytest -n0 ...               # serial; needed for -s or pdb
 | `linalg.py`, `numerical.py` | Colpa (`colpa_batch`, `SqwAmplitudes`), the per-q Bogoliubov fallback (`KKdMatrix`) and workers, `contract_cross_section_batch` (every cross-section), domains, powder sampling |
 | `runner.py` | the task pipeline and the ground-state guards |
 | `sun/lswt.py`, `sun/operators.py`, `sun/adapter.py` | SU(N) LSWT (`SUNModel`), local operator algebra, runner adapter |
-| `sun/entangled.py`, `sun/dimer_series.py` | entangled units; linked-cluster dimer series with Dlog-Padé |
+| `sun/entangled.py`, `sun/dimer_series.py`, `sun/series_checkpoint.py` | entangled units; linked-cluster dimer series with Dlog-Padé; its save and resume |
 | `sun/kpm.py`, `sun/dynamics.py` | KPM S(q,ω); CP^(N−1) classical dynamics, quench, topological charge |
 | `scga.py`, `thermal_mc.py`, `classical_dynamics.py`, `annealing.py`, `spiral_opt.py`, `corrections.py` | the beyond-LSWT methods (§5) |
 | `stevens.py`, `ewald.py`, `form_factors.py`, `constants.py` | Stevens operators, Ewald dipolar sums, magnetic form factors, the one definition of each physical constant |
@@ -459,6 +459,11 @@ iOS app).
   effective Hamiltonian is not cluster additive, because the T0 states share their
   sector with the vacuum. That block now goes through Hörmann and Schmidt's projective
   cluster-additive transformation (OPEN_WORK item 11, done the same day).
+  The series saves and resumes (`calculation.series_checkpoint`, 2026-10-31): each
+  chunk's subtracted weights go to disk atomically, a rerun with the same directory
+  continues bit for bit, a directory written for anything else is refused, and SIGTERM
+  or SIGUSR1 ends the run cleanly with status 75 (`GAP_STATUS.md`, "The dimer series
+  saves and resumes").
 - **Biquadratic exchange is right off the collinear axis** (2026-10-29). The
   symbolic build had dropped, with only a WARNING, a biquadratic's cross-site terms on
   a bond with no bilinear coupling, and on a non-collinear intercell bond the part that

@@ -789,7 +789,16 @@ calculation: {mode: entangled, series_order: 5, series_resum: dlog_pade}  # | pa
   call runs in forked processes on Linux (`DimerSeriesModel.subtract_workers`, default
   `n_workers`; serial on macOS), bit for bit the serial result, and the additivity
   check is one log line per cluster size (`DimerSeriesModel.additivity`). The hoppings agree to
-  ~1e-12 (2e-11 at order 6: the subtraction amplifies rounding, in both). S(Q,w) and the ground-state guards stay on the
+  ~1e-12 (2e-11 at order 6: the subtraction amplifies rounding, in both).
+  **An order longer than one job** (order 9 is about a day on 120 threads): set
+  `calculation.series_checkpoint: <dir>` (or `$MAGCALC_SERIES_CHECKPOINT`,
+  `DimerSeriesModel.checkpoint_dir`; off by default). Each chunk's subtracted weights are
+  written atomically to `<dir>/order-N/`, and a rerun with the same directory loads them
+  and continues, bit for bit the uninterrupted hoppings. It refuses a directory written
+  for another model, order, kernel set or algorithm version. SIGTERM or SIGUSR1 finishes
+  the chunk in flight, saves it and exits with status 75; the signal is seen only between
+  chunks (about an hour each at order 9), so ask Slurm for it earlier than that (TUTORIAL
+  §4g; `tests/test_dimer_series_checkpoint.py`). S(Q,w) and the ground-state guards stay on the
   harmonic model. Reference: `examples/entangled/Rb2Cu3SnF12/series_dispersion.py`
   (the full pinwheel at J2 = 0.95 J1, gaps vs the measured 2.35 / 7.3 meV).
 * Powder averaging: supported (same shared spherical average as SU(N)).

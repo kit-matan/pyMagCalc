@@ -988,6 +988,81 @@ the rule-value parser fix a87c8a8 below, magpipe at 283f694), 2026-10-22, idle m
 ALPS ones. The merge is also what makes `sqrt(3)*D1x/3`, the allowed kagome DM, pass this check: before the
 parser fix it reached the check as an unbound `sqrt3` and was refused as a conflict.
 
+### The dimer series saves and resumes, 2026-10-31 — OPEN_WORK item 10
+
+**Why.** `DimerSeriesModel.hopping_series(order)` kept every subtracted cluster weight in memory until it returned.
+Rb₂Cu₃SnF₁₂ at order 9 has 910 371 clusters, 705 014 of them at L = 9, and on LANTA (120 threads) each ~30 000-topology
+chunk of L = 9 took 54–61 min, so the order needs about a day. A job killed at the 24 h wall lost all of it.
+
+**What is saved** (`magcalc/sun/series_checkpoint.py`). The memo itself: for each topology its structural key, one
+embedding, its subtracted weight (gs_w, Lc0, delta_trim) and its additivity ratio. These are exactly the numbers the
+assembly sums, so a resumed run's hoppings are the uninterrupted run's bit for bit.
+- **When:** after every chunk of `_rust_level`, after every chunk of the NumPy path (which now goes in the same
+  `chunk_bytes` chunks, through one process pool per level), after every level, and on the way out of an exception.
+  One file per chunk, `<dir>/order-N/w-NNNNNN.pkl`, append only.
+- **How:** written to a temporary name, fsynced, renamed, and the directory fsynced. A kill at any moment leaves the
+  previous state; a temporary file from a killed write is ignored and removed. A `flock` keeps a second process out
+  (Lustre mounted without flock only warns).
+- **The key:** the manifest and every chunk file carry a blake2b fingerprint of the local levels, their Sz labels
+  (whether the PT runs in sectors), every link's pair operator (DM included) and offset, the lattice and unit
+  positions, the order, the kernel set, the cluster enumeration (count and an order-independent digest per size),
+  the file format and an algorithm version (`ALGORITHM`, to bump whenever a weight changes). The memo's own key is a
+  digest of ROUNDED levels and operators, so it could not serve; the fingerprint uses the exact bytes. A mismatch
+  raises `CheckpointMismatch` naming what differs, before anything is loaded.
+- **Safe to load:** the files hold only tuples, bytes, ints, floats and strings (arrays as raw bytes), read by an
+  unpickler that refuses every global.
+
+**Stopping cleanly.** While a checkpointed run is in progress, SIGTERM and SIGUSR1 (`stop_signals`) set a flag. After
+the chunk in flight, the run saves it and raises `SeriesInterrupted`, a `SystemExit` with status 75 (EX_TEMPFAIL), so
+an unhandled one ends the process with that status and no `except Exception` swallows it. The NumPy pool's workers
+ignore SIGUSR1, so a signal sent to the whole job step does not kill them under the parent. The handlers are restored
+afterwards. The flag is read only between chunks, because the Rust kernel runs a whole chunk without returning to
+Python; at order 9 that is about an hour, so a Slurm job should ask for `--signal=B:USR1@4500` or earlier and pass
+the signal on to Python (TUTORIAL §4g has the script).
+
+**The switch,** off by default: `DimerSeriesModel.checkpoint_dir`, `$MAGCALC_SERIES_CHECKPOINT`, or
+`calculation.series_checkpoint` in a `mode: entangled` config with `series_order`.
+
+**Pinned** (`tests/test_dimer_series_checkpoint.py`, Rb₂Cu₃SnF₁₂ with its out-of-plane DM, both kernel sets):
+- order 4: a crash in the middle of a chunk of the last level, and a stop by a real SIGUSR1 (status 75, the chunk in
+  flight finished and no more, handlers restored), each resumed from a fresh model to the uninterrupted hoppings
+  and ground-state energy, bit for bit;
+- refusals: one link's DM sign flipped, another kernel set, the PT without Sz sectors, a chunk file of another
+  calculation, a pickle naming a global (`os.getcwd`, not called), a directory held by another process;
+- one directory holding orders 2 and 3; off by default (no files, no handlers touched); on by the environment
+  variable and by the config key;
+- slow, order 6: a separate process SIGKILLed a third of the way into L = 6, with nothing flushed on the way out,
+  resumed here to the uninterrupted hoppings bit for bit (315 s under `numpy` with 4 pool workers, 102 s under `rust`).
+
+**Tests run** (pyMagCalc `285a038` plus this change, on the Mac): the 15 tests of the new file (13 fast, 2 slow);
+`pytest -m slow -k dimer_series`, 6 passed; the fast suite, 1354 passed, 18 skipped, 2 xfailed. Three tests did
+not pass, and none is from this change. The two shadow-guard tests cannot pass while a second checkout is
+importable, as it is from a worktree. One xdist worker crashed in `test_intensity_layer.py` with the machine at
+load ~180, and that file passes on a rerun. The full gate (`pytest -m ""` from the workspace root) is owed before
+merging.
+
+**Why order 9's L = 9 chunks slow down from 54 to 61 min on LANTA** (looked at the same day; nothing changed by it).
+- **Not the order of the topologies.** `hopping_series` hands them to the kernel in the iteration order of the
+  level's set of forms, which is unrelated to cluster size. Enumerated here (705 014 embeddings → 702 820
+  topologies, 15 min on the Mac) and cut by the same 4 GB rule, the 23 full chunks each hold 30 439–30 515
+  topologies, 27 023–27 305 of them ten-dimer trees (m = 10), and their summed scratch, a proxy for the work,
+  agrees to ±0.4 %. Chunk 22 is no heavier than chunk 0.
+- **The admission gate.** The m = 10 trees are 89 % of each chunk and 97 % of its work, and each is charged
+  1.94 GB (C(20, 10) rows × 30 columns × 21 blocks). The gate admits them in budget/1.94 GB at a time: 60 at the
+  117 GB that 0.5 × MemAvailable gave, so half of the 120 threads wait through the heavy part of every chunk.
+  The budget is measured again at each call, and MemAvailable falls as the parent's memo and heap grow (at
+  order 8: 115.2 → 111.5 → 107.2 → 107.2 GB over L = 8's four chunks). At 104 GB the gate admits 53 m = 10
+  clusters at once. 54 min × 60/53 = 61 min, the observed drift. Order 8 never met this: its largest cluster
+  is 0.42 GB, so 120 fit in any of those budgets.
+- **Why the statistics hide it.** `peak_concurrent` is the maximum over the call, and the small clusters at the
+  end of each chunk always fill all 120 threads, so it reads 120. The per-chunk log line's "scratch budget" is the
+  number that tracks the slowdown.
+- **What would help, for Kit to decide:** a fixed `RSMAGCALC_SCRATCH_GB` (say 150) in the job. It removes the
+  drift and admits 77 m = 10 trees at once. Measured peak RSS is 0.55–0.80 of the estimate for sectored clusters,
+  so that is about 80–120 GB of real scratch beside the parent's memory. In rsMagCalc, the sectored estimate
+  could be tightened toward the measured peak, and a time-weighted concurrency could be reported next to
+  `peak_concurrent`. Neither is done here.
+
 ### The dimer series' T0 sector made cluster additive, 2026-10-31 — OPEN_WORK item 11
 
 **The defect** (found in the section below). The one-particle effective Hamiltonian was the des Cloizeaux

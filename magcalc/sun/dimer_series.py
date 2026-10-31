@@ -31,6 +31,11 @@ Structure (all validated against independent oracles -- see tests/test_dimer_ser
     parity reference (tests/test_dimer_series.py runs its oracles under both).
     The subtraction of a level's new topologies runs in forked processes on Linux
     (`subtract_workers`, default `n_workers`), bit for bit the serial result.
+  * `checkpoint_dir` (or $MAGCALC_SERIES_CHECKPOINT, `calculation.series_checkpoint`)
+    writes the memo of subtracted weights to disk chunk by chunk, so a run killed at
+    a wall-time limit continues where it stopped; a stop signal (SIGTERM, SIGUSR1)
+    ends it cleanly after the chunk in flight with exit status 75
+    (`series_checkpoint.py`).
   * `pade` / `dlog_pade_estimates` / `resummed` -- Pade and Dlog-Pade resummation;
     Dlog-Pade returns the family of near-diagonal approximants (defective ones with a
     real pole in (0, lambda] are discarded) and the spread is the uncertainty, as in
@@ -50,6 +55,8 @@ order L(cluster) -- and reports each cluster size where it fails.
 """
 import itertools
 import logging
+import os
+import signal
 from collections import defaultdict
 
 import numpy as np
@@ -57,6 +64,7 @@ import scipy.sparse as sp
 
 from ..constants import GAMMA_ELECTRON as GAMMA, MU_B
 from .entangled import _embedded_spin_ops, iter_pair_matrices
+from . import series_checkpoint as _ckpt
 
 logger = logging.getLogger(__name__)
 
@@ -500,6 +508,13 @@ def _subtract_worker(i):
     return (i,) + m._subtracted(form, node_order, order, raw)
 
 
+def _ignore_signals(signums):
+    """Pool initializer: the PT workers ignore the stop signals, which the parent
+    handles (a worker killed by one would leave its task, and the pool, hanging)."""
+    for s in signums:
+        signal.signal(s, signal.SIG_IGN)
+
+
 def _pt_worker(args):
     """Multiprocessing worker: raw cluster PT (top-level for spawn pickling)."""
     skey, levels_list, links_local, order, sz_list = args
@@ -534,8 +549,18 @@ class DimerSeriesModel:
         # (n_workers, on Linux only: it forks), 1 = serial
         self.subtract_workers = None
         self.additivity = []              # one dict per level with a failed check
+        # save-and-resume directory (None = off); one subdirectory per order
+        self.checkpoint_dir = os.environ.get(_ckpt.ENV) or None
+        # signals that stop a checkpointed run cleanly after the chunk in flight
+        self.stop_signals = (signal.SIGTERM, signal.SIGUSR1)
+        self._ckpt = None                 # the open SeriesCheckpoint, during a run
+        self._ckpt_pending = []           # memo entries not yet on disk
+        self._ckpt_saved = 0              # entries written in this run
+        self._resumed = defaultdict(int)  # (order, size) -> topologies loaded
+        self._stop = None                 # the stop signal received, if any
         self.subtract_stats = []          # one dict per forked subtraction
         self._violations = {}             # (order, size) -> [count, worst, form]
+        self._resumed_violations = {}     # the same, of the topologies loaded
         self._touch = defaultdict(list)   # d -> [(t, shift)]: node (d,c) in inst (t, c-shift)
         for t, (u, v, off, _V) in enumerate(self.link_types):
             self._touch[u].append((t, (0, 0, 0)))
@@ -954,10 +979,16 @@ class DimerSeriesModel:
         level's tally in one line (at order 8 on Rb2Cu3SnF12 one line per cluster
         was 82 342 lines)."""
         self._w_memo[memo_key] = (gs_w, Lc0, delta_trim)
+        if self._ckpt is not None:
+            self._ckpt_pending.append((memo_key, form, ratio))
+        self._tally(memo_key[1], form, ratio)
+
+    def _tally(self, order, form, ratio, violations=None):
         if ratio > ADDITIVITY_TOL:
             logger.debug("cluster additivity violated for %s (below-order weight "
                          "%.2e of the cluster's scale)", form, ratio)
-            acc = self._violations.setdefault((memo_key[1], len(form)), [0, 0.0, None])
+            violations = self._violations if violations is None else violations
+            acc = violations.setdefault((order, len(form)), [0, 0.0, None])
             acc[0] += 1
             if ratio > acc[1]:
                 acc[1], acc[2] = ratio, form
@@ -965,7 +996,15 @@ class DimerSeriesModel:
     def _report_additivity(self, order, size, n_new):
         """One record (and, if any cluster failed, one WARNING) per level: the
         level's new topologies and any smaller one first computed while
-        subtracting them."""
+        subtracting them. Topologies loaded from a checkpoint count with the
+        level they belong to."""
+        old = self._resumed_violations.pop((order, size), None)
+        if old is not None:
+            acc = self._violations.setdefault((order, size), [0, 0.0, None])
+            acc[0] += old[0]
+            if old[1] > acc[1]:
+                acc[1], acc[2] = old[1], old[2]
+        n_new += self._resumed.get((order, size), 0)
         for key in sorted(k for k in self._violations if k[0] == order):
             count, worst, form = self._violations.pop(key)
             here = key[1] == size
@@ -993,15 +1032,8 @@ class DimerSeriesModel:
         peak is one chunk.
         """
         keys = list(reps)
-        i = 0
-        while i < len(keys):
-            chunk, nbytes = [], 0
-            while i < len(keys) and (not chunk or nbytes < self.chunk_bytes):
-                form, node_order = reps[keys[i]]
-                p = len(node_order) * self.nexc
-                nbytes += (order + 1) * p * p * 16
-                chunk.append(keys[i])
-                i += 1
+        done = 0
+        for chunk in self._chunks(reps, order):
             tasks = []
             for skey in chunk:
                 form, node_order = reps[skey]
@@ -1010,7 +1042,7 @@ class DimerSeriesModel:
             n_stats = len(self.kernel_stats)
             out = self._rust_pt(tasks, order)
             if out is None:
-                return {k: reps[k] for k in keys[i - len(chunk):]}
+                return {k: reps[k] for k in keys[done:]}
             if len(self.kernel_stats) > n_stats:
                 st = self.kernel_stats[-1]
                 st.update(size=size)
@@ -1023,7 +1055,129 @@ class DimerSeriesModel:
             self._subtract_level([(reps[skey][0], raw)
                                   for skey, raw in zip(chunk, out)], order)
             del out
+            done += len(chunk)
+            self._checkpoint_boundary(order)
         return {}
+
+    def _chunks(self, reps, order):
+        """The keys of `reps` in order, in chunks of at most `chunk_bytes` of raw PT
+        results (at least one topology each)."""
+        chunk, nbytes = [], 0
+        for skey, (_form, node_order) in reps.items():
+            p = len(node_order) * self.nexc
+            chunk.append(skey)
+            nbytes += (order + 1) * p * p * 16
+            if nbytes >= self.chunk_bytes:
+                yield chunk
+                chunk, nbytes = [], 0
+        if chunk:
+            yield chunk
+
+    def _numpy_level(self, reps, order, size):
+        """The raw PT of a level's new topologies by NumPy -- in a process pool when
+        the level is big enough to pay for it, else inside the subtraction -- then
+        the subtraction, chunk by chunk as `_rust_level` does."""
+        n_workers = self.n_workers or max(1, (os.cpu_count() or 2) - 1)
+        pool = None
+        if size >= 4 and n_workers > 1 and len(reps) > 2 * n_workers:
+            import multiprocessing as mp
+            ign = tuple(s for s in self.stop_signals if s != signal.SIGTERM)
+            pool = mp.get_context("spawn").Pool(n_workers, initializer=_ignore_signals,
+                                                initargs=(ign,))
+        try:
+            for chunk in self._chunks(reps, order):
+                raws = {}
+                if pool is not None:
+                    tasks = []
+                    for skey in chunk:
+                        form, node_order = reps[skey]
+                        lv, sz = self._node_levels(node_order)
+                        tasks.append((skey, lv, self._local_links(form, node_order),
+                                      order, sz))
+                    for skey, gs_raw, delta_raw in pool.imap_unordered(
+                            _pt_worker, tasks, chunksize=4):
+                        raws[skey] = (gs_raw, delta_raw)
+                self._subtract_level([(reps[skey][0], raws.get(skey))
+                                      for skey in chunk], order)
+                del raws
+                self._checkpoint_boundary(order)
+        finally:
+            if pool is not None:
+                pool.terminate()
+                pool.join()
+
+    # ------------------------------------------------------------- checkpoint
+    def _checkpoint_open(self, order, levels):
+        """Open (or resume) `checkpoint_dir`'s checkpoint for `order` and load its
+        memo entries. Returns the previous signal handlers to restore."""
+        self._ckpt = _ckpt.SeriesCheckpoint(self.checkpoint_dir, self, order, levels)
+        self._ckpt_pending, self._ckpt_saved, self._stop = [], 0, None
+        loaded = self._ckpt.load()
+        for skey, form, gs_w, Lc0, delta_trim, ratio in loaded:
+            if (skey, order) in self._w_memo:
+                continue
+            self._w_memo[(skey, order)] = (gs_w, Lc0, delta_trim)
+            self._resumed[(order, len(form))] += 1
+            self._tally(order, form, ratio, self._resumed_violations)
+        if loaded:
+            sizes = sorted({k[1] for k in self._resumed if k[0] == order})
+            logger.info("dimer series order %d: resumed %d topologies from %d "
+                        "checkpoint files in %s (%s)", order, len(loaded),
+                        len(self._ckpt.files()), self._ckpt.dir,
+                        ", ".join(f"L{s}:{self._resumed[(order, s)]}" for s in sizes))
+        else:
+            logger.info("dimer series order %d: checkpointing to %s", order,
+                        self._ckpt.dir)
+        old = {}
+        import threading
+        if threading.current_thread() is threading.main_thread():
+            def _handler(signum, _frame):
+                self._stop = signum
+            for s in self.stop_signals:
+                old[s] = signal.signal(s, _handler)
+        return old
+
+    def _checkpoint_close(self, old_handlers):
+        """Restore the signal handlers and release the checkpoint. Whatever was
+        memoized and not yet written (the run is unwinding from an error) is
+        written first: each memo entry is complete on its own."""
+        for s, h in old_handlers.items():
+            signal.signal(s, h)
+        if self._ckpt is not None:
+            try:
+                self._checkpoint_flush()
+            except Exception:
+                logger.warning("dimer series: could not write the last entries to "
+                               "the checkpoint", exc_info=True)
+            self._ckpt.close()
+        self._ckpt = None
+        self._ckpt_pending = []
+
+    def _checkpoint_flush(self):
+        if self._ckpt is None or not self._ckpt_pending:
+            return
+        entries = []
+        for memo_key, form, ratio in self._ckpt_pending:
+            gs_w, Lc0, delta_trim = self._w_memo[memo_key]
+            entries.append((memo_key[0], form, gs_w, Lc0, delta_trim, ratio))
+        self._ckpt.write(entries)
+        self._ckpt_saved += len(entries)
+        self._ckpt_pending = []
+
+    def _checkpoint_boundary(self, order):
+        """After a chunk: write its memo entries, then stop if a stop signal came."""
+        if self._ckpt is None:
+            return
+        self._checkpoint_flush()
+        if self._stop is not None:
+            name = signal.Signals(self._stop).name
+            msg = (f"dimer series order {order} stopped by {name}: {self._ckpt_saved} "
+                   f"topologies saved in this run, {len(self._ckpt.files())} files in "
+                   f"{self._ckpt.dir}; run again with the same checkpoint directory "
+                   f"to continue (exit status {_ckpt.EXIT_INTERRUPTED})")
+            logger.warning(msg)
+            raise _ckpt.SeriesInterrupted(msg, order=order, directory=self._ckpt.dir,
+                                          signum=self._stop)
 
     def _subtract_procs(self, items):
         """How many processes `_subtract_level` forks for these (form, raw) items:
@@ -1094,18 +1248,31 @@ class DimerSeriesModel:
         Clusters are deduplicated by STRUCTURE (each topology's PT runs once) and the
         raw PT of each level's new topologies runs in a multiprocessing pool -- or,
         under `kernels="rust"`, in rsMagCalc's thread pool, for every level.
+
+        With `checkpoint_dir` set, each chunk's weights go to disk as it finishes and
+        a rerun with the same directory loads them and continues; the hoppings are
+        the uninterrupted run's bit for bit. A stop signal (`stop_signals`) ends the
+        run after the chunk in flight by raising `SeriesInterrupted`, exit status 75.
         """
         if order in self._t_cache:
             return self._t_cache[order]
-        import os
         levels = self._enumerate(order)
         n_cl = sum(len(v) for v in levels.values())
         logger.info("dimer series order %d: %d clusters (%s)", order, n_cl,
                     ", ".join(f"L{k}:{len(v)}" for k, v in sorted(levels.items())))
+        old_handlers = {}
+        try:
+            if self.checkpoint_dir:
+                old_handlers = self._checkpoint_open(order, levels)
+            t = self._hopping_levels(order, levels)
+        finally:
+            self._checkpoint_close(old_handlers)
+        self._t_cache[order] = t
+        return t
+
+    def _hopping_levels(self, order, levels):
         t = defaultdict(lambda: np.zeros((order + 1, self.nexc, self.nexc), complex))
         nexc = self.nexc
-        n_workers = self.n_workers or max(1, (os.cpu_count() or 2) - 1)
-
         for size in sorted(levels):
             forms = levels[size]
             # group embeddings by structural key; one PT per topology
@@ -1117,32 +1284,18 @@ class DimerSeriesModel:
                 if (skey, order) not in self._w_memo and skey not in reps:
                     reps[skey] = (form, node_order)
             n_new = len(reps)
-            logger.info("  L=%d: %d embeddings -> %d new topologies", size,
-                        len(forms), n_new)
+            resumed = self._resumed.get((order, size), 0)
+            logger.info("  L=%d: %d embeddings -> %d new topologies%s", size,
+                        len(forms), n_new,
+                        f" ({resumed} more from the checkpoint)" if resumed else "")
 
-            # parallel raw PT for the new topologies (worth it for big clusters)
+            # raw PT of the new topologies, subtracted and memoized chunk by chunk
             if reps and self.kernels == "rust":
                 reps = self._rust_level(reps, order, size)
-            raws = {}
-            if reps and size >= 4 and n_workers > 1 \
-                    and len(reps) > 2 * n_workers:
-                import multiprocessing as mp
-                tasks = []
-                for skey, (form, node_order) in reps.items():
-                    lv, sz = self._node_levels(node_order)
-                    tasks.append((skey, lv, self._local_links(form, node_order),
-                                  order, sz))
-                ctx = mp.get_context("spawn")
-                with ctx.Pool(n_workers) as pool:
-                    for skey, gs_raw, delta_raw in pool.imap_unordered(
-                            _pt_worker, tasks, chunksize=4):
-                        raws[skey] = (gs_raw, delta_raw)
-
-            # subtraction + memoization, reps first
-            self._subtract_level([(form, raws.get(skey))
-                                  for skey, (form, _no) in reps.items()], order)
-            del raws
+            if reps:
+                self._numpy_level(reps, order, size)
             self._report_additivity(order, size, n_new)
+            self._checkpoint_boundary(order)
 
             # assembly over ALL embeddings
             for form in forms:
@@ -1157,9 +1310,7 @@ class DimerSeriesModel:
                                          ib * nexc:(ib + 1) * nexc]
                         if np.abs(blk).max() > 1e-14:
                             t[(dA, dB, off)][Lc0:] += blk
-        t = dict(t)
-        self._t_cache[order] = t
-        return t
+        return dict(t)
 
     def ground_state_energy(self, order):
         """Ground-state energy per unit cell: series (order+1,)."""
