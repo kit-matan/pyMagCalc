@@ -1054,6 +1054,10 @@ magpipe `e92b2c7`): **2737 passed, 2 skipped, 2 xfailed, 0 failed, 15 min 35 s**
 - **The count:** 2732 before, minus the 4 passing tests of the old additivity file, plus the 9 of the new.
 - **The xfails:** item 11's two strict xfails are gone; item 9's two remain.
 
+Merging neutron-data phase 2's last five commits on top (AMATERAS, the deterministic δQ quadrature, spectra per
+crystal node; merge `1220ad9`) and gating again gives **2749 passed, 2 skipped, 2 xfailed, 0 failed, 26 min 26 s**
+(13:08–13:35, at load up to 125 from another session's fits). The 12 added tests are phase 2's.
+
 ### The dimer series' subtraction in processes, and the T0 sector under DM, 2026-10-31
 
 **What changed.** Two follow-ups from the LANTA validation below:

@@ -284,7 +284,7 @@ pytest -n0 ...               # serial; needed for -s or pdb
 - Both `pytest.ini` files run in parallel (`-n auto --dist worksteal`, pytest-xdist is a
   required dev dependency).
 - From the maintainer's workspace root, plain `pytest` also collects fMagCalc's,
-  rsMagCalc's and magpipe's tests. The last full gate there was **2737 passed, 2 skipped,
+  rsMagCalc's and magpipe's tests. The last full gate there was **2749 passed, 2 skipped,
   2 xfailed** (2026-10-31). The two skips are structural: `seekpath` absent, ALPS
   present. The two xfails are strict pins of OPEN_WORK item 9.
 - **Tests never open a GUI window.** `tests/conftest.py` forces the Agg backend and sets
