@@ -7,7 +7,7 @@ context can make a correct first change. It is a map, not the whole territory: t
 authoritative details live in the files it points to (§12), and when they disagree, the
 code and the tests win.
 
-*Last reviewed: 2026-10-31, against pyMagCalc `a511aa8` plus the dimer series' memory-admitted pool (rsMagCalc `src/budget.rs`, `DimerSeriesModel.chunk_bytes` and `kernel_stats`). This file is kept current with
+*Last reviewed: 2026-10-31, against pyMagCalc `3c0b5b0` plus the dimer series' forked subtraction and per-level additivity line (`DimerSeriesModel.subtract_workers`, `additivity`). This file is kept current with
 every change that alters what it describes (§13).*
 
 ---
@@ -284,9 +284,9 @@ pytest -n0 ...               # serial; needed for -s or pdb
 - Both `pytest.ini` files run in parallel (`-n auto --dist worksteal`, pytest-xdist is a
   required dev dependency).
 - From the maintainer's workspace root, plain `pytest` also collects fMagCalc's,
-  rsMagCalc's and magpipe's tests. The last full gate there was **2724 passed, 2 skipped,
-  2 xfailed** (2026-10-31). The two skips are structural: `seekpath` absent, ALPS
-  present. The two xfails are strict pins of OPEN_WORK item 9.
+  rsMagCalc's and magpipe's tests. The last full gate there was **2732 passed, 2 skipped,
+  4 xfailed** (2026-10-31). The two skips are structural: `seekpath` absent, ALPS
+  present. The four xfails are strict pins of OPEN_WORK items 9 and 11, two each.
 - **Tests never open a GUI window.** `tests/conftest.py` forces the Agg backend and sets
   `MAGCALC_NO_GUI=1`. A bare `magcalc run` outside pytest is not guarded; prefix it with
   `MAGCALC_NO_GUI=1`.
@@ -450,6 +450,12 @@ iOS app).
   available memory, cgroup limits included. Until 2026-10-31 a fixed 3 GB was divided
   by a level's largest cluster, which left order 8 on 2 threads of a 128-core node
   (`GAP_STATUS.md`, "Dimer series under `kernels: rust`: memory admits each cluster").
+  The subtraction after each kernel call runs in forked processes on Linux
+  (`DimerSeriesModel.subtract_workers`, default `n_workers`). The additivity check is
+  logged once per cluster size; it used to be one line per cluster, 82 342 lines at
+  order 8. Those lines were not noise. With DM the T0 (Sz = 0) band is not cluster
+  additive from order 6 on, which is an open defect (OPEN_WORK item 11). The Sz = ±1
+  bands, and every model without DM, pass the check.
 - **Biquadratic exchange is right off the collinear axis** (2026-10-29). The
   symbolic build had dropped, with only a WARNING, a biquadratic's cross-site terms on
   a bond with no bilinear coupling, and on a non-collinear intercell bond the part that

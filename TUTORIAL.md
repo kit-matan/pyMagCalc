@@ -769,7 +769,12 @@ dimer series charges each cluster its own scratch, largest first, and logs the
 threads, the peak number running at once and the budget for every call. In a
 script, `DimerSeriesModel.scratch_budget_gb` sets the budget and `kernel_stats` keeps
 those numbers (`GAP_STATUS.md`, "Dimer series under `kernels: rust`: memory admits
-each cluster").
+each cluster"). The linked-cluster subtraction that follows each call runs in forked
+processes on Linux, `n_workers` of them, with the serial result bit for bit;
+`DimerSeriesModel.subtract_workers` overrides the count, and 1 keeps it serial. macOS
+stays serial, because fork is not safe with its system libraries. The check that every
+subtracted weight vanishes below its cluster's size is logged once per cluster size, as
+a count and the worst residual, and is kept in `DimerSeriesModel.additivity`.
 
 Under `kernels: numpy` these keys are ignored (the NumPy loops are serial), except
 by the dimer series, whose NumPy path sizes its process pool with
@@ -1410,6 +1415,16 @@ all inter-dimer couplings, resummed per band with Dlog-Padé (the method of Mata
 order; add `kernels: rust` (§4c2) to run each cluster's perturbation theory in
 rsMagCalc — on the six-dimer Rb₂Cu₃SnF₁₂ cell, order 6 takes 21 s instead of 115 s
 and order 7 6.4 min instead of 32 min.
+
+> **Known defect, open (2026-10-31).** With a DM interaction that breaks spin-rotation
+> symmetry, the T0 (S<sup>z</sup> = 0) one-triplon band is not cluster additive from
+> order 6 on. The linked-cluster theorem fails there: on Rb₂Cu₃SnF₁₂ a seven-link
+> cluster keeps an order-6 weight of up to 4×10⁻³ after the subtraction. The
+> S<sup>z</sup> = ±1 bands are additive, and so is everything without DM. Treat the
+> S<sup>z</sup> = 0 band's coefficients of order 6 and up as unreliable until it is
+> fixed. The run log warns once per cluster size where the check fails
+> (`GAP_STATUS.md`, "The dimer series' subtraction in processes, and the T0 sector
+> under DM").
 
 ## 4h. Beyond LSWT: diffuse, thermal, and dynamical methods
 

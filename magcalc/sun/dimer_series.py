@@ -29,6 +29,8 @@ Structure (all validated against independent oracles -- see tests/test_dimer_ser
     cluster size's new topologies. Everything else (enumeration, isomorphism keys,
     the subtraction, resummation) stays here, and the NumPy PT is the fallback and the
     parity reference (tests/test_dimer_series.py runs its oracles under both).
+    The subtraction of a level's new topologies runs in forked processes on Linux
+    (`subtract_workers`, default `n_workers`), bit for bit the serial result.
   * `pade` / `dlog_pade_estimates` / `resummed` -- Pade and Dlog-Pade resummation;
     Dlog-Pade returns the family of near-diagonal approximants (defective ones with a
     real pole in (0, lambda] are discarded) and the spread is the uncertainty, as in
@@ -55,6 +57,10 @@ logger = logging.getLogger(__name__)
 
 # numpy 2 renamed trapz -> trapezoid; keep compat with older numpy
 _trapezoid = getattr(np, "trapezoid", None) or np.trapz
+
+# the additivity check: after the subtraction, a cluster's weight below order
+# L(cluster), over the largest entry of its weight (or 1)
+ADDITIVITY_TOL = 1e-7
 
 
 # --------------------------------------------------------------------- PT engine
@@ -391,6 +397,21 @@ def _cluster_pt(levels_list, links_local, order, sz_list=None):
     return gs_int, delta
 
 
+# fewest topologies per process worth forking for
+SUBTRACT_MIN_PER_PROC = 500
+
+# (model, items, order) of the subtraction in flight, for its forked children
+_FORKED = None
+
+
+def _subtract_worker(i):
+    """Forked worker: the subtracted weight of item i, from the parent's memo."""
+    m, items, order = _FORKED
+    form, raw = items[i]
+    _skey, node_order = m._struct(form)
+    return (i,) + m._subtracted(form, node_order, order, raw)
+
+
 def _pt_worker(args):
     """Multiprocessing worker: raw cluster PT (top-level for spawn pickling)."""
     skey, levels_list, links_local, order, sz_list = args
@@ -421,6 +442,12 @@ class DimerSeriesModel:
         self.scratch_budget_gb = None
         self.chunk_bytes = 4 << 30        # PT results per rsMagCalc call
         self.kernel_stats = []            # one dict per rsMagCalc call
+        # processes for the subtraction of a level's new topologies; None = auto
+        # (n_workers, on Linux only: it forks), 1 = serial
+        self.subtract_workers = None
+        self.additivity = []              # one dict per level with a failed check
+        self.subtract_stats = []          # one dict per forked subtraction
+        self._violations = {}             # (order, size) -> [count, worst, form]
         self._touch = defaultdict(list)   # d -> [(t, shift)]: node (d,c) in inst (t, c-shift)
         for t, (u, v, off, _V) in enumerate(self.link_types):
             self._touch[u].append((t, (0, 0, 0)))
@@ -790,7 +817,17 @@ class DimerSeriesModel:
         if memo_key in self._w_memo:
             gs_w, Lc0, delta_trim = self._w_memo[memo_key]
             return node_order, gs_w, Lc0, delta_trim
+        gs_w, Lc0, delta_trim, ratio = self._subtracted(form, node_order, order, raw)
+        self._store(memo_key, form, gs_w, Lc0, delta_trim, ratio)
+        return node_order, gs_w, Lc0, delta_trim
 
+    def _subtracted(self, form, node_order, order, raw=None):
+        """One topology's raw PT minus every proper connected subcluster's weight:
+        (gs_w, Lc0, delta_trim, ratio), ratio = the largest weight left below order
+        L(cluster) over the cluster's scale (the additivity check). Reads the memo of
+        the smaller sizes and writes nothing, so a level's topologies are
+        independent of one another (`_subtract_level` runs them in processes).
+        A given `raw` is consumed: it is subtracted in place."""
         lv, sz = self._node_levels(node_order)
         if raw is None:
             links = self._local_links(form, node_order)
@@ -798,8 +835,6 @@ class DimerSeriesModel:
             gs_raw, delta_raw = out[0] if out else _cluster_pt(lv, links, order, sz)
         else:
             gs_raw, delta_raw = raw
-        gs_raw = gs_raw.copy()
-        delta_raw = delta_raw.copy()
 
         nexc = self.nexc
         node_pos = {n: i for i, n in enumerate(node_order)}
@@ -820,13 +855,42 @@ class DimerSeriesModel:
         low = max((np.abs(delta_raw[k]).max() for k in range(min(Lc, order + 1))),
                   default=0.0)
         scale = max(np.abs(delta_raw).max(), 1.0)
-        if low > 1e-7 * scale:
-            logger.warning("cluster additivity violated for %s (below-order weight "
-                           "%.2e vs scale %.2e)", form, low, scale)
-        delta_trim = delta_raw[min(Lc, order + 1):].copy() \
+        Lc0 = min(Lc, order + 1)
+        delta_trim = delta_raw[Lc0:].copy() \
             if Lc <= order else np.zeros((0,) + delta_raw.shape[1:], complex)
-        self._w_memo[memo_key] = (gs_raw, min(Lc, order + 1), delta_trim)
-        return node_order, gs_raw, min(Lc, order + 1), delta_trim
+        return gs_raw, Lc0, delta_trim, low / scale
+
+    def _store(self, memo_key, form, gs_w, Lc0, delta_trim, ratio):
+        """Memoize one topology's weight and tally its additivity check. A cluster
+        over the tolerance is logged at DEBUG only: `hopping_series` reports each
+        level's tally in one line (at order 8 on Rb2Cu3SnF12 one line per cluster
+        was 82 342 lines)."""
+        self._w_memo[memo_key] = (gs_w, Lc0, delta_trim)
+        if ratio > ADDITIVITY_TOL:
+            logger.debug("cluster additivity violated for %s (below-order weight "
+                         "%.2e of the cluster's scale)", form, ratio)
+            acc = self._violations.setdefault((memo_key[1], len(form)), [0, 0.0, None])
+            acc[0] += 1
+            if ratio > acc[1]:
+                acc[1], acc[2] = ratio, form
+
+    def _report_additivity(self, order, size, n_new):
+        """One record (and, if any cluster failed, one WARNING) per level: the
+        level's new topologies and any smaller one first computed while
+        subtracting them."""
+        for key in sorted(k for k in self._violations if k[0] == order):
+            count, worst, form = self._violations.pop(key)
+            here = key[1] == size
+            self.additivity.append(dict(order=order, size=key[1], violated=count,
+                                        topologies=n_new if here else None,
+                                        worst=worst, worst_cluster=form))
+            logger.warning(
+                "  L=%d: cluster additivity violated in %d %s at order %d: "
+                "below-order weight up to %.2e of the cluster's scale (tolerance "
+                "%.0e), worst %s", key[1], count,
+                f"of {n_new} new topologies" if here
+                else f"topologies first met subtracting L={size}",
+                order, worst, ADDITIVITY_TOL, form)
 
     def _rust_level(self, reps, order, size):
         """The raw PT of one level's new topologies in rsMagCalc, subtracted and
@@ -868,9 +932,71 @@ class DimerSeriesModel:
                     size, st["n_clusters"], st["threads"], st["peak_concurrent"],
                     st["budget_bytes"] / 2**30, st["budget_source"],
                     st["max_scratch_bytes"] / 2**30)
-            for skey, raw in zip(chunk, out):
-                self._weight_by_struct(reps[skey][0], order, raw=raw)
+            self._subtract_level([(reps[skey][0], raw)
+                                  for skey, raw in zip(chunk, out)], order)
+            del out
         return {}
+
+    def _subtract_procs(self, items):
+        """How many processes `_subtract_level` forks for these (form, raw) items:
+        1 (serial) unless every raw PT is in hand and the batch is worth a pool."""
+        import os
+        import sys
+        n = self.subtract_workers
+        if n is None:
+            if not sys.platform.startswith("linux"):
+                return 1             # fork is not safe on macOS's system libraries
+            n = self.n_workers or os.cpu_count() or 1
+        if any(raw is None for _f, raw in items):
+            return 1
+        return max(1, min(int(n), len(items) // SUBTRACT_MIN_PER_PROC))
+
+    def _subtract_level(self, items, order):
+        """Subtract and memoize a level's new topologies, given their raw PT as
+        [(form, (gs_raw, delta_raw))]. Each topology reads only the smaller sizes'
+        memo, so they are independent; with `_subtract_procs` > 1 they run in
+        forked processes that inherit the memo and the raws, and only the
+        subtracted weights come back. The result is the serial one bit for bit.
+
+        At order 8 on Rb2Cu3SnF12 the serial subtraction took 6 min of 58 on a
+        128-core node, after the PT had gone parallel.
+        """
+        nproc = self._subtract_procs(items)
+        if nproc > 1:
+            import gc
+            import multiprocessing as mp
+            from concurrent.futures import ProcessPoolExecutor
+            global _FORKED
+            _FORKED = (self, items, order)
+            # the children would otherwise write every object's GC header on their
+            # first collection, copying the whole parent heap page by page
+            gc.freeze()
+            try:
+                # an executor, not mp.Pool: a child killed (say, out of memory)
+                # raises BrokenProcessPool here, where a Pool would wait forever
+                with ProcessPoolExecutor(nproc, mp_context=mp.get_context("fork")) as ex:
+                    done = list(ex.map(_subtract_worker, range(len(items)),
+                                       chunksize=max(1, len(items) // (16 * nproc))))
+            except Exception:
+                logger.warning("dimer series: the forked subtraction failed; "
+                               "subtracting serially", exc_info=True)
+                done = None
+            finally:
+                _FORKED = None
+                gc.unfreeze()
+            if done is not None:
+                self.subtract_stats.append(dict(order=order, size=len(items[0][0]),
+                                                topologies=len(items), procs=nproc))
+                logger.info("  L=%d: subtracted %d topologies in %d processes",
+                            len(items[0][0]), len(items), nproc)
+                for i, gs_w, Lc0, delta_trim, ratio in done:
+                    form = items[i][0]
+                    skey, _no = self._struct(form)
+                    if (skey, order) not in self._w_memo:
+                        self._store((skey, order), form, gs_w, Lc0, delta_trim, ratio)
+                return
+        for form, raw in items:
+            self._weight_by_struct(form, order, raw=raw)
 
     # ----------------------------------------------------------------- assembly
     def hopping_series(self, order):
@@ -902,8 +1028,9 @@ class DimerSeriesModel:
                 form_struct[form] = (skey, node_order)
                 if (skey, order) not in self._w_memo and skey not in reps:
                     reps[skey] = (form, node_order)
+            n_new = len(reps)
             logger.info("  L=%d: %d embeddings -> %d new topologies", size,
-                        len(forms), len(reps))
+                        len(forms), n_new)
 
             # parallel raw PT for the new topologies (worth it for big clusters)
             if reps and self.kernels == "rust":
@@ -923,9 +1050,11 @@ class DimerSeriesModel:
                             _pt_worker, tasks, chunksize=4):
                         raws[skey] = (gs_raw, delta_raw)
 
-            # subtraction (serial: cheap) + memoization, reps first
-            for skey, (form, _no) in reps.items():
-                self._weight_by_struct(form, order, raw=raws.get(skey))
+            # subtraction + memoization, reps first
+            self._subtract_level([(form, raws.get(skey))
+                                  for skey, (form, _no) in reps.items()], order)
+            del raws
+            self._report_additivity(order, size, n_new)
 
             # assembly over ALL embeddings
             for form in forms:

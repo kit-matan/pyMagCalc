@@ -988,6 +988,72 @@ the rule-value parser fix a87c8a8 below, magpipe at 283f694), 2026-10-22, idle m
 ALPS ones. The merge is also what makes `sqrt(3)*D1x/3`, the allowed kagome DM, pass this check: before the
 parser fix it reached the check as an unbound `sqrt3` and was refused as a conflict.
 
+### The dimer series' subtraction in processes, and the T0 sector under DM, 2026-10-31
+
+**What changed.** Two follow-ups from the LANTA validation below:
+- **The subtraction in processes.** At order 8 on Rb₂Cu₃SnF₁₂ the serial linked-cluster subtraction took 6 min of
+  58, 11 % of the wall, after the PT had gone parallel. `_subtracted` now computes one topology's subtracted weight
+  and writes nothing, and `_store` memoizes it. A level's new topologies read only the memo of smaller sizes, so
+  they are independent of one another. `_subtract_level` runs them in forked processes
+  (`concurrent.futures.ProcessPoolExecutor`). The children inherit the memo and the raw PT. Only the subtracted
+  weights come back, at most 1/(L+1) of each raw array.
+  - **When:** on Linux by default, `n_workers` processes with at least 500 topologies each. Serial below that and
+    on macOS, where fork is unsafe with the system libraries. `DimerSeriesModel.subtract_workers` sets the count,
+    and 1 is serial.
+  - **Memory:** `gc.freeze()` before the fork keeps the children's first collection from copying the parent's heap.
+  - **Failure:** a child that dies, for example under the OOM killer, raises `BrokenProcessPool`, where
+    `multiprocessing.Pool` would hang. The level is then subtracted serially.
+  - **Records:** `subtract_stats` keeps one dict per forked level, and the log names the process count.
+  - The two defensive copies of the raw PT are gone. `_subtracted` consumes its raw in place, and the copies were
+    24 s of the 110 s serial subtraction at order 7.
+- **The additivity check, once per level.** It was one WARNING per failing topology: 82 342 lines and a 22 MB log
+  at order 8. It is now one WARNING per cluster size, with the count, the worst residual and the worst cluster.
+  The per-topology line is at DEBUG, and `DimerSeriesModel.additivity` keeps the counts.
+
+**The warnings were not noise.** The check is the linked-cluster theorem: an L-link cluster's subtracted weight
+vanishes below order L. It is an exact identity, so a failure is a defect. On Rb₂Cu₃SnF₁₂:
+- **Order 6:** every size is additive to 1e-13.
+- **Order 7:** 9 088 of the 35 566 seven-link topologies keep an order-6 weight of up to 4.2e-3 of their scale.
+  The genuine order-6 weights of six-link trees are up to 2.8e-3. The failures include trees, and clusters with
+  one or two loops.
+- **Where the residual sits:**
+  - only in the block of the T0 (Sz = 0) one-triplon states; the Sz = ±1 blocks cancel to 1e-14;
+  - with the DM switched off it cancels everywhere;
+  - the dimer chain is additive to 1e-15 through order 8, with uniform DM, with staggered DM, and with two kinds of
+    dimer;
+  - the NumPy and Rust PT agree on it.
+- **Most likely cause:** in the Sz = 0 sector the one-triplon block is transformed against a complement that
+  holds the vacuum. Without DM, total S keeps the two apart at every order; with DM they mix. This is OPEN_WORK
+  item 11, which holds the evidence, the likely fix (Gelfand's joint zero- and one-particle block
+  diagonalization), the injection point and the oracle.
+- **Consequence:** the Sz = 0 band's coefficients of order 6 and up are unreliable for any model with DM; on
+  Rb₂Cu₃SnF₁₂ that band is the Δ₂ mode. The Sz = ±1 bands are additive. TUTORIAL §4g carries the caveat.
+
+**Pinned.**
+- `tests/test_kernels_dimer_series.py` (+4):
+  - the forked subtraction is the serial one bit for bit: hoppings, ground-state energy and memo keys, with every
+    level of more than one topology forked; it also equals NumPy's series to 1e-12;
+  - a killed child falls back to serial with the serial result;
+  - clusters corrupted on purpose below their size are counted exactly, in one WARNING, serially and forked.
+- `tests/test_dimer_series_additivity.py` (6, under both kernel sets), on one seven-link, six-node Rb₂Cu₃SnF₁₂
+  cluster at order 6, 0.2–0.7 s each:
+  - additive with the DM off;
+  - with the DM on, the residual is confined to the T0 block, at 3.506e-3;
+  - additivity with the DM on is a strict xfail until item 11 is fixed.
+
+**Measured.** Rb₂Cu₃SnF₁₂, `kernels: rust`, on the 10-core Mac under other sessions' load. The results are bit
+for bit the same as the serial run, and so are the additivity counts (9 088 at order 7, worst 4.19e-3).
+
+| Order | Serial subtraction | Forked subtraction |
+|---|---|---|
+| 6 | 10.3 s | 2.9 s, 8 processes |
+| 7 | 46.1 s | 14.8 s, 8 processes |
+
+**Gate** (2026-10-31 11:32–11:50, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`; pyMagCalc
+`3c0b5b0` plus this change, rsMagCalc `8552281`, fMagCalc `4a5ff4b`, magpipe `e92b2c7`): **2732 passed, 2 skipped,
+4 xfailed, 0 failed, 17 min 39 s**. That is the 2724 of the previous gate plus the 8 passing tests added here. The
+skips are the structural pair, and the xfails are the strict pins of items 9 and 11, two each.
+
 ### Dimer series under `kernels: rust`: memory admits each cluster, 2026-10-31 — order 8 was on 2 threads of 128
 
 Reported from a LANTA run (128 cores, 243 GB, `n_workers=120`, Rb₂Cu₃SnF₁₂ path A at f = 0): order 7 matched
@@ -1063,9 +1129,8 @@ there). The default budget came out as 126 GB from "0.5 x MemAvailable".
 
 **Not done here:**
 - The series has no checkpoint (OPEN_WORK item 10).
-- The subtraction is still serial.
-- The "cluster additivity violated" check warns once per topology. At level 8 it fired 82 342 times, giving a 22 MB
-  log. The orders still match NumPy, which runs the same check.
+- The serial subtraction and the per-topology additivity warnings were the next change. That change found that the
+  warnings were real (the next section above).
 
 ### Neutron data and the forward model, phase 1, 2026-10-30 — μ per data bin, on a batched Colpa S(Q,ω)
 
