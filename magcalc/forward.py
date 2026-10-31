@@ -305,34 +305,65 @@ class ForwardModel:
         a, z = kern.smoothing, kern.node_z
         stokes, gain = self._line_weights(Ep)
 
+        fit = kern.fit_matrix                 # (10, P): c, g, H11 H22 H33 / 2, H12 H13 H23
+
         def hessian_trace(f):
-            c = np.einsum("kp,vpm->vkm", kern.fit_matrix[4:7], f)
-            return c.sum(axis=1)[:, None, :]
+            return (np.moveaxis(f, 1, 2) @ fit[4:7].T).sum(axis=2)[:, None, :]
 
         def intensity(x):
             return np.clip(x + 0.5 * a * hessian_trace(x), 0.0, None) * wn
 
         def mixture(f):
-            c = np.einsum("kp,vpm->vkm", kern.fit_matrix, f)
-            g = c[:, 1:4]
-            H = np.empty((len(c), 3, 3, c.shape[2]))
+            # (v, m, ...) layout, so every product is a batched matmul
+            c = np.moveaxis(f, 1, 2) @ fit.T                          # (v, m, 10)
+            H = np.empty(c.shape[:2] + (3, 3))
             for (i, j), k in {(0, 0): 4, (1, 1): 5, (2, 2): 6, (0, 1): 7, (0, 2): 8,
                               (1, 2): 9}.items():
-                H[:, i, j] = H[:, j, i] = c[:, k]
-            # |g + H z|^2 = |g|^2 + 2 z.(H g) + z^T H^2 z, without the (nv, P, 3, m) array
-            Hg = np.einsum("vijm,vjm->vim", H, g)
-            H2 = np.einsum("vijm,vjkm->vikm", H, H)
-            grad2 = (np.sum(g * g, axis=1)[:, None, :] + 2 * np.einsum("pi,vim->vpm", z, Hg)
-                     + np.einsum("pi,vijm,pj->vpm", z, H2, z))
-            tr = np.einsum("viim->vm", H)[:, None, :]
-            fro = np.einsum("vijm,vijm->vm", H, H)[:, None, :]
+                H[..., i, j] = H[..., j, i] = c[..., k]
+            grad = c[..., 1:4, None] + H @ z.T                       # (v, m, 3, P)
+            grad2 = np.moveaxis(np.sum(grad * grad, axis=2), 2, 1)   # (v, P, m)
+            tr = np.trace(H, axis1=2, axis2=3)[:, None, :]
+            fro = np.sum(H * H, axis=(2, 3))[:, None, :]
             return f + 0.5 * a * tr, np.clip(a * grad2 + 0.5 * a * a * fro, 0.0, None)
+
         cen, var = mixture(Ep + sp)
         amp = intensity(Ip * stokes)
         if gain is None:
             return cen, var, amp, None, None, None
         cen_g, var_g = mixture(-Ep + sp)
         return cen, var, amp, cen_g, var_g, intensity(Ip * gain)
+
+    PRUNE_WIDTHS = 12.0
+
+    def _bin_mixture(self, kern, lo, hi, eb, es, ew, cen, var, amp, nb):
+        """sum over entries (bin b, virtual sample s) of sum over nodes p and modes m of
+        amp * fraction(bin; cen, rho, var), evaluated only for the (entry, mode) pairs whose
+        mode carries intensity and whose mixture reaches the bin: beyond PRUNE_WIDTHS of its
+        widest component past its outermost node, a component's fraction is below any line
+        shape's tail. With count cells most pairs fail that test, which is most of the work."""
+        res = self.resolution
+        rho = kern.rho
+        w2 = (var + (rho[:, None, None] * np.asarray(res.energy.sigma(cen), float)) ** 2
+              + res.intrinsic_sigma ** 2)
+        reach = self.PRUNE_WIDTHS * np.sqrt(w2.max(axis=1))
+        lo_reach = cen.min(axis=1) - reach
+        hi_reach = cen.max(axis=1) + reach
+        live = np.any(amp > 0, axis=1)
+        out = np.zeros(nb)
+        step = max(1, self.entry_chunk // kern.points)
+        for c0 in range(0, len(eb), step):
+            b = eb[c0:c0 + step]
+            s = es[c0:c0 + step]
+            act = (live[s] & (lo_reach[s] < hi[b][:, None]) & (hi_reach[s] > lo[b][:, None]))
+            ci, mi = np.nonzero(act)
+            if not len(ci):
+                continue
+            sv, bv = s[ci], b[ci]
+            f = res.fraction(lo[bv][:, None], hi[bv][:, None], cen[sv, :, mi], 0.0,
+                             rho[sv][:, None], var[sv, :, mi])
+            val = np.sum(amp[sv, :, mi] * f, axis=1)
+            out += np.bincount(bv, weights=ew[c0:c0 + step][ci] * val, minlength=nb)
+        return out
 
     def signal_per_exposure(self, params=None):
         """The model in the data's intensity units per bin (mu_b / X_b)."""
@@ -358,12 +389,11 @@ class ForwardModel:
             if kern is not None and kern.points > 1:
                 # quadrature: a Gaussian-widened residual per grid node, summed
                 cen, var, amp, cen_g, var_g, amp_g = self._node_components(kern, E, I)
-                gain = cen_g
-
-                def fraction(lo_, hi_, s_, g_):
-                    c, v = (cen_g, var_g) if g_ else (cen, var)
-                    return self.resolution.fraction(lo_[:, :, None], hi_[:, :, None], c[s_],
-                                                    0.0, kern.rho[s_][:, None, None], v[s_])
+                part = self._bin_mixture(kern, lo, hi, eb, es, ew, cen, var, amp, nb)
+                if cen_g is not None:
+                    part += self._bin_mixture(kern, lo, hi, eb, es, ew, cen_g, var_g, amp_g, nb)
+                sig += w_node * part
+                continue
             else:
                 stokes, gain = self._line_weights(E)
                 amp = I * stokes
