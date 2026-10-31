@@ -250,27 +250,29 @@ class ForwardModel:
         return self.data.sample_cartesian(self.b_matrix, self.q_smear)
 
     def _spectra(self):
-        """[(weight, energies, intensities, crystal index)] per crystal node, at the
-        samples (or, with a Q-E resolution, at the virtual samples)."""
+        """Yields (weight, energies, intensities, crystal index) per crystal node, at the
+        samples (or, with a Q-E resolution, at the virtual samples): one node at a time,
+        so only one node's spectra are held in memory."""
         import time
         q = self.sample_q()
-        out = []
-        t = time.perf_counter()
-        npts = 0
+        self.last_timing["sqw_seconds"] = 0.0
+        self.last_timing["sqw_points"] = 0
         for ic, cr in enumerate(self.crystals):
-            qc = q if self._kernels is None else (q[self._kernels[ic].sample]
-                                                  - self._kernels[ic].dq)
+            if self._kernels is None:
+                qc = q
+            else:
+                kern = self._kernels[ic]
+                qc = q[np.repeat(kern.sample, kern.points)] - kern.dq
             for R, w in cr.nodes():
+                t = time.perf_counter()
                 E, I = self.calc.sqw_batch(qc @ R.T, apply_g=self.apply_g,
                                            g_tensors=self.g_tensors)
+                self.last_timing["sqw_seconds"] += time.perf_counter() - t
+                self.last_timing["sqw_points"] += len(qc)
                 if not np.all(np.isfinite(E)) or not np.all(np.isfinite(I)):
                     raise FloatingPointError("sqw_batch returned non-finite values at "
                                              "some samples")
-                out.append((w, E, I, ic))
-                npts += len(qc)
-        self.last_timing["sqw_seconds"] = time.perf_counter() - t
-        self.last_timing["sqw_points"] = npts
-        return out
+                yield w, E, I, ic
 
     def _fraction_function(self):
         """fraction(lo, hi, centre) of the resolution: its own method (the protocol), or,
@@ -289,6 +291,49 @@ class ForwardModel:
         gain = thermal_bose_prefactor(-E, T) if self.include_gain else None   # n
         return stokes, gain
 
+    def _node_components(self, kern, E, I):
+        """The 'quadrature' kernel's mixture, per virtual sample, node and mode: the mean and
+        variance of the recorded energy f = E(Q - dQ) + shift (and of -E(Q - dQ) + shift on
+        the gain side) once the analytic share w is integrated (see `qe_resolution`), and
+        the node-weighted Bose intensity, with its own curvature correction a tr(H_I) / 2
+        from the same fit. The gain entries are None at T = 0."""
+        nv, npts = len(kern.sample), kern.points
+        Ep = E.reshape(nv, npts, -1)
+        Ip = I.reshape(nv, npts, -1)
+        sp = kern.shift.reshape(nv, npts)[:, :, None]
+        wn = kern.node_weight[None, :, None]
+        a, z = kern.smoothing, kern.node_z
+        stokes, gain = self._line_weights(Ep)
+
+        def hessian_trace(f):
+            c = np.einsum("kp,vpm->vkm", kern.fit_matrix[4:7], f)
+            return c.sum(axis=1)[:, None, :]
+
+        def intensity(x):
+            return np.clip(x + 0.5 * a * hessian_trace(x), 0.0, None) * wn
+
+        def mixture(f):
+            c = np.einsum("kp,vpm->vkm", kern.fit_matrix, f)
+            g = c[:, 1:4]
+            H = np.empty((len(c), 3, 3, c.shape[2]))
+            for (i, j), k in {(0, 0): 4, (1, 1): 5, (2, 2): 6, (0, 1): 7, (0, 2): 8,
+                              (1, 2): 9}.items():
+                H[:, i, j] = H[:, j, i] = c[:, k]
+            # |g + H z|^2 = |g|^2 + 2 z.(H g) + z^T H^2 z, without the (nv, P, 3, m) array
+            Hg = np.einsum("vijm,vjm->vim", H, g)
+            H2 = np.einsum("vijm,vjkm->vikm", H, H)
+            grad2 = (np.sum(g * g, axis=1)[:, None, :] + 2 * np.einsum("pi,vim->vpm", z, Hg)
+                     + np.einsum("pi,vijm,pj->vpm", z, H2, z))
+            tr = np.einsum("viim->vm", H)[:, None, :]
+            fro = np.einsum("vijm,vijm->vm", H, H)[:, None, :]
+            return f + 0.5 * a * tr, np.clip(a * grad2 + 0.5 * a * a * fro, 0.0, None)
+        cen, var = mixture(Ep + sp)
+        amp = intensity(Ip * stokes)
+        if gain is None:
+            return cen, var, amp, None, None, None
+        cen_g, var_g = mixture(-Ep + sp)
+        return cen, var, amp, cen_g, var_g, intensity(Ip * gain)
+
     def signal_per_exposure(self, params=None):
         """The model in the data's intensity units per bin (mu_b / X_b)."""
         import time
@@ -306,35 +351,48 @@ class ForwardModel:
         if self._kernels is None:
             act = self._active[self._e_bin]
             eb, es, ew = self._e_bin[act], self._e_samp[act], self._e_w[act]
-            fraction = self._fraction_function()
         else:
             eb, es, ew = self._qe_bin, self._qe_v, self._qe_w
         for w_node, E, I, ic in spectra:
-            stokes, gain = self._line_weights(E)
-            amp = I * stokes
-            if gain is not None:
-                amp_g = I * gain
-            if self._kernels is not None:
-                kern = self._kernels[ic]
+            kern = None if self._kernels is None else self._kernels[ic]
+            if kern is not None and kern.points > 1:
+                # quadrature: a Gaussian-widened residual per grid node, summed
+                cen, var, amp, cen_g, var_g, amp_g = self._node_components(kern, E, I)
+                gain = cen_g
 
-                def fraction(lo_, hi_, c_, s_=None):
-                    return self.resolution.fraction(lo_, hi_, c_, kern.shift[s_][:, None],
-                                                    kern.rho[s_][:, None])
-            for c0 in range(0, len(eb), self.entry_chunk):
-                b = eb[c0:c0 + self.entry_chunk]
-                s = es[c0:c0 + self.entry_chunk]
-                l, h = lo[b][:, None], hi[b][:, None]
-                if self._kernels is None:
-                    val = np.sum(amp[s] * fraction(l, h, E[s]), axis=1)
-                    if gain is not None:
-                        val += np.sum(amp_g[s] * fraction(l, h, -E[s]), axis=1)
+                def fraction(lo_, hi_, s_, g_):
+                    c, v = (cen_g, var_g) if g_ else (cen, var)
+                    return self.resolution.fraction(lo_[:, :, None], hi_[:, :, None], c[s_],
+                                                    0.0, kern.rho[s_][:, None, None], v[s_])
+            else:
+                stokes, gain = self._line_weights(E)
+                amp = I * stokes
+                if gain is not None:
+                    amp_g = I * gain
+                if kern is None:
+                    res_fraction = self._fraction_function()
+
+                    def fraction(lo_, hi_, s_, g_):
+                        return res_fraction(lo_, hi_, -E[s_] if g_ else E[s_])
                 else:
-                    val = np.sum(amp[s] * fraction(l, h, E[s], s), axis=1)
-                    if gain is not None:
-                        val += np.sum(amp_g[s] * fraction(l, h, -E[s], s), axis=1)
-                sig += w_node * np.bincount(b, weights=ew[c0:c0 + self.entry_chunk] * val,
-                                            minlength=nb)
-        self.last_timing["bin_seconds"] = time.perf_counter() - t
+                    def fraction(lo_, hi_, s_, g_):
+                        return self.resolution.fraction(lo_, hi_, -E[s_] if g_ else E[s_],
+                                                        kern.shift[s_][:, None],
+                                                        kern.rho[s_][:, None])
+            step = max(1, self.entry_chunk // (1 if kern is None else kern.points))
+            for c0 in range(0, len(eb), step):
+                b = eb[c0:c0 + step]
+                s = es[c0:c0 + step]
+                l, h = lo[b][:, None], hi[b][:, None]
+                f = fraction(l, h, s, False)
+                val = np.sum((amp[s] * f).reshape(len(s), -1), axis=1)
+                if gain is not None:
+                    f = fraction(l, h, s, True)
+                    val += np.sum((amp_g[s] * f).reshape(len(s), -1), axis=1)
+                sig += w_node * np.bincount(b, weights=ew[c0:c0 + step] * val, minlength=nb)
+        # the spectra are computed inside the loop now: the binning time is the rest
+        self.last_timing["bin_seconds"] = (time.perf_counter() - t
+                                           - self.last_timing["sqw_seconds"])
         self._cache = {key: sig}
         return sig
 

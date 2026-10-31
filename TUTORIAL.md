@@ -1301,6 +1301,12 @@ res = spec.resolution(7.7)
   emission-time file. Pass the file when the line shape matters: it carries the pulse
   tail, which shows on the energy-gain side of the elastic line. `geometry={...}`
   overrides any number, e.g. calibrated `chopper4_slot_deg` or `fermi_scale`.
+- **AMATERAS.** `amateras(f2=300, slit2=0.030, f3=300)` builds the monochromating pair #2 and
+  the pulse shaper (#1 if `f1` is given, else #3). It uses Nirei et al. (J. Neutron Res.
+  2024) and the instrument team's geometry, with 4 mm disks. The moderator pulse defaults
+  to a Gaussian through the one published width; calibrate it on your elastic line.
+  `DiskChopper(thickness=)` narrows a slot by the distance the disk moves while the
+  neutron crosses it.
 - **Counter-rotating pairs** (`DiskChopper(..., counter_rotating=True)`) open where the
   two slots overlap. That halves a single disk's burst only when the beam fills the
   slot, so give the beam width at the chopper.
@@ -1330,11 +1336,19 @@ fm = ForwardModel(calc, data, qe, crystals=[Crystal(position=[0, 0, 0.006]), ...
 - **What it does.** The recorded event differs from the true one by (δQ, δE), a function
   of one neutron's emission time and speed, its divergence, where it scatters in the
   sample, and where it is detected in the pixel. That function is exact; its Jacobian
-  gives the 4-D covariance Σ. For each sample the model is evaluated at Q − δQ, with
-  δQ = chol(Σ_QQ) z. The recorded energy is shifted by b·δQ (b = Σ_QQ⁻¹Σ_QE), and the
-  energy resolution's own line shape is narrowed to the conditional width. The result
-  is exact for a Gaussian kernel. The chopper times tilt the kernel: on a dispersive
-  mode they can widen or narrow the line.
+  gives the 4-D covariance Σ. The model is evaluated at Q − δQ, and the recorded energy
+  is shifted by b·δQ (b = Σ_QQ⁻¹Σ_QE); the energy resolution's own line shape is
+  narrowed to the conditional width. The result is exact for a Gaussian kernel. The
+  chopper times tilt the kernel: on a dispersive mode they can widen or narrow the line.
+- **The average over δQ** is deterministic by default (`method="quadrature"`): a 3×3×3
+  Gauss–Hermite grid carries 1 − `smoothing` of the Q covariance and catches curvature;
+  the rest is integrated analytically at each node from a quadratic fitted through them.
+  It costs 27 model evaluations per sample and adds no noise to a fit. `method="sample"`
+  draws one δQ per sample instead: exact on average, but on a steep dispersion it needs
+  thousands of samples per bin, and a fit rewards a free width for smoothing its noise.
+  Near the vertex of a minimum whose curvature across the Q resolution exceeds the gap
+  (c σ_Q > Δ), raise `nodes` (5 or 7, with `smoothing=0.1`) and check a few bins against
+  `method="sample"` with many draws.
 - **`U`** maps the model's Cartesian Q to the lab at ψ = 0. The lab has x along the beam
   and z vertical; the rotation axis is vertical.
 - **Count cells** need each sample's run (`BinnedData.sample_run`, filled by
@@ -1345,6 +1359,10 @@ fm = ForwardModel(calc, data, qe, crystals=[Crystal(position=[0, 0, 0.006]), ...
   energy blocks.
 - **`Crystal.position`** (m, sample frame) moves one crystal off the rotation axis: its
   lines shift in Q and E with ψ.
+- **`QEResolution(intrinsic_sigma=...)`** gives the modes a Gaussian width of their own
+  (a lifetime, or an unresolved splitting), added in quadrature after the Q–E
+  conditioning. Fit it as a nuisance only once the instrument and the sample's grains are
+  modelled; otherwise it absorbs them.
 - **The depth** in `GeometrySpread` should be the energy resolution's `detector_depth`.
 - **Divergence is an instrument number to calibrate.** It dominates the Q width at a cold
   instrument; fix it from Bragg-peak widths at several |Q| (mosaic grows with |Q|,

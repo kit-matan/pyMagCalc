@@ -263,7 +263,11 @@ class DiskChopper:
     Trapezoid(slot/v, beam/v), v = 2 pi radius frequency. A counter-rotating pair
     (`counter_rotating`; the second disk's slot `slot_width2`, default the same) opens
     where the two slots overlap: `CounterRotatingOpening`, which halves the burst only
-    when the beam fills the slot."""
+    when the beam fills the slot.
+
+    `thickness` (m): a disk of thickness d moves v d / v_n while a neutron of speed v_n
+    crosses it, so the slot is effectively w - v d / v_n wide (Nirei et al., J. Neutron
+    Res. 2024, Eq. 3); it needs the neutron's energy, so window(ei) applies it."""
     name: str
     distance: float
     frequency: float
@@ -272,26 +276,40 @@ class DiskChopper:
     beam_width: float = 0.0
     counter_rotating: bool = False
     slot_width2: Optional[float] = None
+    thickness: float = 0.0
 
     @classmethod
     def from_slot_angle(cls, name, distance, frequency, slot_angle_deg, radius,
-                        beam_width=0.0, counter_rotating=False, slot_angle2_deg=None):
+                        beam_width=0.0, counter_rotating=False, slot_angle2_deg=None,
+                        thickness=0.0):
         w2 = None if slot_angle2_deg is None else radius * np.radians(slot_angle2_deg)
         return cls(name, distance, frequency, radius * np.radians(slot_angle_deg), radius,
-                   beam_width, counter_rotating, w2)
+                   beam_width, counter_rotating, w2, thickness)
 
     @property
     def speed(self):
         """Speed of one disk at the beam (m/s)."""
         return 2 * np.pi * self.radius * self.frequency
 
-    def window(self) -> Distribution:
+    def effective_slot(self, w, ei=None):
+        if not self.thickness:
+            return w
+        if ei is None:
+            raise ValueError(f"chopper {self.name} has a thickness: window() needs ei")
+        we = w - self.speed * self.thickness / (NEUTRON_V_PER_SQRT_MEV * np.sqrt(ei))
+        if we <= 0:
+            raise ValueError(f"chopper {self.name}: the slot closes at Ei = {ei} meV")
+        return we
+
+    def window(self, ei=None) -> Distribution:
         if self.frequency <= 0:
             raise ValueError(f"chopper {self.name} is not running")
+        w1 = self.effective_slot(self.slot_width, ei)
         if self.counter_rotating:
-            w2 = self.slot_width if self.slot_width2 is None else self.slot_width2
-            return CounterRotatingOpening(self.slot_width, w2, self.beam_width, self.speed)
-        return Trapezoid(self.slot_width / self.speed, self.beam_width / self.speed)
+            w2 = self.effective_slot(self.slot_width if self.slot_width2 is None
+                                     else self.slot_width2, ei)
+            return CounterRotatingOpening(w1, w2, self.beam_width, self.speed)
+        return Trapezoid(w1 / self.speed, self.beam_width / self.speed)
 
 
 @dataclass
@@ -302,7 +320,7 @@ class TimeWindow:
     distance: float
     density: Distribution
 
-    def window(self) -> Distribution:
+    def window(self, ei=None) -> Distribution:
         return self.density
 
 
@@ -359,7 +377,7 @@ class ChopperSpectrometer:
 
     def is_gaussian(self, ei):
         m = self.moderator_pulse(ei)
-        return (all(c.window().is_gaussian for c in self.choppers)
+        return (all(c.window(ei).is_gaussian for c in self.choppers)
                 and (m is None or m.is_gaussian) and self.detector_depth == 0)
 
     # ---------------------------------------------------------------- (tau, mu)
@@ -368,7 +386,7 @@ class ChopperSpectrometer:
         is sum_c a_c a_c^T / var_c with a_c = (1, x_c), plus (1, 0) / var_moderator."""
         lam = np.zeros((2, 2))
         for c in self.choppers:
-            w = c.window()
+            w = c.window(ei)
             a = np.array([1.0, c.distance])
             lam += np.outer(a, a) / w.var()
         m = self.moderator_pulse(ei)
@@ -385,7 +403,7 @@ class ChopperSpectrometer:
         n = int(n)
         if len(self.choppers) == 2:
             p, q = self.choppers
-            wp, wq = p.window(), q.window()
+            wp, wq = p.window(ei), q.window(ei)
             sp = _midpoints(*wp.support(), n)
             sq = _midpoints(*wq.support(), n)
             SP, SQ = np.meshgrid(sp, sq, indexing="ij")
@@ -395,7 +413,7 @@ class ChopperSpectrometer:
             w = wp.pdf(SP) * wq.pdf(SQ)
         else:
             (c,) = self.choppers
-            wc = c.window()
+            wc = c.window(ei)
             t0 = _midpoints(*m.support(), n)
             sc = _midpoints(*wc.support(), n)
             T0, SC = np.meshgrid(t0, sc, indexing="ij")
@@ -742,6 +760,47 @@ def cncs(variant="Intermediate", f_res=300.0, f1=60.0, *, moderator=None, geomet
     depth = g["detector_depth"] if detector_depth is None else detector_depth
     return ChopperSpectrometer("CNCS " + variant, g["x_chopper4"] + g["chop_sam"],
                                g["sam_det"], [c1, c4], moderator=moderator,
+                               detector_depth=depth, extra_sigma=extra_sigma)
+
+
+# AMATERAS (J-PARC MLF BL14): Nirei et al., J. Neutron Res. (2024), DOI 10.3233/JNR-230013,
+# and the instrument team. L1 30 m, L2 4 m; fast disk choppers #1 at 7.1 m (counter-rotating
+# pair, or one disk in practice; 30 mm slit), #3 at 14.2 m (single disk, 30 mm), #2 at
+# L1 - 1.581 m (counter-rotating pair; 10 or 30 mm slits); beam radius 300 mm; the beam
+# fills the 30 mm guide width; disk thickness 4.0 mm, implied by the paper's w_eff/w = 0.634
+# (10 mm slit at 2.0 meV) and reproducing its dt_mps = 74 and 229 us at 5.9 meV. The
+# coupled-moderator pulse is given only at one energy (124 us FWHM at 5.9 meV); the default
+# is a Gaussian of FWHM proportional to the wavelength through that point -- calibrate it.
+AMATERAS_GEOMETRY = {
+    "l1": 30.0, "l2": 4.0, "l3": 1.581, "x_chopper1": 7.1, "x_chopper3": 14.2,
+    "radius": 0.300, "beam_width": 0.030, "thickness": 0.0040, "slot_13": 0.030,
+    "detector_depth": 0.022, "pulse_fwhm_at_5p9": 124e-6,
+}
+
+
+def amateras(f2=300.0, slit2=0.030, f3=None, f1=None, *, f1_pair=False, moderator=None,
+             geometry=None, detector_depth=None, extra_sigma=0.0) -> ChopperSpectrometer:
+    """AMATERAS with the monochromating pair #2 (`f2` Hz, `slit2` 0.010 or 0.030 m) and the
+    pulse shaper: #1 (`f1` Hz; one disk unless `f1_pair`) if running, else #3 (`f3` Hz).
+    With neither, the moderator pulse alone shapes the pulse. moderator: default a
+    Gaussian pulse of FWHM 124 us x lambda / lambda(5.9 meV) (see AMATERAS_GEOMETRY)."""
+    g = dict(AMATERAS_GEOMETRY)
+    g.update(geometry or {})
+    ch = [DiskChopper("#2", g["l1"] - g["l3"], f2, slit2, g["radius"], g["beam_width"],
+                      counter_rotating=True, thickness=g["thickness"])]
+    if f1:
+        ch.append(DiskChopper("#1", g["x_chopper1"], f1, g["slot_13"], g["radius"],
+                              g["beam_width"], counter_rotating=f1_pair,
+                              thickness=g["thickness"]))
+    elif f3:
+        ch.append(DiskChopper("#3", g["x_chopper3"], f3, g["slot_13"], g["radius"],
+                              g["beam_width"], thickness=g["thickness"]))
+    if moderator is None:
+        lam0 = float(wavelength(5.9))
+        moderator = lambda ei: Gaussian(g["pulse_fwhm_at_5p9"] * float(wavelength(ei)) / lam0
+                                        / FWHM_PER_SIGMA)
+    depth = g["detector_depth"] if detector_depth is None else detector_depth
+    return ChopperSpectrometer("AMATERAS", g["l1"], g["l2"], ch, moderator=moderator,
                                detector_depth=depth, extra_sigma=extra_sigma)
 
 
