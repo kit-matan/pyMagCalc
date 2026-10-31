@@ -1041,7 +1041,7 @@ importable, as it is from a worktree. One xdist worker crashed in `test_intensit
 load ~180, and that file passes on a rerun. The full gate (`pytest -m ""` from the workspace root) is owed before
 merging.
 
-**Why order 9's L = 9 chunks slow down from 54 to 61 min on LANTA** (looked at the same day; nothing changed by it).
+**Why order 9's L = 9 chunks run at about half the node** (LANTA job 6492718; looked at the same day; nothing changed by it).
 - **Not the order of the topologies.** `hopping_series` hands them to the kernel in the iteration order of the
   level's set of forms, which is unrelated to cluster size. Enumerated here (705 014 embeddings → 702 820
   topologies, 15 min on the Mac) and cut by the same 4 GB rule, the 23 full chunks each hold 30 439–30 515
@@ -1050,16 +1050,20 @@ merging.
 - **The admission gate.** The m = 10 trees are 89 % of each chunk and 97 % of its work, and each is charged
   1.94 GB (C(20, 10) rows × 30 columns × 21 blocks). The gate admits them in budget/1.94 GB at a time: 60 at the
   117 GB that 0.5 × MemAvailable gave, so half of the 120 threads wait through the heavy part of every chunk.
-  The budget is measured again at each call, and MemAvailable falls as the parent's memo and heap grow (at
-  order 8: 115.2 → 111.5 → 107.2 → 107.2 GB over L = 8's four chunks). At 104 GB the gate admits 53 m = 10
-  clusters at once. 54 min × 60/53 = 61 min, the observed drift. Order 8 never met this: its largest cluster
-  is 0.42 GB, so 120 fit in any of those budgets.
+  The budget is measured again at each call, and MemAvailable falls as the parent's memo and heap grow. The
+  order-9 log reads 115.0, 109.0, 100.2, 102.5, 100.7, 103.3 and 101.5 GB over L = 9's first seven chunks, which
+  admit 59, 56, then 51–53 m = 10 trees at once; the node's load average was 53. The chunks took 54.1, 55.9,
+  55.3, 57.9, 61.0, 56.5 and 57.4 min. So the budget settled near 100 GB by the third chunk, and the 61 min chunk
+  was partly noise, not a steady drift. Between chunks the processes held 35–41 GB, and inside a chunk the
+  scratch in use was about 0.57 of the admitted sum. Order 8 never met this: its largest cluster is 0.42 GB, so
+  120 fit in any of its budgets (115.2 → 111.5 → 107.2 → 107.2 GB).
 - **Why the statistics hide it.** `peak_concurrent` is the maximum over the call, and the small clusters at the
   end of each chunk always fill all 120 threads, so it reads 120. The per-chunk log line's "scratch budget" is the
   number that tracks the slowdown.
-- **What would help, for Kit to decide:** a fixed `RSMAGCALC_SCRATCH_GB` (say 150) in the job. It removes the
-  drift and admits 77 m = 10 trees at once. Measured peak RSS is 0.55–0.80 of the estimate for sectored clusters,
-  so that is about 80–120 GB of real scratch beside the parent's memory. In rsMagCalc, the sectored estimate
+- **What would help:** a fixed `RSMAGCALC_SCRATCH_GB` in the job. It stops the budget moving with MemAvailable
+  and admits budget/1.94 GB m = 10 trees at once: 77 at 150 GB, 87 at 170 GB. At the measured 0.57 that is
+  about 97 GB of real scratch at 170, beside the 35–41 GB the processes hold between chunks. A run at 170 GB
+  was queued the same day (job 6494816). In rsMagCalc, the sectored estimate
   could be tightened toward the measured peak, and a time-weighted concurrency could be reported next to
   `peak_concurrent`. Neither is done here.
 
