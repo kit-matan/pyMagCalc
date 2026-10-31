@@ -7,7 +7,7 @@ context can make a correct first change. It is a map, not the whole territory: t
 authoritative details live in the files it points to (§12), and when they disagree, the
 code and the tests win.
 
-*Last reviewed: 2026-10-31, against pyMagCalc master `2fe67a6` (the numeric H(q) builder, K8, and the exact-zero-mode rule) plus the dimer series' save and resume (`magcalc/sun/series_checkpoint.py`, `calculation.series_checkpoint`), and before that `bfae055` plus neutron-data phase 2's AMATERAS model and deterministic δQ quadrature (`magcalc/resolution.py`, `magcalc/qe_resolution.py`, the `fraction` and `prepare` hooks in `ForwardModel`), merged the same day after the dimer series' projective cluster-additive one-particle block (`_pca_one_particle`, OPEN_WORK item 11). This file is kept current with
+*Last reviewed: 2026-10-31, against pyMagCalc master `1256378` (the δQ quadrature's mixture by batched matmul, `e2ae02b`), and before that `2fe67a6` (the numeric H(q) builder, K8, and the exact-zero-mode rule) plus the dimer series' save and resume (`magcalc/sun/series_checkpoint.py`, `calculation.series_checkpoint`), and before that `bfae055` plus neutron-data phase 2's AMATERAS model and deterministic δQ quadrature (`magcalc/resolution.py`, `magcalc/qe_resolution.py`, the `fraction` and `prepare` hooks in `ForwardModel`), merged the same day after the dimer series' projective cluster-additive one-particle block (`_pca_one_particle`, OPEN_WORK item 11). This file is kept current with
 every change that alters what it describes (§13).*
 
 ---
@@ -293,7 +293,8 @@ pytest -n0 ...               # serial; needed for -s or pdb
   required dev dependency).
 - From the maintainer's workspace root, plain `pytest` also collects fMagCalc's,
   rsMagCalc's and magpipe's tests. The last full gate there was **3206 passed, 2 skipped,
-  4 xfailed** (2026-10-31, with K8 and the dimer series' checkpoint). The two skips are structural: `seekpath` absent, ALPS
+  4 xfailed** (2026-10-31, with K8, the dimer series' checkpoint and the δQ quadrature's
+  batched mixture). The two skips are structural: `seekpath` absent, ALPS
   present. The xfails are OPEN_WORK item 9's two strict pins, run under both H(q) builders.
 - **Tests never open a GUI window.** `tests/conftest.py` forces the Agg backend and sets
   `MAGCALC_NO_GUI=1`. A bare `magcalc run` outside pytest is not guarded; prefix it with

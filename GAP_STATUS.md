@@ -1771,6 +1771,10 @@ per-node mixture by batched matmul over (sample, mode) rather than four-index `e
 `_bin_mixture` evaluates a mode's components only where the mode carries intensity and its
 mixture reaches the bin within `PRUNE_WIDTHS` (12) widths: on a 1,439-bin AMATERAS subset,
 25 s → 9 s per evaluation (2.8×), equal to 3e-16 (`e2ae02b`).
+**Gate** (2026-10-31 21:55–22:13, master `1256378`, workspace root, `MAGCALC_NO_GUI=1 python -m
+pytest -m "" -rs`, idle machine; rsMagCalc `3f16142`, fMagCalc `192e7f8`, magpipe `e92b2c7`):
+**3206 passed, 2 skipped, 4 xfailed, 0 failed, 18 min 07 s**, the count unchanged because the
+speedup adds no tests (it is pinned by the existing quadrature tests at their tolerances).
 
 **On real data** (a 2025 CNCS dataset; unpublished, so the data and the scripts stay in that
 project):

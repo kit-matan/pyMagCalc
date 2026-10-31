@@ -431,7 +431,7 @@ loop, **not** a merge gate: the `slow` marker holds the exact-diagonalization
 oracles, convergence sweeps and integration runs. Before merging to `master`, run
 `pytest -m "" -rs` and account for every skip. From the maintainer's workspace root
 that also collects the fMagCalc, rsMagCalc and magpipe tests; the last full gate there
-was **3206 passed, 2 skipped, 4 xfailed** (2026-10-31), the two skips being structural
+was **3206 passed, 2 skipped, 4 xfailed** (2026-10-31, master `1256378`), the two skips being structural
 (`seekpath` absent, ALPS present) and the xfails strict pins of a known open defect, under both H(q) builders. Tests run in parallel (pytest-xdist); use `-n0` for
 `-s` or pdb. Tests that involve a compiled companion run under both paths through the
 `kernels` (`numpy`/`rust`), `backend` (`numpy`/`fortran`) and `builder` (`numeric`/`symbolic`) fixtures, and skip by name
