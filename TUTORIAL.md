@@ -1482,6 +1482,46 @@ coefficient moved from −1.125 to −1.091. The S<sup>z</sup> = ±1 bands were 
 affected. The run log warns, once per cluster size, if the additivity check fails
 (`GAP_STATUS.md`, "The dimer series' T0 sector made cluster additive").
 
+#### Save and resume: an order longer than one job
+
+A high order can outlast a batch job's wall time (Rb₂Cu₃SnF₁₂ at order 9 needs about a
+day on 120 threads). Give the series a checkpoint directory and it writes each chunk of
+finished cluster weights there as it goes; a second run with the same directory loads
+them and continues:
+
+```yaml
+calculation: {mode: entangled, series_order: 9, kernels: rust, series_checkpoint: ckpt_o9}
+```
+
+or `export MAGCALC_SERIES_CHECKPOINT=ckpt_o9` (for a script, e.g.
+`series_dispersion.py`), or `DimerSeriesModel.checkpoint_dir` in Python. It is off by
+default. Each order gets its own `order-N/` subdirectory, so a loop over orders can share
+one directory. The resumed hoppings are bit for bit those of an uninterrupted run.
+
+- Every file is written to a temporary name, fsynced and renamed, so a kill at any
+  moment leaves a usable checkpoint. A hard kill loses only the chunk in flight.
+- The checkpoint records the model (levels, Sz sectors, every pair operator with its
+  DM, the lattice), the order, the kernel set, the cluster enumeration and the
+  algorithm version. A run that differs in any of them refuses to resume and names
+  what differs. Use a new directory, or delete the old one to start over.
+- **SIGTERM or SIGUSR1 stops the run cleanly.** The chunk in flight finishes and is
+  saved, and the process exits with status **75**, so a job script can tell "resume
+  me" from a failure. A chunk is up to `chunk_bytes` (4 GB) of results, about an hour
+  at order 9 on 120 threads. Under Slurm, ask for the signal more than one chunk
+  before the wall and pass it to Python:
+
+```bash
+#SBATCH --signal=B:USR1@4500
+python -u run_series.py & PID=$!
+trap 'kill -USR1 $PID' USR1
+wait $PID; wait $PID; rc=$?
+[ $rc -eq 75 ] && sbatch "$0"     # not finished: queue the next job
+```
+
+  The first `wait` returns when the trap fires; the second collects the exit status.
+  If the signal comes too late, Slurm's SIGKILL ends the job and the next one repeats
+  only the unfinished chunk.
+
 ## 4h. Beyond LSWT: diffuse, thermal, and dynamical methods
 
 Tasks for regimes an expansion about an ordered state does not cover. The classical
