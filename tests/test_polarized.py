@@ -163,3 +163,9 @@ def test_unknown_cross_section_still_raises():
     calc = _model(SCREW)
     with pytest.raises(ValueError, match="Unknown cross_section"):
         calc.calculate_sqw(_q([0.1]), cross_section="nonsense")
+
+
+@pytest.fixture(autouse=True)
+def _under_both_builders(builder):
+    """Every test here runs under both H(q) builders (K8; tests/conftest.py)."""
+    return builder

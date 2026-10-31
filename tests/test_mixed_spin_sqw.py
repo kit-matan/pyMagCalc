@@ -232,3 +232,9 @@ def test_spins_reach_the_kernel_and_a_failing_kernel_falls_back(monkeypatch, cap
     E, I = _sorted(res)
     for iq, (q, h) in enumerate(zip(qs, _RLU[:2, 0])):
         np.testing.assert_allclose(I[iq], _closed_form(q, h)[1], rtol=0, atol=1e-10)
+
+
+@pytest.fixture(autouse=True)
+def _under_both_builders(builder):
+    """Every test here runs under both H(q) builders (K8; tests/conftest.py)."""
+    return builder

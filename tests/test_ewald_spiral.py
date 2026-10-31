@@ -348,3 +348,9 @@ def test_sqw_energies_match_the_dispersion():
     np.testing.assert_allclose(e_sqw, e_disp, atol=1e-8)
     for i, l in enumerate([0.07, 0.19]):
         np.testing.assert_allclose(e_sqw[i], SUNNY_INCOMM[l], atol=1e-6)
+
+
+@pytest.fixture(autouse=True)
+def _under_both_builders(builder):
+    """Every test here runs under both H(q) builders (K8; tests/conftest.py)."""
+    return builder

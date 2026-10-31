@@ -248,3 +248,9 @@ def test_sun_energy_tolerance_is_read_from_the_same_key(tmp_path):
 @pytest.mark.slow
 def test_sun_audit_respects_on_imaginary_off(tmp_path):
     assert _run_sun(tmp_path, on_imaginary="off") is None
+
+
+@pytest.fixture(autouse=True)
+def _under_both_builders(builder):
+    """Every test here runs under both H(q) builders (K8; tests/conftest.py)."""
+    return builder

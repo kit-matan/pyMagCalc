@@ -95,7 +95,13 @@ def test_intercell_biquadratic_is_gauge_invariant():
     q = _q_cart()
     here = _spectrum(_calc(_chain(b_shift=0), 1.5, "biqg0"), q)
     moved = _spectrum(_calc(_chain(b_shift=-1), 1.5, "biqg1"), q)
-    assert np.max(np.abs(here - moved)) < 1e-10
+    # This state is not a minimum, and at q = 0 it has a defective (Jordan) pair:
+    # rounding of order eps in H moves those two eigenvalues by ~sqrt(eps) x scale
+    # (1e-8 here, whichever builder), so only "both at the noise floor" is an
+    # identity for them. Every other eigenvalue must agree to rounding.
+    floor = 1e-6 * np.max(np.abs(here))
+    noise = (np.abs(here) < floor) & (np.abs(moved) < floor)
+    assert np.max(np.abs(here - moved)[~noise]) < 1e-10
     # and the term must matter, or the identity proves nothing
     none = _spectrum(_calc(_chain(b_shift=0, biq_intercell=0.0), 1.5, "biqg_none"), q)
     assert np.max(np.abs(here - none)) > 1e-2
@@ -122,7 +128,8 @@ def test_biquadratic_on_a_bare_bond_is_continuous_in_J():
 def test_unplaceable_quadratic_terms_raise(monkeypatch):
     """The build used to WARN and drop a quadratic term with no Fourier placement --
     that is how both biquadratic defects stayed silent. It now raises."""
-    from magcalc import symbolic
+    from magcalc import numeric_hq, symbolic
+    monkeypatch.setenv(numeric_hq.ENV, "symbolic")    # a gen_HM internal
     monkeypatch.setattr(symbolic, "_complete_fourier_lookup", lambda *a, **k: None)
     with pytest.raises(RuntimeError, match="no Fourier placement"):
         _calc(_chain(), 1.5, "biq_drop")
@@ -202,3 +209,9 @@ def test_pair_operator_raises_in_a_dipole_run(tmp_path):
 def test_models_without_pair_operator_are_not_refused():
     m = GenericSpinModel(copy.deepcopy(_chain()))
     m.reject_dipole_unsupported()   # no raise
+
+
+@pytest.fixture(autouse=True)
+def _under_both_builders(builder):
+    """Every test here runs under both H(q) builders (K8; tests/conftest.py)."""
+    return builder

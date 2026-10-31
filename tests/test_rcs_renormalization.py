@@ -167,3 +167,9 @@ def test_lambda_values_match_sunny_rcs_factors():
 def test_bad_value_raises():
     with pytest.raises(ValueError, match="anisotropy_renormalization"):
         GenericSpinModel(_cfg("sia", 1.0, "yes-please"))
+
+
+@pytest.fixture(autouse=True)
+def _under_both_builders(builder):
+    """Every test here runs under both H(q) builders (K8; tests/conftest.py)."""
+    return builder

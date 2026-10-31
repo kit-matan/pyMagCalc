@@ -1,6 +1,10 @@
 # Open work — pick-up notes
 
-**Current status (2026-10-31): items 8, 9 and 10 are open.** Item 11, a correctness
+**Current status (2026-10-31): items 8, 9 and 10 are open.** The numeric dipole H(q)
+builder (rsMagCalc K8, `calculation.hamiltonian_builder`, default `auto`) and the
+exact-zero-mode rule it needed were done the same day; nothing of it is open
+(`GAP_STATUS.md`, "Rust kernels K8", which also says why fMagCalc's `run_sqw_model`
+cut was left). Item 11, a correctness
 defect in the dimer series under DM, was found and fixed the same day. Item 8 was left by phase 1
 of the neutron-data layer (`GAP_STATUS.md`, "Neutron data and the forward model,
 phase 1"). Item 9 was found while closing item 7, which routed `calculate_sqw`

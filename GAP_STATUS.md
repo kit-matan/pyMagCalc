@@ -988,6 +988,118 @@ the rule-value parser fix a87c8a8 below, magpipe at 283f694), 2026-10-22, idle m
 ALPS ones. The merge is also what makes `sqrt(3)*D1x/3`, the allowed kagome DM, pass this check: before the
 parser fix it reached the check as an unbound `sqrt3` and was refused as a conflict.
 
+### Rust kernels K8, 2026-10-31 — the dipole H(q) built numerically, SymPy kept as fallback and reference
+
+**What changed.** `calculation.hamiltonian_builder` chooses how the dipole engine's LSWT matrix
+H(q) = 2 g H2(q) is built:
+- **`symbolic`:** `symbolic.gen_HM`, the SymPy Holstein–Primakoff expansion, Fourier transform and matrix
+  extraction, then a `lambdify`, in the parent and again in every pool worker. It stays as the fallback, the
+  parity reference, and the only route for a custom Python spin model.
+- **`numeric`:** `magcalc/numeric_hq.py` with rsMagCalc's `DipoleHq` (`src/dipole_hq.rs`).
+- **`auto`, the default:** numeric when rsMagCalc is installed and the model allows it, otherwise symbolic. The
+  reason for a fallback is logged at INFO, or at WARNING when `numeric` was asked for by name.
+  `MAGCALC_HAMILTONIAN_BUILDER` in the environment overrides the config.
+
+**How the numeric build works.** Term meaning stays in one place: `HamiltonianTerms` calls the spin model's own
+builders (`GenericSpinModel.classical_parts`, the calls `Hamiltonian` makes) once, with commutative symbols for
+the spin components and symbolic parameters, and applies the substitution `Hamiltonian` applies to its total
+(`_apply_substitution_and_filter`).
+- **The tables:** the result is a list of monomials, coefficient times a product of (site, component) factors.
+  Bilinear terms give two factors, the polynomial terms (biquadratic, `sia`, `sia_matrix`, Stevens) up to six,
+  and the Zeeman term one, which still carries −R[a][2] c†c. Unique coefficients are lambdified once in
+  (S, parameters), and so are the rotations when `transformations` makes them depend on a parameter.
+- **The algebra, in Rust:** for each (S, parameters), `DipoleHq` does what `gen_HM` does symbolically: the HP
+  expansion about each site's frame, truncated at boson degree 2 with no reordering, `gen_HM`'s Fourier
+  placement, and 2g. The result is a sparse bond sum H(q) = Σ_d M_d e^{iq·d}, evaluated over q in parallel.
+  The √(S/2) of two one-boson factors is applied once, as √(S_a S_b)/2; √(S/2)² is not S/2 in floating point,
+  and a collinear ferromagnet's H(0) would otherwise be 4e-16 instead of exactly 0.
+- **The wiring:** `MagCalc._build_h_stack` (every guard, Colpa, corrections, the Fortran stacks), the per-q
+  process pools (the bond model is pickled to the workers in place of a SymPy matrix to lambdify), the fit
+  evaluator (`compile_dispersion_evaluator`: same signature, the bond model rebuilt only when (S, p) change),
+  Ud, and the numerical-results cache key all take either builder. `HMat_sym` and `Ud_sym` are properties:
+  under the numeric builder they run `gen_HM` only if something asks for them.
+
+**Pinned** (`tests/test_numeric_hq.py`, 83 tests, 29 of them in the fast suite; rsMagCalc `tests/test_dipole_hq.py`, 11).
+- **Entry-wise parity with `HMat_sym`**, H(±q) and Ud, at ≤ 1e-12 relative (measured ≤ 5e-15):
+  - every buildable shipped dipole config (slow), and a fast subset with DM, a Kitaev matrix, a rotating-frame
+    spiral, a field, single-ion anisotropy and different ions;
+  - random rotations in place of the configured structure (parity is an identity at any rotation);
+  - a triclinic three-site model with spins 1, 5/2 and 1/2 carrying every term the examples do not: a biquadratic
+    on an intercell bond between differently rotated sites and on a bond with no bilinear term, `sia_matrix`,
+    Stevens (2,0), (2,2), (4,0), (4,3), (6,0), (6,6), with and without `rcs`, Kitaev, all three g-tensor forms in
+    a field, parameter expressions;
+  - after a parameter change, and with a rotation that depends on a parameter.
+- **The wiring:** dispersion, S(Q,ω) band sums and the fit evaluator at new parameters agree with the symbolic
+  builder's; the per-q pool runs on the shipped bond model; a bond model refuses other (S, p); `HMat_sym` on
+  demand equals the numeric H; the fallbacks (no rsMagCalc, a custom model, `pair_operator`).
+- **End to end:** the `builder` fixture (`tests/conftest.py`) runs 22 oracle modules under both builders:
+  Sunny's absolute normalization, polarization and Blume–Maleev frames, mixed spin, single-k, every Hamiltonian
+  term, RCS, Ewald (spiral too), the gapless backends, Kitaev, the biquadratic Sunny pin, Colpa S(Q,ω),
+  corrections, the guards and their tolerances, the Zeeman calibration, supercells, the intensity layer and
+  fitting.
+- **Closed forms, in rsMagCalc:** ferromagnetic and Néel chains, an easy-plane ferromagnet's gapless mode (the
+  anomalous placement), a Zeeman monomial, a collinear biquadratic as its bilinear equivalent 2BS², and the
+  anisotropy axis carried by the rotation.
+
+The sweep found one defect in the first draft, not in the reference: a one-factor monomial (Zeeman) was skipped,
+so the three field configs (aCVO at 20 T, SW20, SW29) disagreed by 3–86 %.
+
+**The Goldstone noise, and the zero-mode rule.** The two builders round differently, and at a Goldstone mode of a
+Jordan block an O(ε) change in H moves the eigenvalue by O(√ε) × the scale: 5e-16 against 1.1e-7 meV on SW09 at
+Γ. Both are noise, but KKdMatrix decided between zero intensity and a spike with an absolute cut on the
+pseudo-norm (|N_ii| < 1e-12), and N_ii ~ ω / scale follows the noise. The feasibility study saw SW28 at its
+antiferromagnetic Bragg points ±(1,1,1) give 0 on SymPy's H and 2.7e9 on the prototype's.
+- **The rule** (`linalg.ZERO_MODE_ENERGY_REL = 1e-5`, `ZERO_MODE_NORM = 1e-3`): a mode with ω ≤ 1e-5 × max|H_ij|
+  at that q and |N_ii| < 1e-3 is an exact zero mode, reported with zero intensity. The scale is H's largest
+  entry, not the largest eigenvalue, which is itself zero at a Néel chain's Bragg point. A ferromagnetic
+  Goldstone mode is not defective (N_ii = 1), so its finite intensity down to ω → 0 is kept.
+- **fMagCalc:** `calc_alpha` applies the same rule, line for line (fMagCalc `192e7f8`).
+- **Pinned** (`tests/test_zero_mode_rule.py`, 5, both backends): a Néel chain's Bragg points lifted by a noise
+  gap H2 → H2 + ε max|H| I, ε = 1e-14 to 1e-11 (ω up to 4.5e-6 of the scale), give zero intensity, and with the
+  rule off the 1e5–1e7 spike returns, so the pin bites; next to the peak (ω / scale = 1e-3) the intensity is
+  untouched and equals the chain's closed form 2S(1 − cos qd)/|sin qd| (8000 there). The existing FM closed
+  form down to 4e-11 meV (`test_gapless_backends.py`) is unchanged.
+- **What it costs:** a defective mode within 1e-5 of the band scale of an exact zero, i.e. a q within about that
+  relative distance of a Bragg point, now reads 0 instead of its (huge) value.
+- **On the shipped models:** with the Rust builder SW28 has no spike under either rule, so the rule changes no
+  shipped result there; the test above is what shows it is needed.
+
+**Measured** (MagCalc construction, `cache_mode: none`, 2026-10-31 at load 40–100 from other sessions; the
+symbolic time includes `gen_HM`, the numeric time the term resolution and one assembly; a 2005-q H(q) stack after
+warm-up):
+
+| Model | sites | numeric build | symbolic build | 2005-q stack, numeric / symbolic |
+|---|---|---|---|---|
+| KFe₃J | 9 | 0.17 s | 2.9 s | 2 / 9 ms |
+| α-Cu₂V₂O₇ at 20 T | 16 | 0.32 s | 2.9 s | 7 / 27 ms |
+| FeI₂ (1×4×4) | 16 | 0.66 s | 34.9 s | 7 / 119 ms |
+| SW20 in field | 16 | 0.50 s | 7.3 s | 13 / 17 ms |
+| SW21 YIG | 20 | 0.18 s | 6.2 s | 14 / 38 ms |
+| SW28 | 32 | 0.62 s | 25.6 s | 75 / 245 ms |
+
+Nearly all of the numeric build is the spin model's own term resolution in SymPy, which the classical energy
+also pays; the Rust assembly is milliseconds and is redone for each new parameter vector (fitting). The pool
+workers no longer `lambdify` either: FeI₂'s cost 3.7 s per worker.
+
+Also in this change: `GenericSpinModel._compute_rotated_interactions` skips (i, j) pairs with no coupling
+before building their rotation (J_eff = 0 · R = 0, bit-identical). It built a SymPy rotation for all 1200 OUC
+pairs of SW23, most of them uncoupled; the numeric build there went from 3.1 s to 0.6 s, and the symbolic build
+and the classical energy gain the same 2.5 s.
+
+**Not done:** fMagCalc's `run_sqw_model` still applies its 1e-3 meV energy cut, which was introduced for the
+bond-reconstructed H. It could be fed the numeric bond model exactly, with the cut at 0, but GAP_STATUS
+"calculate_sqw on Colpa's method" already recommends retiring fMagCalc's S(Q,ω), so this was left.
+
+**Gate** (2026-10-31 18:49–19:08, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`; pyMagCalc
+`feature/k8-numeric-hq`, rsMagCalc `3f16142` built and installed with an 8-aligned stroff, fMagCalc `192e7f8`
+installed, magpipe `e92b2c7`, at load 40–100 from other sessions): **3191 passed, 2 skipped, 4 xfailed, 0
+failed, 19 min 30 s**.
+- **The count:** 2749 before. The 442 added are the 88 tests of `test_numeric_hq.py` and `test_zero_mode_rule.py`,
+  rsMagCalc's 11, and the 22 oracle modules' second (`symbolic`) parametrization; under `auto` their existing
+  tests now run on the numeric builder.
+- **The skips** are the structural `seekpath` and ALPS pair. **The xfails** are OPEN_WORK item 9's two strict pins,
+  now under both builders.
+
 ### The dimer series' T0 sector made cluster additive, 2026-10-31 — OPEN_WORK item 11
 
 **The defect** (found in the section below). The one-particle effective Hamiltonian was the des Cloizeaux

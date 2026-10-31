@@ -353,3 +353,9 @@ def test_acvo_16_sites_equals_the_per_q_path():
     q = rng.uniform([-1, 0, -1], [9, 3, 1], size=(40, 3)) * B
     ok = _assert_equal_to_per_q(calc, q)
     assert ok.all()
+
+
+@pytest.fixture(autouse=True)
+def _under_both_builders(builder):
+    """Every test here runs under both H(q) builders (K8; tests/conftest.py)."""
+    return builder

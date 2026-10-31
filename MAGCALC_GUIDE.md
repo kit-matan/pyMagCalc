@@ -7,7 +7,7 @@ context can make a correct first change. It is a map, not the whole territory: t
 authoritative details live in the files it points to (§12), and when they disagree, the
 code and the tests win.
 
-*Last reviewed: 2026-10-31, against pyMagCalc `bfae055` plus neutron-data phase 2's AMATERAS model and deterministic δQ quadrature (`magcalc/resolution.py`, `magcalc/qe_resolution.py`, the `fraction` and `prepare` hooks in `ForwardModel`), merged the same day after the dimer series' projective cluster-additive one-particle block (`_pca_one_particle`, OPEN_WORK item 11). This file is kept current with
+*Last reviewed: 2026-10-31, against pyMagCalc branch `feature/k8-numeric-hq` (the numeric H(q) builder, K8, and the exact-zero-mode rule) on top of `bfae055` plus neutron-data phase 2's AMATERAS model and deterministic δQ quadrature (`magcalc/resolution.py`, `magcalc/qe_resolution.py`, the `fraction` and `prepare` hooks in `ForwardModel`), merged the same day after the dimer series' projective cluster-additive one-particle block (`_pca_one_particle`, OPEN_WORK item 11). This file is kept current with
 every change that alters what it describes (§13).*
 
 ---
@@ -82,15 +82,23 @@ GenericSpinModel           generic_model.py + config_builder.py
    │  atoms: Wyckoff orbits expanded by spglib; magnetic supercell replicated
    │  bonds: `symmetry_rules` propagated by the space group (J' = R J Rᵀ; DM as axial vectors)
    ▼
-symbolic.py                SymPy Holstein–Primakoff Hamiltonian, Fourier transform → H(q)
-   ▼
-MagCalc (core.py)          lambdify H(q); batched Colpa Bogoliubov work (numerical.py)
+numeric_hq.py              terms → monomials; rsMagCalc DipoleHq builds H(q) per (S, p)
+  or symbolic.py           SymPy Holstein–Primakoff, Fourier transform → H(q), lambdified
+   ▼                       (`calculation.hamiltonian_builder`: auto | numeric | symbolic)
+MagCalc (core.py)          H(q) stacks; batched Colpa Bogoliubov work (numerical.py)
    │                       — or hand the hot loop to fMagCalc (backend: fortran)
    ▼
 runner.py                  the declarative task pipeline:
                            minimization → ground-state guards → dispersion → S(Q,ω)
                            → beyond-LSWT tasks → powder → fit → plots and data files
 ```
+
+The two H(q) builders compute the same matrix, entry by entry to rounding. `auto`, the
+default, uses the numeric one when rsMagCalc is installed: the spin model's own term
+builders run once with plain symbols for the spin components, and the Rust kernel does
+the boson algebra in milliseconds for each parameter set, where the SymPy build took
+3–35 s per cold model, FeI₂ 35 s (`GAP_STATUS.md`, "Rust kernels K8"). The SymPy build
+stays as the fallback, the reference, and the only route for a custom Python model.
 
 `mode: SUN` and `mode: entangled` leave this path after the model is built.
 `sun/adapter.py` converts the `GenericSpinModel` into a `SUNModel` (`sun/lswt.py`), which
@@ -146,7 +154,7 @@ separate model. Top-level blocks:
 | `magnetic_structure` | `pattern`, `single_k` (rotating-frame spiral), `multi_k`, `explicit`; or `from_mcif:` at top level |
 | `tasks` | which steps to run (§5) |
 | `q_path` | named points in **chemical** RLU plus `path` and `points_per_segment` |
-| `calculation` | `mode`, `backend`, `kernels`, `n_workers`, `temperature`, `domains`, `cross_section`, `cache_mode`, the guard tolerances, `anisotropy_renormalization`, `classical_energy`, `series_order` |
+| `calculation` | `mode`, `backend`, `kernels`, `n_workers`, `temperature`, `domains`, `cross_section`, `cache_mode`, the guard tolerances, `anisotropy_renormalization`, `classical_energy`, `hamiltonian_builder`, `series_order` |
 | per-task blocks | `minimization`, `scga`, `thermal_mc`, `sampled_correlations`, `kpm`, `corrections`, `powder_average`, `energy_cut`, `fitting`, … |
 | `output`, `plotting` | file names, `save_plot`, `show_plot`, resolution |
 
@@ -284,9 +292,9 @@ pytest -n0 ...               # serial; needed for -s or pdb
 - Both `pytest.ini` files run in parallel (`-n auto --dist worksteal`, pytest-xdist is a
   required dev dependency).
 - From the maintainer's workspace root, plain `pytest` also collects fMagCalc's,
-  rsMagCalc's and magpipe's tests. The last full gate there was **2749 passed, 2 skipped,
-  2 xfailed** (2026-10-31). The two skips are structural: `seekpath` absent, ALPS
-  present. The two xfails are strict pins of OPEN_WORK item 9.
+  rsMagCalc's and magpipe's tests. The last full gate there was **3191 passed, 2 skipped,
+  4 xfailed** (2026-10-31, with K8). The two skips are structural: `seekpath` absent, ALPS
+  present. The xfails are OPEN_WORK item 9's two strict pins, run under both H(q) builders.
 - **Tests never open a GUI window.** `tests/conftest.py` forces the Agg backend and sets
   `MAGCALC_NO_GUI=1`. A bare `magcalc run` outside pytest is not guarded; prefix it with
   `MAGCALC_NO_GUI=1`.
@@ -308,8 +316,9 @@ pytest -n0 ...               # serial; needed for -s or pdb
 | `schema.py`, `config_loader.py`, `yaml_io.py` | config validation, loading, canonical YAML output |
 | `config_builder.py`, `generic_model.py` | symmetry expansion of atoms and bonds; `GenericSpinModel`; magnetic structures and supercells |
 | `cif_utils.py`, `cell_utils.py`, `mcif.py` | CIF reading; primitive/standard cells and BZ paths; magnetic CIF import and export |
-| `symbolic.py` | SymPy Holstein–Primakoff Hamiltonian and its Fourier transform |
-| `core.py` | `MagCalc`: lambdified H(q), dispersion, S(Q,ω) (`calculate_sqw` → `sqw_amplitudes`, batched Colpa; the per-q pool behind `sqw_method: perq`), `sqw_batch`, powder, minimization, the fMagCalc hand-off, `DispersionEvaluator` |
+| `numeric_hq.py` | the numeric H(q) builder: terms resolved by the model's own builders into monomials (`HamiltonianTerms`), assembled per (S, p) by rsMagCalc's `DipoleHq` |
+| `symbolic.py` | SymPy Holstein–Primakoff Hamiltonian and its Fourier transform (`gen_HM`), the reference builder |
+| `core.py` | `MagCalc`: H(q) from either builder (`_build_h_stack`), dispersion, S(Q,ω) (`calculate_sqw` → `sqw_amplitudes`, batched Colpa; the per-q pool behind `sqw_method: perq`), `sqw_batch`, powder, minimization, the fMagCalc hand-off, `DispersionEvaluator` |
 | `linalg.py`, `numerical.py` | Colpa (`colpa_batch`, `SqwAmplitudes`), the per-q Bogoliubov fallback (`KKdMatrix`) and workers, `contract_cross_section_batch` (every cross-section), domains, powder sampling |
 | `runner.py` | the task pipeline and the ground-state guards |
 | `sun/lswt.py`, `sun/operators.py`, `sun/adapter.py` | SU(N) LSWT (`SUNModel`), local operator algebra, runner adapter |
@@ -475,6 +484,18 @@ iOS app).
   every site the reference spin length; it now uses each site's own, pinned to a (1, ½)
   Néel chain's exact −0.9875 meV and its exact canting angle (`GAP_STATUS.md`,
   "minimize_energy on a quartic mixed-spin energy"). Nothing is open in `OPEN_WORK.md`.
+- **The dipole H(q) without SymPy** (K8, 2026-10-31). `calculation.hamiltonian_builder`
+  (`auto`, the default) builds H(q) in rsMagCalc from monomials the spin model's own
+  builders produce: FeI₂ builds in 0.66 s instead of 35 s, SW28 in 0.6 s instead of
+  26 s, and a new parameter set reassembles in milliseconds. It agrees with SymPy's `HMat_sym` entry by
+  entry (≤ 5e-15 relative) on every shipped dipole config, and the dipole oracle tests
+  run under both builders. `symbolic` keeps the SymPy build (`GAP_STATUS.md`, "Rust
+  kernels K8").
+- **Exact zero modes at antiferromagnetic Bragg points** (2026-10-31). The per-q
+  Bogoliubov fallback reported such a Goldstone mode as zero only when its pseudo-norm
+  fell under an absolute 1e-12, so rounding chose between zero and a 1e6–1e9 spike. A
+  mode at most 1e-5 of the matrix scale and defective (pseudo-norm < 1e-3) is now an exact
+  zero mode, in NumPy and fMagCalc alike; a ferromagnet's Goldstone mode is untouched.
 - **Not supported:**
   - mixed spins in the classical dipole samplers: `thermal_mc` and
     `sampled_correlations` refuse them, while the SU(N) sampler accepts them;

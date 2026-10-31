@@ -150,3 +150,9 @@ def test_sw29_field_split_branches_restored():
     e = np.sort(np.asarray(d.energies).ravel())
     assert e[0] == pytest.approx(0.10622, abs=2e-3)
     assert e[-1] == pytest.approx(1.72668, abs=2e-3)
+
+
+@pytest.fixture(autouse=True)
+def _under_both_builders(builder):
+    """Every test here runs under both H(q) builders (K8; tests/conftest.py)."""
+    return builder

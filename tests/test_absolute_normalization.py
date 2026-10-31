@@ -115,3 +115,9 @@ def test_sunny_default_measure_applies_g():
     got = _sqw("fm", 1.0, "abs_g").sum(axis=1)
     assert got == pytest.approx(np.array(SUNNY_FM_APPLY_G).sum(axis=1) / 4.0,
                                 abs=1e-6)
+
+
+@pytest.fixture(autouse=True)
+def _under_both_builders(builder):
+    """Every test here runs under both H(q) builders (K8; tests/conftest.py)."""
+    return builder

@@ -98,3 +98,9 @@ def test_true_spiral_config_is_not_flagged():
     finally:
         if os.path.exists(p):
             os.remove(p)
+
+
+@pytest.fixture(autouse=True)
+def _under_both_builders(builder):
+    """Every test here runs under both H(q) builders (K8; tests/conftest.py)."""
+    return builder

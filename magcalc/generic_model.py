@@ -1789,7 +1789,6 @@ class GenericSpinModel:
 
                 phase = 2 * np.pi * np.dot(k_vec, r_frac)
                 
-                R_rel = get_rot_matrix(phase, axis)
                 
                 # Total Interaction Matrix in Global Frame
                 # J_tot = J * I + Kex + DM_term
@@ -1804,8 +1803,19 @@ class GenericSpinModel:
                 K_mat = Kex[i][j]
                 
                 J_global = sp.eye(3) * J_scalar + K_mat
-                
-                if not (hasattr(D_vec, 'is_zero_matrix') and D_vec.is_zero_matrix) and D_vec != sp.Matrix([0,0,0]):
+                d_zero = (hasattr(D_vec, 'is_zero_matrix') and D_vec.is_zero_matrix) \
+                    or D_vec == sp.Matrix([0, 0, 0])
+                if d_zero and J_global.is_zero_matrix:
+                    # No coupling on this pair: J_eff = 0 R = 0. Building the
+                    # rotation anyway cost 2.5 s on SW23 (1200 pairs, few bonds).
+                    Jex[i, j] = 0
+                    DM[i][j] = dnull_vec
+                    Kex[i][j] = sp.zeros(3, 3)
+                    continue
+
+                R_rel = get_rot_matrix(phase, axis)
+
+                if not d_zero:
                     Dx, Dy, Dz = D_vec[0], D_vec[1], D_vec[2]
                     D_skew = sp.Matrix([[0, Dz, -Dy], [-Dz, 0, Dx], [Dy, -Dx, 0]])
                     J_global += D_skew

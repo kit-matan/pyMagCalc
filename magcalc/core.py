@@ -43,6 +43,7 @@ from typing import List, NamedTuple, Tuple, Dict, Any, Optional, Union
 
 # --- Modularized Imports ---
 from .symbolic import gen_HM
+from .numeric_hq import HamiltonianTerms, NumericUnavailable, requested_builder
 from .numerical import (
     parse_domains, sqw_domain_average,
     process_calc_disp,
@@ -726,6 +727,11 @@ class MagCalc:
         )
 
         # --- Load or Generate Symbolic Matrices ---
+        # `hamiltonian_builder` says which builder made H(q): "numeric" (K8,
+        # `numeric_hq`) or "symbolic" (gen_HM). Under "numeric", HMat_sym and
+        # Ud_sym stay unbuilt unless something asks for them (see the properties).
+        self.hamiltonian_builder: str = "symbolic"
+        self._hq_terms: Optional[HamiltonianTerms] = None
         self.HMat_sym: Optional[sp.Matrix] = None
         self.Ud_sym: Optional[sp.Matrix] = None
         self.Ud_numeric: Optional[npt.NDArray[np.complex128]] = None
@@ -739,7 +745,7 @@ class MagCalc:
                 logger.info("Using externally provided Ud_numeric_override.")
                 self.set_external_Ud_numeric(Ud_numeric_override)  # Use the existing setter
             else:
-                if self.Ud_sym is not None:
+                if self._hq_terms is not None or self.__dict__.get("_Ud_sym") is not None:
                     # _calculate_numerical_ud raises exceptions on failure
                     self._calculate_numerical_ud()
                 else:
@@ -758,6 +764,85 @@ class MagCalc:
         self._intermediate_numerical_H_matrices_disp: List[
             Optional[npt.NDArray[np.complex128]]
         ] = []
+
+    # --- H(q): which builder, and the SymPy matrices on demand ---------------
+    @property
+    def HMat_sym(self) -> Optional[sp.Matrix]:
+        """The SymPy H(q) = 2gH2 (gen_HM). Under the numeric builder it is built
+        only when something asks for it -- a script, an export, a test -- since
+        nothing in the engine needs it then."""
+        hm = self.__dict__.get("_HMat_sym")
+        if hm is None and self.__dict__.get("_hq_terms") is not None:
+            hm = self._symbolic_on_demand()[0]
+        return hm
+
+    @HMat_sym.setter
+    def HMat_sym(self, value):
+        self.__dict__["_HMat_sym"] = value
+
+    @property
+    def Ud_sym(self) -> Optional[sp.Matrix]:
+        ud = self.__dict__.get("_Ud_sym")
+        if ud is None and self.__dict__.get("_hq_terms") is not None:
+            ud = self._symbolic_on_demand()[1]
+        return ud
+
+    @Ud_sym.setter
+    def Ud_sym(self, value):
+        self.__dict__["_Ud_sym"] = value
+
+    def _symbolic_on_demand(self):
+        logger.info("HMat_sym requested on a model whose H(q) is built numerically; "
+                    "running gen_HM (SymPy) for it.")
+        hm, ud = gen_HM(self.sm, self.k_sym, self.S_sym, list(self.params_sym))
+        self.__dict__["_HMat_sym"], self.__dict__["_Ud_sym"] = hm, ud
+        return hm, ud
+
+    def _has_hamiltonian(self) -> bool:
+        """Is H(q) available, from either builder (without building SymPy's)?"""
+        return (self.__dict__.get("_hq_terms") is not None
+                or self.__dict__.get("_HMat_sym") is not None)
+
+    def _init_numeric_builder(self) -> bool:
+        """Set up the numeric H(q) builder if the config asks for it (or `auto`)
+        and the model allows it. False means: use gen_HM. The reason for a
+        fallback goes to the log -- a WARNING when `numeric` was asked for by name,
+        INFO under `auto`."""
+        cfg = getattr(self.sm, "config", None) or {}
+        want = requested_builder(cfg)
+        if want == "symbolic":
+            return False
+        reject = getattr(self.sm, "reject_dipole_unsupported", None)
+        if reject is not None:
+            reject()     # the same error gen_HM would raise, before any fallback
+        try:
+            terms = HamiltonianTerms(self.sm, self.S_sym, list(self.params_sym),
+                                     list(self.params_sym_flat))
+            terms.model(float(self.spin_magnitude), self.hamiltonian_params)
+        except NumericUnavailable as e:
+            log = logger.warning if want == "numeric" else logger.info
+            log(f"Hamiltonian builder: symbolic (numeric unavailable: {e}).")
+            return False
+        except Exception:
+            logger.exception("Numeric H(q) builder failed; falling back to gen_HM.")
+            return False
+        self._hq_terms = terms
+        self.hamiltonian_builder = "numeric"
+        from .kernels import rust_module
+        logger.info(
+            f"Hamiltonian builder: numeric {rust_module().describe()} -- "
+            f"{terms.n_monomials} monomials ({terms.n_pairs} bilinear pairs, "
+            f"{terms.n_nonbilinear} higher-order) in {terms.setup_seconds:.2f} s.")
+        return True
+
+    def _worker_h_source(self):
+        """(H source, lambdify symbols) for `numerical._init_worker`: SymPy's
+        matrix, or a picklable bond model fixed at the current (S, params)."""
+        symbols = [s for s in self.full_symbol_list if isinstance(s, sp.Symbol)]
+        if self._hq_terms is not None:
+            return self._hq_terms.fixed_function(float(self.spin_magnitude),
+                                                 self.hamiltonian_params), symbols
+        return self.HMat_sym, symbols
 
     def _validate_spin_model_module(self):
         """Checks if the provided spin_model_module has required functions."""
@@ -1020,7 +1105,11 @@ class MagCalc:
         Load symbolic HMat (2gH) and Ud matrices from cache or generate them.
         Handles reading from `.pck` files if `cache_mode='r'` or 'auto' (and valid),
         or calling `gen_HM` and writing the files if `cache_mode='w'` or 'auto' (and regeneration needed).
+        Under the numeric builder (`calculation.hamiltonian_builder`) none of
+        this runs: H(q) is assembled in milliseconds and never cached.
         """
+        if self._init_numeric_builder():
+            return
         # Namespace the cache file by model structure so different models that
         # share a cache_file_base (notably every GUI run, which uses
         # ".config_gui_run_cache") don't collide. Falls back to the bare base if
@@ -1141,6 +1230,10 @@ class MagCalc:
         the result in `self.Ud_numeric`.
         """
         # Ud_sym existence checked in __init__ before calling this
+        if self._hq_terms is not None:
+            self.Ud_numeric = self._hq_terms.ud(float(self.spin_magnitude),
+                                                self.hamiltonian_params)
+            return
         logger.info("Calculating numerical Ud matrix...")
         # Ensure correct number of symbols/params match
         if len(self.params_sym_flat) != len(self.hamiltonian_params):
@@ -1307,7 +1400,11 @@ class MagCalc:
         # cache_file_base or numerical parameters would silently reuse stale
         # numerical results.
         try:
-            if self.HMat_sym is not None:
+            if self._hq_terms is not None:
+                hasher.update(b"numeric_hq")
+                hasher.update(self._hq_terms.fingerprint(
+                    float(self.spin_magnitude), self.hamiltonian_params))
+            elif self.HMat_sym is not None:
                 hasher.update(sp.srepr(self.HMat_sym).encode("utf-8"))
         except Exception:
             # Hashing should never break the calculation; fall back silently.
@@ -1399,13 +1496,13 @@ class MagCalc:
             )
 
         start_time = timeit.default_timer()
-        if self.HMat_sym is None:  # Should be caught by __init__
+        if not self._has_hamiltonian():  # Should be caught by __init__
             logger.error("Symbolic matrix HMat_sym not available.")
             return None
 
         logger.info("Running dispersion calculation...")
 
-        if self.HMat_sym is None or self.Ud_numeric is None:
+        if not self._has_hamiltonian() or self.Ud_numeric is None:
             logger.error("HMat or Ud_numeric is missing. Cannot calculate dispersion.")
             return None
 
@@ -1502,12 +1599,9 @@ class MagCalc:
              # We can't easily use 'process_calc_disp' without _worker_HMat_func being set in THIS process.
              # So we must initialize it here.
 
-             # Filter symbols for lambdify
-             lambdify_symbols = [s for s in self.full_symbol_list if isinstance(s, sp.Symbol)]
-
              # Initialize worker in main process for serial execution
              # This sets numerical._worker_HMat_func used by process_calc_disp
-             _init_worker(self.HMat_sym, lambdify_symbols)
+             _init_worker(*self._worker_h_source())
 
              # Run loop
              for args in tqdm(task_args, total=len(task_args), desc="Dispersion (Serial)", unit="q-point"):
@@ -1516,12 +1610,10 @@ class MagCalc:
         else:
             # --- Parallel Execution Path ---
             try:
-                # We must pickle the symbolic matrix only once.
-                lambdify_symbols = [s for s in self.full_symbol_list if isinstance(s, sp.Symbol)]
-
+                # We must pickle the symbolic matrix (or bond model) only once.
                 with Pool(
                     initializer=_init_worker,
-                    initargs=(self.HMat_sym, lambdify_symbols),
+                    initargs=self._worker_h_source(),
                     processes=num_processes
                 ) as pool:
                     # Use imap to report progress with tqdm
@@ -1597,7 +1689,7 @@ class MagCalc:
         Raises:
             RuntimeError: If the symbolic Hamiltonian is not available.
         """
-        if self.HMat_sym is None:
+        if not self._has_hamiltonian():
             raise RuntimeError(
                 "Symbolic Hamiltonian not available; cannot compile evaluator."
             )
@@ -1615,9 +1707,13 @@ class MagCalc:
             s for s in self.full_symbol_list if isinstance(s, sp.Symbol)
         ]
         t0 = timeit.default_timer()
-        hmat_func = lambdify(
-            lambdify_symbols, self.HMat_sym, modules=["numpy"], cse=True
-        )
+        if self._hq_terms is not None:
+            # Same signature; the bond model is rebuilt only when (S, p) change.
+            hmat_func = self._hq_terms.h_function()
+        else:
+            hmat_func = lambdify(
+                lambdify_symbols, self.HMat_sym, modules=["numpy"], cse=True
+            )
         logger.info(
             f"Compiled dispersion evaluator ({len(lambdify_symbols)} symbols) "
             f"in {timeit.default_timer() - t0:.2f} s."
@@ -2171,7 +2267,7 @@ class MagCalc:
         instability is 1.5 meV on a 59 meV band. In meV those are only 3 orders apart;
         relative to the bandwidth they are 5e-4 vs 2.5e-2 -- cleanly separated.
         """
-        if self.HMat_sym is None:
+        if not self._has_hamiltonian():
             return {"max_imag": 0.0, "band_scale": 0.0, "relative": 0.0}
         B = reciprocal_b_matrix(np.asarray(self.sm.unit_cell(), dtype=float))
         rng = np.random.default_rng(seed)
@@ -2229,6 +2325,11 @@ class MagCalc:
         # large cells. The cache key is the HMat_sym object itself (replaced on
         # regeneration); parameter VALUES are passed as arguments, so they may
         # change freely without invalidating the compiled function.
+        if self._hq_terms is not None:
+            model = self._hq_terms.model(S, self.hamiltonian_params)
+            stack = model.hamiltonians(np.asarray(q_grid, dtype=float), negate=negate)
+            dip = self._ewald_h_stack(q_grid if not negate else -np.asarray(q_grid, float))
+            return stack if dip is None else stack + dip
         cached = getattr(self, "_h_stack_cache", None)
         if cached is None or cached[0] is not self.HMat_sym:
             lam = [s for s in self.full_symbol_list if isinstance(s, sp.Symbol)]
@@ -2589,7 +2690,7 @@ class MagCalc:
         every other pyMagCalc S(Q,w) has. Not with a single-k structure, whose
         amplitudes are in the rotating frame.
         """
-        if self.HMat_sym is None or self.Ud_numeric is None:
+        if not self._has_hamiltonian() or self.Ud_numeric is None:
             raise RuntimeError("Symbolic matrices not initialized.")
         q_cart = np.atleast_2d(np.asarray(q_cart, dtype=float))
         n = int(self.nspins)
@@ -2736,7 +2837,7 @@ class MagCalc:
         start_t: float = timeit.default_timer()
 
         # Input Validation
-        if self.HMat_sym is None or self.Ud_numeric is None:
+        if not self._has_hamiltonian() or self.Ud_numeric is None:
             logger.error("Symbolic matrices not initialized. Cannot calculate S(q,w).")
             return None
 
@@ -2877,7 +2978,7 @@ class MagCalc:
              with Pool(
                 processes=os.cpu_count(),
                 initializer=_init_worker,
-                initargs=(self.HMat_sym, [s for s in self.full_symbol_list if isinstance(s, sp.Symbol)]),
+                initargs=self._worker_h_source(),
             ) as pool:
                 # Use imap to report progress with tqdm. imap preserves order.
                 results = list(

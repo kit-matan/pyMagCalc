@@ -36,7 +36,7 @@
 *   **Knowing Which Engine Ran:** `magcalc where` reports the `magcalc` package actually imported, its git HEAD, and any *other* importable copy — because `pip install -e .` does **not** win by default (its finder is appended to `sys.meta_path`, so anything on `sys.path` shadows it). Every `magcalc run` logs the same line first. An interpreter-startup check that fires even when a stale copy wins outright — which the in-package detector structurally cannot do — is **installed automatically on your first `magcalc` command** (`magcalc guard --install` / `--uninstall` to manage it by hand, `MAGCALC_SHADOW_GUARD=off` to opt out of both).
 *   **Reduced Neutron Data and a Forward Model:** `magcalc.neutron_data` reads Mantid MDNorm 4-D histograms and per-run detector/energy count cells into one `BinnedData`. It carries counts, exposure, t0-corrected energy edges, a data-to-model Q-frame map and an exact exposure-weighted Q quadrature per bin. `magcalc.forward.ForwardModel` predicts the expected count in every data bin from a dipole model, with the energy integral exact over each bin, the resolution width at the mode energy, crystals/twins with mosaic, Q smearing and the Bose factor. It runs on `MagCalc.sqw_batch`, a batched Colpa S(Q,ω) 87× faster than the per-q pool on a 16-site cell (28,000 against 330 q/s), with optional per-site g tensors. Python API; validated against Sunny, a closed-form chain and exact identities. The energy resolution can be an instrument's own line shape: `magcalc.resolution` builds it from a chopper spectrometer's moderator pulse, choppers and flight paths (single disks, counter-rotating pairs and Fermi choppers, Ikeda–Carpenter or tabulated pulses, detector depth), with CNCS and AMATERAS models built in. Given PyChop's own time widths it reproduces PyChop's widths to rounding; with its own geometry it is within 13% of PyChop and matches a measured CNCS elastic width to 0.2% (Intermediate) and 9% (High Flux) with no free width, and an independent ray-tracing Monte Carlo to 0.15% in the line shape. `magcalc.qe_resolution` adds the Q resolution and the Q–E correlation (divergence, sample size and position, pixel size, and the chopper times' tilt), through the forward model's own sample quadrature; its 4-D covariance matches the ray trace to 0.3%, and the average over the Q resolution is a deterministic quadrature, so a fit sees no sampling noise.
 *   **Data Fitting:** Fits the spin Hamiltonian to inelastic-neutron-scattering data — magnon dispersion `E(Q)`, single-crystal `I(Q, ω)`, or powder `I(|Q|, ω)` — via [lmfit](https://lmfit.github.io/) (bounds, tied/fixed parameters, uncertainties, choice of optimizer). Dispersion fits use a **compile-once fast evaluator** (`DispersionEvaluator`) that skips all per-iteration symbolic work, making fits of large magnetic cells orders of magnitude faster.
-*   **Optional compiled companions:** [fMagCalc](https://github.com/kit-matan/fMagCalc) (Fortran/OpenMP/LAPACK) runs the dipole engine's per-q diagonalization, S(Q,ω) and powder averages, mixed spin included (`calculation: {backend: fortran}`). Since S(Q,ω) moved to batched Colpa (2026-10-30) the default NumPy path is 4–5× faster than fMagCalc's S(Q,ω) on a 16-site cell, so `backend: fortran` is no longer the fast choice there. [rsMagCalc](https://github.com/kit-matan/rsMagCalc) (Rust/PyO3) runs the loops the Fortran path does not cover — the classical and CP^(N−1) samplers, the annealing ground-state search, SU(N)/entangled LSWT, KPM and SCGA (`calculation: {kernels: rust}`): for example 169 s → 3.3 s on a 128-trajectory classical average, and 1.4 s → 7.6 ms per q for KPM on a 900-site cell. Neither is required; a missing one logs a warning and the NumPy path runs, and every compiled result is pinned to the NumPy one.
+*   **Optional compiled companions:** [fMagCalc](https://github.com/kit-matan/fMagCalc) (Fortran/OpenMP/LAPACK) runs the dipole engine's per-q diagonalization, S(Q,ω) and powder averages, mixed spin included (`calculation: {backend: fortran}`). Since S(Q,ω) moved to batched Colpa (2026-10-30) the default NumPy path is 4–5× faster than fMagCalc's S(Q,ω) on a 16-site cell, so `backend: fortran` is no longer the fast choice there. [rsMagCalc](https://github.com/kit-matan/rsMagCalc) (Rust/PyO3) runs the loops the Fortran path does not cover — the classical and CP^(N−1) samplers, the annealing ground-state search, SU(N)/entangled LSWT, KPM and SCGA (`calculation: {kernels: rust}`), and it builds the dipole engine's H(q) without SymPy (`calculation.hamiltonian_builder`, default `auto`): for example 169 s → 3.3 s on a 128-trajectory classical average, and 1.4 s → 7.6 ms per q for KPM on a 900-site cell. Neither is required; a missing one logs a warning and the NumPy path runs, and every compiled result is pinned to the NumPy one.
 *   **Data Export (CSV):** Export results to `.csv` or `.npz` files for external analysis.
 *   **Validated Configurations:** Supports declarative YAML configurations validated against a robust **Pydantic schema** for immediate error feedback.
 
@@ -45,7 +45,8 @@
 *   `magcalc/`: Core Python package.
     *   `core.py`: Main `MagCalc` class, calculation logic, and the `DispersionEvaluator` fast dispersion engine.
     *   `generic_model.py`: `GenericSpinModel` for YAML-based model loading (mixed-spin, spiral, interaction matrices).
-    *   `symbolic.py`: Symbolic Hamiltonian construction and Fourier transforms.
+    *   `numeric_hq.py`: the numeric H(q) builder (`calculation.hamiltonian_builder: auto`, the default): terms resolved by the model's own builders, assembled by rsMagCalc in milliseconds.
+    *   `symbolic.py`: Symbolic Hamiltonian construction and Fourier transforms (`gen_HM`), the reference builder.
     *   `sun/`: SU(N) and entangled-unit engines — `lswt.py` (SU(N) LSWT), `entangled.py` (dimer/trimer units), `dimer_series.py` (linked-cluster series + Dlog-Padé), `kpm.py` (Chebyshev spectral S(q,ω)).
     *   `scga.py`: Self-consistent Gaussian approximation (paramagnetic diffuse S(q)).
     *   `annealing.py` / `thermal_mc.py` / `classical_dynamics.py`: ground-state annealing, finite-T Monte-Carlo (parallel tempering + Wang–Landau), and classical spin dynamics (SampledCorrelations); `sun/dynamics.py` is the CP^(N−1) counterpart, including the dissipative quench.
@@ -182,6 +183,12 @@ and `magcalc where` reports whether it is available:
 calculation:
   kernels: rust           # default: numpy
 ```
+
+One rsMagCalc kernel needs no `kernels:` key: once the package is installed, the dipole
+engine's LSWT matrix H(q) is built by it by default (`calculation.hamiltonian_builder:
+auto`) instead of by SymPy, which removes the 3–35 s symbolic build of a cold
+model. Set `hamiltonian_builder: symbolic` to use the SymPy build; without rsMagCalc
+that is what runs.
 
 On macOS 27, never strip the built extension: the system loader rejects a stripped
 library (`rsMagCalc/README.md` explains, and its build settings already prevent it).
@@ -424,10 +431,10 @@ loop, **not** a merge gate: the `slow` marker holds the exact-diagonalization
 oracles, convergence sweeps and integration runs. Before merging to `master`, run
 `pytest -m "" -rs` and account for every skip. From the maintainer's workspace root
 that also collects the fMagCalc, rsMagCalc and magpipe tests; the last full gate there
-was **2749 passed, 2 skipped, 2 xfailed** (2026-10-31), the two skips being structural
-(`seekpath` absent, ALPS present) and the two xfails strict pins of a known open defect. Tests run in parallel (pytest-xdist); use `-n0` for
+was **3191 passed, 2 skipped, 4 xfailed** (2026-10-31), the two skips being structural
+(`seekpath` absent, ALPS present) and the xfails strict pins of a known open defect, under both H(q) builders. Tests run in parallel (pytest-xdist); use `-n0` for
 `-s` or pdb. Tests that involve a compiled companion run under both paths through the
-`kernels` (`numpy`/`rust`) and `backend` (`numpy`/`fortran`) fixtures, and skip by name
+`kernels` (`numpy`/`rust`), `backend` (`numpy`/`fortran`) and `builder` (`numeric`/`symbolic`) fixtures, and skip by name
 when the companion is not installed.
 
 Every feature is pinned to an **independent** reference — Sunny.jl (checked out

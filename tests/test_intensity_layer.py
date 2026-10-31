@@ -424,3 +424,9 @@ def test_fitproblem_forward_model_uses_the_measurement_options():
     src = inspect.getsource(FitProblem._model_modes)
     assert "self.temperature" in src and "self.cross_section" in src
     assert "self.domains" in src
+
+
+@pytest.fixture(autouse=True)
+def _under_both_builders(builder):
+    """Every test here runs under both H(q) builders (K8; tests/conftest.py)."""
+    return builder

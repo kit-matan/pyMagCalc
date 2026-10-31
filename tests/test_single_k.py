@@ -438,3 +438,9 @@ def test_symmetry_gate_dm_parallel_ok(caplog):
     with caplog.at_level(logging.WARNING, logger='magcalc.generic_model'):
         sm.spin_interactions([-1.0])
     assert not any('NOT invariant' in r.message for r in caplog.records)
+
+
+@pytest.fixture(autouse=True)
+def _under_both_builders(builder):
+    """Every test here runs under both H(q) builders (K8; tests/conftest.py)."""
+    return builder

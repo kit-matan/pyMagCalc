@@ -269,3 +269,9 @@ def test_batched_path_on_kfe3j_matches_the_per_k_loop(tmp_path, monkeypatch):
     assert a[2:4] == b[2:4] == (100, 0)
     assert abs(a[0] - b[0]) < 1e-12 * abs(b[0])
     np.testing.assert_allclose(a[1], b[1], rtol=0, atol=1e-11)
+
+
+@pytest.fixture(autouse=True)
+def _under_both_builders(builder):
+    """Every test here runs under both H(q) builders (K8; tests/conftest.py)."""
+    return builder
