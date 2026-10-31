@@ -1048,7 +1048,24 @@ Rb₂Cu₃SnF₁₂ order 6 under `rust` logs its six levels with 10 threads; th
 magpipe `e92b2c7`): **2724 passed, 2 skipped, 2 xfailed, 0 failed, 14 min 19 s**. That is the 2700 of the phase 2
 gate plus the 24 added here. The skips are the structural pair and the xfails are item 9's strict pins.
 
-**Not done here:** the series has no checkpoint (OPEN_WORK item 10).
+**Validated on the node that reported it** (LANTA, 128 cores, 243 GB, `n_workers=120`, the same model and path;
+rsMagCalc `8552281`, pyMagCalc code-identical to `7e6cd94`; the 23 dimer-series tests and the 22 budget tests pass
+there). The default budget came out as 126 GB from "0.5 x MemAvailable".
+- **Order 7:** 150 s, down from 357 s; peak RSS 9.3 GB; dlog equal to the Mac reference to 2.1e-11, its 8
+  coefficients to 5.1e-11.
+- **Order 8:** 58 min; peak RSS 36.8 GB; dlog 1.8618137855 against NumPy's 1.8618137849 (6.6e-10), its 9
+  coefficients to 6.7e-10.
+- **The pool:** levels 5–8 ran 120 clusters at once on 120 threads. Level 8 went in four chunks of about 42 000
+  topologies, largest cluster 0.42 GB.
+- **Where order 8's hour goes:** levels up to 7 take 3 min, and level 8's topology classification 42 s. The kernel
+  chunks take 48 min, about 2.2 core-seconds per cluster. The serial subtraction after each chunk takes 6 min,
+  11 % of the wall.
+
+**Not done here:**
+- The series has no checkpoint (OPEN_WORK item 10).
+- The subtraction is still serial.
+- The "cluster additivity violated" check warns once per topology. At level 8 it fired 82 342 times, giving a 22 MB
+  log. The orders still match NumPy, which runs the same check.
 
 ### Neutron data and the forward model, phase 1, 2026-10-30 — μ per data bin, on a batched Colpa S(Q,ω)
 
