@@ -2367,6 +2367,72 @@ pass on rerun, so **2438 pass**: the 2405 of the Luttinger–Tisza gate plus the
 two skips are the structural pair. Before merging, the same suite ran from a mirror of the root with the worktrees
 on `PYTHONPATH`; every added test passed there too.
 
+### K7's memory traffic, 2026-11-01 — the Ω recursion and S_k/M_k tiled over rows, byte for byte
+
+**Why.** A thread-scaling probe on a LANTA node (2 × 64-core EPYC 7713, NPS4, 720 seeded-random order-9 ten-dimer
+Rb₂Cu₃SnF₁₂ clusters, rsMagCalc `3f16142`) found the order-9 PT memory-bandwidth bound:
+
+| threads | 8 | 16 | 32 | 48 | 64 | 96 | 120 |
+|---|---|---|---|---|---|---|---|
+| clusters/s | 3.53 | 6.24 | 9.95 | 11.04 | **11.89** | 11.20 | 10.58 |
+| CPU s per cluster | 2.26 | 2.56 | 3.22 | 4.35 | 5.38 | 8.57 | 11.34 |
+
+Eight threads bound to one NUMA node ran at half the speed of eight unpinned; one socket gave about half the node; and
+`numactl --interleave=all` was slower than the default first touch (8.54 against 11.89 at 64 threads). Throughput
+followed the number of memory channels in use, so the fix had to be fewer bytes per cluster, not placement.
+
+**Where the bytes went.** `bloch_parts` keeps about 2·order + 1 dense n × p complex arrays (the Ω_k and the V·Ω_m;
+at order 9 a ten-dimer cluster's largest sector has n = 184 756 rows, p = 30, so 89 MB each) and streamed them term by
+term. Counted in passes over one such array, per cluster: the Ω recursion read and wrote y once per step (y = 0, y +=
+V·Ω, one read-modify-write per subtracted Ω_j B_{k−j}, the resolvent, the nonzero-row scan), about 190 passes; S_k and
+M_k summed every Gram-type term separately, S and M each re-reading the pair, about 145. On top of that sits the sparse
+gather V·Ω_{k−1}, which an LRU simulation of that sector's column pattern puts at 14, 9.5 and 4.8 array reads per
+product for a 0.5, 4 and 32 MB cache (25.7 nonzeros per row; the high digits of the product index jump tens of MB).
+With the 4 MB of L3 a core gets on that node, about 420 passes per cluster, 85 of them the gather.
+
+**What changed** (rsMagCalc `src/dimer_series.rs`):
+
+- the sparse V·Ω pass stays a whole-array pass, and the rest of each step of the recursion runs over 64-row tiles,
+  so y is written once per order;
+- S_k and M_k for every k are summed in one pass over 64-row blocks (`gram_series`): each array is read once, and
+  the S and M terms of a pair share the read.
+
+That leaves about 186 passes, 85 of them the unchanged gather: 2.3× fewer bytes, a prediction from the count, not
+yet a LANTA measurement. At 64 threads the old kernel moved about 23 GB per cluster × 11.9 clusters/s ≈ 270 GB/s,
+which is what such a node sustains, so the count and the probe agree.
+
+**Exactness.** The tiled kernel is byte for byte the term-by-term one, after one re-association made first as its
+own commit (rsMagCalc `f801010`): the plain (non-adjoint-pair) Gram terms used to add their 64-row block partials
+straight into the running S_k / M_k, and a single pass over the rows cannot reproduce that order, because the running
+sum is not complete before the term's first block. Each such term now sums into its own accumulator first, as the
+adjoint-pair terms always did, and is added in whole. That moved the results by at most 6.8e-14 relative (96 order-8
+clusters) against the previous build; the NumPy parity tests pass at 1e-12. Against that commit the tiled kernel was
+compared byte by byte (`tobytes`, so a −0.0 against +0.0 would count): 192 of 192 arrays on 96 order-8 clusters,
+48 of 48 on 24 order-9 clusters (21 of them ten dimers), and four large random `block_effective_series` problems (complex sparse V,
+V series of length 1–3, p = 1, 3, 4, a ragged last block). rsMagCalc `tests/test_dimer_series_parity.py` gains three
+cases with many row blocks (up to 727 rows, a series of three V, p = 1), each against NumPy at 1e-12; every earlier
+case had at most 16 rows, one block. 22 tests there now.
+
+**On an M1 Pro** (25 GB/s per core, so barely bandwidth-limited at these thread counts; load 5–13 from other work,
+pyMagCalc's `cluster_pt_batch` on the probe's tasks):
+
+| | 1 thread | 2 | 4 | 8 |
+|---|---|---|---|---|
+| order 8, 96 clusters, before → after (clusters/s) | 2.82 → 3.04 | 5.51 → 5.96 | 10.7 → 11.6 | 17.7 → 20.9 |
+| order 9, 12 clusters (mostly ten dimers) | 0.549 → 0.609 | 0.977 → 1.104 | 1.600 → 1.768 | — |
+
+On one thread the S_k/M_k pass went 3.9 s → 2.5 s and the recursion 8.2 s → 8.4 s (8 order-9 clusters). Two
+variants were measured and dropped: building each Ω_k row by row in a single fused pass (the recursion took 10.4 s),
+and appending the V·Ω rows through a buffer or growing the array tile by tile instead of zero-filling it whole
+(+10 to 16 % on the product; the whole-array fill costs about one extra write pass per order, ~5 % of the traffic).
+
+**What is left** (OPEN_WORK item 12): the LANTA measurement, and the gather, now about half of the traffic.
+
+**Gate** (2026-11-01, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`, rsMagCalc on this change rebuilt
+and installed, stroff 8-aligned; pyMagCalc `26a91e3`, fMagCalc `192e7f8`, magpipe `e92b2c7`): **3219 passed,
+2 skipped, 4 xfailed, 0 failed, 19 min 11 s**: the 3216 of the 14-point rule's gate plus the three multi-block parity
+cases. The skips are the structural pair, the xfails item 9's pins under both builders.
+
 ### Gapless and degenerate S(Q,ω) under `backend: fortran`, 2026-10-28 — two Fortran defects, pinned to Sunny and a closed form
 
 OPEN_WORK item 2 read: "fMagCalc zeroes the intensity of modes below 1e-3 meV and NumPy

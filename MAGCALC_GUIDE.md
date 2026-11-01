@@ -7,7 +7,7 @@ context can make a correct first change. It is a map, not the whole territory: t
 authoritative details live in the files it points to (§12), and when they disagree, the
 code and the tests win.
 
-*Last reviewed: 2026-10-31, against pyMagCalc master with the δQ quadrature's 14-point rule (`QEResolution(nodes="s14")`), and before that `1256378` (the δQ quadrature's mixture by batched matmul, `e2ae02b`), and before that `2fe67a6` (the numeric H(q) builder, K8, and the exact-zero-mode rule) plus the dimer series' save and resume (`magcalc/sun/series_checkpoint.py`, `calculation.series_checkpoint`), and before that `bfae055` plus neutron-data phase 2's AMATERAS model and deterministic δQ quadrature (`magcalc/resolution.py`, `magcalc/qe_resolution.py`, the `fraction` and `prepare` hooks in `ForwardModel`), merged the same day after the dimer series' projective cluster-additive one-particle block (`_pca_one_particle`, OPEN_WORK item 11). This file is kept current with
+*Last reviewed: 2026-11-01, against pyMagCalc master with rsMagCalc's K7 tiled over rows (the dimer series' order-9 memory traffic), and before that the δQ quadrature's 14-point rule (`QEResolution(nodes="s14")`), and before that `1256378` (the δQ quadrature's mixture by batched matmul, `e2ae02b`), and before that `2fe67a6` (the numeric H(q) builder, K8, and the exact-zero-mode rule) plus the dimer series' save and resume (`magcalc/sun/series_checkpoint.py`, `calculation.series_checkpoint`), and before that `bfae055` plus neutron-data phase 2's AMATERAS model and deterministic δQ quadrature (`magcalc/resolution.py`, `magcalc/qe_resolution.py`, the `fraction` and `prepare` hooks in `ForwardModel`), merged the same day after the dimer series' projective cluster-additive one-particle block (`_pca_one_particle`, OPEN_WORK item 11). This file is kept current with
 every change that alters what it describes (§13).*
 
 ---
@@ -456,7 +456,10 @@ iOS app).
   topologies. On the six-dimer Rb₂Cu₃SnF₁₂ cell order 6 takes 21 s instead of 115 s
   with the NumPy process pool, and order 7 6.4 min instead of 32 min
   (`GAP_STATUS.md`, "Rust kernels K7"). An earlier plan had excluded it as
-  "symbolic"; it is numerical throughout.
+  "symbolic"; it is numerical throughout. At order 9 it is memory-bandwidth bound on a
+  128-core node, so since 2026-11-01 it reads each n × p array once per order wherever
+  the recursion allows, with byte-identical results (`GAP_STATUS.md`, "K7's memory
+  traffic"; the LANTA timing is OPEN_WORK item 12).
   How many clusters run at once is set by memory, not by `n_workers` alone. Each
   cluster is charged its own scratch against `$RSMAGCALC_SCRATCH_GB`, or else half the
   available memory, cgroup limits included. Until 2026-10-31 a fixed 3 GB was divided

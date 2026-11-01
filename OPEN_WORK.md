@@ -181,6 +181,24 @@ known; item 3 is done:
     their toy model, whose error now scales as g⁷ at order 6. See `GAP_STATUS.md`, "The
     dimer series' T0 sector made cluster additive".
 
+12. **K7 at order 9 is memory-bandwidth bound. PARTIAL 2026-11-01.** A LANTA thread-scaling probe
+    put the order-9 PT's throughput flat from 48 to 120 threads, half on one socket, and worse
+    interleaved. rsMagCalc now tiles the Ω recursion and the S_k/M_k sums over 64-row blocks,
+    byte for byte the old results after one 6.8e-14 re-association, for about 2.3× fewer bytes
+    per cluster by count (`GAP_STATUS.md`, "K7's memory traffic").
+    - **Left open, the measurement:** the gain is a count, not a LANTA timing. The M1 Pro is
+      barely bandwidth-limited and shows 8–18 %. Rerun the probe (threads 8–120, one cluster
+      batch per thread count) on the new build before changing how many threads production
+      runs use; until then 48–64 threads per node is the measured sweet spot.
+    - **Left open, the gather:** V·Ω_{k−1} reads about 9.5 arrays per product with 4 MB of
+      cache per core, about 85 of the remaining ~186 passes. Applying V link by link streams
+      the whole array per link (worse, ~27 passes per product); renumbering a sector's states
+      to shorten the jumps changes the 64-row blocks and so the rounding (fine against NumPy
+      at 1e-12, not byte for byte). Measure before choosing.
+    - **Oracle:** `tests/test_dimer_series_parity.py` (NumPy at 1e-12, multi-block cases), and
+      for a pure restructuring a byte-level A/B against the previous build on the probe's
+      clusters.
+
 Items 3 and 4 come from the 2026-10-27 assessment of what is still worth compiling.
 Its third candidate, the Ewald dipolar sum, is done (`GAP_STATUS.md`, "Ewald dipolar
 sum: q-independent terms computed once").
