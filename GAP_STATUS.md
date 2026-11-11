@@ -2401,6 +2401,29 @@ That leaves about 186 passes, 85 of them the unchanged gather: 2.3× fewer bytes
 yet a LANTA measurement. At 64 threads the old kernel moved about 23 GB per cluster × 11.9 clusters/s ≈ 270 GB/s,
 which is what such a node sustains, so the count and the probe agree.
 
+**Measured on LANTA** (2026-11-11, job 6550775, run by the Rb/CsCu₃SnF₁₂ analysis; one node, 2 × EPYC 7713, the same
+720 order-9 clusters as the first probe, both builds back to back per row, scratch budget 200 GB):
+
+| threads (default placement) | 8 | 16 | 24 | 32 | 48 | 64 | 96 | 120 |
+|---|---|---|---|---|---|---|---|---|
+| `3f16142`, clusters/s | 3.54 | 6.20 | 8.04 | 9.64 | 10.97 | 11.62 | 11.43 | 10.85 |
+| `10b6e4d`, clusters/s | 4.23 | 7.72 | 10.19 | 13.19 | 16.35 | 18.24 | **18.70** | 17.93 |
+| ratio | 1.20 | 1.24 | 1.27 | 1.37 | 1.49 | 1.57 | 1.64 | 1.65 |
+| `10b6e4d`, CPU s per cluster | 1.89 | 2.07 | 2.36 | 2.43 | 2.94 | 3.51 | 5.13 | 6.69 |
+
+Bound to one NUMA node (8 threads) the ratio is 1.62, to one socket 1.55 (32 threads) and 1.70 (64), interleaved 1.71
+(64); binding or interleaving is still worse than the default for both builds. A repeat of the 8-thread row at the end
+drifts 1–2 %, and `3f16142` reproduces the first probe's rows to 1–3 % on another node. Peak scratch is the same.
+
+So the gain grows with memory pressure, as a traffic cut should: 1.2× where bandwidth does not limit, 1.55–1.7× where
+it does. But 1.65× is not the 2.3× the count predicts, and `10b6e4d` is still bandwidth-bound (flat from 64 to 120
+threads, CPU per cluster 1.89 → 6.69 s). If both builds sat on the same bandwidth ceiling, the ratio would be
+(420 + X) / (186 + X) for X passes the count leaves out; 1.65 gives X ≈ 175, as much again as the count. The likely
+candidates, none of them measured yet: the kernel zero-filling the ~2 GB each cluster allocates fresh (once per array,
+before the Vec's own fill), write-allocate reads on every streamed write, the CSR V read once per product (1.3 array
+equivalents), and the gather running worse than the 4 MB model when 64+ threads share the L3. Until one of them is
+cut, 64–96 threads per node is the sweet spot for order-9 runs (it was 48–64).
+
 **Exactness.** The tiled kernel is byte for byte the term-by-term one, after one re-association made first as its
 own commit (rsMagCalc `f801010`): the plain (non-adjoint-pair) Gram terms used to add their 64-row block partials
 straight into the running S_k / M_k, and a single pass over the rows cannot reproduce that order, because the running
@@ -2428,7 +2451,9 @@ and appending the V·Ω rows through a buffer or growing the array tile by tile 
 
 **What is left** (OPEN_WORK item 12): the LANTA measurement, and the gather, now about half of the traffic.
 Reordering a sector's states by reverse Cuthill–McKee halves the gather in the LRU model (9.25 → 4.8 array reads per
-product at 4 MB) but costs more than it saves on an M1 (2026-11-11, rsMagCalc branch `feature/k7-rcm`, not merged).
+product at 4 MB) but costs more than it saves on an M1 (2026-11-11, rsMagCalc branch `feature/k7-rcm`, not merged). With
+X ≈ 175 passes outside the count, its ~40-pass saving is ~10 % of the traffic before its own setup, so it is not
+worth a billed probe until the unaccounted traffic is understood.
 
 **Gate** (2026-11-01, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`, rsMagCalc on this change rebuilt
 and installed, stroff 8-aligned; pyMagCalc `26a91e3`, fMagCalc `192e7f8`, magpipe `e92b2c7`): **3219 passed,

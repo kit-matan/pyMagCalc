@@ -184,18 +184,22 @@ known; item 3 is done:
     their toy model, whose error now scales as g⁷ at order 6. See `GAP_STATUS.md`, "The
     dimer series' T0 sector made cluster additive".
 
-12. **K7 at order 9 is memory-bandwidth bound. PARTIAL 2026-11-01.** A LANTA thread-scaling probe
+12. **K7 at order 9 is memory-bandwidth bound. PARTIAL 2026-11-11.** A LANTA thread-scaling probe
     put the order-9 PT's throughput flat from 48 to 120 threads, half on one socket, and worse
-    interleaved. rsMagCalc now tiles the Ω recursion and the S_k/M_k sums over 64-row blocks,
-    byte for byte the old results after one 6.8e-14 re-association, for about 2.3× fewer bytes
-    per cluster by count (`GAP_STATUS.md`, "K7's memory traffic").
-    - **Left open, the measurement:** the gain is a count, not a LANTA timing. The M1 Pro is
-      barely bandwidth-limited and shows 8–18 %. Rerun the probe (threads 8–120, one cluster
-      batch per thread count) on the new build before changing how many threads production
-      runs use; until then 48–64 threads per node is the measured sweet spot.
-    - **Left open, the gather:** V·Ω_{k−1} reads about 9.5 arrays per product with 4 MB of
-      cache per core, about 85 of the remaining ~186 passes. Applying V link by link streams
-      the whole array per link (worse, ~27 passes per product). **Measured 2026-11-11:**
+    interleaved. rsMagCalc `10b6e4d` tiles the Ω recursion and the S_k/M_k sums over 64-row
+    blocks, byte for byte the old results after one 6.8e-14 re-association, for about 2.3× fewer
+    bytes per cluster by count (`GAP_STATUS.md`, "K7's memory traffic").
+    - **Measured on LANTA** (2026-11-11, job 6550775): 1.20× at 8 threads, 1.55–1.7× wherever
+      bandwidth limits; peak 11.6 → 18.7 clusters/s, now at 96 threads. Use 64–96 threads per
+      node for order-9 runs.
+    - **Left open, the unaccounted traffic:** 1.65× instead of 2.3× means about 175 passes per
+      cluster lie outside the count, and the new build is still bandwidth-bound. Candidates, to
+      be measured before anything is changed: the kernel zero-filling each cluster's ~2 GB of
+      fresh allocations (a per-worker arena reused across clusters would remove it, and the
+      page faults of 64–120 threads in one process with it), write-allocate reads on the
+      streamed writes, the CSR V read per product, and L3 sharing at high thread counts.
+      `perf stat` on LANTA (uncore memory counters, or page-fault counts) can tell them apart.
+    - **The gather, measured 2026-11-11:**
       - LRU model, ten order-9 sectors, array reads per product at 0.5 / 4 / 32 MB:
         the current order 14.0 / 9.25 / 4.25; nodes relabelled by degree (leaves on the
         high digits) 4 MB 7.6, and the best of ~120 hill-climbing swaps 7.5; the sector's
@@ -206,8 +210,8 @@ known; item 3 is done:
         permuted V cost about 0.25 s per order-9 cluster, so 4 threads go 1.84 → 1.45
         clusters/s. Reading V through index maps instead of permuting it is worse still
         (the PT 8.2 → 12.4 s on 6 clusters: random rows of a 113 MB CSR).
-      - So: merge it only if a LANTA A/B against `10b6e4d` shows the halved gather beating
-        the setup. Counting the setup's own traffic, the expected saving is ~15 % of bytes.
+      - With ~175 passes outside the count its saving is ~10 % of the traffic before its
+        setup, so it waits until the unaccounted traffic is understood.
     - **Oracle:** `tests/test_dimer_series_parity.py` (NumPy at 1e-12, multi-block cases), and
       for a pure restructuring a byte-level A/B against the previous build on the probe's
       clusters.
