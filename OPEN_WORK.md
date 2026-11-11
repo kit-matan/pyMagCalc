@@ -216,19 +216,22 @@ known; item 3 is done:
       for a pure restructuring a byte-level A/B against the previous build on the probe's
       clusters.
 
-13. **The series checkpoint does not fingerprint the K7 build. OPEN 2026-11-11.** Found while
-    doing item 12. `series_checkpoint.model_parts` keys on the kernel set (`rust`) but not on
-    the rsMagCalc build, so a run checkpointed under one build and resumed under another
-    whose rounding differs mixes weights rounded two ways. Physically harmless (1e-14), but
-    it breaks the documented promise that a resume is bit for bit the uninterrupted run,
-    and it has already happened once in principle: `f801010` (2026-11-01) moved the K7
-    results by 6.8e-14 with nothing in the fingerprint changing.
-    - **Fix:** rsMagCalc exports an arithmetic version (`build_info()["k7_arithmetic"]`,
-      bumped whenever the rounding can change; `feature/k7-rcm` already carries the
-      constant), and `model_parts` adds it under `kernels: rust`, or the build's git head
-      when an older build lacks it. A mismatch then refuses, as every other part does.
-    - **Oracle:** `tests/test_dimer_series_checkpoint.py`'s refusal tests, with a monkeypatched
-      `build_info`.
+13. **The series checkpoint did not fingerprint the K7 build. DONE 2026-11-11,** the day it
+    was found (doing item 12). `series_checkpoint.model_parts` keyed on the kernel set (`rust`)
+    but not on the rsMagCalc build, so a run checkpointed under one build and resumed under
+    another that rounds differently mixed weights rounded two ways: harmless in size (1e-14),
+    but not the documented bit-for-bit resume, and `f801010` (2026-11-01) had already moved
+    the K7 results by 6.8e-14 with nothing in the fingerprint changing.
+    - **Fix:** rsMagCalc's `build_info()` reports `k7_arithmetic` (`dimer_series::ARITHMETIC`,
+      2 since `f801010`, bumped whenever the rounding can change), and under `kernels: rust`
+      the fingerprint carries it (`series_checkpoint.k7_arithmetic`), or "git <head>" for an
+      older build. NumPy fingerprints are unchanged; a rust checkpoint written before the fix
+      is refused once, naming the part.
+    - **Pinned:** `tests/test_dimer_series_checkpoint.py` (another rounding version refused,
+      the part present under rust only and the git-head fallback, and a rebuild with the same
+      version resuming bit for bit); rsMagCalc `tests/test_build_info.py`. Without the fix the
+      first two fail. Gate 3234 passed, 2 skipped, 0 failed, 18 min 21 s (the 3231 of item 9's
+      gate plus these three).
 
 Items 3 and 4 come from the 2026-10-27 assessment of what is still worth compiling.
 Its third candidate, the Ewald dipolar sum, is done (`GAP_STATUS.md`, "Ewald dipolar
@@ -385,6 +388,7 @@ add it rather than folding it into whatever you are doing.
 
 | # | Item | Status |
 |---|---|---|
+| 13 | The series checkpoint did not fingerprint the K7 build's rounding (found doing item 12) | **DONE** 2026-11-11 — `k7_arithmetic` in the fingerprint under `kernels: rust` |
 | 9 | k_case 2 single-k, polarization axis off q: the per-mode clamp inflated a degenerate group's `sf±` total (2026-10-30; pick-up notes at the top of this file) | **DONE** 2026-11-11 — negatives clipped per degenerate group, both paths; the strict xfails pass |
 
 ### Closed 2026-10-30

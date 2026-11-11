@@ -1118,7 +1118,10 @@ assembly sums, so a resumed run's hoppings are the uninterrupted run's bit for b
 - **The key:** the manifest and every chunk file carry a blake2b fingerprint of the local levels, their Sz labels
   (whether the PT runs in sectors), every link's pair operator (DM included) and offset, the lattice and unit
   positions, the order, the kernel set, the cluster enumeration (count and an order-independent digest per size),
-  the file format and an algorithm version (`ALGORITHM`, to bump whenever a weight changes). The memo's own key is a
+  the file format and an algorithm version (`ALGORITHM`, to bump whenever a weight changes). Since 2026-11-11, under
+  `kernels: rust`, also the rsMagCalc build's rounding version (`build_info()["k7_arithmetic"]`, or "git <head>" for
+  an older build; OPEN_WORK item 13): the kernel set alone let a resume mix weights rounded by two builds, and
+  `f801010` had moved them by 6.8e-14. The memo's own key is a
   digest of ROUNDED levels and operators, so it could not serve; the fingerprint uses the exact bytes. A mismatch
   raises `CheckpointMismatch` naming what differs, before anything is loaded.
 - **Safe to load:** the files hold only tuples, bytes, ints, floats and strings (arrays as raw bytes), read by an
@@ -1139,8 +1142,10 @@ the signal on to Python (TUTORIAL §4g has the script).
 - order 4: a crash in the middle of a chunk of the last level, and a stop by a real SIGUSR1 (status 75, the chunk in
   flight finished and no more, handlers restored), each resumed from a fresh model to the uninterrupted hoppings
   and ground-state energy, bit for bit;
-- refusals: one link's DM sign flipped, another kernel set, the PT without Sz sectors, a chunk file of another
-  calculation, a pickle naming a global (`os.getcwd`, not called), a directory held by another process;
+- refusals: one link's DM sign flipped, another kernel set, another K7 rounding version (2026-11-11; a rebuild with
+  the same one resumes bit for bit, and a NumPy fingerprint carries no such part), the PT without Sz sectors, a chunk
+  file of another calculation, a pickle naming a global (`os.getcwd`, not called), a directory held by another
+  process;
 - one directory holding orders 2 and 3; off by default (no files, no handlers touched); on by the environment
   variable and by the config key;
 - slow, order 6: a separate process SIGKILLed a third of the way into L = 6, with nothing flushed on the way out,

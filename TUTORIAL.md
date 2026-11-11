@@ -1507,8 +1507,11 @@ one directory. The resumed hoppings are bit for bit those of an uninterrupted ru
   moment leaves a usable checkpoint. A hard kill loses only the chunk in flight.
 - The checkpoint records the model (levels, Sz sectors, every pair operator with its
   DM, the lattice), the order, the kernel set, the cluster enumeration and the
-  algorithm version. A run that differs in any of them refuses to resume and names
-  what differs. Use a new directory, or delete the old one to start over.
+  algorithm version, and under `kernels: rust` the rsMagCalc build's rounding version
+  (`k7_arithmetic`; a rebuild that changes no number still resumes). A run that differs
+  in any of them refuses to resume and names what differs. Use a new directory, or
+  delete the old one to start over. A `kernels: rust` checkpoint written before
+  2026-11-11 lacks that part and is refused by a newer pyMagCalc.
 - **SIGTERM or SIGUSR1 stops the run cleanly.** The chunk in flight finishes and is
   saved, and the process exits with status **75**, so a job script can tell "resume
   me" from a failure. A chunk is up to `chunk_bytes` (4 GB) of results, about an hour

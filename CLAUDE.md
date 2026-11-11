@@ -797,7 +797,8 @@ calculation: {mode: entangled, series_order: 5, series_resum: dlog_pade}  # | pa
   `DimerSeriesModel.checkpoint_dir`; off by default). Each chunk's subtracted weights are
   written atomically to `<dir>/order-N/`, and a rerun with the same directory loads them
   and continues, bit for bit the uninterrupted hoppings. It refuses a directory written
-  for another model, order, kernel set or algorithm version. SIGTERM or SIGUSR1 finishes
+  for another model, order, kernel set, K7 rounding version (`k7_arithmetic`, under
+  `kernels: rust`) or algorithm version. SIGTERM or SIGUSR1 finishes
   the chunk in flight, saves it and exits with status 75; the signal is seen only between
   chunks (about an hour each at order 9), so ask Slurm for it earlier than that (TUTORIAL
   §4g; `tests/test_dimer_series_checkpoint.py`). S(Q,w) and the ground-state guards stay on the

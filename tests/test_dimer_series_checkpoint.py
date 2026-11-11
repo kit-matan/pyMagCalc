@@ -195,6 +195,54 @@ def test_other_sz_setting_is_refused(saved):
         m.hopping_series(3)
 
 
+def _fake_build(monkeypatch, **info):
+    """rsMagCalc's build_info as another build would report it (the kernel itself is
+    the installed one: only the fingerprint reads build_info)."""
+    rs = pytest.importorskip("rsmagcalc")
+    real = rs.build_info()
+    fake = {k: v for k, v in real.items() if k != "k7_arithmetic"}
+    fake.update(info)
+    monkeypatch.setattr(rs, "build_info", lambda: dict(fake))
+
+
+def test_k7_rounding_is_in_the_fingerprint_under_rust_only(monkeypatch):
+    """OPEN_WORK item 13: the kernel set alone let a resume mix weights rounded by two
+    rsMagCalc builds. A NumPy fingerprint carries no such part, so a NumPy checkpoint
+    written before the part existed still matches."""
+    _fake_build(monkeypatch, k7_arithmetic=2)
+    assert sc.model_parts(_model("rust"), 3)["k7_arithmetic"] == 2
+    assert "k7_arithmetic" not in sc.model_parts(_model("numpy"), 3)
+    _fake_build(monkeypatch, git_head="abc123")           # a build older than the key
+    assert sc.model_parts(_model("rust"), 3)["k7_arithmetic"] == "git abc123"
+
+
+def test_other_k7_rounding_is_refused(tmp_path, monkeypatch):
+    _fake_build(monkeypatch, k7_arithmetic=2)
+    m = _model("rust")
+    m.checkpoint_dir = str(tmp_path)
+    m.hopping_series(3)
+    _fake_build(monkeypatch, k7_arithmetic=3)
+    m2 = _model("rust")
+    m2.checkpoint_dir = str(tmp_path)
+    with pytest.raises(sc.CheckpointMismatch, match="k7_arithmetic: saved 2, now 3"):
+        m2.hopping_series(3)
+    assert not m2._w_memo
+
+
+def test_a_rebuild_with_the_same_rounding_resumes(tmp_path, monkeypatch):
+    """Only the rounding version is fingerprinted, not the git head: a rebuild that
+    changes no number resumes, bit for bit."""
+    _fake_build(monkeypatch, k7_arithmetic=2, git_head="1111111")
+    m = _model("rust")
+    m.checkpoint_dir = str(tmp_path)
+    m.hopping_series(3)
+    _fake_build(monkeypatch, k7_arithmetic=2, git_head="2222222")
+    m2 = _model("rust")
+    m2.checkpoint_dir = str(tmp_path)
+    _assert_identical(m2, "rust", 3)
+    assert sum(m2._resumed.values()) == _topologies(m2, 3)
+
+
 def test_each_order_has_its_own_directory(saved):
     m = _model("numpy")
     m.checkpoint_dir = str(saved)

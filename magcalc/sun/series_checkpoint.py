@@ -21,8 +21,9 @@ Every file is written to a temporary name, fsynced and renamed, so a kill mid-wr
 leaves the previous state intact. The manifest and every chunk file carry a
 fingerprint of everything that decides a memoized weight: the local levels and their
 Sz labels (whether the PT runs in Sz sectors), every link's pair operator (DM
-included) and cell offset, the lattice and unit positions, the order, the kernel set,
-the cluster enumeration, and the version of this format and of the algorithm. A
+included) and cell offset, the lattice and unit positions, the order, the kernel set
+(and under rsMagCalc its build's rounding version, `k7_arithmetic`), the cluster
+enumeration, and the version of this format and of the algorithm. A
 mismatch refuses to resume and names what differs; nothing is reused silently.
 
 The chunk files are pickles that hold only tuples, bytes, ints, floats and strings
@@ -86,13 +87,32 @@ def _arr(x, dtype):
     return f"{a.dtype.str}{a.shape}".encode() + a.tobytes()
 
 
+def k7_arithmetic(kernels):
+    """Which rounding the per-cluster PT runs with: None when NumPy runs it (the
+    `numpy` kernel set, or `rust` without rsMagCalc), else the rsMagCalc build's
+    `k7_arithmetic`, or "git <head>" for a build older than that key.
+
+    Part of the fingerprint since 2026-11-11 (OPEN_WORK item 13): the kernel set alone
+    let a run checkpointed under one build resume under another that rounds
+    differently (rsMagCalc f801010 moved the weights by 6.8e-14), which mixes weights
+    rounded two ways and breaks the bit-for-bit resume.
+    """
+    from magcalc import kernels as _kernels
+    rs = _kernels.rust_for(str(kernels))
+    if rs is None:
+        return None
+    info = rs.build_info()
+    v = info.get("k7_arithmetic")
+    return int(v) if v is not None else f"git {info.get('git_head') or 'unknown'}"
+
+
 def model_parts(model, order):
     """{part: digest} of everything that decides a memoized weight at `order`
     (the enumeration is checked separately: it needs the enumerated levels)."""
     links = [_hex(int(u), int(v), tuple(int(x) for x in off), _arr(V, complex))
              for (u, v, off, V) in model.link_types]
     sz = model.sz_levels
-    return {
+    parts = {
         "format": FORMAT,
         "algorithm": ALGORITHM,
         "order": int(order),
@@ -106,6 +126,11 @@ def model_parts(model, order):
         "links": _hex(*links),
         "lattice": _hex(_arr(model.lat, float), _arr(model.pos, float)),
     }
+    # only under rsMagCalc, so a NumPy checkpoint written before the key still matches
+    k7 = k7_arithmetic(model.kernels)
+    if k7 is not None:
+        parts["k7_arithmetic"] = k7
+    return parts
 
 
 def enumeration_parts(levels):

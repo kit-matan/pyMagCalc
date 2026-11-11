@@ -7,7 +7,7 @@ context can make a correct first change. It is a map, not the whole territory: t
 authoritative details live in the files it points to (§12), and when they disagree, the
 code and the tests win.
 
-*Last reviewed: 2026-11-11, against pyMagCalc master with the K7 tiling measured on LANTA and the k_case 2 polarized clamp fixed (OPEN_WORK item 9), and before that rsMagCalc's K7 tiled over rows (the dimer series' order-9 memory traffic), and before that the δQ quadrature's 14-point rule (`QEResolution(nodes="s14")`), and before that `1256378` (the δQ quadrature's mixture by batched matmul, `e2ae02b`), and before that `2fe67a6` (the numeric H(q) builder, K8, and the exact-zero-mode rule) plus the dimer series' save and resume (`magcalc/sun/series_checkpoint.py`, `calculation.series_checkpoint`), and before that `bfae055` plus neutron-data phase 2's AMATERAS model and deterministic δQ quadrature (`magcalc/resolution.py`, `magcalc/qe_resolution.py`, the `fraction` and `prepare` hooks in `ForwardModel`), merged the same day after the dimer series' projective cluster-additive one-particle block (`_pca_one_particle`, OPEN_WORK item 11). This file is kept current with
+*Last reviewed: 2026-11-11, against pyMagCalc master with the series checkpoint fingerprinting the K7 rounding (OPEN_WORK item 13), the K7 tiling measured on LANTA and the k_case 2 polarized clamp fixed (OPEN_WORK item 9), and before that rsMagCalc's K7 tiled over rows (the dimer series' order-9 memory traffic), and before that the δQ quadrature's 14-point rule (`QEResolution(nodes="s14")`), and before that `1256378` (the δQ quadrature's mixture by batched matmul, `e2ae02b`), and before that `2fe67a6` (the numeric H(q) builder, K8, and the exact-zero-mode rule) plus the dimer series' save and resume (`magcalc/sun/series_checkpoint.py`, `calculation.series_checkpoint`), and before that `bfae055` plus neutron-data phase 2's AMATERAS model and deterministic δQ quadrature (`magcalc/resolution.py`, `magcalc/qe_resolution.py`, the `fraction` and `prepare` hooks in `ForwardModel`), merged the same day after the dimer series' projective cluster-additive one-particle block (`_pca_one_particle`, OPEN_WORK item 11). This file is kept current with
 every change that alters what it describes (§13).*
 
 ---
@@ -292,8 +292,9 @@ pytest -n0 ...               # serial; needed for -s or pdb
 - Both `pytest.ini` files run in parallel (`-n auto --dist worksteal`, pytest-xdist is a
   required dev dependency).
 - From the maintainer's workspace root, plain `pytest` also collects fMagCalc's,
-  rsMagCalc's and magpipe's tests. The last full gate there was **3231 passed, 2 skipped**
-  (2026-11-11, with the k_case 2 polarized clamp fixed). The two skips are structural:
+  rsMagCalc's and magpipe's tests. The last full gate there was **3234 passed, 2 skipped**
+  (2026-11-11, with the k_case 2 polarized clamp fixed and the series checkpoint
+  fingerprinting the K7 rounding). The two skips are structural:
   `seekpath` absent, ALPS present. No xfail is left: OPEN_WORK item 9's two strict pins
   pass since that fix.
 - **Tests never open a GUI window.** `tests/conftest.py` forces the Agg backend and sets
