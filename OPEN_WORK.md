@@ -195,12 +195,36 @@ known; item 3 is done:
       runs use; until then 48–64 threads per node is the measured sweet spot.
     - **Left open, the gather:** V·Ω_{k−1} reads about 9.5 arrays per product with 4 MB of
       cache per core, about 85 of the remaining ~186 passes. Applying V link by link streams
-      the whole array per link (worse, ~27 passes per product); renumbering a sector's states
-      to shorten the jumps changes the 64-row blocks and so the rounding (fine against NumPy
-      at 1e-12, not byte for byte). Measure before choosing.
+      the whole array per link (worse, ~27 passes per product). **Measured 2026-11-11:**
+      - LRU model, ten order-9 sectors, array reads per product at 0.5 / 4 / 32 MB:
+        the current order 14.0 / 9.25 / 4.25; nodes relabelled by degree (leaves on the
+        high digits) 4 MB 7.6, and the best of ~120 hill-climbing swaps 7.5; the sector's
+        states in reverse Cuthill–McKee order 9.9 / 4.8 / 1.0 (bandwidth ~16 000 rows).
+      - RCM is built on rsMagCalc branch `feature/k7-rcm` (`f3fdaf7`, NOT merged; 2.8e-14
+        from `10b6e4d`, parity at 1e-12). On the M1 it loses: the PT runs within 2 % of the
+        current order (the gather is not the bottleneck there), and the order plus the
+        permuted V cost about 0.25 s per order-9 cluster, so 4 threads go 1.84 → 1.45
+        clusters/s. Reading V through index maps instead of permuting it is worse still
+        (the PT 8.2 → 12.4 s on 6 clusters: random rows of a 113 MB CSR).
+      - So: merge it only if a LANTA A/B against `10b6e4d` shows the halved gather beating
+        the setup. Counting the setup's own traffic, the expected saving is ~15 % of bytes.
     - **Oracle:** `tests/test_dimer_series_parity.py` (NumPy at 1e-12, multi-block cases), and
       for a pure restructuring a byte-level A/B against the previous build on the probe's
       clusters.
+
+13. **The series checkpoint does not fingerprint the K7 build. OPEN 2026-11-11.** Found while
+    doing item 12. `series_checkpoint.model_parts` keys on the kernel set (`rust`) but not on
+    the rsMagCalc build, so a run checkpointed under one build and resumed under another
+    whose rounding differs mixes weights rounded two ways. Physically harmless (1e-14), but
+    it breaks the documented promise that a resume is bit for bit the uninterrupted run,
+    and it has already happened once in principle: `f801010` (2026-11-01) moved the K7
+    results by 6.8e-14 with nothing in the fingerprint changing.
+    - **Fix:** rsMagCalc exports an arithmetic version (`build_info()["k7_arithmetic"]`,
+      bumped whenever the rounding can change; `feature/k7-rcm` already carries the
+      constant), and `model_parts` adds it under `kernels: rust`, or the build's git head
+      when an older build lacks it. A mismatch then refuses, as every other part does.
+    - **Oracle:** `tests/test_dimer_series_checkpoint.py`'s refusal tests, with a monkeypatched
+      `build_info`.
 
 Items 3 and 4 come from the 2026-10-27 assessment of what is still worth compiling.
 Its third candidate, the Ewald dipolar sum, is done (`GAP_STATUS.md`, "Ewald dipolar

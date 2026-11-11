@@ -2427,6 +2427,8 @@ and appending the V·Ω rows through a buffer or growing the array tile by tile 
 (+10 to 16 % on the product; the whole-array fill costs about one extra write pass per order, ~5 % of the traffic).
 
 **What is left** (OPEN_WORK item 12): the LANTA measurement, and the gather, now about half of the traffic.
+Reordering a sector's states by reverse Cuthill–McKee halves the gather in the LRU model (9.25 → 4.8 array reads per
+product at 4 MB) but costs more than it saves on an M1 (2026-11-11, rsMagCalc branch `feature/k7-rcm`, not merged).
 
 **Gate** (2026-11-01, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`, rsMagCalc on this change rebuilt
 and installed, stroff 8-aligned; pyMagCalc `26a91e3`, fMagCalc `192e7f8`, magpipe `e92b2c7`): **3219 passed,
