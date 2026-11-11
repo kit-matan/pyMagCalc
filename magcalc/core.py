@@ -2746,7 +2746,8 @@ class MagCalc:
                 np.concatenate([p.energies for p in parts], axis=1),
                 np.concatenate([p.left for p in parts], axis=2),
                 np.concatenate([p.right for p in parts], axis=2),
-                np.logical_and.reduce([p.ok for p in parts]))
+                np.logical_and.reduce([p.ok for p in parts]),
+                group_clamp=int(self.k_case) == 2)
         if self.supercell_ncells > 1:
             # Per-chemical-cell normalization (Sunny/SpinW convention).
             norm = 1.0 / np.sqrt(self.supercell_ncells)

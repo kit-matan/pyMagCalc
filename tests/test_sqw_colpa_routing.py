@@ -108,15 +108,14 @@ def _helix(k, n_cells, supercell):
     return sm, calc
 
 
-# k_case 2 with a polarization axis off q: the three channel modes of one degenerate
-# group can carry a NEGATIVE sf+/sf- each (the channel tensors (I - nn^T) S' R1 are
-# not Hermitian), and the per-mode clamp zeroes it before the group is summed: +6 %
-# on the group total at one q here. Unclamped, the identity holds to 1e-15. The per-q
-# pool clamps the same way, so this predates Colpa (OPEN_WORK item 9).
-_CLAMP_XFAIL = pytest.mark.xfail(strict=True, reason="per-mode clamp, OPEN_WORK item 9")
+# k_case 2 with a polarization axis off q: one channel mode of a degenerate group can
+# carry a NEGATIVE sf+/sf- (the channel tensors (I - nn^T) S' R1 are not Hermitian).
+# Until 2026-11-11 each mode was clipped to zero before the group was summed, +6 % on
+# the group total at one q here, in both the Colpa path and the per-q pool (OPEN_WORK
+# item 9, strict xfails). Negatives are now clipped per degenerate group
+# (`numerical.clamp_degenerate_groups`), and the identity holds to 1e-9.
 _SUPERCELL_CASES = [
-    pytest.param(n, kc, cs, id=f"{cid}-k{kc}",
-                 marks=[_CLAMP_XFAIL] if (kc == 2 and cid in ("P-sf+", "P-sf-")) else [])
+    pytest.param(n, kc, cs, id=f"{cid}-k{kc}")
     for n, kc in ((3, 3), (2, 2)) for cs, cid in zip(CROSS_SECTIONS, CS_IDS)]
 
 
@@ -140,8 +139,9 @@ def test_single_k_equals_the_explicit_supercell(n_cells, k_case, cs):
 
 @pytest.mark.parametrize("channel", ["sf+", "sf-"])
 def test_k_case_2_polarized_identity_holds_before_the_clamp(channel):
-    """The unclamped contraction of the amplitudes satisfies the identity exactly, so
-    the xfail above is the clamp and nothing else."""
+    """The unclamped contraction of the amplitudes satisfies the identity exactly, and
+    has negative modes, so the identity above tests the group clamp, not a case where
+    no clamp is needed."""
     sm, spiral = _helix(0.5, 2, supercell=False)
     _, cell = _helix(0.5, 2, supercell=True)
     B = reciprocal_b_matrix(np.array(sm.unit_cell(), float))
@@ -155,6 +155,46 @@ def test_k_case_2_polarized_identity_holds_before_the_clamp(channel):
         cell.sqw_amplitudes(q).correlation(), q, cs)
     assert np.real(va).min() < -1e-3                     # the clamp has work to do
     assert np.real(va).sum(1) == pytest.approx(np.real(vb).sum(1), abs=1e-12)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("channel", ["sf+", "sf-"])
+def test_k_case_2_polarized_per_q_pool_equals_the_explicit_supercell(channel):
+    """The per-q pool clipped the same way (OPEN_WORK item 9); its single-k worker
+    now clips per degenerate group too. Slow: the pool spawns."""
+    sm, spiral = _helix(0.5, 2, supercell=False)
+    _, cell = _helix(0.5, 2, supercell=True)
+    B = reciprocal_b_matrix(np.array(sm.unit_cell(), float))
+    rng = np.random.default_rng(2)
+    q = np.column_stack([rng.uniform(-1, 1, 7), rng.uniform(-0.6, 0.6, 7),
+                         np.zeros(7)]) @ B
+    cs = {"polarization": P_GEN, "channel": channel}
+    _assert_same(_sqw(spiral, q, cs, "perq"), cell.calculate_sqw(list(q), cross_section=cs),
+                 1e-5, _scale(cell, q))
+
+
+# ------------------------------------------------- the group clamp's exact properties
+def test_clamp_degenerate_groups_keeps_each_group_total():
+    E = np.array([[1.0, 2.0, 1.0 + 1e-12, 3.0, 2.0, np.nan],
+                  [0.5, 0.5, 0.5, 4.0, 5.0, 6.0]])
+    V = np.array([[0.7, -0.1, -0.2, 0.4, 0.3, np.nan],
+                  [-0.3, 0.1, 0.1, 0.2, 0.0, 1.0]])
+    out = numerical.clamp_degenerate_groups(E, V)
+    assert (out[np.isfinite(out)] >= 0).all() and np.isnan(out[0, 5])
+    # group {0, 2} at E = 1: total 0.5, all of it on the non-negative member
+    assert out[0, [0, 2]] == pytest.approx([0.5, 0.0], abs=1e-15)
+    # group {1, 4} at E = 2: total 0.2 on mode 4; a group without negatives is untouched
+    assert out[0, [1, 4]] == pytest.approx([0.0, 0.2], abs=1e-15)
+    assert out[0, 3] == 0.4
+    # a group whose total is negative goes to zero; the rest of the row is untouched
+    assert (out[1, :3] == 0).all() and (out[1, 3:] == V[1, 3:]).all()
+
+
+def test_clamp_degenerate_groups_is_the_per_mode_clip_on_non_degenerate_modes():
+    rng = np.random.default_rng(0)
+    E = np.sort(rng.uniform(0, 5, (50, 8)), axis=1)
+    V = rng.normal(size=(50, 8))
+    assert np.array_equal(numerical.clamp_degenerate_groups(E, V), np.where(V < 0, 0.0, V))
 
 
 def test_the_supercell_identity_is_not_vacuous():

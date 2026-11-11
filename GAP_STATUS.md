@@ -1920,7 +1920,7 @@ time, on threads, in-process. The pool stays selectable for one release as
   of a degenerate group can carry a negative sf±. The per-mode clamp zeroes it before
   the group is summed: +6 % on one group total on the Néel chain. Unclamped, the
   supercell identity holds to 1e-15. The pool does the same. It is pinned as two strict
-  xfails, not fixed here.
+  xfails, not fixed here. (Fixed 2026-11-11: "The k_case 2 polarized clamp" below.)
 - **A false claim about temperature in fits.**
   `test_ignoring_temperature_biases_an_intensity_fit` asserted that a T = 0 model fitted
   to 40 K intensities of a ferrimagnetic chain "recovers ~1.07 (a 17% error)", and
@@ -2432,6 +2432,41 @@ and appending the V·Ω rows through a buffer or growing the array tile by tile 
 and installed, stroff 8-aligned; pyMagCalc `26a91e3`, fMagCalc `192e7f8`, magpipe `e92b2c7`): **3219 passed,
 2 skipped, 4 xfailed, 0 failed, 19 min 11 s**: the 3216 of the 14-point rule's gate plus the three multi-block parity
 cases. The skips are the structural pair, the xfails item 9's pins under both builders.
+
+### The k_case 2 polarized clamp, 2026-11-11 — negatives clipped per degenerate group (OPEN_WORK item 9)
+
+**The defect.** For a single-k structure with 2k a reciprocal-lattice vector (`k_case` 2) the q−k and q+k channels are
+the same momentum, and their lab-frame tensors are (I − nnᵀ) S′ R₁ and (I − nnᵀ) S′ R₁*, which are not Hermitian. With a
+polarization axis off q, one channel mode of a degenerate group can then carry a negative `sf+` or `sf-` that the
+group's other modes outweigh. Both S(Q,ω) paths clipped every mode at zero before anything was summed, so the group
+total came out too large: on the S = 1 Néel chain written as k = ½, with P = (0.3, −0.5, 0.81), one q gave 0.273 where
+the explicit 2-site supercell gives 0.257 (+6 %). Unclamped, the identity held to 1e-15, so the clamp was the whole
+error. `perp`, `trace`, the components, `chiral`, the P ∥ q `sf±`, `nsf`, Blume–Maleev and k_case 3 were never affected.
+
+**The fix.** `numerical.clamp_degenerate_groups(energies, values)` clips per group of modes whose energies agree to
+1e-6 × max(1, max|E|) at that q. A group with a negative member keeps its total, clipped at zero, shared among its
+non-negative members in proportion; a group without one is left alone, so the result equals the per-mode clip wherever
+that clip did nothing. It is used for k_case 2 only, in both paths: `sqw_amplitudes` sets `SqwAmplitudes.group_clamp`
+on the three-channel amplitudes, whose `contract` then calls it (so `calculate_sqw`, `sqw_batch` and the forward model
+all get it), and the per-q pool's single-k worker applies it once all three channels are in. Inside a degenerate group
+only the total is an observable, which is why the split among members is free.
+
+**Pinned** (`tests/test_sqw_colpa_routing.py`, every case under both H(q) builders):
+- the single-k = explicit supercell identity for the two P-`sf±` k_case 2 cases, the former strict xfails, now at 1e-9
+  like every other cross-section;
+- the per-q pool against the same supercell, `sf+` and `sf-` (slow: the pool spawns);
+- the clamp's exact properties: group totals kept and clipped at zero, untouched groups bit for bit, the per-mode clip
+  on non-degenerate modes, NaN kept;
+- the existing check that the unclamped contraction has negative modes (below −1e-3), so the identity tests the group
+  clamp rather than a case with nothing to clip.
+With the fix reverted, all eight identity cases fail. The other S(Q,ω) suites (`test_single_k`, `test_polarized`,
+`test_polarization_frames`, `test_forward_model`, `test_sqw_batch`) pass unchanged.
+
+**Gate** (2026-11-11, workspace root, `MAGCALC_NO_GUI=1 python -m pytest -m "" -rs`; pyMagCalc `833849f` plus this
+change, rsMagCalc `10b6e4d`, fMagCalc `192e7f8`, magpipe `e92b2c7`): **3231 passed, 2 skipped, 0 xfailed, 0 failed,
+18 min 35 s**, the load rising to ~150 from another session's LaTeX builds partway through, with no worker lost. That is
+the 3219 of K7's tiling gate, plus the four former xfails, plus eight new tests (the pool identity and the two clamp
+tests, each under both builders). The skips are the structural pair; no xfail is left.
 
 ### Gapless and degenerate S(Q,ω) under `backend: fortran`, 2026-10-28 — two Fortran defects, pinned to Sunny and a closed form
 

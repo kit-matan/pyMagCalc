@@ -16,7 +16,8 @@ dipole S(Q,ω)) is in fMagCalc. Everything is merged to `master` and pushed (pyM
 `9b70cf5` before the last two items, fMagCalc `4a5ff4b`, rsMagCalc `1d2532d`, now
 public). Last full gate: see `GAP_STATUS.md`, "The dimer series' subtraction in
 processes, and the T0 sector under DM" and "The dimer series' T0 sector made cluster
-additive" (the structural skips, and item 9's strict xfails). K7, the dimer series' per-cluster perturbation
+additive" (the structural skips, and item 9's strict xfails, which pass since item 9 was
+fixed on 2026-11-11). K7, the dimer series' per-cluster perturbation
 theory, followed on 2026-10-29 from a profile of every shipped example under the
 compiled kernels (`GAP_STATUS.md`, "Rust kernels K7"). Four small follow-ups were
 known; item 3 is done:
@@ -131,24 +132,26 @@ known; item 3 is done:
    The forward model's oracles (Sunny, the closed-form chain, exact identities) carry
    over unchanged.
 
-9. **k_case 2 single-k with a polarization axis off q: the per-mode clamp changes the
-   group total.** Found while closing item 7, and older than it: the per-q pool does
-   the same. For a single-k structure with 2k a reciprocal-lattice vector (`k_case`
-   2), the q−k and q+k channel tensors are (I − nnᵀ) S′ R₁, which is not Hermitian. One
-   channel mode of a degenerate group can then carry a negative `sf+` or `sf-` when
-   the polarization axis has a component off q. The mode is clipped to zero before the
-   group is summed. On the S = 1 Néel chain written as k = ½, with P = (0.3, −0.5,
-   0.81), one q gets 0.273 for the group where the explicit 2-site supercell gives
-   0.257 (+6 %). Unclamped, the two agree to 1e-15.
-   - **Not affected:** `perp`, `trace`, the components, `chiral`, the P ∥ q `sf±`
-     strings, `nsf`, Blume–Maleev, and k_case 3. All of these pass the supercell
-     identity to 1e-9.
-   - **Pinned:** `tests/test_sqw_colpa_routing.py` has the two cases as strict xfails,
-     and the unclamped identity as a passing test.
-   - **Candidate fix:** for k_case 2, clamp the sum over the three channels of a
-     degenerate group, not each channel mode. Alternatively, fold q±k into one channel,
-     since they are the same momentum.
-   - **Oracle:** the supercell identity, which is exact.
+9. **k_case 2 single-k with a polarization axis off q: the per-mode clamp changed the
+   group total. DONE 2026-11-11.** Found while closing item 7, and older than it: the
+   per-q pool did the same. For a single-k structure with 2k a reciprocal-lattice vector
+   (`k_case` 2), the q−k and q+k channel tensors are (I − nnᵀ) S′ R₁, which is not
+   Hermitian, so one channel mode of a degenerate group can carry a negative `sf+` or
+   `sf-` when the polarization axis has a component off q. Each mode used to be clipped
+   to zero before the group was summed: on the S = 1 Néel chain written as k = ½, with
+   P = (0.3, −0.5, 0.81), one q got 0.273 for the group where the explicit 2-site
+   supercell gives 0.257 (+6 %).
+   - **Fix:** `numerical.clamp_degenerate_groups` clips per energy-degenerate group: a
+     group with a negative member keeps its total, clipped at zero, shared among its
+     non-negative members in proportion. Groups without a negative, and every other
+     structure, are untouched. Both paths use it for k_case 2: the Colpa amplitudes
+     (`SqwAmplitudes.group_clamp`) and the per-q pool's single-k worker.
+   - **Pinned:** `tests/test_sqw_colpa_routing.py`. The two strict xfails now pass (the
+     supercell identity to 1e-9, both builders); the pool path against the supercell
+     (slow); the clamp's exact properties (group totals kept, equal to the per-mode clip
+     on non-degenerate modes, NaN kept). Without the fix all eight identity cases fail.
+     See `GAP_STATUS.md`, "The k_case 2 polarized clamp".
+
 10. **The dimer series has no checkpoint. DONE 2026-10-31,** the day it was found
     (a LANTA run of Rb₂Cu₃SnF₁₂ at order 8, the run that showed the K7 pool on 2
     threads). `hopping_series(order)` held everything in memory until it returned, so
@@ -349,6 +352,12 @@ same commit, and item 15 was found inside item 12 the same way. That is the inte
 flow — the alternative is a commit that changes several unrelated numbers at once and
 cannot be reviewed. The next item here will almost certainly be found the same way, so
 add it rather than folding it into whatever you are doing.
+
+### Closed 2026-11-11
+
+| # | Item | Status |
+|---|---|---|
+| 9 | k_case 2 single-k, polarization axis off q: the per-mode clamp inflated a degenerate group's `sf±` total (2026-10-30; pick-up notes at the top of this file) | **DONE** 2026-11-11 — negatives clipped per degenerate group, both paths; the strict xfails pass |
 
 ### Closed 2026-10-30
 

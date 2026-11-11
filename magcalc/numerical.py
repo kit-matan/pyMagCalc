@@ -594,6 +594,43 @@ def form_factor_matrix(ion_list, q_cart) -> npt.NDArray[np.float64]:
     return ff
 
 
+def clamp_degenerate_groups(energies, values, rtol: float = 1e-6):
+    """Clip negatives per energy-degenerate group of modes, not per mode.
+
+    energies, values (Nq, M). At each q the modes whose energies agree to
+    rtol * max(1, max|E|) form a group. A group with a negative member keeps its
+    total, clipped at zero, shared among its non-negative members in proportion;
+    a group without one is untouched, so this equals the per-mode clip wherever
+    that clip did nothing.
+
+    For a k_case 2 single-k structure (2k a reciprocal-lattice vector) the q-k
+    and q+k channels are the same momentum, and their tensors (I - n n^T) S' R1
+    are not Hermitian: one mode of a degenerate group can carry a negative sf+ or
+    sf- that the group's other modes outweigh. Clipped mode by mode, the group
+    total came out too large (+6 % at one q of the S = 1 Neel chain, OPEN_WORK
+    item 9); only the total is an observable.
+    """
+    E = np.asarray(energies, dtype=float)
+    out = np.array(values, dtype=float, copy=True)
+    for k in np.flatnonzero((out < 0).any(axis=1)):
+        e, v = E[k], out[k]
+        live = np.flatnonzero(np.isfinite(e) & np.isfinite(v))
+        if live.size == 0:
+            continue
+        tol = rtol * max(1.0, float(np.abs(e[live]).max()))
+        order = live[np.argsort(e[live], kind="stable")]
+        cuts = np.flatnonzero(np.diff(e[order]) > tol) + 1
+        for grp in np.split(order, cuts):
+            g = v[grp]
+            if not (g < 0).any():
+                continue
+            pos = np.where(g > 0, g, 0.0)
+            total = max(float(g.sum()), 0.0)
+            ps = float(pos.sum())
+            v[grp] = pos * (total / ps) if ps > 0 else 0.0
+    return out
+
+
 @dataclass
 class SqwAmplitudes:
     """One-magnon amplitudes of a stack of q: S^ab(q, m) = left_a(q, m) right_b(q, m)^*.
@@ -608,6 +645,9 @@ class SqwAmplitudes:
     left: npt.NDArray[np.complex128]
     right: npt.NDArray[np.complex128]
     ok: npt.NDArray[np.bool_]
+    # True for the three channels of a k_case 2 single-k structure, whose
+    # negatives are clipped per degenerate group (`clamp_degenerate_groups`)
+    group_clamp: bool = False
 
     def correlation(self, sl=slice(None)) -> npt.NDArray[np.complex128]:
         """S^ab(q, m), (Nq, 3, 3, M), for the q in `sl`."""
@@ -628,7 +668,9 @@ class SqwAmplitudes:
             if clamp and vals.size:
                 worst = max(worst, float(np.nanmax(np.abs(np.imag(vals)), initial=0.0)))
             vals = np.real(vals)
-            if clamp:
+            if clamp and self.group_clamp:
+                vals = clamp_degenerate_groups(self.energies[sl], vals)
+            elif clamp:
                 vals = np.where(vals < 0, 0.0, vals)        # keeps NaN
             out[sl] = vals
         if worst > SQW_IMAG_PART_THRESHOLD:
@@ -1043,6 +1085,7 @@ def process_calc_Sqw_single_k(
 
     numerical_args_base = [spin_magnitude_num] + list(hamiltonian_params_num)
 
+    group_clamp = False
     for c, (shift, (T_left, T_right)) in enumerate(zip(shifts, tensors)):
         q_c = q_vector + shift
         q_label = f"q={q_vector} (channel {['q-k', 'q', 'q+k'][c]})"
@@ -1112,11 +1155,16 @@ def process_calc_Sqw_single_k(
                     )
 
             channel_int = np.real(intensity_per_mode)
-            if clamp:
+            # k_case 2: clipped per degenerate group once every channel is in
+            group_clamp = clamp and k_case == 2
+            if clamp and not group_clamp:
                 channel_int[channel_int < 0] = 0
             intensities_all[sl] = channel_int
         except Exception:
             logger.exception(f"Error during single-k S(q,w) calculation for {q_label}.")
             continue
 
+    if group_clamp:
+        intensities_all = clamp_degenerate_groups(
+            energies_all[None], intensities_all[None])[0]
     return q_vector, energies_all, intensities_all

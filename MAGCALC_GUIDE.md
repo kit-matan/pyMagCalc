@@ -7,7 +7,7 @@ context can make a correct first change. It is a map, not the whole territory: t
 authoritative details live in the files it points to (§12), and when they disagree, the
 code and the tests win.
 
-*Last reviewed: 2026-11-01, against pyMagCalc master with rsMagCalc's K7 tiled over rows (the dimer series' order-9 memory traffic), and before that the δQ quadrature's 14-point rule (`QEResolution(nodes="s14")`), and before that `1256378` (the δQ quadrature's mixture by batched matmul, `e2ae02b`), and before that `2fe67a6` (the numeric H(q) builder, K8, and the exact-zero-mode rule) plus the dimer series' save and resume (`magcalc/sun/series_checkpoint.py`, `calculation.series_checkpoint`), and before that `bfae055` plus neutron-data phase 2's AMATERAS model and deterministic δQ quadrature (`magcalc/resolution.py`, `magcalc/qe_resolution.py`, the `fraction` and `prepare` hooks in `ForwardModel`), merged the same day after the dimer series' projective cluster-additive one-particle block (`_pca_one_particle`, OPEN_WORK item 11). This file is kept current with
+*Last reviewed: 2026-11-11, against pyMagCalc master with the k_case 2 polarized clamp fixed (OPEN_WORK item 9), and before that rsMagCalc's K7 tiled over rows (the dimer series' order-9 memory traffic), and before that the δQ quadrature's 14-point rule (`QEResolution(nodes="s14")`), and before that `1256378` (the δQ quadrature's mixture by batched matmul, `e2ae02b`), and before that `2fe67a6` (the numeric H(q) builder, K8, and the exact-zero-mode rule) plus the dimer series' save and resume (`magcalc/sun/series_checkpoint.py`, `calculation.series_checkpoint`), and before that `bfae055` plus neutron-data phase 2's AMATERAS model and deterministic δQ quadrature (`magcalc/resolution.py`, `magcalc/qe_resolution.py`, the `fraction` and `prepare` hooks in `ForwardModel`), merged the same day after the dimer series' projective cluster-additive one-particle block (`_pca_one_particle`, OPEN_WORK item 11). This file is kept current with
 every change that alters what it describes (§13).*
 
 ---
@@ -292,10 +292,10 @@ pytest -n0 ...               # serial; needed for -s or pdb
 - Both `pytest.ini` files run in parallel (`-n auto --dist worksteal`, pytest-xdist is a
   required dev dependency).
 - From the maintainer's workspace root, plain `pytest` also collects fMagCalc's,
-  rsMagCalc's and magpipe's tests. The last full gate there was **3206 passed, 2 skipped,
-  4 xfailed** (2026-10-31, with K8, the dimer series' checkpoint and the δQ quadrature's
-  batched mixture). The two skips are structural: `seekpath` absent, ALPS
-  present. The xfails are OPEN_WORK item 9's two strict pins, run under both H(q) builders.
+  rsMagCalc's and magpipe's tests. The last full gate there was **3231 passed, 2 skipped**
+  (2026-11-11, with the k_case 2 polarized clamp fixed). The two skips are structural:
+  `seekpath` absent, ALPS present. No xfail is left: OPEN_WORK item 9's two strict pins
+  pass since that fix.
 - **Tests never open a GUI window.** `tests/conftest.py` forces the Agg backend and sets
   `MAGCALC_NO_GUI=1`. A bare `magcalc run` outside pytest is not guarded; prefix it with
   `MAGCALC_NO_GUI=1`.
@@ -396,7 +396,8 @@ iOS app).
   S(Q,ω) test and by an exact single-k = supercell identity for every cross-section.
   Colpa is also 4–5× faster end to end than fMagCalc's S(Q,ω), whose retirement is
   recommended (`GAP_STATUS.md`, "calculate_sqw on Colpa's method"). Two older defects
-  turned up: the k_case 2 polarized clamp (OPEN_WORK item 9), and a test whose "T = 0 fit
+  turned up: the k_case 2 polarized clamp (OPEN_WORK item 9, fixed 2026-11-11: negatives
+  are now clipped per degenerate group), and a test whose "T = 0 fit
   is biased 17 %" claim was rounding noise.
 
 - **Phase 1 of the neutron-data layer** (2026-10-30). `MagCalc.sqw_batch` computes the
