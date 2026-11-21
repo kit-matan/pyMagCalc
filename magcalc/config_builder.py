@@ -390,13 +390,14 @@ class MagCalcConfigBuilder:
             b.set_lattice(a=lp.get('a', 1.0), b=lp.get('b', lp.get('a', 1.0)),
                           c=lp.get('c', lp.get('a', 1.0)), alpha=lp.get('alpha', 90.0),
                           beta=lp.get('beta', 90.0), gamma=lp.get('gamma', 90.0),
-                          space_group=int(sg) if sg is not None else None)
+                          space_group=int(sg) if sg is not None else None,
+                          hall_number=lp.get('hall_number'))
         elif cs.get('lattice_vectors') is not None:
             b.lattice_vectors = np.array(cs['lattice_vectors'], dtype=float)
             b.config['crystal_structure']['lattice_vectors'] = b.lattice_vectors.tolist()
             if sg is not None:
                 b.space_group_number = int(sg)
-                b._load_symmetry_ops(int(sg))
+                b._load_symmetry_ops(int(sg), lp.get('hall_number'))
 
         # Atoms. Explicit atoms_uc are the full cell already; wyckoff_atoms need the
         # orbit expanded over the loaded space group (add_wyckoff_atom does that).
@@ -424,10 +425,12 @@ class MagCalcConfigBuilder:
 
     def set_lattice(self, a: float, b: float = None, c: float = None, 
                    alpha: float = 90.0, beta: float = 90.0, gamma: float = 90.0,
-                   space_group: int = None):
+                   space_group: int = None, hall_number: int = None):
         """
         Define lattice parameters and optional space group.
-        :param space_group: Integer Number (1-230). 
+        :param space_group: Integer Number (1-230).
+        :param hall_number: A specific setting of it (spglib Hall number, 1-530);
+            the group's first (standard) setting when omitted.
         """
         if b is None: b = a
         if c is None: c = a
@@ -439,7 +442,7 @@ class MagCalcConfigBuilder:
 
         if space_group:
             self.space_group_number = space_group
-            self._load_symmetry_ops(space_group)
+            self._load_symmetry_ops(space_group, hall_number)
 
         # Calculate lattice vectors
         # Calculate lattice vectors
@@ -777,6 +780,29 @@ class MagCalcConfigBuilder:
         user_type = str(type)
         rot_ops = self.symmetry_ops['rotations']
         trans_ops = self.symmetry_ops['translations']
+
+        # An `anisotropic_exchange` entry holds a DIAGONAL only. Under an operation
+        # that mixes the Cartesian axes (a 3- or 6-fold, a diagonal mirror) the
+        # rotated tensor R diag(V) R^T is no longer diagonal, and keeping its
+        # diagonal dropped the rest without a word (triangular lattice, V =
+        # (1.0, 0.2, 0.5): Jxy = +-0.346 lost on the 60-degree bonds). When that
+        # would happen the rule is propagated as the full tensor it is.
+        if type == "anisotropic_exchange" and self._aniso_rule_leaves_diagonal(
+                val_vec, is_symbolic, rot_ops):
+            comps = list(value) if isinstance(value, (list, tuple, np.ndarray)) \
+                else [value]
+            if len(comps) != 3:
+                raise ValueError(
+                    f"anisotropic_exchange rule for {ref_pair} needs three diagonal "
+                    f"components [Jxx, Jyy, Jzz]; got {value!r}.")
+            full = [[comps[a] if a == b else 0 for b in range(3)] for a in range(3)]
+            logger.info(
+                f"anisotropic_exchange rule for {ref_pair}: a symmetry operation "
+                f"rotates the diagonal tensor off the Cartesian axes, so the rule is "
+                f"propagated as a full interaction_matrix.")
+            return self.add_symmetry_interaction(
+                "interaction_matrix", ref_pair, full, distance=distance,
+                offset=[int(v) for v in best_offset], axis=axis)
         ref_key = (self.atoms_uc[idx_i]['label'], self.atoms_uc[idx_j]['label'],
                    tuple(int(v) for v in best_offset))
 
@@ -1155,11 +1181,32 @@ class MagCalcConfigBuilder:
              entry["original_value"] = original_value
         self.config["interactions"]["interaction_matrix"].append(entry)
 
+    def _aniso_rule_leaves_diagonal(self, val_vec, is_symbolic, rot_ops, tol=1e-9):
+        """True when some operation turns the diagonal tensor diag(V) into one with
+        off-diagonal elements (checked on numeric samples of a symbolic V)."""
+        try:
+            samples = _rule_value_samples(val_vec, is_symbolic)
+        except (TypeError, ValueError):
+            samples = [np.array([1.0, 2.0, 3.0])]   # generic: any axis mixing counts
+        for s in samples:
+            s = np.asarray(s, dtype=float).ravel()
+            if s.size != 3:
+                return False
+            scale = max(float(np.abs(s).max()), 1e-300)
+            for R in rot_ops:
+                R_cart = self._lattice_rotation(R)
+                J = R_cart @ np.diag(s) @ R_cart.T
+                if np.abs(J - np.diag(np.diag(J))).max() > tol * scale + 1e-6 * scale:
+                    return True
+        return False
+
     def _find_atom_at_pos(self, pos, tol=1e-3):
         for a in self.atoms_uc:
             p = np.array(a['pos'])
-            diff = np.abs(p - pos)
-            diff = np.minimum(diff, 1.0 - diff)
+            # nearest-image difference: a site stored any number of cells outside
+            # [0, 1) is still found (it used to be folded by one cell only)
+            diff = p - pos
+            diff = np.abs(diff - np.round(diff))
             if np.linalg.norm(diff) < tol:
                 return a, np.linalg.norm(diff)
         return None, None
@@ -1198,10 +1245,11 @@ class MagCalcConfigBuilder:
         interactions = []
         for a in self.atoms_uc:
             if a['label'].startswith(base_label): # Simple prefix match
+                # `atoms` / `value` are the keys GenericSpinModel reads
                 interactions.append({
                     "type": "sia",
-                    "atom_label": a['label'],
-                    "K": value,
+                    "atoms": [a['label']],
+                    "value": value,
                     "axis": axis if axis is not None else [0,0,1]
                 })
         
@@ -1396,26 +1444,45 @@ class MagCalcConfigBuilder:
         self._atom_label_to_idx = {a['label']: i for i, a in enumerate(self.atoms_uc)}
         logger.info(f"Aligned {len(new_atoms_uc)} atoms to provided reference positions.")
 
-    def _load_symmetry_ops(self, space_group: int):
+    def _load_symmetry_ops(self, space_group: int, hall_number: int = None):
         """
         Load symmetry operations from spglib database.
         """
-        # Heuristic: Iterate Hall numbers to find the first one matching the SG number.
-        # This usually corresponds to the standard setting.
-        found = False
+        # The first Hall number of a space group is its standard setting; a group
+        # has several (axis choices, and for 24 groups two origin choices). Pass
+        # `hall_number` (lattice_parameters.hall_number) to pick another one.
+        settings = []
         for hall in range(1, 531):
             sg_info = spglib.get_spacegroup_type(hall)
-            # sg_info.number is integer
             if sg_info.number == space_group:
-                # Prefer "standard" setting? Usually the first one or specific choice.
-                # Just take the first one found for now.
-                # Actually, for Fdd2 (43), we want standard setting.
-                self.symmetry_ops = spglib.get_symmetry_from_database(hall)
-                if self.symmetry_ops:
-                    found = True
-                    logger.info(f"Loaded symmetry for SG {space_group}: Hall {hall} ({sg_info.international_short})")
-                    break 
-        
+                settings.append((hall, sg_info))
+        if hall_number is not None:
+            chosen = [s for s in settings if s[0] == int(hall_number)]
+            if not chosen:
+                raise ValueError(
+                    f"hall_number {hall_number} is not a setting of space group "
+                    f"{space_group}; its settings are Hall "
+                    f"{[h for h, _ in settings]}.")
+        else:
+            chosen = settings[:1]
+
+        found = False
+        if chosen:
+            hall, sg_info = chosen[0]
+            self.symmetry_ops = spglib.get_symmetry_from_database(hall)
+            if self.symmetry_ops:
+                found = True
+                logger.info(f"Loaded symmetry for SG {space_group}: Hall {hall} ({sg_info.international_short})")
+                origins = sorted({str(i.choice) for _, i in settings
+                                  if str(i.choice) in ("1", "2")})
+                if hall_number is None and len(origins) > 1:
+                    logger.warning(
+                        f"Space group {space_group} has two origin choices; using "
+                        f"Hall {hall} (origin choice {sg_info.choice}). If the "
+                        f"positions are given in the other one, set "
+                        f"lattice_parameters.hall_number (settings: "
+                        f"{[(h, str(i.choice)) for h, i in settings]}).")
+
         if not found:
             logger.error(f"FAILED to find Hall number for Space Group {space_group}")
 
@@ -1591,14 +1658,9 @@ class MagCalcConfigBuilder:
         labels = [a["label"] for a in self.atoms_uc]
         
         # Determine search range for offsets
-        # Estimate from max_distance and lattice vectors? 
-        # For now, use fixed robust range or simple heuristic.
-        # If lattice is 5A and max_dist is 8A, range 2 is enough.
-        # Safe bet: [-2, 2] for typical inputs.
-        search_range = 2 
-        from itertools import product
-        
-        offsets = list(product(range(-search_range, search_range+1), repeat=3))
+        # Sized from max_distance and the cell heights: a fixed +-2 missed the
+        # [3,0,0] orbit at 7.5 A of a 2.5 A cell.
+        offsets = self._offset_shell(max_distance)
 
         # Store all bonds as (idx_i, idx_j, tuple(offset))
         all_bonds = []
@@ -1800,11 +1862,18 @@ class MagCalcConfigBuilder:
                                              distance=target_dist, offset=list(ref_off))
                 
                 # Remove added bonds from pool
-                expanded = self.config["interactions"]["anisotropic_exchange"]
+                # (a rule promoted to a full tensor lands in `interaction_matrix`)
+                expanded = (self.config["interactions"]["anisotropic_exchange"]
+                            + self.config["interactions"]["interaction_matrix"])
+                n_before = len(pool)
                 pool = [b for b in pool if not any(
                     (e["pair"] == [b[0], b[1]] and e.get("rij_offset") == list(b[2]))
                     for e in expanded
                 )]
+                if len(pool) == n_before:
+                    raise ValueError(
+                        f"Distance rule {rule}: propagating the bond "
+                        f"{ref_i}->{ref_j} {list(ref_off)} added no bond of the pool.")
 
     def _expand_interaction_matrix_rules(self):
         """

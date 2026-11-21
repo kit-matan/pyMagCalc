@@ -367,6 +367,10 @@ def parallel_tempering(H, b, N, S, temperatures, n_sweeps=4000, n_equil=1500,
     replicas in parallel over `n_workers` threads (None = all cores); a kernel
     failure is logged and the NumPy loop below runs instead. The two do not share
     a random stream (`kernels.make_rng`)."""
+    if int(n_sweeps) <= int(n_equil):
+        raise ValueError(
+            f"parallel_tempering: n_sweeps ({n_sweeps}) must exceed n_equil "
+            f"({n_equil}); otherwise no sweep is measured and every average is NaN.")
     temps = np.asarray(sorted(temperatures), float)
     R = len(temps)
     betas = 1.0 / temps

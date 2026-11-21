@@ -81,6 +81,34 @@ def gram_schmidt(x: npt.NDArray[np.complex128]) -> npt.NDArray[np.complex128]:
             q[:, deficient] = 0.0
     return q
 
+
+def _orthonormalize_degenerate_block(
+    x: npt.NDArray[np.complex128], rel_tol: float = 1e-8
+) -> npt.NDArray[np.complex128]:
+    """Gram-Schmidt on a degenerate block, then made orthogonal in the bosonic
+    metric g = diag(1, -1).
+
+    The Bogoliubov transformation needs T^dagger g T = g, so the vectors of a
+    degenerate block must be g-orthogonal, which Euclidean orthogonality gives only
+    when the block's modes share one u/v ratio (a symmetry-related pair). At an
+    accidental degeneracy they do not, and the group's summed intensity came out
+    wrong (10 % in a two-mode test). The Euclidean basis Q is therefore rotated by
+    the eigenvectors of Q^dagger g Q -- but only when that matrix is not already
+    diagonal, so symmetry-related blocks are returned exactly as before.
+    """
+    q = gram_schmidt(x)
+    m = q.shape[1]
+    if m < 2 or q.shape[0] % 2:
+        return q
+    n = q.shape[0] // 2
+    g = np.concatenate([np.ones(n), -np.ones(n)])
+    M = q.conj().T @ (g[:, None] * q)
+    off = np.abs(M - np.diag(np.diag(M))).max()
+    if off <= rel_tol * max(np.abs(np.diag(M)).max(), 1e-300):
+        return q
+    _, w = np.linalg.eigh((M + M.conj().T) / 2)
+    return q @ w
+
 def _diagonalize_and_sort(
     Hmat: npt.NDArray[np.complex128], nspins: int, q_vector_label: str
 ) -> Tuple[Optional[npt.NDArray[np.complex128]], Optional[npt.NDArray[np.complex128]]]:
@@ -163,7 +191,7 @@ def _apply_gram_schmidt(
                 f"Applying Gram-Schmidt to block [{start_idx}:{end_idx}] for {q_vector_label}"
             )
             vec_block = orthonormalized_eigenvectors[:, start_idx:end_idx]
-            orthonormal_vecs = gram_schmidt(vec_block)
+            orthonormal_vecs = _orthonormalize_degenerate_block(vec_block)
             if orthonormal_vecs.shape[1] == vec_block.shape[1]:
                 orthonormalized_eigenvectors[:, start_idx:end_idx] = orthonormal_vecs
             else:
@@ -184,7 +212,7 @@ def _apply_gram_schmidt(
             f"Applying Gram-Schmidt to final block [{start_idx}:{end_idx}] for {q_vector_label}"
         )
         vec_block = orthonormalized_eigenvectors[:, start_idx:end_idx]
-        orthonormal_vecs = gram_schmidt(vec_block)
+        orthonormal_vecs = _orthonormalize_degenerate_block(vec_block)
         if orthonormal_vecs.shape[1] == vec_block.shape[1]:
             orthonormalized_eigenvectors[:, start_idx:end_idx] = orthonormal_vecs
         else:

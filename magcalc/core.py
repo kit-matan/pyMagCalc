@@ -2565,8 +2565,14 @@ class MagCalc:
         elif isinstance(q_vectors, list):
             q_vectors_list = [np.array(q) for q in q_vectors]
         else:
-             logger.error("Invalid input for q_vectors. Must be list of arrays or 2D array.")
-             return None
+            # a single q (shape (3,)) or a tuple of them, as calculate_dispersion
+            # accepts; this used to log an error and return None
+            try:
+                q_arr = np.asarray(q_vectors, dtype=float).reshape(-1, 3)
+            except (TypeError, ValueError) as e:
+                raise ValueError(
+                    "q_vectors must be a list of 3-vectors or an (N, 3) array.") from e
+            q_vectors_list = [q_arr[i, :] for i in range(q_arr.shape[0])]
 
         # Domain/twin averaging is shared with the SU(N) and entangled engines --
         # see numerical.sqw_domain_average.
@@ -2867,7 +2873,10 @@ class MagCalc:
         if backend == "fortran":
             if use_single_k:
                 logger.info("Single-k S(q,w) not available in the Fortran backend; using NumPy.")
-            elif (cross_section or "perp").lower() != "perp":
+            elif not (cross_section is None or (
+                    isinstance(cross_section, str)
+                    and cross_section.lower() == "perp")):
+                # (a dict spec, e.g. a polarized channel, is not 'perp' either)
                 logger.info(
                     f"cross_section='{cross_section}' not available in the "
                     "Fortran backend (it computes the perp contraction); using NumPy.")

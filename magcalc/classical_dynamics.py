@@ -380,8 +380,13 @@ def _contract(tensor, q, cross_section):
     if cs in ("xx", "yy", "zz"):
         a = {"xx": 0, "yy": 1, "zz": 2}[cs]
         return tensor[:, a, a]
+    # perp: (delta - q^q^) : C. At q -> 0 the direction is undefined; use its
+    # rotational average (2/3) Tr, as scga._contract does (Sunny's convention).
+    # The full trace used here before put a 3/2 spike at Gamma on a q-path.
     qn = np.linalg.norm(q)
-    P = np.eye(3) if qn < 1e-12 else np.eye(3) - np.outer(q / qn, q / qn)
+    if qn < 1e-12:
+        return (2.0 / 3.0) * np.einsum("waa->w", tensor)
+    P = np.eye(3) - np.outer(q / qn, q / qn)
     return np.einsum("ab,wab->w", P, tensor)
 
 

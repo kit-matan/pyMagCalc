@@ -411,6 +411,14 @@ class QEResolution:
             extra = extra + np.asarray(var, float)
         if np.any(extra > 0):
             s0 = np.asarray(self.energy.sigma(np.asarray(centre, float)), float)
+            if not hasattr(self.energy, "cdf"):
+                # Gaussian law: work with the absolute width, so a base width of
+                # zero (sigma0 = 0) plus an intrinsic width is a Gaussian of that
+                # width and not 0/0.
+                width = np.sqrt((np.asarray(rho, float) * s0) ** 2 + extra)
+                from .forward import _bin_fraction
+                return _bin_fraction(np.asarray(lo) - shift, np.asarray(hi) - shift,
+                                     np.asarray(centre, float), width)
             rho = np.sqrt(np.asarray(rho, float) ** 2 + extra / s0 ** 2)
         return self._fraction(lo, hi, centre, shift, rho)
 
@@ -420,8 +428,13 @@ class QEResolution:
         hi = np.asarray(hi) - shift
         if hasattr(self.energy, "cdf"):
             rho = np.asarray(rho, float)
-            return (self.energy.cdf((hi - centre) / rho, centre)
-                    - self.energy.cdf((lo - centre) / rho, centre))
+            with np.errstate(divide="ignore", invalid="ignore"):
+                frac = (self.energy.cdf((hi - centre) / rho, centre)
+                        - self.energy.cdf((lo - centre) / rho, centre))
+            if np.any(rho == 0):       # delta-function limit, as in _bin_fraction
+                step = 0.5 * (np.sign(hi - centre) - np.sign(lo - centre))
+                frac = np.where(rho == 0, step, frac)
+            return frac
         from .forward import _bin_fraction
         return _bin_fraction(lo, hi, centre, rho * self.energy.sigma(centre))
 

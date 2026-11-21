@@ -445,12 +445,13 @@ class GenericSpinModel:
         if lattice:
              builder.set_lattice(
                 a=lattice.get('a', 1.0),
-                b=lattice.get('b', 1.0),
-                c=lattice.get('c', 1.0),
+                b=lattice.get('b', lattice.get('a', 1.0)),
+                c=lattice.get('c', lattice.get('a', 1.0)),
                 alpha=lattice.get('alpha', 90.0),
                 beta=lattice.get('beta', 90.0),
                 gamma=lattice.get('gamma', 90.0),
-                space_group=int(lattice.get('space_group')) if lattice.get('space_group') else None
+                space_group=int(lattice.get('space_group')) if lattice.get('space_group') else None,
+                hall_number=lattice.get('hall_number'),
              )
         elif 'lattice_vectors' in crystal_struct:
              builder.lattice_vectors = np.array(crystal_struct['lattice_vectors'], dtype=float)
@@ -1060,7 +1061,9 @@ class GenericSpinModel:
         if 'lattice_parameters' in crystal_struct:
             lp = crystal_struct['lattice_parameters']
             # Dict or object? Config is dict.
-            a, b, c = lp['a'], lp['b'], lp['c']
+            # b and c default to a (the schema requires only `a`)
+            a = lp['a']
+            b, c = lp.get('b', a), lp.get('c', a)
             alpha = np.deg2rad(lp.get('alpha', 90.0))
             beta = np.deg2rad(lp.get('beta', 90.0))
             gamma = np.deg2rad(lp.get('gamma', 90.0))
@@ -2048,16 +2051,21 @@ class GenericSpinModel:
             # --- Resolve the anisotropy strength D_sia ---
             D_sia = None
             val = interaction.get('value')
+            if val is None:
+                val = interaction.get('K')  # older builder/designer output
             if isinstance(val, (int, float)):
                 # Numeric literal (e.g. value: 0.2). Honour it directly.
                 D_sia = val
-            elif isinstance(val, str) and param_map and val in param_map:
-                # Named parameter (e.g. value: "D").
-                D_sia = param_map[val]
+            elif isinstance(val, str) and param_map:
+                # Named parameter or an expression of them ("D", "-D", "2*D"). The
+                # parameters are SYMBOLS on the LSWT path, so the result must stay an
+                # expression: float() of it used to fail and fall through to the
+                # positional fallback, i.e. to the wrong parameter.
+                D_sia = self._resolve_scalar(val, param_map)
             elif isinstance(val, str):
-                # Parameter expression or numeric string.
+                # No named parameters: a numeric string, else positional below.
                 try:
-                    D_sia = float(sp.sympify(val, locals=param_map or {}))
+                    D_sia = float(sp.sympify(val))
                 except Exception:
                     D_sia = None
             if D_sia is None and rest_idx < len(p_rest):
@@ -2068,11 +2076,7 @@ class GenericSpinModel:
                 continue
 
             # --- Determine which sites this entry applies to ---
-            target_labels = interaction.get('atoms') or interaction.get('atom_labels')
-            if target_labels:
-                target_idx = [label_to_idx[l] for l in target_labels if l in label_to_idx]
-            else:
-                target_idx = list(range(N_uc))
+            target_idx = self._sia_target_indices(interaction, label_to_idx, N_uc)
 
             # --- Build the anisotropy axis ---
             axis = interaction.get('axis', [0, 0, 1])
@@ -2107,10 +2111,21 @@ class GenericSpinModel:
         return val
 
     def _sia_target_indices(self, interaction, label_to_idx, N_uc):
-        labels = interaction.get('atoms') or interaction.get('atom_labels')
-        if labels:
-            return [label_to_idx[l] for l in labels if l in label_to_idx]
-        return list(range(N_uc))
+        """Sites an on-site entry acts on: `atoms` / `atom_labels` (a list) or
+        `atom_label` (one label, older builder output); every site when none is given.
+        A label that matches no site is an error: it used to drop the term silently."""
+        labels = (interaction.get('atoms') or interaction.get('atom_labels')
+                  or interaction.get('atom_label'))
+        if not labels:
+            return list(range(N_uc))
+        if isinstance(labels, str):
+            labels = [labels]
+        unknown = [l for l in labels if l not in label_to_idx]
+        if unknown:
+            raise ValueError(
+                f"{interaction.get('type')} entry names atom label(s) {unknown} that "
+                f"match no site; known labels: {sorted(label_to_idx)}.")
+        return [label_to_idx[l] for l in labels]
 
     def _rcs(self, k: int, i: int) -> float:
         """lambda_k(s_i) when `calculation.anisotropy_renormalization: rcs`, else 1.

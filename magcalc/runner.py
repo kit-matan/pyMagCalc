@@ -72,8 +72,12 @@ def generate_q_path_from_config(config):
             end_pt = points.get(end_label)
             
             if start_pt is None or end_pt is None:
-                logger.error(f"Undefined point in path: {start_label} -> {end_label}")
-                continue
+                # skipping the segment used to shorten the path silently
+                missing = [l for l, p in ((start_label, start_pt), (end_label, end_pt))
+                           if p is None]
+                raise ValueError(
+                    f"q_path.path names undefined point(s) {missing}; defined "
+                    f"points: {sorted(points)}.")
 
             segment = np.linspace(start_pt, end_pt, n_points)
             if i > 0:

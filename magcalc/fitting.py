@@ -88,13 +88,22 @@ def load_fit_data(fit_type: str, path: str) -> Dict[str, np.ndarray]:
     # NeXus histograms (Gap 4 #20). Dispatch on the extension so the CSV path --
     # which is how data usually leaves a reduction pipeline here -- is untouched.
     if str(path).lower().endswith((".nxs", ".nxspe", ".h5", ".hdf5")):
+        if fit_type != "powder":
+            raise ValueError(
+                f"NeXus histograms are |Q|-energy maps and can only be fitted with "
+                f"fitting.type: powder, not '{fit_type}' ({path}).")
         from .binning import load_nxs
         nx = load_nxs(path)
         xx, ee = np.meshgrid(nx["x"], nx["energy"], indexing="ij")
-        return {"q_mag": xx.ravel(), "energy": ee.ravel(),
-                "intensity": np.asarray(nx["signal"], float).ravel(),
-                "error": np.sqrt(np.abs(np.asarray(nx["signal"], float).ravel())),
-                "binning": nx["params"]}
+        signal = np.asarray(nx["signal"], float).ravel()
+        # Poisson errors; an empty bin gets sigma = 1 count (a zero would make its
+        # residual infinite), and masked (non-finite) bins are left out.
+        error = np.sqrt(np.maximum(np.abs(signal), 1.0))
+        keep = np.isfinite(signal)
+        # "q" is the key FitProblem reads; "q_mag" is kept for older callers.
+        return {"q": xx.ravel()[keep], "q_mag": xx.ravel()[keep],
+                "energy": ee.ravel()[keep], "intensity": signal[keep],
+                "error": error[keep], "binning": nx["params"]}
 
     if not os.path.exists(path):
         raise FileNotFoundError(f"Fit data file not found: {path}")
@@ -193,8 +202,11 @@ class FitProblem:
         temperature: Optional[float] = None,
         domains=None,
         cross_section: str = "perp",
+        powder_samples: int = 50,
     ):
         self.fit_type = fit_type
+        # Sphere samples per |Q| for powder evaluations.
+        self._powder_samples = int(powder_samples)
         self.calc = calculator
         self.data = data
         self.name_order = name_order
@@ -446,12 +458,32 @@ def build_lmfit_params(fit_cfg: Dict[str, Any], parameters: Dict[str, Any],
                 f"fitting.vary references vector parameter '{name}'. v1 only varies "
                 f"scalar parameters; keep vectors fixed."
             )
-        lo, hi = (bounds.get(name) or [-np.inf, np.inf])
-        params.add(name, value=float(base), min=float(lo), max=float(hi))
-        if name in exprs:
-            params[name].set(expr=exprs[name])
+        # a one-sided bound is written with null: [0, null]
+        lo, hi = (bounds.get(name) or [None, None])
+        params.add(name, value=float(base),
+                   min=-np.inf if lo is None else float(lo),
+                   max=np.inf if hi is None else float(hi))
 
+    # `expr` ties a parameter to others. A tied parameter need not be in `vary`
+    # (it is not free); it used to be ignored unless it was.
     fit_type = fit_cfg.get("type", "dispersion")
+    nuisance = (("scale", "background", "energy_broadening")
+                if fit_type in ("sqw", "powder") else ())
+    for name, expr in exprs.items():
+        if name in nuisance:
+            continue
+        if name not in name_order:
+            raise ValueError(
+                f"fitting.expr references '{name}', which is not a model parameter "
+                f"name. Known names: {name_order}.")
+        if name not in params:
+            base = parameters.get(name)
+            if isinstance(base, (list, tuple, np.ndarray)):
+                raise ValueError(
+                    f"fitting.expr references vector parameter '{name}'; only "
+                    f"scalar parameters can be tied.")
+            params.add(name, value=float(base))
+
     if fit_type in ("sqw", "powder"):
         def _nuis(key, default_value, default_vary):
             spec = fit_cfg.get(key, {}) or {}
@@ -475,6 +507,9 @@ def build_lmfit_params(fit_cfg: Dict[str, Any], parameters: Dict[str, Any],
                    min=1e-3 if w_min is None else float(w_min),
                    max=np.inf if w_max is None else float(w_max))
 
+    # set after every name exists, so an expression may refer to any of them
+    for name, expr in exprs.items():
+        params[name].set(expr=expr)
     return params
 
 
@@ -547,10 +582,9 @@ def run_fit(
         temperature=temperature,
         domains=domains,
         cross_section=cross_section,
-    )
-    # Number of sphere samples for powder evaluations during the fit.
-    problem._powder_samples = int(
-        (final_config.get("powder_average", {}) or {}).get("num_samples", 50)
+        # Number of sphere samples for powder evaluations during the fit.
+        powder_samples=int(
+            (final_config.get("powder_average", {}) or {}).get("num_samples", 50)),
     )
 
     params = build_lmfit_params(fit_cfg, parameters, name_order)

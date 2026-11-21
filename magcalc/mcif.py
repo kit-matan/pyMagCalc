@@ -341,6 +341,15 @@ def read_mcif(path: str, tol: float = 1e-4,
     my = _mi('_atom_site_moment.crystalaxis_y', '_atom_site_moment_crystalaxis_y')
     mz = _mi('_atom_site_moment.crystalaxis_z', '_atom_site_moment_crystalaxis_z')
 
+    # R acts on components along the lattice VECTORS. 'unit_axes' components are
+    # along a_i/|a_i|, so they are rescaled to lattice components for the rotation
+    # and back: m'_i = |a_i| sum_j R_ij m_j/|a_j|. Applying R to them directly is
+    # wrong for any operation that mixes axes of unequal length.
+    if moment_basis == 'unit_axes':
+        axis_len = np.linalg.norm(np.asarray(A, dtype=float), axis=1)
+    else:
+        axis_len = np.ones(3)
+
     sites = []
     for r in rm:
         label = r[mli]
@@ -350,7 +359,8 @@ def read_mcif(path: str, tol: float = 1e-4,
             for s2 in centerings:
                 R, T, p = _compose(s1, s2)
                 r_new = (R @ r0 + T) % 1.0
-                m_new = float(np.linalg.det(R)) * p * (R @ m0)      # axial + time reversal
+                # axial + time reversal
+                m_new = float(np.linalg.det(R)) * p * (axis_len * (R @ (m0 / axis_len)))
                 # Match on DISTANCE, periodic, not on a quantised bucket. The
                 # bucket key `round(r/tol) % (1/tol)` splits two images of one
                 # site whenever the coordinate sits on a bucket boundary: for

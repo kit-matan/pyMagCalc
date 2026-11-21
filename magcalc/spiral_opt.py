@@ -237,10 +237,13 @@ class _SpiralEnergy:
         # (H_on, b_on) over the 3N Cartesian moment components, or None.
         self.H_on, self.b_on = onsite if onsite is not None else (None, None)
         self.H_vec = H_vec
-        self.S = float(S_val)
+        self.N = J_full.shape[0]
+        # Spin length per site (N,): a scalar is one length for every site. A
+        # mixed-spin model used to get the first atom's S on all sites.
+        self.S = np.broadcast_to(np.asarray(S_val, dtype=float), (self.N,)).copy()
+        self.S_ouc = self.S[np.asarray(ouc_map, dtype=int)]
         self.axis0 = axis
         self.optimize_axis = bool(optimize_axis)
-        self.N = J_full.shape[0]
         self.lam = 0.0                  # regularization weight (stage 1)
         # index bookkeeping
         self.n_axis_pars = 2 if self.optimize_axis else 0
@@ -288,14 +291,16 @@ class _SpiralEnergy:
 
         s_ouc = spins[self.ouc_map]                    # (N_ouc, 3)
         Rs = np.einsum('jab,jb->ja', R, s_ouc)         # rotated neighbor spins
-        E = 0.5 * self.S**2 * np.einsum('ia,ijab,jb->', spins, self.J_full, Rs)
+        mom = self.S[:, None] * spins                  # S_i s_i
+        E = 0.5 * np.einsum('ia,ijab,jb->', mom, self.J_full,
+                            self.S_ouc[:, None] * Rs)
 
         if self.H_on is not None:
-            m = self.S * spins.ravel()
+            m = mom.ravel()
             E += 0.5 * float(m @ (self.H_on @ m)) + float(self.b_on @ m)
 
         if self.H_vec is not None:
-            E += GAMMA * MU_B * self.S * float(np.sum(spins @ self.H_vec))
+            E += GAMMA * MU_B * float(np.sum(mom @ self.H_vec))
 
         if self.lam != 0.0:
             E += self.lam * float(np.sum(_reg(spins @ n)))
@@ -502,7 +507,16 @@ def optimize_spiral(model: GenericSpinModel, p_num, min_cfg: Dict[str, Any],
     _warn_if_onsite_breaks_the_spiral(onsite, axis, N)
     H_vec = _resolve_field(model, p_num)
 
-    energy = _SpiralEnergy(J_full, offsets, ouc_map, onsite, H_vec, S_val,
+    # Per-site spin lengths from the model; `S_val` (one length) only when the
+    # model cannot give them.
+    S_site = S_val
+    try:
+        mags = model.spin_magnitudes()
+        if mags is not None and len(mags) == N:
+            S_site = np.asarray([float(s) for s in mags])
+    except Exception:
+        S_site = S_val
+    energy = _SpiralEnergy(J_full, offsets, ouc_map, onsite, H_vec, S_site,
                            axis, optimize_axis)
 
     # --- Initial k: config k_init > lt_guess > structure k > random ---

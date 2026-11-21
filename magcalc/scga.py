@@ -104,12 +104,15 @@ def _exchange_cache(model, params):
     inv_lat = np.linalg.inv(lat)
     N = len(apos)
     bonds = []
+    # lattice axes along which some bond leaves the cell (integer offsets)
+    wraps = np.zeros(3, bool)
     for i, j, M in iter_pair_matrices(Jex, DM, Kex, N, len(aouc)):
         jc = j % N
         R = np.round((aouc[j] - apos[jc]) @ inv_lat).astype(int)
+        wraps |= R != 0
         bonds.append((i, jc, R.astype(float) @ lat, M))
     spins = np.asarray(model.spin_magnitudes(), float)
-    return {"N": N, "bonds": bonds, "pos": apos, "spins": spins,
+    return {"N": N, "bonds": bonds, "pos": apos, "spins": spins, "wraps": wraps,
             "ions": _ion_list(model, N), "g": _g_tensors(model, N)}
 
 
@@ -168,9 +171,14 @@ def _q_mesh(lat, nq, wraps):
 
 
 def _wraps(cache):
-    w = np.zeros(3, bool)
-    for (_i, _j, R_cart, _M) in cache["bonds"]:
-        w |= np.abs(R_cart) > 1e-9
+    """Which LATTICE axes the mesh must sample: those along which a bond leaves the
+    cell. Taken from the integer cell offsets; the Cartesian components of R used
+    before pick the wrong axes whenever a lattice vector is not along its own
+    Cartesian axis (a chain along y sampled only q.R = 0)."""
+    w = cache.get("wraps")
+    if w is None:      # a cache built elsewhere: fall back to sampling every axis
+        return np.array([True, True, True])
+    w = np.asarray(w, bool)
     return w if w.any() else np.array([True, True, True])
 
 
